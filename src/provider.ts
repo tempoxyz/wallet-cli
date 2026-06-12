@@ -16,11 +16,11 @@ export function createProvider(
         if (!options.noBrowser) openExternal(url)
       },
     }),
-    // The CLI-friendly pull mode, matching the legacy `accounts/cli` provider.
+    // Pull mode is the local-account-friendly MPP path for a CLI.
     mpp: { mode: 'pull' },
     storage: Storage.filesystem(),
     testnet: options.network === 'testnet' || process.env.TEMPO_WALLET_NETWORK === 'testnet',
-  }) as CoreProvider.Provider
+  })
 }
 
 export async function connect(provider: CoreProvider.Provider) {
