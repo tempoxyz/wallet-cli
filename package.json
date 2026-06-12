@@ -1,0 +1,40 @@
+{
+  "name": "wallet-cli",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@11.0.8",
+  "bin": {
+    "tempo-wallet": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "bundle": "tsx scripts/package.ts --bundle-only",
+    "check": "pnpm check:types && pnpm test:types && pnpm test",
+    "dev": "node --import tsx src/cli.ts",
+    "package": "tsx scripts/package.ts",
+    "start": "node dist/cli.js",
+    "check:types": "tsc -b --noEmit",
+    "test:types": "tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "accounts": "^0.14.2",
+    "incur": "^0.4.8",
+    "mppx": "^0.6.31",
+    "viem": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@yao-pkg/pkg": "^6.20.0",
+    "esbuild": "^0.28.0",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "^4.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
