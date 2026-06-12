@@ -1,6 +1,17 @@
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { platform } from 'node:process'
+
+export function openExternal(url: string) {
+  const command = platform === 'darwin' ? 'open' : platform === 'win32' ? 'cmd' : 'xdg-open'
+  const args = platform === 'win32' ? ['/c', 'start', '', url] : [url]
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: 'ignore',
+  })
+  child.unref()
+}
 
 export function runProcess(command: string, args: readonly string[]) {
   return new Promise<string>((resolve, reject) => {

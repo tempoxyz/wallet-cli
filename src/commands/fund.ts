@@ -1,12 +1,10 @@
-import { spawn } from 'node:child_process'
-import { platform } from 'node:process'
-
 import type { Provider as CoreProvider } from 'accounts'
 import { Actions } from 'viem/tempo'
 
 import { usdcToken } from '../shared/constants.js'
 import { usageError } from '../shared/errors.js'
 import { chainId } from '../shared/network.js'
+import { openExternal } from '../shared/process.js'
 import { formatMicroUnits, sleep } from '../shared/utils.js'
 import { createProvider } from '../provider.js'
 import { loadWalletState } from '../wallet/store.js'
@@ -144,14 +142,4 @@ function fundUrl(action: FundAction, options: { code?: string | undefined } = {}
   url.searchParams.set('action', action === 'credits' ? 'fund' : action)
   if (action === 'credits') url.searchParams.set('intent', 'credits')
   return url.toString()
-}
-
-function openExternal(url: string) {
-  const command = platform === 'darwin' ? 'open' : platform === 'win32' ? 'cmd' : 'xdg-open'
-  const args = platform === 'win32' ? ['/c', 'start', '', url] : [url]
-  const child = spawn(command, args, {
-    detached: true,
-    stdio: 'ignore',
-  })
-  child.unref()
 }
