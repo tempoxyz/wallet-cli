@@ -1,37 +1,46 @@
 {
   "name": "wallet-cli",
-  "private": true,
   "version": "0.6.0",
-  "type": "module",
-  "packageManager": "pnpm@11.0.8",
+  "private": true,
   "bin": {
+    "tempo-request": "./dist/request-cli.js",
     "tempo-wallet": "./dist/cli.js"
   },
+  "type": "module",
   "scripts": {
     "build": "tsc -b",
     "bundle": "tsx scripts/package.ts --bundle-only",
-    "check": "pnpm check:types && pnpm test:types && pnpm test",
+    "check": "pnpm check:code && pnpm check:types && pnpm test:types && pnpm test",
+    "check:code": "vp check --fix",
+    "check:format": "vp fmt --check",
+    "check:lint": "vp lint",
+    "check:types": "pnpm typecheck",
     "dev": "node --import tsx src/cli.ts",
+    "format": "vp fmt",
+    "lint": "vp lint --fix",
     "package": "tsx scripts/package.ts",
     "start": "node dist/cli.js",
-    "check:types": "tsc -b --noEmit",
+    "typecheck": "tsc -b --noEmit",
     "test:types": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "accounts": "^0.14.2",
-    "incur": "^0.4.8",
-    "mppx": "^0.6.31",
-    "viem": "latest"
+    "accounts": "0.14.8",
+    "incur": "0.4.8",
+    "mppx": "0.7.0",
+    "undici": "8.4.1",
+    "viem": "2.52.2"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "@yao-pkg/pkg": "^6.20.0",
-    "esbuild": "^0.28.0",
-    "tsx": "latest",
-    "typescript": "latest",
-    "vitest": "^4.1.8"
+    "@types/node": "25.9.2",
+    "@yao-pkg/pkg": "6.20.0",
+    "esbuild": "0.28.0",
+    "tsx": "4.22.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8",
+    "vp": "npm:vite-plus@0.1.24"
   },
+  "packageManager": "pnpm@11.0.8",
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"

@@ -1,0 +1,397 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { parseRequestArgs, runRequest } from "../src/commands/request.js";
+import {
+  findReusableSession,
+  preserveSessionCumulative,
+  readSessionRecordsByOrigin,
+  updateSessionReceipt,
+  upsertSessionRecord,
+} from "../src/payment/session-store.js";
+import { withSessionLock } from "../src/payment/session-lock.js";
+import { useTempHome } from "./helpers.js";
+
+type SeenRequest = {
+  body: string;
+  headers: Record<string, string | string[] | undefined>;
+  method: string;
+  url: string;
+};
+
+const servers: { close: () => Promise<void> }[] = [];
+
+afterEach(async () => {
+  await Promise.all(servers.map((server) => server.close()));
+  servers.length = 0;
+});
+
+describe("request command", () => {
+  it("performs a non-payment GET request", async () => {
+    const server = await testServer((_request, response) => {
+      response.end("hello world");
+    });
+    const stdout = captureStdout();
+
+    await runRequest([server.url("/test")], { stdout });
+
+    expect(stdout.text()).toBe("hello world");
+  });
+
+  it("posts JSON with the expected method and content type", async () => {
+    let seen: SeenRequest | undefined;
+    const server = await testServer(async (request, response) => {
+      seen = await readSeenRequest(request);
+      response.end(JSON.stringify({ ok: true }));
+    });
+    const stdout = captureStdout();
+
+    await runRequest(["-X", "POST", "--json", '{"key":"value"}', server.url("/api")], { stdout });
+
+    expect(stdout.text()).toBe('{"ok":true}');
+    expect(seen?.method).toBe("POST");
+    expect(seen?.headers["content-type"]).toContain("application/json");
+    expect(seen?.body).toBe('{"key":"value"}');
+  });
+
+  it("includes headers in stdout when requested", async () => {
+    const server = await testServer((_request, response) => {
+      response.setHeader("x-test", "foo");
+      response.end("body");
+    });
+    const stdout = captureStdout();
+
+    await runRequest(["-i", server.url("/headers")], { stdout });
+
+    expect(stdout.text()).toContain("HTTP 200");
+    expect(stdout.text()).toContain("x-test: foo");
+    expect(stdout.text()).toContain("body");
+  });
+
+  it("writes output and dumped headers to files", async () => {
+    const home = await useTempHome();
+    const outputPath = join(home, "out.txt");
+    const headersPath = join(home, "headers.txt");
+    const server = await testServer((_request, response) => {
+      response.setHeader("x-file", "yes");
+      response.end("file body");
+    });
+    const stdout = captureStdout();
+
+    await runRequest(["-D", headersPath, "-o", outputPath, server.url("/file")], { stdout });
+
+    expect(stdout.text()).toBe("");
+    expect(await readFile(outputPath, "utf8")).toBe("file body");
+    expect(await readFile(headersPath, "utf8")).toContain("x-file: yes");
+  });
+
+  it("appends data to the query string with -G", async () => {
+    let seen: SeenRequest | undefined;
+    const server = await testServer(async (request, response) => {
+      seen = await readSeenRequest(request);
+      response.end("ok");
+    });
+
+    await runRequest(["-G", "-d", "q=hello world", server.url("/search")], {
+      stdout: captureStdout(),
+    });
+
+    expect(seen?.method).toBe("GET");
+    expect(seen?.url).toContain("q=hello%20world");
+    expect(seen?.body).toBe("");
+  });
+
+  it("uses curl-parity default retry statuses when --retries is set", async () => {
+    let calls = 0;
+    const server = await testServer((_request, response) => {
+      calls += 1;
+      if (calls === 1) {
+        response.statusCode = 500;
+        response.end("try again");
+        return;
+      }
+      response.end("ok");
+    });
+    const stdout = captureStdout();
+
+    await runRequest(["--retries", "1", "--retry-backoff", "0", server.url("/flaky")], { stdout });
+
+    expect(calls).toBe(2);
+    expect(stdout.text()).toBe("ok");
+  });
+
+  it("does not follow redirects unless -L is provided", async () => {
+    const server = await testServer((_request, response) => {
+      response.statusCode = 302;
+      response.setHeader("location", "/target");
+      response.end("redirect");
+    });
+    const stdout = captureStdout();
+
+    await runRequest([server.url("/redirect")], { stdout });
+
+    expect(stdout.text()).toBe("redirect");
+  });
+
+  it("follows redirects with the Rust-compatible default and explicit limit", async () => {
+    let calls = 0;
+    const server = await testServer((request, response) => {
+      calls += 1;
+      if (request.url === "/redirect") {
+        response.statusCode = 302;
+        response.setHeader("location", "/target");
+        response.end("redirect");
+        return;
+      }
+      response.end("target");
+    });
+    const stdout = captureStdout();
+
+    await runRequest(["-L", "--max-redirs", "1", server.url("/redirect")], { stdout });
+
+    expect(calls).toBe(2);
+    expect(stdout.text()).toBe("target");
+  });
+
+  it("fails when the redirect limit is exceeded", async () => {
+    const server = await testServer((_request, response) => {
+      response.statusCode = 302;
+      response.setHeader("location", "/again");
+      response.end("redirect");
+    });
+
+    await expect(
+      runRequest(["-L", "--max-redirs", "0", server.url("/redirect")], {
+        stdout: captureStdout(),
+      }),
+    ).rejects.toMatchObject({ code: "E_NETWORK" });
+  });
+
+  it("outputs SSE data as Rust-compatible NDJSON records", async () => {
+    const server = await testServer((_request, response) => {
+      response.setHeader("content-type", "text/event-stream");
+      response.end('data: {"msg":"hello"}\n\nevent: payment-receipt\ndata: {"ok":true}\n\n');
+    });
+    const stdout = captureStdout();
+
+    await runRequest(["--sse-json", server.url("/stream")], { stdout });
+
+    const lines = stdout
+      .text()
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({ event: "data", data: { msg: "hello" } });
+    expect(lines[1]).toMatchObject({ event: "payment-receipt", data: { ok: true } });
+    expect(lines[0]?.ts).toEqual(expect.any(String));
+  });
+
+  it("emits an SSE error record for --sse-json HTTP failures", async () => {
+    const server = await testServer((_request, response) => {
+      response.statusCode = 500;
+      response.setHeader("content-type", "text/event-stream");
+      response.end("broken");
+    });
+    const stdout = captureStdout();
+
+    await expect(
+      runRequest(["--sse-json", server.url("/stream")], { stdout }),
+    ).rejects.toMatchObject({ code: "E_NETWORK" });
+
+    const line = JSON.parse(stdout.text().trim()) as Record<string, unknown>;
+    expect(line).toMatchObject({ event: "error" });
+    expect(String(line.message)).toContain("500");
+  });
+
+  it("sends multipart file fields with filename and content type", async () => {
+    const home = await useTempHome();
+    const filePath = join(home, "upload.txt");
+    await writeFile(filePath, "file-content");
+    let seen: SeenRequest | undefined;
+    const server = await testServer(async (request, response) => {
+      seen = await readSeenRequest(request);
+      response.end("uploaded");
+    });
+
+    await runRequest(["-F", `upload=@${filePath};type=text/plain`, server.url("/upload")], {
+      stdout: captureStdout(),
+    });
+
+    expect(seen?.headers["content-type"]).toContain("multipart/form-data");
+    expect(seen?.body).toContain('filename="upload.txt"');
+    expect(seen?.body.toLowerCase()).toContain("content-type: text/plain");
+    expect(seen?.body).toContain("file-content");
+  });
+
+  it("dry-runs a 402 by returning headers/body without payment execution", async () => {
+    const home = await useTempHome();
+    const headersPath = join(home, "payment-headers.txt");
+    const server = await testServer((_request, response) => {
+      response.statusCode = 402;
+      response.setHeader(
+        "www-authenticate",
+        'Payment realm="example", method="tempo", intent="charge", request="abc"',
+      );
+      response.end("Payment Required");
+    });
+    const stdout = captureStdout();
+
+    await runRequest(["--dry-run", "-D", headersPath, server.url("/paid")], { stdout });
+
+    expect(stdout.text()).toBe("Payment Required");
+    expect(await readFile(headersPath, "utf8")).toContain("www-authenticate");
+  });
+
+  it("returns E_PAYMENT for non-dry-run 402 responses", async () => {
+    const server = await testServer((_request, response) => {
+      response.statusCode = 402;
+      response.end("Payment Required");
+    });
+
+    await expect(
+      runRequest([server.url("/paid")], { stdout: captureStdout() }),
+    ).rejects.toMatchObject({
+      code: "E_PAYMENT",
+      exitCode: 4,
+    });
+  });
+
+  it("accepts request global/payment compatibility flags", () => {
+    expect(
+      parseRequestArgs([
+        "-t",
+        "--max-spend",
+        "1.00",
+        "--connect-timeout",
+        "2",
+        "--insecure",
+        "--max-redirs",
+        "3",
+        "https://example.com",
+      ]),
+    ).toMatchObject({
+      connectTimeout: 2,
+      insecure: true,
+      maxRedirs: 3,
+      maxSpend: "1.00",
+      url: "https://example.com",
+    });
+  });
+
+  it("recovers stale session locks left behind by killed request processes", async () => {
+    const home = await useTempHome();
+    const lockDir = join(home, ".tempo", "wallet", "session-locks");
+    const lockPath = join(lockDir, "https___rpc.mpp.tempo.xyz.lock");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(lockPath, "99999999\n2026-01-01T00:00:00.000Z\n");
+
+    const result = await withSessionLock("https://rpc.mpp.tempo.xyz/", async () => "ok");
+
+    expect(result).toBe("ok");
+  });
+
+  it("persists Rust-compatible session channel rows with monotonic cumulative fields", async () => {
+    await useTempHome();
+    const origin = "https://paid.example.com";
+    const channelId = `0x${"1".repeat(64)}`;
+    await upsertSessionRecord({
+      accepted_cumulative: 0n,
+      authorized_signer: "0x0000000000000000000000000000000000000aaa",
+      chain_id: 4217,
+      challenge_echo: "{}",
+      channel_id: channelId,
+      close_requested_at: 0,
+      created_at: 1,
+      cumulative_amount: 100n,
+      deposit: 1000n,
+      escrow_contract: "0x0000000000000000000000000000000000000bbb",
+      grace_ready_at: 0,
+      last_used_at: 1,
+      network: "tempo",
+      origin,
+      payee: "0x0000000000000000000000000000000000000ccc",
+      payer: "0x0000000000000000000000000000000000000aaa",
+      request_url: `${origin}/api`,
+      salt: "0x00",
+      server_spent: 0n,
+      session_protocol: "v1",
+      state: "active",
+      token: "0x0000000000000000000000000000000000000ddd",
+    });
+    await preserveSessionCumulative(channelId, 200n);
+    await updateSessionReceipt({
+      acceptedCumulative: 150n,
+      channelId,
+      serverSpent: 125n,
+      signedCumulative: 175n,
+    });
+
+    const rows = await readSessionRecordsByOrigin(origin);
+    const reusable = await findReusableSession({
+      authorizedSigner: "0x0000000000000000000000000000000000000aaa",
+      chainId: 4217,
+      escrowContract: "0x0000000000000000000000000000000000000bbb",
+      origin,
+      payee: "0x0000000000000000000000000000000000000ccc",
+      payer: "0x0000000000000000000000000000000000000aaa",
+      token: "0x0000000000000000000000000000000000000ddd",
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.cumulative_amount).toBe(200n);
+    expect(rows[0]?.accepted_cumulative).toBe(150n);
+    expect(rows[0]?.server_spent).toBe(125n);
+    expect(reusable?.channel_id).toBe(channelId);
+  });
+});
+
+async function testServer(
+  handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>,
+) {
+  const server = createServer((request, response) => {
+    void handler(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected TCP test server address");
+  const close = () =>
+    new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  const managed = { close };
+  servers.push(managed);
+  return {
+    ...managed,
+    url(path: string) {
+      return `http://127.0.0.1:${address.port}${path}`;
+    },
+  };
+}
+
+function captureStdout() {
+  let output = "";
+  return {
+    write(chunk: string | Uint8Array) {
+      output += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      return true;
+    },
+    text() {
+      return output;
+    },
+  };
+}
+
+async function readSeenRequest(request: IncomingMessage): Promise<SeenRequest> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(Buffer.from(chunk));
+  return {
+    body: Buffer.concat(chunks).toString("utf8"),
+    headers: request.headers,
+    method: request.method ?? "",
+    url: request.url ?? "",
+  };
+}
