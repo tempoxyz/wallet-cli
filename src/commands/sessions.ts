@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 
 import { encodeFunctionData, getAddress, parseAbiItem, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
 import { Challenge, Credential } from "mppx";
 
 import {
@@ -38,6 +39,7 @@ import {
   stringValue,
 } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
+import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import { loadWalletState } from "../wallet/store.js";
 
 export type ChannelState = "active" | "closing" | "finalizable" | "finalized" | "orphaned";
@@ -352,6 +354,7 @@ async function closeOneSession(
       escrowContract: escrow,
       functionName: "requestClose",
       network: options.network,
+      record,
     });
     await updateChannelCloseState({
       channelId: record.channel_id,
@@ -378,6 +381,7 @@ async function closeOneSession(
     escrowContract: escrow,
     functionName: "withdraw",
     network: options.network,
+    record,
   });
   await deleteChannelRecord(record.channel_id);
   return closeResult(record, "closed");
@@ -526,24 +530,13 @@ async function sendSessionManagementTransaction(options: {
   escrowContract: Address;
   functionName: "requestClose" | "withdraw";
   network?: string | undefined;
+  record: ChannelRecord;
 }) {
   const provider = createProvider({ network: options.network });
+  const request = buildSessionManagementTransactionRequest(options);
   const receipt = await provider.request({
     method: "eth_sendTransactionSync",
-    params: [
-      {
-        calls: [
-          {
-            to: options.escrowContract,
-            data: encodeFunctionData({
-              abi: escrowAbi,
-              functionName: options.functionName,
-              args: [options.channelId],
-            }),
-          },
-        ],
-      },
-    ],
+    params: [request],
   });
   const record = getRecord(receipt);
   const txHash = stringValue(record.transactionHash ?? record.transaction_hash ?? record.hash);
@@ -552,6 +545,29 @@ async function sendSessionManagementTransaction(options: {
       `${options.functionName} submitted but receipt did not include a transaction hash`,
     );
   return txHash;
+}
+
+export function buildSessionManagementTransactionRequest(options: {
+  channelId: Hex;
+  escrowContract: Address;
+  functionName: "requestClose" | "withdraw";
+  record: ChannelRecord;
+}) {
+  const isPrecompile = options.escrowContract.toLowerCase() === TempoChannel.address.toLowerCase();
+  const descriptor = isPrecompile ? requireSessionDescriptor(options.record) : undefined;
+  return {
+    feeToken: options.record.token as Address,
+    calls: [
+      {
+        to: options.escrowContract,
+        data: encodeFunctionData({
+          abi: isPrecompile ? TempoAbis.tip20ChannelReserve : escrowAbi,
+          functionName: options.functionName,
+          args: isPrecompile ? [descriptor] : [options.channelId],
+        } as never),
+      },
+    ],
+  };
 }
 
 async function recordCloseResult(
@@ -664,6 +680,7 @@ function sessionItem(record: ChannelRecord) {
 
 async function readChannelRecords(): Promise<ChannelRecord[]> {
   const path = channelsDbPath();
+  await ensureChannelsTable();
   const query = `SELECT version, origin, request_url, chain_id,
                     escrow_contract, token, payee, payer, authorized_signer,
                     salt, channel_id, session_protocol, descriptor_json, deposit, cumulative_amount, accepted_cumulative,
@@ -804,6 +821,22 @@ async function getOnChainChannel(options: {
   escrowContract: Address;
   network?: string | undefined;
 }) {
+  if (options.escrowContract.toLowerCase() === TempoChannel.address.toLowerCase()) {
+    const state = (await createTempoPublicClient(options.network).readContract({
+      address: TempoChannel.address,
+      abi: TempoAbis.tip20ChannelReserve,
+      functionName: "getChannelState",
+      args: [options.channelId],
+    })) as unknown;
+    const record = getRecord(state);
+    const tuple = Array.isArray(state) ? state : [];
+    const deposit = parseOnChainBigInt(record.deposit ?? tuple[1]);
+    const settled = parseOnChainBigInt(record.settled ?? tuple[0]);
+    const closeRequestedAt = parseOnChainBigInt(record.closeRequestedAt ?? tuple[2]);
+    if (deposit === 0n) return null;
+    return { token: usdcToken, deposit, settled, closeRequestedAt };
+  }
+
   const value = (await createTempoPublicClient(options.network).readContract({
     address: options.escrowContract,
     abi: escrowAbi,
@@ -910,6 +943,17 @@ async function ensureChannelsTable() {
     session_protocol TEXT NOT NULL DEFAULT 'v1',
     descriptor_json TEXT
   )`);
+  await addColumnIfMissing("accepted_cumulative TEXT NOT NULL DEFAULT '0'");
+  await addColumnIfMissing("server_spent TEXT NOT NULL DEFAULT '0'");
+  await addColumnIfMissing("session_protocol TEXT NOT NULL DEFAULT 'v1'");
+  await addColumnIfMissing("descriptor_json TEXT");
+}
+
+async function addColumnIfMissing(definition: string) {
+  await runSql(`ALTER TABLE channels ADD COLUMN ${definition}`).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("duplicate column name")) throw error;
+  });
 }
 
 function sessionStateFromCloseTiming(closeRequestedAt: number, gracePeriod: number): ChannelState {

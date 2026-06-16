@@ -11,6 +11,7 @@ export type WalletState = {
     access: string;
     chainId: number;
     expiry?: number | undefined;
+    keyAuthorization?: unknown | undefined;
     keyType?: string | undefined;
     privateKey?: string | undefined;
     limits: readonly { token: string; limit: string }[];
@@ -55,6 +56,7 @@ export async function loadWalletState(): Promise<WalletState> {
         access: item.access,
         chainId: item.chainId,
         expiry: typeof item.expiry === "number" ? item.expiry : undefined,
+        keyAuthorization: reviveBigInts(item.keyAuthorization),
         keyType: typeof item.keyType === "string" ? item.keyType : undefined,
         privateKey: typeof item.privateKey === "string" ? item.privateKey : undefined,
         limits: getArray(item.limits).flatMap((limit) => {
@@ -72,6 +74,15 @@ export async function loadWalletState(): Promise<WalletState> {
     activeAccount: typeof record.activeAccount === "number" ? record.activeAccount : undefined,
     chainId: typeof record.chainId === "number" ? record.chainId : undefined,
   };
+}
+
+function reviveBigInts(value: unknown): unknown {
+  if (typeof value === "string" && value.endsWith("#__bigint")) {
+    return BigInt(value.slice(0, -"#__bigint".length));
+  }
+  if (Array.isArray(value)) return value.map(reviveBigInts);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, reviveBigInts(item)]));
 }
 
 export async function saveWalletState(state: WalletState) {

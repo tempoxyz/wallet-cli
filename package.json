@@ -25,7 +25,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "accounts": "0.14.8",
+    "accounts": "0.14.9",
     "incur": "0.4.8",
     "mppx": "0.7.0",
     "undici": "8.4.1",

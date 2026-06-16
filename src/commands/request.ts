@@ -19,9 +19,17 @@ import {
 import { createWalletClient, encodeFunctionData, http, parseUnits } from "viem";
 import { prepareTransactionRequest, signTransaction } from "viem/actions";
 import { privateKeyToAccount } from "viem/accounts";
-import { Account as TempoAccount, Actions, Chain } from "viem/tempo";
+import {
+  Abis as TempoAbis,
+  Account as TempoAccount,
+  Actions,
+  Chain,
+  Channel as TempoChannel,
+  KeyAuthorizationManager,
+} from "viem/tempo";
 
 import { withSessionLock } from "../payment/session-lock.js";
+import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import {
   deleteSessionRecord,
   findReusableSession,
@@ -569,6 +577,7 @@ async function paySessionAndRetryRequest(
         action: "voucher",
         channelId: reusable.channel_id as `0x${string}`,
         cumulativeAmountRaw: signedCumulative.toString(),
+        ...(reusable.descriptor_json ? { descriptor: requireSessionDescriptor(reusable) } : {}),
       });
       record = reusable;
     } else {
@@ -610,7 +619,7 @@ async function paySessionAndRetryRequest(
       });
       if (recovered) return recovered;
     }
-    if (reusable && isSessionInvalidationResponse(response)) {
+    if (reusable && (await isSessionInvalidationResponse(response))) {
       await deleteSessionRecord(reusable.channel_id);
       return paySessionAndRetryRequest(
         paymentRequiredResponse,
@@ -647,14 +656,15 @@ async function resolvePaymentIdentity(options: RequestOptions) {
       address: account.address,
       getClient,
       methodOptions: { account, mode: "pull" as const },
+      signerAddress: account.address,
     };
   }
 
   const walletState = await loadWalletState();
-  const stored = storedAccessKeyIdentity(walletState, options);
+  const stored = await storedAccessKeyIdentity(walletState, options);
   if (stored) return stored;
 
-  const provider = createProvider({ mpp: false, network: options.network });
+  const provider = createProvider({ network: options.network });
   const providerState = provider as unknown as {
     store: { getState(): { accounts: { address: string }[]; activeAccount: number } };
   };
@@ -679,6 +689,7 @@ async function resolvePaymentIdentity(options: RequestOptions) {
     getClient,
     provider,
     providerState,
+    signerAddress: account.address,
     methodOptions: {
       getClient,
       ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
@@ -686,7 +697,7 @@ async function resolvePaymentIdentity(options: RequestOptions) {
   };
 }
 
-function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptions) {
+export async function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptions) {
   const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
   if (!activeAccount) return undefined;
 
@@ -695,13 +706,27 @@ function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptio
     if (key.chainId !== expectedChain || !key.privateKey) continue;
     if (key.keyType && key.keyType !== "secp256k1" && key.keyType !== "p256") continue;
 
+    const keyAuthorizationManager = KeyAuthorizationManager.memory();
+    if (key.keyAuthorization) {
+      await keyAuthorizationManager.set(
+        {
+          address: activeAccount.address as `0x${string}`,
+          accessKey: key.address as `0x${string}`,
+          chainId: expectedChain,
+        },
+        key.keyAuthorization as never,
+      );
+    }
+
     const account =
       key.keyType === "p256"
         ? TempoAccount.fromP256(key.privateKey as `0x${string}`, {
             access: activeAccount.address as `0x${string}`,
+            keyAuthorizationManager,
           })
         : TempoAccount.fromSecp256k1(key.privateKey as `0x${string}`, {
             access: activeAccount.address as `0x${string}`,
+            keyAuthorizationManager,
           });
     if (key.address.toLowerCase() !== account.accessKeyAddress.toLowerCase()) continue;
 
@@ -716,6 +741,7 @@ function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptio
       address: account.address,
       getClient,
       methodOptions: { account, getClient, mode: "pull" as const },
+      signerAddress: account.accessKeyAddress,
     };
   }
 
@@ -745,6 +771,7 @@ function sessionDetails(
     escrowContract: stringValue(
       methodDetails.escrowContract || escrowContract(resolvedChainId),
     ).toLowerCase(),
+    feePayer: Boolean(methodDetails.feePayer),
     origin: originFromUrl(requestUrl),
     payee,
     requestUrl,
@@ -762,9 +789,9 @@ async function reusableSessionRecord(
   details: SessionDetails,
   identity: PaymentIdentity,
   skipChannelId?: string | undefined,
-) {
+): Promise<PersistedSessionRecord | undefined> {
   const record = await findReusableSession({
-    authorizedSigner: identity.address,
+    authorizedSigner: identity.signerAddress,
     chainId: details.chainId,
     escrowContract: details.escrowContract,
     origin: details.origin,
@@ -775,6 +802,13 @@ async function reusableSessionRecord(
   if (!record) return undefined;
   if (skipChannelId && record.channel_id.toLowerCase() === skipChannelId.toLowerCase())
     return undefined;
+  if (
+    record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase() &&
+    !record.descriptor_json
+  ) {
+    await deleteSessionRecord(record.channel_id);
+    return await reusableSessionRecord(details, identity, skipChannelId);
+  }
 
   const onChain = await readOnChainChannel(record);
   if (!onChain) {
@@ -789,7 +823,7 @@ async function reusableSessionRecord(
     onChain.payer.toLowerCase() !== identity.address.toLowerCase() ||
     onChain.payee.toLowerCase() !== details.payee ||
     onChain.token.toLowerCase() !== details.token ||
-    onChain.authorizedSigner.toLowerCase() !== identity.address.toLowerCase()
+    onChain.authorizedSigner.toLowerCase() !== identity.signerAddress.toLowerCase()
   ) {
     await deleteSessionRecord(record.channel_id);
     return undefined;
@@ -797,8 +831,24 @@ async function reusableSessionRecord(
   return record;
 }
 
-function isSessionInvalidationResponse(response: Response) {
-  return response.status === 404 || response.status === 410;
+export async function isSessionInvalidationResponse(response: Response) {
+  if (response.status !== 404 && response.status !== 410) return false;
+
+  const authenticate = response.headers.get("www-authenticate")?.toLowerCase() ?? "";
+  if (authenticate.includes("mpp") || authenticate.includes("payment")) return true;
+
+  const body = await response
+    .clone()
+    .text()
+    .catch(() => "");
+  const text = body.toLowerCase();
+  return (
+    (text.includes("session") || text.includes("channel")) &&
+    (text.includes("not found") ||
+      text.includes("invalid") ||
+      text.includes("expired") ||
+      text.includes("closed"))
+  );
 }
 
 async function tryTopUpAndRetry(options: {
@@ -831,6 +881,9 @@ async function tryTopUpAndRetry(options: {
     action: "topUp",
     additionalDepositRaw: additionalDeposit.toString(),
     channelId: options.record.channel_id,
+    ...(options.record.descriptor_json
+      ? { descriptor: requireSessionDescriptor(options.record) }
+      : {}),
     transaction,
   } as never);
   const topUpInit = topUpRequestInit(options.request.init);
@@ -866,30 +919,55 @@ async function buildTopUpTransaction(options: {
   identity: PaymentIdentity;
   record: PersistedSessionRecord;
 }) {
-  const approveData = encodeFunctionData({
-    abi: tip20Abi,
-    functionName: "approve",
-    args: [options.record.escrow_contract as `0x${string}`, options.additionalDeposit],
-  });
-  const topUpData = encodeFunctionData({
-    abi: escrowAbi,
-    functionName: "topUp",
-    args: [options.record.channel_id as `0x${string}`, options.additionalDeposit],
+  const request = buildTopUpTransactionRequest({
+    additionalDeposit: options.additionalDeposit,
+    details: options.details,
+    record: options.record,
   });
   const client = options.identity.getClient({ chainId: options.details.chainId });
   const prepared = await prepareTransactionRequest(
     client as never,
     {
       account: (client as { account: unknown }).account,
-      calls: [
-        { to: options.details.token as `0x${string}`, data: approveData },
-        { to: options.record.escrow_contract as `0x${string}`, data: topUpData },
-      ],
-      feeToken: options.details.token,
+      ...request,
     } as never,
   );
   prepared.gas = (prepared.gas ?? 0n) + 5_000n;
   return (await signTransaction(client as never, prepared as never)) as `0x${string}`;
+}
+
+export function buildTopUpTransactionRequest(options: {
+  additionalDeposit: bigint;
+  details: Pick<SessionDetails, "feePayer" | "token">;
+  record: Pick<PersistedSessionRecord, "channel_id" | "descriptor_json" | "escrow_contract">;
+}) {
+  const isPrecompile =
+    options.record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase();
+  const topUpData = encodeFunctionData({
+    abi: isPrecompile ? TempoAbis.tip20ChannelReserve : escrowAbi,
+    functionName: "topUp",
+    args: isPrecompile
+      ? [requireSessionDescriptor(options.record), options.additionalDeposit]
+      : [options.record.channel_id as `0x${string}`, options.additionalDeposit],
+  } as never);
+  const calls = isPrecompile
+    ? [{ to: options.record.escrow_contract as `0x${string}`, data: topUpData }]
+    : [
+        {
+          to: options.details.token as `0x${string}`,
+          data: encodeFunctionData({
+            abi: tip20Abi,
+            functionName: "approve",
+            args: [options.record.escrow_contract as `0x${string}`, options.additionalDeposit],
+          }),
+        },
+        { to: options.record.escrow_contract as `0x${string}`, data: topUpData },
+      ];
+  return {
+    calls,
+    ...(options.details.feePayer ? { feePayer: true } : {}),
+    feeToken: options.details.token,
+  };
 }
 
 function topUpRequestInit(init: RequestInitWithDispatcher) {
@@ -979,7 +1057,7 @@ function sessionRecordFromOpenCredential(options: {
   return {
     accepted_cumulative: 0n,
     authorized_signer: stringValue(
-      payload.authorizedSigner || options.identity.address,
+      payload.authorizedSigner || options.identity.signerAddress,
     ).toLowerCase(),
     chain_id: options.details.chainId,
     challenge_echo: challengeEchoJson(options.challenge),
@@ -988,6 +1066,7 @@ function sessionRecordFromOpenCredential(options: {
     created_at: now,
     cumulative_amount: options.signedCumulative,
     deposit: options.depositRaw,
+    descriptor_json: payload.descriptor ? JSON.stringify(payload.descriptor) : undefined,
     escrow_contract: options.details.escrowContract,
     grace_ready_at: 0,
     last_used_at: now,
@@ -998,10 +1077,16 @@ function sessionRecordFromOpenCredential(options: {
     request_url: options.details.requestUrl,
     salt: "0x00",
     server_spent: 0n,
-    session_protocol: "v1",
+    session_protocol: sessionProtocol(options.challenge) ?? (payload.descriptor ? "v2" : "v1"),
     state: "active",
     token: options.details.token,
   };
+}
+
+function sessionProtocol(challenge: Challenge.Challenge) {
+  const request = challenge.request as Record<string, unknown>;
+  const methodDetails = getRecord(request.methodDetails);
+  return stringValue(methodDetails.sessionProtocol) || undefined;
 }
 
 async function persistSessionReceipt(
@@ -1029,6 +1114,30 @@ async function persistSessionReceipt(
 
 async function readOnChainChannel(record: PersistedSessionRecord) {
   const network = record.chain_id === 42431 ? "testnet" : "mainnet";
+  if (record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase()) {
+    const state = (await createTempoPublicClient(network).readContract({
+      address: TempoChannel.address,
+      abi: TempoAbis.tip20ChannelReserve,
+      functionName: "getChannelState",
+      args: [record.channel_id as `0x${string}`],
+    })) as unknown;
+    const object = getRecord(state);
+    const tuple = Array.isArray(state) ? state : [];
+    const deposit = parseOnChainBigInt(object.deposit ?? tuple[1]);
+    const settled = parseOnChainBigInt(object.settled ?? tuple[0]);
+    const closeRequestedAt = parseOnChainBigInt(object.closeRequestedAt ?? tuple[2]);
+    if (deposit === 0n) return null;
+    return {
+      authorizedSigner: record.authorized_signer,
+      closeRequestedAt,
+      deposit,
+      payee: record.payee,
+      payer: record.payer,
+      settled,
+      token: record.token,
+    };
+  }
+
   const value = (await createTempoPublicClient(network).readContract({
     address: record.escrow_contract as `0x${string}`,
     abi: escrowAbi,

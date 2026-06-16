@@ -1,9 +1,19 @@
 import { arch, platform } from "node:process";
+import { erc20Abi, formatUnits, type Address } from "viem";
 
 import { version } from "../shared/constants.js";
-import { chainId, networkName, tokenSymbol } from "../shared/network.js";
+import { chainId, createTempoPublicClient, networkName, tokenSymbol } from "../shared/network.js";
 import { usageError } from "../shared/errors.js";
-import { cleanStoredScalar, formatMicroUnits, formatUnixTimestamp } from "../shared/utils.js";
+import { channelsDbPath, runProcess } from "../shared/process.js";
+import {
+  cleanStoredScalar,
+  formatMicroUnits,
+  formatTokenUnits,
+  formatUnixTimestamp,
+  getArray,
+  getRecord,
+  parseStoredBigInt,
+} from "../shared/utils.js";
 import { connect, createProvider } from "../provider.js";
 import {
   emptyWalletState,
@@ -20,10 +30,11 @@ export async function loginHandler(options: {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   if (activeAccount && walletStateMatchesNetwork(state, options.network))
-    return currentWhoamiOutput({
+    return await currentWhoamiOutput({
       walletAddress: activeAccount.address,
       chain: state.chainId ?? null,
       accessKeys: state.accessKeys,
+      network: options.network,
     });
 
   const provider = createProvider({ network: options.network, noBrowser: options["no-browser"] });
@@ -80,7 +91,12 @@ export async function whoamiHandler(options: {
 
   if (options.credits) return { credits };
 
-  return currentWhoamiOutput({ walletAddress, chain, accessKeys: state.accessKeys });
+  return await currentWhoamiOutput({
+    walletAddress,
+    chain,
+    accessKeys: state.accessKeys,
+    network: options.network,
+  });
 }
 
 export async function keysHandler() {
@@ -88,7 +104,7 @@ export async function keysHandler() {
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   const chain = state.chainId ?? null;
 
-  return currentKeysOutput({
+  return await currentKeysOutput({
     walletAddress: activeAccount?.address ?? null,
     chain,
     accessKeys: state.accessKeys,
@@ -118,36 +134,59 @@ export function completionsHandler() {
   };
 }
 
-export function currentWhoamiOutput(options: {
+export async function currentWhoamiOutput(options: {
   walletAddress: string | null;
   chain: number | null;
   accessKeys: WalletState["accessKeys"];
+  network?: string | undefined;
 }) {
+  const balance = await tokenBalance({
+    token: options.accessKeys[0]?.limits[0]?.token,
+    walletAddress: options.walletAddress,
+    network: options.network,
+  });
+  const sessions = await activeSessionStats({
+    token: balance?.token ?? options.accessKeys[0]?.limits[0]?.token,
+    walletAddress: options.walletAddress,
+  });
   return {
     ready: Boolean(options.walletAddress),
     wallet: options.walletAddress?.toLowerCase() ?? null,
-    balance: emptyBalance(),
+    balance: balanceOutput(balance, sessions),
     key: currentKeyOutput({
       key: options.accessKeys[0],
       walletAddress: options.walletAddress,
       chain: options.chain,
+      balance,
     }),
   };
 }
 
-export function currentKeysOutput(options: {
+export async function currentKeysOutput(options: {
   walletAddress: string | null;
   chain: number | null;
   accessKeys: WalletState["accessKeys"];
 }) {
-  const keys = options.accessKeys.flatMap((key) => {
+  const balances = new Map<string, TokenBalance | null>();
+  const keys = [];
+  for (const key of options.accessKeys) {
+    const token = key.limits[0]?.token ?? "0x20c000000000000000000000b9537d11c60e8b50";
+    const balance = balances.has(token.toLowerCase())
+      ? (balances.get(token.toLowerCase()) ?? null)
+      : await tokenBalance({
+          token,
+          walletAddress: options.walletAddress,
+          network: networkName(options.chain) === "tempo-moderato" ? "testnet" : undefined,
+        });
+    balances.set(token.toLowerCase(), balance);
     const output = currentKeyOutput({
       key,
       walletAddress: options.walletAddress,
       chain: options.chain,
+      balance,
     });
-    return output ? [output] : [];
-  });
+    if (output) keys.push(output);
+  }
 
   return {
     keys,
@@ -159,6 +198,7 @@ function currentKeyOutput(options: {
   key: WalletState["accessKeys"][number] | undefined;
   walletAddress: string | null;
   chain: number | null;
+  balance: TokenBalance | null;
 }) {
   if (!options.key) return null;
   const limit = options.key.limits[0];
@@ -170,7 +210,10 @@ function currentKeyOutput(options: {
     wallet_address: options.walletAddress?.toLowerCase() ?? null,
     symbol: tokenSymbol(token),
     token: token.toLowerCase(),
-    balance: "0.000000",
+    balance:
+      options.balance && options.balance.token.toLowerCase() === token.toLowerCase()
+        ? options.balance.formatted
+        : "0.000000",
     spending_limit: {
       unlimited: false,
       limit: limit ? formatMicroUnits(cleanStoredScalar(limit.limit)) : "0.000000",
@@ -181,14 +224,92 @@ function currentKeyOutput(options: {
   };
 }
 
-function emptyBalance() {
+type TokenBalance = {
+  formatted: string;
+  raw: bigint;
+  symbol: string;
+  token: string;
+};
+
+type SessionStats = {
+  active: number;
+  locked: bigint;
+};
+
+async function tokenBalance(options: {
+  token: string | undefined;
+  walletAddress: string | null;
+  network?: string | undefined;
+}): Promise<TokenBalance | null> {
+  if (!options.walletAddress) return null;
+  const token = options.token ?? "0x20c000000000000000000000b9537d11c60e8b50";
+  try {
+    const client = createTempoPublicClient(options.network);
+    const raw = await client.readContract({
+      address: token as Address,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [options.walletAddress as Address],
+    });
+    return {
+      formatted: formatUnits(raw, 6),
+      raw,
+      symbol: tokenSymbol(token),
+      token,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function activeSessionStats(options: {
+  token: string | undefined;
+  walletAddress: string | null;
+}): Promise<SessionStats> {
+  if (!options.walletAddress) return { active: 0, locked: 0n };
+  const token = options.token?.toLowerCase();
+  const query = `SELECT token, deposit, cumulative_amount, accepted_cumulative, server_spent
+             FROM channels
+             WHERE LOWER(payer) = LOWER('${options.walletAddress.replaceAll("'", "''")}')
+               AND state = 'active'
+               AND close_requested_at = 0`;
+  try {
+    const stdout = await runProcess("sqlite3", ["-json", channelsDbPath(), query]);
+    const rows = getArray(JSON.parse(stdout || "[]") as unknown);
+    let active = 0;
+    let locked = 0n;
+    for (const row of rows) {
+      const item = getRecord(row);
+      if (token && String(item.token).toLowerCase() !== token) continue;
+      const spent = maxBigInt(
+        parseStoredBigInt(item.cumulative_amount),
+        parseStoredBigInt(item.accepted_cumulative),
+        parseStoredBigInt(item.server_spent),
+      );
+      const deposit = parseStoredBigInt(item.deposit);
+      active += 1;
+      locked += deposit > spent ? deposit - spent : 0n;
+    }
+    return { active, locked };
+  } catch {
+    return { active: 0, locked: 0n };
+  }
+}
+
+function balanceOutput(balance: TokenBalance | null, sessions: SessionStats) {
+  const available = balance?.raw ?? 0n;
+  const total = available + sessions.locked;
   return {
-    total: "0.000000",
-    locked: "0",
-    available: "0.000000",
-    active_sessions: 0,
-    symbol: "USDC.e",
+    total: formatTokenUnits(total, 6),
+    locked: formatTokenUnits(sessions.locked, 6),
+    available: balance?.formatted ?? "0.000000",
+    active_sessions: sessions.active,
+    symbol: balance?.symbol ?? "USDC.e",
   };
+}
+
+function maxBigInt(...values: bigint[]) {
+  return values.reduce((max, value) => (value > max ? value : max), 0n);
 }
 
 function refreshAuthUrl(network: string | undefined) {

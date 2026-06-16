@@ -2,9 +2,17 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { decodeFunctionData } from "viem";
+import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { parseRequestArgs, runRequest } from "../src/commands/request.js";
+import {
+  buildTopUpTransactionRequest,
+  isSessionInvalidationResponse,
+  parseRequestArgs,
+  runRequest,
+  storedAccessKeyIdentity,
+} from "../src/commands/request.js";
 import {
   findReusableSession,
   preserveSessionCumulative,
@@ -13,7 +21,14 @@ import {
   upsertSessionRecord,
 } from "../src/payment/session-store.js";
 import { withSessionLock } from "../src/payment/session-lock.js";
-import { useTempHome } from "./helpers.js";
+import {
+  testAccessKey,
+  testWallet,
+  useTempHome,
+  walletState,
+  writeWalletState,
+} from "./helpers.js";
+import { loadWalletState } from "../src/wallet/store.js";
 
 type SeenRequest = {
   body: string;
@@ -347,7 +362,173 @@ describe("request command", () => {
     expect(rows[0]?.server_spent).toBe(125n);
     expect(reusable?.channel_id).toBe(channelId);
   });
+
+  it("preserves pending key authorizations from wallet storage for local access-key payments", async () => {
+    await useTempHome();
+    const keyAuthorization = {
+      address: testAccessKey,
+      chainId: 4217n,
+      expiry: 1783809942,
+      limits: [{ token: "0x20C000000000000000000000b9537d11c60E8b50", limit: 100000000n }],
+      signature: { type: "secp256k1", signature: "0x1234" },
+      type: "secp256k1",
+    };
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            ...walletState().accessKeys[0]!,
+            keyAuthorization,
+          },
+        ],
+      }),
+    );
+
+    const state = await loadWalletState();
+    const identity = await storedAccessKeyIdentity(
+      state,
+      requestOptions("https://paid.example.com"),
+    );
+    const stored = await identity?.account.keyAuthorizationManager?.get({
+      address: testWallet,
+      accessKey: testAccessKey,
+      chainId: 4217,
+    });
+
+    expect(identity?.signerAddress.toLowerCase()).toBe(testAccessKey.toLowerCase());
+    expect(stored).toStrictEqual(keyAuthorization);
+  });
+
+  it("keeps v2 session descriptors for reuse", async () => {
+    await useTempHome();
+    const origin = "https://paid.example.com";
+    const channelId = `0x${"2".repeat(64)}`;
+    const descriptor = {
+      authorizedSigner: testAccessKey,
+      expiringNonceHash: `0x${"3".repeat(64)}`,
+      operator: "0x0000000000000000000000000000000000000000",
+      payee: "0x0000000000000000000000000000000000000ccc",
+      payer: testWallet,
+      salt: `0x${"4".repeat(64)}`,
+      token: "0x0000000000000000000000000000000000000ddd",
+    };
+    await upsertSessionRecord({
+      accepted_cumulative: 100n,
+      authorized_signer: testAccessKey,
+      chain_id: 4217,
+      challenge_echo: "{}",
+      channel_id: channelId,
+      close_requested_at: 0,
+      created_at: 1,
+      cumulative_amount: 100n,
+      deposit: 1000n,
+      descriptor_json: JSON.stringify(descriptor),
+      escrow_contract: "0x4d50500000000000000000000000000000000000",
+      grace_ready_at: 0,
+      last_used_at: 1,
+      network: "tempo",
+      origin,
+      payee: descriptor.payee,
+      payer: testWallet,
+      request_url: `${origin}/api`,
+      salt: descriptor.salt,
+      server_spent: 100n,
+      session_protocol: "v2",
+      state: "active",
+      token: descriptor.token,
+    });
+
+    const reusable = await findReusableSession({
+      authorizedSigner: testAccessKey,
+      chainId: 4217,
+      escrowContract: "0x4d50500000000000000000000000000000000000",
+      origin,
+      payee: descriptor.payee,
+      payer: testWallet,
+      token: descriptor.token,
+    });
+
+    expect(reusable?.session_protocol).toBe("v2");
+    expect(reusable?.descriptor_json).toBe(JSON.stringify(descriptor));
+  });
+
+  it("does not invalidate reusable sessions for ordinary upstream 404 responses", async () => {
+    await expect(
+      isSessionInvalidationResponse(
+        new Response(JSON.stringify({ error: { message: "model not found" } }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    ).resolves.toBe(false);
+
+    await expect(
+      isSessionInvalidationResponse(
+        new Response("session channel not found", {
+          status: 404,
+          headers: { "www-authenticate": "Payment method=tempo" },
+        }),
+      ),
+    ).resolves.toBe(true);
+  });
+
+  it("builds v2 top-up transactions as one descriptor-based precompile call with fee payer", () => {
+    const descriptor = sessionDescriptor();
+    const request = buildTopUpTransactionRequest({
+      additionalDeposit: 5_000n,
+      details: {
+        feePayer: true,
+        token: descriptor.token,
+      },
+      record: {
+        channel_id: `0x${"5".repeat(64)}`,
+        descriptor_json: JSON.stringify(descriptor),
+        escrow_contract: TempoChannel.address,
+      },
+    });
+
+    expect(request.feePayer).toBe(true);
+    expect(request.feeToken).toBe(descriptor.token);
+    expect(request.calls).toHaveLength(1);
+    expect(request.calls[0]?.to.toLowerCase()).toBe(TempoChannel.address.toLowerCase());
+
+    const decoded = decodeFunctionData({
+      abi: TempoAbis.tip20ChannelReserve,
+      data: request.calls[0]!.data,
+    });
+    expect(decoded.functionName).toBe("topUp");
+    expect(normalizeDescriptor(decoded.args[0])).toEqual(normalizeDescriptor(descriptor));
+    expect(decoded.args[1]).toBe(5_000n);
+  });
 });
+
+function requestOptions(url: string): ReturnType<typeof parseRequestArgs> {
+  return parseRequestArgs([url]);
+}
+
+function sessionDescriptor() {
+  return {
+    authorizedSigner: testAccessKey,
+    expiringNonceHash: `0x${"3".repeat(64)}` as `0x${string}`,
+    operator: "0x0000000000000000000000000000000000000000" as `0x${string}`,
+    payee: "0x0000000000000000000000000000000000000ccc" as `0x${string}`,
+    payer: testWallet,
+    salt: `0x${"4".repeat(64)}` as `0x${string}`,
+    token: "0x0000000000000000000000000000000000000ddd" as `0x${string}`,
+  };
+}
+
+function normalizeDescriptor(value: unknown) {
+  const descriptor = value as ReturnType<typeof sessionDescriptor>;
+  return {
+    ...descriptor,
+    authorizedSigner: descriptor.authorizedSigner.toLowerCase(),
+    operator: descriptor.operator.toLowerCase(),
+    payee: descriptor.payee.toLowerCase(),
+    payer: descriptor.payer.toLowerCase(),
+    token: descriptor.token.toLowerCase(),
+  };
+}
 
 async function testServer(
   handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>,
