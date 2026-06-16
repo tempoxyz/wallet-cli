@@ -1,23 +1,23 @@
-import { loadWalletState } from './wallet/store.js'
-import { currentWhoamiOutput } from './commands/identity.js'
-import { fundAction, runFundingFlow } from './commands/fund.js'
-import { listSessions } from './commands/sessions.js'
-import { fetchServices } from './commands/services.js'
+import { loadWalletState } from "./wallet/store.js";
+import { currentWhoamiOutput } from "./commands/identity.js";
+import { fundAction, runFundingFlow } from "./commands/fund.js";
+import { listSessions } from "./commands/sessions.js";
+import { fetchServices } from "./commands/services.js";
 
 export async function handleCompatCommand(args: readonly string[]) {
-  if (args[0] === 'help') {
-    printCompatHelp()
-    return true
+  if (args[0] === "help") {
+    printCompatHelp();
+    return true;
   }
-  if (args.includes('--help') || args.includes('-h')) return false
+  if (args.includes("--help") || args.includes("-h")) return false;
 
-  const command = args.find((arg) => !arg.startsWith('-'))
-  if (command === 'completions' && printCompletions(args)) return true
+  const command = args.find((arg) => !arg.startsWith("-"));
+  if (command === "completions" && printCompletions(args)) return true;
 
-  if (command === 'login' && args.includes('--no-browser')) {
-    const state = await loadWalletState()
-    const activeAccount = state.accounts[state.activeAccount ?? 0]
-    if (!activeAccount) return false
+  if (command === "login" && args.includes("--no-browser")) {
+    const state = await loadWalletState();
+    const activeAccount = state.accounts[state.activeAccount ?? 0];
+    if (!activeAccount) return false;
     printCompatOutput(
       currentWhoamiOutput({
         walletAddress: activeAccount.address,
@@ -25,76 +25,82 @@ export async function handleCompatCommand(args: readonly string[]) {
         accessKeys: state.accessKeys,
       }),
       args,
-    )
-    return true
+    );
+    return true;
   }
 
-  if (command === 'fund') {
+  if (command === "fund") {
     try {
-      await runFundCompat(args)
+      await runFundCompat(args);
     } catch (error) {
-      printCompatErrorAndExit(error, args)
+      printCompatErrorAndExit(error, args);
     }
-    return true
+    return true;
   }
 
-  if (command !== 'sessions' && command !== 'services') return false
+  if (command !== "sessions" && command !== "services") return false;
 
-  const commandIndex = args.indexOf(command)
-  const rest = args.slice(commandIndex + 1)
-  const subcommand = rest.find((arg) => !arg.startsWith('-') && isSubcommand(command, arg))
-  if (subcommand) return false
+  const commandIndex = args.indexOf(command);
+  const rest = args.slice(commandIndex + 1);
+  const subcommand = rest.find((arg) => !arg.startsWith("-") && isSubcommand(command, arg));
+  if (subcommand) return false;
 
-  if (command === 'sessions') {
-    printCompatOutput(await listSessions({ network: stringArg(args, '--network') ?? stringArg(args, '-n') }), args)
-    return true
+  if (command === "sessions") {
+    printCompatOutput(
+      await listSessions({ network: stringArg(args, "--network") ?? stringArg(args, "-n") }),
+      args,
+    );
+    return true;
   }
 
   try {
-    printCompatOutput(await fetchServices({ search: stringArg(args, '--search'), serviceId: serviceIdArg(args) }), args)
+    printCompatOutput(
+      await fetchServices({ search: stringArg(args, "--search"), serviceId: serviceIdArg(args) }),
+      args,
+    );
   } catch (error) {
-    printCompatErrorAndExit(error, args)
+    printCompatErrorAndExit(error, args);
   }
-  return true
+  return true;
 }
 
 async function runFundCompat(args: readonly string[]) {
   const result = await runFundingFlow({
     action: fundAction({
-      credits: args.includes('--credits'),
-      crypto: args.includes('--crypto'),
-      referralCode: stringArg(args, '--referral-code') ?? stringArg(args, '--claim'),
+      credits: args.includes("--credits"),
+      crypto: args.includes("--crypto"),
+      referralCode: stringArg(args, "--referral-code") ?? stringArg(args, "--claim"),
     }),
-    address: stringArg(args, '--address'),
-    code: stringArg(args, '--referral-code') ?? stringArg(args, '--claim'),
-    noBrowser: args.includes('--no-browser'),
-  })
-  printCompatOutput(result, args)
+    address: stringArg(args, "--address"),
+    code: stringArg(args, "--referral-code") ?? stringArg(args, "--claim"),
+    noBrowser: args.includes("--no-browser"),
+  });
+  printCompatOutput(result, args);
 }
 
 function stringArg(args: readonly string[], name: string) {
-  const index = args.indexOf(name)
-  const value = index >= 0 ? args[index + 1] : undefined
-  return value && !value.startsWith('-') ? value : undefined
+  const index = args.indexOf(name);
+  const value = index >= 0 ? args[index + 1] : undefined;
+  return value && !value.startsWith("-") ? value : undefined;
 }
 
 function serviceIdArg(args: readonly string[]) {
-  const commandIndex = args.indexOf('services')
-  if (commandIndex < 0) return undefined
+  const commandIndex = args.indexOf("services");
+  if (commandIndex < 0) return undefined;
 
   for (let index = commandIndex + 1; index < args.length; index++) {
-    const value = args[index]
-    if (!value) continue
-    if (value === '--search' || value === '--network' || value === '-n' || value === '--format') {
-      index++
-      continue
+    const value = args[index];
+    if (!value) continue;
+    if (value === "--search" || value === "--network" || value === "-n" || value === "--format") {
+      index++;
+      continue;
     }
-    if (value.startsWith('-')) continue
-    if (isSubcommand('services', value)) continue
-    return value
+    if (value.startsWith("-")) continue;
+    if (isSubcommand("services", value)) continue;
+    return value;
   }
 
-  return undefined
+  return undefined;
 }
 
 function printCompatHelp() {
@@ -116,27 +122,27 @@ Commands:
 
 Options:
   --help     Show help
-  --version  Show version`)
+  --version  Show version`);
 }
 
 function printCompletions(args: readonly string[]) {
-  const shell = args[args.indexOf('completions') + 1]
-  if (!shell || shell.startsWith('-')) {
-    console.log('Supported shells: bash, zsh, fish, powershell, elvish')
-    return true
+  const shell = args[args.indexOf("completions") + 1];
+  if (!shell || shell.startsWith("-")) {
+    console.log("Supported shells: bash, zsh, fish, powershell, elvish");
+    return true;
   }
 
-  if (shell === 'powershell') {
-    console.log(powershellCompletions())
-    return true
+  if (shell === "powershell") {
+    console.log(powershellCompletions());
+    return true;
   }
 
-  if (shell === 'elvish') {
-    console.log(elvishCompletions())
-    return true
+  if (shell === "elvish") {
+    console.log(elvishCompletions());
+    return true;
   }
 
-  return false
+  return false;
 }
 
 function powershellCompletions() {
@@ -150,7 +156,7 @@ Register-ArgumentCompleter -Native -CommandName 'tempo wallet' -ScriptBlock {
     @($commands + $options) |
         Where-Object { $_ -like "$wordToComplete*" } |
         ForEach-Object { [CompletionResult]::new($_, $_, [CompletionResultType]::ParameterValue, $_) }
-}`
+}`;
 }
 
 function elvishCompletions() {
@@ -180,33 +186,33 @@ set edit:completion:arg-completer[tempo wallet] = {|@words|
         }
     ]
     $completions[$command]
-}`
+}`;
 }
 
-function isSubcommand(command: 'sessions' | 'services', value: string) {
-  if (command === 'sessions') return value === 'list' || value === 'close' || value === 'sync'
-  return value === 'list'
+function isSubcommand(command: "sessions" | "services", value: string) {
+  if (command === "sessions") return value === "list" || value === "close" || value === "sync";
+  return value === "list";
 }
 
 function printCompatOutput(value: unknown, args: readonly string[]) {
-  if (args.includes('--json-output') || args.includes('--format')) {
-    console.log(JSON.stringify(value, null, 2))
-    return
+  if (args.includes("--json-output") || args.includes("--format")) {
+    console.log(JSON.stringify(value, null, 2));
+    return;
   }
 
-  console.log(JSON.stringify(value, null, 2))
+  console.log(JSON.stringify(value, null, 2));
 }
 
 function printCompatErrorAndExit(error: unknown, args: readonly string[]): never {
-  const record = error && typeof error === 'object' ? error as Record<string, unknown> : {}
-  const code = typeof record.code === 'string' ? record.code : 'E_RUNTIME'
-  const message = error instanceof Error ? error.message : String(error)
-  const exitCode = typeof record.exitCode === 'number' ? record.exitCode : 1
+  const record = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+  const code = typeof record.code === "string" ? record.code : "E_RUNTIME";
+  const message = error instanceof Error ? error.message : String(error);
+  const exitCode = typeof record.exitCode === "number" ? record.exitCode : 1;
 
-  if (args.includes('--json-output') || args.includes('--format')) {
-    console.log(JSON.stringify({ code, message }))
+  if (args.includes("--json-output") || args.includes("--format")) {
+    console.log(JSON.stringify({ code, message }));
   } else {
-    console.error(message)
+    console.error(message);
   }
-  process.exit(exitCode)
+  process.exit(exitCode);
 }

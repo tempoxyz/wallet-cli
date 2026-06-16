@@ -5,6 +5,7 @@ on:
     tags:
       - "v*"
       - "tempo-wallet@*"
+      - "tempo-request@*"
   workflow_dispatch:
 
 jobs:
@@ -14,6 +15,7 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     outputs:
+      packages: ${{ steps.parse.outputs.packages }}
       version: ${{ steps.parse.outputs.version }}
       release_tag: ${{ steps.parse.outputs.release_tag }}
     steps:
@@ -27,12 +29,22 @@ jobs:
 
           if [[ "$TAG" == v* ]]; then
             VERSION="${TAG#v}"
+            PACKAGES='["tempo-wallet","tempo-request"]'
             RELEASE_TAG="$TAG"
-          elif [[ "$TAG" == tempo-wallet@* ]]; then
+          elif [[ "$TAG" == *"@"* ]]; then
+            PACKAGE="${TAG%%@*}"
             VERSION="${TAG#*@}"
             RELEASE_TAG="$TAG"
+
+            if [[ "$PACKAGE" == "tempo-wallet" || "$PACKAGE" == "tempo-request" ]]; then
+              PACKAGES="[\"${PACKAGE}\"]"
+            else
+              echo "Unsupported package in tag: ${PACKAGE}" >&2
+              exit 1
+            fi
           elif [[ "$TAG" == refs/heads/* || "$TAG" == "$GITHUB_REF" ]]; then
             VERSION="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+            PACKAGES='["tempo-wallet","tempo-request"]'
             RELEASE_TAG="$TAG"
           else
             echo "Unsupported tag format: ${TAG}" >&2
@@ -40,12 +52,13 @@ jobs:
           fi
 
           {
+            echo "packages=${PACKAGES}"
             echo "version=${VERSION}"
             echo "release_tag=${RELEASE_TAG}"
           } >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build tempo-wallet (${{ matrix.build.suffix }})
+    name: Build ${{ matrix.package }} (${{ matrix.build.suffix }})
     permissions:
       contents: read
       id-token: write
@@ -55,6 +68,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        package: ${{ fromJson(needs.parse-tag.outputs.packages) }}
         build:
           - os: ubuntu-latest
             pkg_target: node22-linux-x64
@@ -69,12 +83,13 @@ jobs:
             pkg_target: node22-macos-arm64
             suffix: darwin-arm64
     env:
-      PACKAGE: tempo-wallet
+      PACKAGE: ${{ matrix.package }}
       TEMPO_WALLET_VERSION: ${{ needs.parse-tag.outputs.version }}
+      TEMPO_WALLET_PACKAGE_NAME: ${{ matrix.package }}
       TEMPO_WALLET_PKG_TARGET: ${{ matrix.build.pkg_target }}
       TEMPO_WALLET_PACKAGE_SUFFIX: ${{ matrix.build.suffix }}
       TEMPO_WALLET_PACKAGE_DIR: artifacts
-      TEMPO_WALLET_PACKAGE_OUTPUT: artifacts/tempo-wallet-${{ matrix.build.suffix }}
+      TEMPO_WALLET_PACKAGE_OUTPUT: artifacts/${{ matrix.package }}-${{ matrix.build.suffix }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -105,18 +120,18 @@ jobs:
       - name: Build JavaScript
         run: pnpm build
 
-      - name: Build release binary
+      - name: Build TypeScript CLI release binary
         run: pnpm package
 
       - name: Smoke test host binary
         if: matrix.build.pkg_target == 'node22-linux-x64' || matrix.build.pkg_target == 'node22-linux-arm64' || matrix.build.pkg_target == 'node22-macos-arm64'
-        run: ./artifacts/tempo-wallet-${{ matrix.build.suffix }} --version
+        run: ./artifacts/${PACKAGE}-${{ matrix.build.suffix }} --version
 
       - name: Generate sha256
         shell: bash
         run: |
           set -euo pipefail
-          BIN="artifacts/tempo-wallet-${{ matrix.build.suffix }}"
+          BIN="artifacts/${PACKAGE}-${{ matrix.build.suffix }}"
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$BIN" > "$BIN.sha256"
           else
@@ -127,22 +142,22 @@ jobs:
       - name: Generate SBOM (SPDX-JSON)
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          file: artifacts/tempo-wallet-${{ matrix.build.suffix }}
+          file: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
           format: spdx-json
-          output-file: artifacts/tempo-wallet-${{ matrix.build.suffix }}.spdx.json
+          output-file: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
       - name: Attest SBOM
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
-          subject-path: artifacts/tempo-wallet-${{ matrix.build.suffix }}
-          sbom-path: artifacts/tempo-wallet-${{ matrix.build.suffix }}.spdx.json
+          subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
+          sbom-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
 
       - name: Attest build provenance (SLSA v1)
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
-          subject-path: artifacts/tempo-wallet-${{ matrix.build.suffix }}
+          subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -151,31 +166,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BIN="artifacts/tempo-wallet-${{ matrix.build.suffix }}"
+          BIN="artifacts/${PACKAGE}-${{ matrix.build.suffix }}"
           cosign sign-blob --yes \
             --bundle "${BIN}.sigstore.json" \
             "$BIN"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: tempo-wallet-${{ matrix.build.suffix }}
+          name: ${{ env.PACKAGE }}-${{ matrix.build.suffix }}
           path: |
-            artifacts/tempo-wallet-${{ matrix.build.suffix }}
-            artifacts/tempo-wallet-${{ matrix.build.suffix }}.sha256
-            artifacts/tempo-wallet-${{ matrix.build.suffix }}.spdx.json
-            artifacts/tempo-wallet-${{ matrix.build.suffix }}.sigstore.json
+            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
+            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.sha256
+            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
+            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.sigstore.json
           if-no-files-found: error
 
   publish:
-    name: Publish tempo-wallet
+    name: Publish ${{ matrix.package }}
     environment: release
     permissions:
       contents: write
     needs: [parse-tag, build]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJson(needs.parse-tag.outputs.packages) }}
     env:
-      PACKAGE: tempo-wallet
+      PACKAGE: ${{ matrix.package }}
       VERSION: ${{ needs.parse-tag.outputs.version }}
       RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
     steps:
@@ -186,7 +205,7 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
-          pattern: tempo-wallet-*
+          pattern: ${{ env.PACKAGE }}-*
           merge-multiple: true
 
       - name: Wait for GitHub Release
@@ -230,13 +249,32 @@ jobs:
         run: |
           echo -n "$RELEASE_SIGNING_KEY" | base64 -d > /tmp/release.key
 
-          ./wallet-release-tools/target/release/tempo-sign sign \
-            --key-file /tmp/release.key \
-            --artifacts-dir artifacts \
-            --version "$VERSION" \
-            --base-url "https://cli.tempo.xyz/extensions/${PACKAGE}" \
-            --description "Manage your Tempo Wallet" \
+          URL_PREFIX="https://cli.tempo.xyz/extensions/${PACKAGE}"
+
+          declare -A PKG_DESC=(
+            [tempo-wallet]="Manage your Tempo Wallet"
+            [tempo-request]="Make an HTTP request"
+          )
+
+          SIGN_ARGS=(
+            --key-file /tmp/release.key
+            --artifacts-dir artifacts
+            --version "$VERSION"
+            --base-url "$URL_PREFIX"
+            --description "${PKG_DESC[$PACKAGE]}"
             --output "artifacts/${PACKAGE}-manifest.json"
+          )
+
+          if [ "$PACKAGE" = "tempo-request" ] && [ -f "SKILL.md" ]; then
+            SKILL_SHA256=$(sha256sum "SKILL.md" | cut -d' ' -f1)
+            SIGN_ARGS+=(
+              --skill "${URL_PREFIX}/v${VERSION}/SKILL.md"
+              --skill-sha256 "$SKILL_SHA256"
+              --skill-file "SKILL.md"
+            )
+          fi
+
+          ./wallet-release-tools/target/release/tempo-sign sign "${SIGN_ARGS[@]}"
 
           rm /tmp/release.key
 
@@ -251,7 +289,7 @@ jobs:
           PREFIX="extensions/${PACKAGE}"
           VTAG="v${VERSION}"
 
-          for f in artifacts/tempo-wallet-linux-* artifacts/tempo-wallet-darwin-*; do
+          for f in "artifacts/${PACKAGE}"-linux-* "artifacts/${PACKAGE}"-darwin-*; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
             aws s3 cp "$f" "s3://tempo-cli/${PREFIX}/${BASENAME}" --endpoint-url "$AWS_ENDPOINT_URL"
@@ -260,6 +298,10 @@ jobs:
 
           aws s3 cp "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/manifest.json" --endpoint-url "$AWS_ENDPOINT_URL"
           aws s3 cp "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/${VTAG}/manifest.json" --endpoint-url "$AWS_ENDPOINT_URL"
+
+          if [ "$PACKAGE" = "tempo-request" ] && [ -f "SKILL.md" ]; then
+            aws s3 cp "SKILL.md" "s3://tempo-cli/${PREFIX}/${VTAG}/SKILL.md" --endpoint-url "$AWS_ENDPOINT_URL" --content-type "text/markdown"
+          fi
 
           echo "${VERSION}" | aws s3 cp - "s3://tempo-cli/${PREFIX}/VERSION" --endpoint-url "$AWS_ENDPOINT_URL" --content-type "text/plain"
 
