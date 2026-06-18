@@ -61,8 +61,9 @@ jobs:
           git commit -m "chore: release ${VERSION}"
           git push --force "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:"$BRANCH"
 
-          if gh pr view "$BRANCH" >/dev/null 2>&1; then
-            gh pr edit "$BRANCH" --title "chore: release ${VERSION}" --body "Version wallet-cli to ${VERSION} and update CHANGELOG.md."
+          PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr edit "$PR_NUMBER" --title "chore: release ${VERSION}" --body "Version wallet-cli to ${VERSION} and update CHANGELOG.md."
           else
             gh pr create --head "$BRANCH" --base main --title "chore: release ${VERSION}" --body "Version wallet-cli to ${VERSION} and update CHANGELOG.md."
           fi
