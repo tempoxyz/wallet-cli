@@ -49,6 +49,7 @@ jobs:
         if: steps.diff.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          PUSH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
@@ -58,7 +59,7 @@ jobs:
           git checkout -B "$BRANCH"
           git add package.json CHANGELOG.md .changelog
           git commit -m "chore: release ${VERSION}"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:"$BRANCH"
+          git push --force "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:"$BRANCH"
 
           if gh pr view "$BRANCH" >/dev/null 2>&1; then
             gh pr edit "$BRANCH" --title "chore: release ${VERSION}" --body "Version wallet-cli to ${VERSION} and update CHANGELOG.md."
