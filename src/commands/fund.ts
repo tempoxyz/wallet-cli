@@ -135,7 +135,9 @@ async function waitForFunding(options: {
 }
 
 function fundUrl(action: FundAction, options: { code?: string | undefined } = {}) {
-  const url = new URL("https://wallet.tempo.xyz/");
+  // The CLI is an agent/MPP surface, so all funding handoffs land on the dedicated
+  // /agent page rather than the consumer wallet home.
+  const url = new URL("https://wallet.tempo.xyz/agent");
   if (action === "claim" && options.code) {
     url.searchParams.set("claim", options.code);
     return url.toString();

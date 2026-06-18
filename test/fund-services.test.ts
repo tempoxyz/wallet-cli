@@ -78,7 +78,7 @@ describe("runFundingFlow", () => {
 
     // The claim URL is printed before the (timing-out) wait loop.
     const printed = consoleError.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
-    expect(printed).toContain("https://wallet.tempo.xyz/?claim=REF123");
+    expect(printed).toContain("https://wallet.tempo.xyz/agent?claim=REF123");
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe("Timed out waiting for funding");
