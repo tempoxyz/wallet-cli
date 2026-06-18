@@ -1,0 +1,7 @@
+# Local changelog configuration for the wallet-cli release workflow.
+# This repository uses a single shared version for both published binaries.
+packages = ["wallet-cli"]
+aliases = ["tempo-wallet", "tempo-request"]
+
+[changelog]
+format = "root"
