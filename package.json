@@ -10,6 +10,9 @@
   "scripts": {
     "build": "tsc -b",
     "bundle": "tsx scripts/package.ts --bundle-only",
+    "changelog:notes": "tsx scripts/changelog.ts notes",
+    "changelog:validate": "tsx scripts/changelog.ts validate",
+    "changelog:version": "tsx scripts/changelog.ts version",
     "check": "pnpm check:code && pnpm check:types && pnpm test:types && pnpm test",
     "check:code": "vp check --fix",
     "check:format": "vp fmt --check",
