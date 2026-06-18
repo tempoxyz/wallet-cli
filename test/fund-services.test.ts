@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fundAction, runFundingFlow } from "../src/commands/fund.js";
+import { fundAction, fundUrl, runFundingFlow } from "../src/commands/fund.js";
 import { fetchServices, fetchServiceList } from "../src/commands/services.js";
 import { expectUsageError, useTempHome } from "./helpers.js";
 
@@ -29,6 +29,17 @@ describe("fundAction", () => {
 
   it("prioritizes crypto over referral code", () => {
     expect(fundAction({ crypto: true, referralCode: "ABC" })).toBe("crypto");
+  });
+});
+
+describe("fundUrl", () => {
+  it("routes every funding handoff to the /agent page", () => {
+    expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/agent?action=fund");
+    expect(fundUrl("crypto")).toBe("https://wallet.tempo.xyz/agent?action=crypto");
+    expect(fundUrl("credits")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=credits");
+    expect(fundUrl("claim", { code: "ABC123" })).toBe(
+      "https://wallet.tempo.xyz/agent?claim=ABC123",
+    );
   });
 });
 
