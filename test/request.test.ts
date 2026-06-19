@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { Challenge, Credential, Method, z } from "mppx";
+import { Mppx } from "mppx/client";
 import { decodeFunctionData } from "viem";
 import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,6 +14,7 @@ import {
   parseRequestArgs,
   runRequest,
   storedAccessKeyIdentity,
+  tempoPaymentChallengeResponse,
 } from "../src/commands/request.js";
 import {
   findReusableSession,
@@ -259,6 +262,56 @@ describe("request command", () => {
 
     expect(stdout.text()).toBe("Payment Required");
     expect(await readFile(headersPath, "utf8")).toContain("www-authenticate");
+  });
+
+  it("ignores x402 payment-required headers when a Tempo payment challenge is present", async () => {
+    const method = Method.from({
+      name: "tempo",
+      intent: "charge",
+      schema: {
+        credential: { payload: z.object({ ok: z.boolean() }) },
+        request: z.object({
+          amount: z.string(),
+          currency: z.string(),
+          methodDetails: z.optional(z.record(z.string(), z.unknown())),
+          recipient: z.string(),
+        }),
+      },
+    });
+    const payment = Mppx.create({
+      methods: [
+        Method.toClient(method, {
+          async createCredential({ challenge }) {
+            return Credential.serialize({ challenge, payload: { ok: true } });
+          },
+        }),
+      ],
+      polyfill: false,
+    });
+    const challenge = Challenge.from({
+      id: "stable-social-test",
+      intent: "charge",
+      method: "tempo",
+      realm: "stablesocial.dev",
+      request: {
+        amount: "60000",
+        currency: "0x20c000000000000000000000b9537d11c60e8b50",
+        methodDetails: { chainId: 4217 },
+        recipient: "0xCfA26F13c6C18307033EcE13BBb8F470dA5b4dbE",
+      },
+    });
+    const response = new Response(null, {
+      headers: {
+        "payment-required": "not-base64-json",
+        "www-authenticate": Challenge.serialize(challenge),
+      },
+      status: 402,
+    });
+
+    const credential = await payment.createCredential(tempoPaymentChallengeResponse(response));
+
+    expect(response.headers.has("payment-required")).toBe(true);
+    expect(Credential.deserialize(credential).payload).toEqual({ ok: true });
   });
 
   it("returns E_PAYMENT for non-dry-run 402 responses", async () => {
