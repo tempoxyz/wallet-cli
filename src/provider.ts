@@ -3,6 +3,8 @@ import { Provider, Storage } from "accounts/cli";
 
 import { openExternal } from "./shared/process.js";
 
+export const accessKeyAuthorizationSeconds = 30 * 86_400;
+
 export function createProvider(
   options: {
     network?: string | undefined;
@@ -28,7 +30,7 @@ export async function connect(provider: CoreProvider.Provider) {
       {
         capabilities: {
           authorizeAccessKey: {
-            expiry: Math.floor(Date.now() / 1000) + 86_400,
+            expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
           },
         },
       },

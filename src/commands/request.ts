@@ -496,6 +496,7 @@ async function payAndRetryRequest(
   const header = paymentRequiredResponse.headers.get("www-authenticate");
   const preflightError = paymentChallengeError(header);
   if (preflightError) throw preflightError;
+  const challengeResponse = tempoPaymentChallengeResponse(paymentRequiredResponse);
 
   const sessionChallenge = sessionChallengeFromHeader(header);
   if (sessionChallenge)
@@ -525,7 +526,7 @@ async function payAndRetryRequest(
       return await createCredential(paymentContext(challenge, options) as never);
     });
 
-    const credential = await payment.createCredential(paymentRequiredResponse);
+    const credential = await payment.createCredential(challengeResponse);
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
     return await fetchWithRetries(
       { init: paidInit, url: paymentRequiredResponse.url || request.url },
@@ -553,6 +554,7 @@ async function paySessionAndRetryRequest(
     const identity = await resolvePaymentIdentity(options);
     const details = sessionDetails(challenge, request.url, options);
     const reusable = await reusableSessionRecord(details, identity, skipChannelId);
+    const challengeResponse = tempoPaymentChallengeResponse(paymentRequiredResponse);
     const payment = Mppx.create({
       methods: [
         tempoSession({
@@ -573,7 +575,7 @@ async function paySessionAndRetryRequest(
         details.amount;
       enforceSessionMaxSpend(signedCumulative, options);
       await preserveSessionCumulative(reusable.channel_id, signedCumulative);
-      credential = await payment.createCredential(paymentRequiredResponse, {
+      credential = await payment.createCredential(challengeResponse, {
         action: "voucher",
         channelId: reusable.channel_id as `0x${string}`,
         cumulativeAmountRaw: signedCumulative.toString(),
@@ -585,7 +587,7 @@ async function paySessionAndRetryRequest(
       await assertSufficientSessionBalance(identity.address, details, depositRaw);
       signedCumulative = details.amount;
       enforceSessionMaxSpend(signedCumulative, options);
-      credential = await payment.createCredential(paymentRequiredResponse, {
+      credential = await payment.createCredential(challengeResponse, {
         depositRaw: depositRaw.toString(),
       });
       record = sessionRecordFromOpenCredential({
@@ -877,15 +879,18 @@ async function tryTopUpAndRetry(options: {
     identity: options.identity,
     record: options.record,
   });
-  const topUpCredential = await options.payment.createCredential(options.paymentRequiredResponse, {
-    action: "topUp",
-    additionalDepositRaw: additionalDeposit.toString(),
-    channelId: options.record.channel_id,
-    ...(options.record.descriptor_json
-      ? { descriptor: requireSessionDescriptor(options.record) }
-      : {}),
-    transaction,
-  } as never);
+  const topUpCredential = await options.payment.createCredential(
+    tempoPaymentChallengeResponse(options.paymentRequiredResponse),
+    {
+      action: "topUp",
+      additionalDepositRaw: additionalDeposit.toString(),
+      channelId: options.record.channel_id,
+      ...(options.record.descriptor_json
+        ? { descriptor: requireSessionDescriptor(options.record) }
+        : {}),
+      transaction,
+    } as never,
+  );
   const topUpInit = topUpRequestInit(options.request.init);
   const authorizedTopUp = options.payment.transport.setCredential(topUpInit, topUpCredential);
   const topUpResponse = await fetchWithRetries(
@@ -1281,6 +1286,19 @@ function responseHeaderText(response: Response) {
   const lines = [`HTTP ${response.status}`];
   for (const [name, value] of response.headers.entries()) lines.push(`${name}: ${value}`);
   return `${lines.join("\n")}\n\n`;
+}
+
+export function tempoPaymentChallengeResponse(response: Response) {
+  if (!response.headers.has("www-authenticate") || !response.headers.has("payment-required"))
+    return response;
+
+  const headers = new Headers(response.headers);
+  headers.delete("payment-required");
+  return new Response(null, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
 }
 
 function paymentChallengeError(header: string | null) {

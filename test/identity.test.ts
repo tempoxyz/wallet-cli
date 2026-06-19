@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { keysHandler, logoutHandler, whoamiHandler } from "../src/commands/identity.js";
+import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
 
 import {
@@ -12,6 +13,10 @@ import {
   walletState,
   writeWalletState,
 } from "./helpers.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("wallet store", () => {
   it("loads an empty store when none exists", async () => {
@@ -91,6 +96,27 @@ describe("identity commands", () => {
     expect(await loadWalletState()).toMatchObject({ accounts: [], accessKeys: [] });
     expect(await readWalletStoreJson()).toMatchObject({
       "tempo-cli.store": { state: { accounts: [], accessKeys: [] } },
+    });
+  });
+
+  it("requests 30-day access keys when connecting", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
+    const request = vi.fn().mockResolvedValue({ accounts: [] });
+
+    await connect({ request } as never);
+
+    expect(request).toHaveBeenCalledWith({
+      method: "wallet_connect",
+      params: [
+        {
+          capabilities: {
+            authorizeAccessKey: {
+              expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
+            },
+          },
+        },
+      ],
     });
   });
 });
