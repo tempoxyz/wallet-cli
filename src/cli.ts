@@ -19,7 +19,7 @@ import {
   listSessions,
   syncSessions,
 } from "./commands/sessions.js";
-import { fetchServiceList } from "./commands/services.js";
+import { fetchServiceList, fetchServices } from "./commands/services.js";
 import { handleCompatCommand } from "./compat.js";
 import {
   completionsArgs,
@@ -36,7 +36,7 @@ import {
   logoutOutput,
   refreshOutput,
   servicesArgs,
-  servicesListOutput,
+  servicesOutput,
   servicesOptions,
   sessionsCloseArgs,
   sessionsCloseCommandOutput,
@@ -208,24 +208,20 @@ sessions.command("sync", {
 
 cli.command(sessions);
 
-const services = Cli.create("services", {
+cli.command("services", {
   description: "Browse the MPP service directory",
   args: servicesArgs,
   options: servicesOptions,
   alias: globalAlias,
-});
-
-services.command("list", {
-  description: "List available services",
-  options: globalOptions,
-  alias: globalAlias,
-  output: servicesListOutput,
-  async run() {
-    return fetchServiceList();
+  output: servicesOutput,
+  async run({ args, options }) {
+    if (args.serviceId === "list" && !options.search) return fetchServiceList();
+    return fetchServices({
+      search: options.search,
+      serviceId: args.serviceId === "list" ? undefined : args.serviceId,
+    });
   },
 });
-
-cli.command(services);
 
 cli.command("debug", {
   description: "Collect debug info for support",
@@ -253,14 +249,185 @@ void main();
 export default cli;
 
 async function main() {
-  if (process.argv.slice(2).includes("--describe")) {
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs.includes("--describe")) {
     process.stdout.write(`${JSON.stringify(describeCli())}\n`);
     process.exit(0);
   }
 
-  if (await handleCompatCommand(process.argv.slice(2))) process.exit(0);
+  const args = normalizeServicesOutputAliases(rawArgs);
 
-  cli.serve();
+  if (handleBuiltinSchema(args)) process.exit(0);
+
+  if (await handleCompatCommand(args)) process.exit(0);
+
+  await cli.serve(args);
+}
+
+function normalizeServicesOutputAliases(args: readonly string[]) {
+  const commandIndex = firstCommandIndex(args);
+  if (commandIndex === undefined || args[commandIndex] !== "services") return [...args];
+
+  const normalized: string[] = [];
+  let format: string | undefined;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--json-output" || arg === "-j") {
+      format ??= "json";
+      if (isBooleanLiteral(args[index + 1])) index++;
+      continue;
+    }
+    if (arg === "--toon-output" || arg === "-t") {
+      format ??= "toon";
+      if (isBooleanLiteral(args[index + 1])) index++;
+      continue;
+    }
+    if (arg) normalized.push(arg);
+  }
+
+  if (!format || hasFormat(normalized)) return normalized;
+
+  const normalizedCommandIndex = firstCommandIndex(normalized);
+  if (normalizedCommandIndex === undefined) return normalized;
+  return [
+    ...normalized.slice(0, normalizedCommandIndex + 1),
+    "--format",
+    format,
+    ...normalized.slice(normalizedCommandIndex + 1),
+  ];
+}
+
+function firstCommandIndex(args: readonly string[]) {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (!arg) continue;
+    if (arg === "--format" || arg === "--token-limit" || arg === "--token-offset") {
+      index++;
+      continue;
+    }
+    if (arg.startsWith("--format=") || arg.startsWith("--token-limit=")) continue;
+    if (arg.startsWith("-")) continue;
+    return index;
+  }
+  return undefined;
+}
+
+function hasFormat(args: readonly string[]) {
+  return args.some((arg) => arg === "--format" || arg.startsWith("--format="));
+}
+
+function isBooleanLiteral(value: string | undefined) {
+  return value === "true" || value === "false";
+}
+
+function handleBuiltinSchema(args: readonly string[]) {
+  if (!args.includes("--schema")) return false;
+
+  const tokens = commandTokens(args);
+  const [command, subcommand] = tokens;
+
+  if (command === "mcp" && subcommand === "add") {
+    printSchema({
+      options: objectSchema({
+        agent: stringSchema("Target a specific agent"),
+        command: stringSchema("Override the command agents will run"),
+        "no-global": booleanSchema("Install to project instead of globally"),
+      }),
+      output: objectSchema({
+        agents: arraySchema(stringSchema()),
+        command: stringSchema(),
+        name: stringSchema(),
+      }),
+    });
+    return true;
+  }
+
+  if (command === "skills" || command === "skill") {
+    if (subcommand === "add") {
+      printSchema({
+        options: objectSchema({
+          depth: numberSchema("Grouping depth for skill files"),
+          "no-global": booleanSchema("Install to project instead of globally"),
+        }),
+        output: objectSchema({
+          skills: arraySchema(stringSchema()),
+        }),
+      });
+      return true;
+    }
+
+    if (subcommand === "list" || subcommand === "ls") {
+      printSchema({
+        output: arraySchema(
+          objectSchema({
+            description: stringSchema(),
+            installed: booleanSchema(),
+            name: stringSchema(),
+          }),
+        ),
+      });
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function commandTokens(args: readonly string[]) {
+  const tokens: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (!arg || arg === "--schema" || arg === "--help" || arg === "--llms" || arg === "--llms-full")
+      continue;
+    if (arg === "--format" || arg === "--token-limit" || arg === "--token-offset") {
+      index++;
+      continue;
+    }
+    if (arg.startsWith("--format=") || arg.startsWith("--token-limit=")) continue;
+    if (arg.startsWith("-")) continue;
+    tokens.push(arg);
+  }
+  return tokens;
+}
+
+function printSchema(schema: Record<string, unknown>) {
+  process.stdout.write(`${JSON.stringify(schema, null, 2)}\n`);
+}
+
+function objectSchema(properties: Record<string, unknown>) {
+  return {
+    type: "object",
+    properties,
+    additionalProperties: false,
+  };
+}
+
+function stringSchema(description?: string | undefined) {
+  return {
+    ...(description ? { description } : {}),
+    type: "string",
+  };
+}
+
+function numberSchema(description?: string | undefined) {
+  return {
+    ...(description ? { description } : {}),
+    type: "number",
+  };
+}
+
+function booleanSchema(description?: string | undefined) {
+  return {
+    ...(description ? { description } : {}),
+    type: "boolean",
+  };
+}
+
+function arraySchema(items: Record<string, unknown>) {
+  return {
+    type: "array",
+    items,
+  };
 }
 
 function describeCli() {
@@ -433,7 +600,42 @@ function describeCli() {
             valueName: "QUERY",
           }),
         ],
-        subcommands: [{ name: "list", about: "List available services" }],
+      },
+      {
+        name: "mcp",
+        about: "Register as MCP server",
+        subcommands: [
+          {
+            name: "add",
+            about: "Register as MCP server",
+            args: [
+              option("agent", "--agent", "Target a specific agent", { valueName: "AGENT" }),
+              option("command", "--command", "Override the command agents will run", {
+                short: "-c",
+                valueName: "COMMAND",
+              }),
+              flag("no_global", "--no-global", "Install to project instead of globally"),
+            ],
+          },
+        ],
+      },
+      {
+        name: "skills",
+        about: "Sync skill files to agents",
+        aliases: ["skill"],
+        subcommands: [
+          {
+            name: "add",
+            about: "Sync skill files to agents",
+            args: [
+              option("depth", "--depth", "Grouping depth for skill files", {
+                valueName: "DEPTH",
+              }),
+              flag("no_global", "--no-global", "Install to project instead of globally"),
+            ],
+          },
+          { name: "list", about: "List skills", aliases: ["ls"] },
+        ],
       },
       { name: "debug", about: "Collect debug info for support" },
     ],
