@@ -102,7 +102,7 @@ export async function saveWalletState(state: WalletState) {
           version: 0,
         },
       },
-      null,
+      (_key, value: unknown) => (typeof value === "bigint" ? `${value}#__bigint` : value),
       2,
     ),
   );
