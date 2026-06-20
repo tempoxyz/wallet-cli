@@ -52,6 +52,14 @@ export async function writeWalletState(state: WalletState) {
   );
 }
 
+export async function writeLegacyKeysToml(body: string) {
+  const home = process.env.HOME;
+  if (!home) throw new Error("HOME must be set before writing legacy keys");
+
+  await mkdir(join(home, ".tempo", "wallet"), { recursive: true });
+  await writeFile(join(home, ".tempo", "wallet", "keys.toml"), body);
+}
+
 export async function readWalletStoreJson() {
   const home = process.env.HOME;
   if (!home) throw new Error("HOME must be set before reading wallet state");

@@ -21,13 +21,13 @@ export type WalletState = {
 };
 
 export async function loadWalletState(): Promise<WalletState> {
-  const path = join(homedir(), ".tempo", "wallet", "store.json");
+  const path = walletStorePath();
   let text: string;
 
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyWalletState();
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return await migrateLegacyWalletState();
     throw error;
   }
 
@@ -118,3 +118,147 @@ export function emptyWalletState(): WalletState {
     accessKeys: [],
   };
 }
+
+async function migrateLegacyWalletState() {
+  const state = await loadLegacyWalletState();
+  if (state.accounts.length || state.accessKeys.length) await saveWalletState(state);
+  return state;
+}
+
+async function loadLegacyWalletState(): Promise<WalletState> {
+  let text: string;
+  try {
+    text = await readFile(legacyKeysPath(), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyWalletState();
+    throw error;
+  }
+
+  const keys = parseLegacyKeys(text);
+  const accounts = [...new Set(keys.map((key) => key.access))].map((address) => ({ address }));
+  return {
+    accounts,
+    accessKeys: keys,
+    ...(accounts.length ? { activeAccount: 0 } : {}),
+    ...(keys[0] ? { chainId: keys[0].chainId } : {}),
+  };
+}
+
+function legacyKeysPath() {
+  return join(homedir(), ".tempo", "wallet", "keys.toml");
+}
+
+function parseLegacyKeys(text: string): WalletState["accessKeys"] {
+  const keys: LegacyKey[] = [];
+  let key: LegacyKey | undefined;
+  let limit: LegacyLimit | undefined;
+  let section: "key" | "limit" | undefined;
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = stripTomlComment(rawLine).trim();
+    if (!line) continue;
+
+    if (line === "[[keys]]") {
+      key = {};
+      keys.push(key);
+      limit = undefined;
+      section = "key";
+      continue;
+    }
+
+    if (line === "[[keys.limits]]") {
+      if (!key) continue;
+      limit = {};
+      key.limits = [...(key.limits ?? []), limit];
+      section = "limit";
+      continue;
+    }
+
+    const match = /^([A-Za-z0-9_-]+)\s*=\s*(.+)$/.exec(line);
+    if (!match) continue;
+
+    const [, field, raw] = match;
+    const value = parseTomlValue(raw ?? "");
+    if (section === "limit" && limit) {
+      if (field === "currency" && typeof value === "string") limit.token = value;
+      if (field === "limit" && typeof value === "string") limit.limit = value;
+      continue;
+    }
+
+    if (section !== "key" || !key) continue;
+    if (field === "wallet_address" && typeof value === "string") key.access = value;
+    if (field === "chain_id" && typeof value === "number") key.chainId = value;
+    if (field === "key_address" && typeof value === "string") key.address = value;
+    if (field === "key" && typeof value === "string") key.privateKey = value;
+    if (field === "key_type" && typeof value === "string") key.keyType = value;
+    if (field === "expiry" && typeof value === "number") key.expiry = value;
+  }
+
+  return keys.flatMap((key) => {
+    if (
+      typeof key.access !== "string" ||
+      typeof key.address !== "string" ||
+      typeof key.chainId !== "number"
+    )
+      return [];
+
+    return [
+      {
+        access: key.access,
+        address: key.address,
+        chainId: key.chainId,
+        expiry: key.expiry,
+        keyType: key.keyType ?? "secp256k1",
+        privateKey: key.privateKey,
+        limits: (key.limits ?? []).flatMap((limit) => {
+          if (typeof limit.token !== "string" || typeof limit.limit !== "string") return [];
+          return [{ token: limit.token, limit: `${limit.limit}#__bigint` }];
+        }),
+      },
+    ];
+  });
+}
+
+function stripTomlComment(line: string) {
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') quoted = !quoted;
+    if (char === "#" && !quoted) return line.slice(0, index);
+  }
+  return line;
+}
+
+function parseTomlValue(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"'))
+    return trimmed.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\");
+  if (/^\d+$/.test(trimmed)) return Number(trimmed);
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  return trimmed;
+}
+
+type LegacyKey = {
+  access?: string | undefined;
+  address?: string | undefined;
+  chainId?: number | undefined;
+  expiry?: number | undefined;
+  keyType?: string | undefined;
+  privateKey?: string | undefined;
+  limits?: LegacyLimit[] | undefined;
+};
+
+type LegacyLimit = {
+  token?: string | undefined;
+  limit?: string | undefined;
+};

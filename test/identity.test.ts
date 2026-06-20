@@ -11,6 +11,7 @@ import {
   testWallet,
   useTempHome,
   walletState,
+  writeLegacyKeysToml,
   writeWalletState,
 } from "./helpers.js";
 
@@ -31,6 +32,60 @@ describe("wallet store", () => {
     await saveWalletState(state);
     const loaded = await loadWalletState();
     expect(loaded).toEqual(state);
+  });
+
+  it("migrates legacy keys.toml when store.json is absent", async () => {
+    await useTempHome();
+    await writeLegacyKeysToml(`
+[[keys]]
+wallet_type = "passkey"
+wallet_address = "${testWallet}"
+chain_id = 4217
+key_type = "secp256k1"
+key_address = "${testAccessKey}"
+key = "${walletState().accessKeys[0]?.privateKey}"
+key_authorization = "0x1234"
+provisioned = true
+expiry = 1783809942
+
+[[keys.limits]]
+currency = "0x20C000000000000000000000b9537d11c60E8b50"
+limit = "100000000"
+`);
+
+    const state = await loadWalletState();
+
+    expect(state).toEqual(walletState());
+    expect(await readWalletStoreJson()).toMatchObject({
+      "tempo-cli.store": {
+        state: {
+          accounts: [{ address: testWallet }],
+          accessKeys: [
+            {
+              access: testWallet,
+              address: testAccessKey,
+              chainId: 4217,
+              keyType: "secp256k1",
+              limits: [{ limit: "100000000#__bigint" }],
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("prefers store.json over legacy keys.toml", async () => {
+    await useTempHome();
+    await writeWalletState(emptyWalletState());
+    await writeLegacyKeysToml(`
+[[keys]]
+wallet_address = "${testWallet}"
+chain_id = 4217
+key_address = "${testAccessKey}"
+key = "${walletState().accessKeys[0]?.privateKey}"
+`);
+
+    expect(await loadWalletState()).toMatchObject(emptyWalletState());
   });
 });
 
