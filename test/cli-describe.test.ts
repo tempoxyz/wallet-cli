@@ -27,20 +27,18 @@ describe("generated CLI metadata", () => {
     expect(schema.options.properties.search.description).toContain("Search by name");
   });
 
-  it("normalizes legacy services output aliases before schema dispatch", async () => {
-    for (const args of [
-      ["services", "--json-output", "--schema"],
-      ["services", "-j", "--schema"],
-      ["-j", "services", "--schema"],
-      ["services", "--json-output", "true", "--schema"],
-      ["services", "--toon-output", "--format", "json", "--schema"],
-      ["services", "-t", "--format", "json", "--schema"],
-    ]) {
-      const schema = JSON.parse(await walletCli(args)) as {
-        args: { properties: { serviceId: { type: string } } };
-      };
-      expect(schema.args.properties.serviceId.type).toBe("string");
-    }
+  it.each([
+    ["long json", ["services", "--json-output", "--schema"]],
+    ["short json", ["services", "-j", "--schema"]],
+    ["prefix json", ["-j", "services", "--schema"]],
+    ["boolean json", ["services", "--json-output", "true", "--schema"]],
+    ["long toon with explicit json", ["services", "--toon-output", "--format", "json", "--schema"]],
+    ["short toon with explicit json", ["services", "-t", "--format", "json", "--schema"]],
+  ])("normalizes legacy services output aliases before schema dispatch: %s", async (_, args) => {
+    const schema = JSON.parse(await walletCli(args)) as {
+      args: { properties: { serviceId: { type: string } } };
+    };
+    expect(schema.args.properties.serviceId.type).toBe("string");
   });
 
   it("keeps explicit services --format precedence over quick output aliases", async () => {
