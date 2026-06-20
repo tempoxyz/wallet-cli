@@ -190,6 +190,7 @@ function parseLegacyKeys(text: string): WalletState["accessKeys"] {
     if (field === "chain_id" && typeof value === "number") key.chainId = value;
     if (field === "key_address" && typeof value === "string") key.address = value;
     if (field === "key" && typeof value === "string") key.privateKey = value;
+    if (field === "key_authorization" && typeof value === "string") key.keyAuthorization = value;
     if (field === "key_type" && typeof value === "string") key.keyType = value;
     if (field === "expiry" && typeof value === "number") key.expiry = value;
   }
@@ -208,6 +209,7 @@ function parseLegacyKeys(text: string): WalletState["accessKeys"] {
         address: key.address,
         chainId: key.chainId,
         expiry: key.expiry,
+        keyAuthorization: key.keyAuthorization,
         keyType: key.keyType ?? "secp256k1",
         privateKey: key.privateKey,
         limits: (key.limits ?? []).flatMap((limit) => {
@@ -253,6 +255,7 @@ type LegacyKey = {
   address?: string | undefined;
   chainId?: number | undefined;
   expiry?: number | undefined;
+  keyAuthorization?: string | undefined;
   keyType?: string | undefined;
   privateKey?: string | undefined;
   limits?: LegacyLimit[] | undefined;

@@ -8,10 +8,17 @@ import {
   expectUsageError,
   readWalletStoreJson,
   testAccessKey,
+  testAccessKey2,
+  testPrivateKey,
+  testPrivateKey2,
   testWallet,
+  testWallet2,
   useTempHome,
+  usdc,
   walletState,
+  walletStoreExists,
   writeLegacyKeysToml,
+  writeRawWalletStore,
   writeWalletState,
 } from "./helpers.js";
 
@@ -24,6 +31,7 @@ describe("wallet store", () => {
     await useTempHome();
     const state = await loadWalletState();
     expect(state).toEqual(emptyWalletState());
+    expect(await walletStoreExists()).toBe(false);
   });
 
   it("round trips save then load", async () => {
@@ -43,7 +51,7 @@ wallet_address = "${testWallet}"
 chain_id = 4217
 key_type = "secp256k1"
 key_address = "${testAccessKey}"
-key = "${walletState().accessKeys[0]?.privateKey}"
+key = "${testPrivateKey}"
 key_authorization = "0x1234"
 provisioned = true
 expiry = 1783809942
@@ -55,7 +63,16 @@ limit = "100000000"
 
     const state = await loadWalletState();
 
-    expect(state).toEqual(walletState());
+    expect(state).toEqual(
+      walletState({
+        accessKeys: [
+          {
+            ...walletState().accessKeys[0]!,
+            keyAuthorization: "0x1234",
+          },
+        ],
+      }),
+    );
     expect(await readWalletStoreJson()).toMatchObject({
       "tempo-cli.store": {
         state: {
@@ -65,6 +82,7 @@ limit = "100000000"
               access: testWallet,
               address: testAccessKey,
               chainId: 4217,
+              keyAuthorization: "0x1234",
               keyType: "secp256k1",
               limits: [{ limit: "100000000#__bigint" }],
             },
@@ -72,6 +90,112 @@ limit = "100000000"
         },
       },
     });
+  });
+
+  it("migrates multiple legacy keys while preserving order and deduplicating accounts", async () => {
+    await useTempHome();
+    await writeLegacyKeysToml(`
+# Managed by the old wallet CLI.
+[[keys]]
+wallet_address = "${testWallet}" # inline comments are ignored
+chain_id = 4217
+key_address = "${testAccessKey}"
+key = "${testPrivateKey}"
+expiry = 1783809942
+
+[[keys.limits]]
+currency = "${usdc}"
+limit = "100000000"
+
+[[keys.limits]]
+currency = "0x1111111111111111111111111111111111111111"
+limit = "2500000"
+
+[[keys]]
+wallet_address = "${testWallet}"
+chain_id = 4217
+key_address = "${testAccessKey2}"
+key = "${testPrivateKey2}"
+
+[[keys]]
+wallet_type = "passkey"
+wallet_address = "${testWallet2}"
+chain_id = 42431
+key_type = "p256"
+key_address = "${testAccessKey2}"
+key = "${testPrivateKey2}"
+`);
+
+    const state = await loadWalletState();
+
+    expect(state.accounts).toEqual([{ address: testWallet }, { address: testWallet2 }]);
+    expect(state.activeAccount).toBe(0);
+    expect(state.chainId).toBe(4217);
+    expect(state.accessKeys).toEqual([
+      {
+        access: testWallet,
+        address: testAccessKey,
+        chainId: 4217,
+        expiry: 1783809942,
+        keyAuthorization: undefined,
+        keyType: "secp256k1",
+        privateKey: testPrivateKey,
+        limits: [
+          { token: usdc, limit: "100000000#__bigint" },
+          { token: "0x1111111111111111111111111111111111111111", limit: "2500000#__bigint" },
+        ],
+      },
+      {
+        access: testWallet,
+        address: testAccessKey2,
+        chainId: 4217,
+        expiry: undefined,
+        keyAuthorization: undefined,
+        keyType: "secp256k1",
+        privateKey: testPrivateKey2,
+        limits: [],
+      },
+      {
+        access: testWallet2,
+        address: testAccessKey2,
+        chainId: 42431,
+        expiry: undefined,
+        keyAuthorization: undefined,
+        keyType: "p256",
+        privateKey: testPrivateKey2,
+        limits: [],
+      },
+    ]);
+  });
+
+  it("does not create store.json when legacy keys.toml has no migratable keys", async () => {
+    await useTempHome();
+    await writeLegacyKeysToml(`
+[[keys]]
+wallet_address = "${testWallet}"
+key = "${testPrivateKey}"
+
+[[keys]]
+chain_id = 4217
+key_address = "${testAccessKey}"
+`);
+
+    expect(await loadWalletState()).toEqual(emptyWalletState());
+    expect(await walletStoreExists()).toBe(false);
+  });
+
+  it("does not fall back to legacy keys when store.json is corrupt", async () => {
+    await useTempHome();
+    await writeRawWalletStore("{not-json");
+    await writeLegacyKeysToml(`
+[[keys]]
+wallet_address = "${testWallet}"
+chain_id = 4217
+key_address = "${testAccessKey}"
+key = "${testPrivateKey}"
+`);
+
+    await expect(loadWalletState()).rejects.toThrow(SyntaxError);
   });
 
   it("prefers store.json over legacy keys.toml", async () => {
@@ -82,7 +206,7 @@ limit = "100000000"
 wallet_address = "${testWallet}"
 chain_id = 4217
 key_address = "${testAccessKey}"
-key = "${walletState().accessKeys[0]?.privateKey}"
+key = "${testPrivateKey}"
 `);
 
     expect(await loadWalletState()).toMatchObject(emptyWalletState());
@@ -98,6 +222,33 @@ describe("identity commands", () => {
     expect(result).toMatchObject({
       ready: true,
       wallet: testWallet.toLowerCase(),
+    });
+  });
+
+  it("whoami reports ready after migrating legacy keys.toml", async () => {
+    await useTempHome();
+    await writeLegacyKeysToml(`
+[[keys]]
+wallet_address = "${testWallet}"
+chain_id = 4217
+key_address = "${testAccessKey}"
+key = "${testPrivateKey}"
+
+[[keys.limits]]
+currency = "${usdc}"
+limit = "100000000"
+`);
+
+    const result = await whoamiHandler({});
+
+    expect(result).toMatchObject({
+      ready: true,
+      wallet: testWallet.toLowerCase(),
+      key: {
+        address: testAccessKey.toLowerCase(),
+        chain_id: 4217,
+        token: usdc.toLowerCase(),
+      },
     });
   });
 
