@@ -140,6 +140,11 @@ export const serviceOutput = z.object({
   endpoint_count: z.number().optional(),
 });
 
+export const serviceDetailOutput = serviceOutput.extend({
+  docs: z.unknown().optional(),
+  endpoints: z.array(z.unknown()).optional(),
+});
+
 export const debugOutput = z.object({
   wallet_version: z.string(),
   request_version: z.string(),
@@ -267,6 +272,8 @@ export const servicesOptions = z.object({
   ...globalOptionShape,
   search: z.string().optional().describe("Search by name, description, tags, or category"),
 });
+
+export const servicesOutput = z.union([z.array(serviceOutput), serviceDetailOutput]);
 
 export const servicesListOutput = z.array(serviceOutput);
 

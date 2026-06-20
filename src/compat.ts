@@ -2,7 +2,6 @@ import { loadWalletState } from "./wallet/store.js";
 import { currentWhoamiOutput } from "./commands/identity.js";
 import { fundAction, runFundingFlow } from "./commands/fund.js";
 import { listSessions } from "./commands/sessions.js";
-import { fetchServices } from "./commands/services.js";
 
 export async function handleCompatCommand(args: readonly string[]) {
   if (args[0] === "help") {
@@ -38,29 +37,17 @@ export async function handleCompatCommand(args: readonly string[]) {
     return true;
   }
 
-  if (command !== "sessions" && command !== "services") return false;
+  if (command !== "sessions") return false;
 
   const commandIndex = args.indexOf(command);
   const rest = args.slice(commandIndex + 1);
-  const subcommand = rest.find((arg) => !arg.startsWith("-") && isSubcommand(command, arg));
+  const subcommand = rest.find((arg) => !arg.startsWith("-") && isSessionSubcommand(arg));
   if (subcommand) return false;
 
-  if (command === "sessions") {
-    printCompatOutput(
-      await listSessions({ network: stringArg(args, "--network") ?? stringArg(args, "-n") }),
-      args,
-    );
-    return true;
-  }
-
-  try {
-    printCompatOutput(
-      await fetchServices({ search: stringArg(args, "--search"), serviceId: serviceIdArg(args) }),
-      args,
-    );
-  } catch (error) {
-    printCompatErrorAndExit(error, args);
-  }
+  printCompatOutput(
+    await listSessions({ network: stringArg(args, "--network") ?? stringArg(args, "-n") }),
+    args,
+  );
   return true;
 }
 
@@ -82,25 +69,6 @@ function stringArg(args: readonly string[], name: string) {
   const index = args.indexOf(name);
   const value = index >= 0 ? args[index + 1] : undefined;
   return value && !value.startsWith("-") ? value : undefined;
-}
-
-function serviceIdArg(args: readonly string[]) {
-  const commandIndex = args.indexOf("services");
-  if (commandIndex < 0) return undefined;
-
-  for (let index = commandIndex + 1; index < args.length; index++) {
-    const value = args[index];
-    if (!value) continue;
-    if (value === "--search" || value === "--network" || value === "-n" || value === "--format") {
-      index++;
-      continue;
-    }
-    if (value.startsWith("-")) continue;
-    if (isSubcommand("services", value)) continue;
-    return value;
-  }
-
-  return undefined;
 }
 
 function printCompatHelp() {
@@ -189,9 +157,8 @@ set edit:completion:arg-completer[tempo wallet] = {|@words|
 }`;
 }
 
-function isSubcommand(command: "sessions" | "services", value: string) {
-  if (command === "sessions") return value === "list" || value === "close" || value === "sync";
-  return value === "list";
+function isSessionSubcommand(value: string) {
+  return value === "list" || value === "close" || value === "sync";
 }
 
 function printCompatOutput(value: unknown, args: readonly string[]) {
