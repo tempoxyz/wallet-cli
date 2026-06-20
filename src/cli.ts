@@ -249,17 +249,75 @@ void main();
 export default cli;
 
 async function main() {
-  const args = process.argv.slice(2);
-  if (args.includes("--describe")) {
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs.includes("--describe")) {
     process.stdout.write(`${JSON.stringify(describeCli())}\n`);
     process.exit(0);
   }
+
+  const args = normalizeServicesOutputAliases(rawArgs);
 
   if (handleBuiltinSchema(args)) process.exit(0);
 
   if (await handleCompatCommand(args)) process.exit(0);
 
-  cli.serve();
+  await cli.serve(args);
+}
+
+function normalizeServicesOutputAliases(args: readonly string[]) {
+  const commandIndex = firstCommandIndex(args);
+  if (commandIndex === undefined || args[commandIndex] !== "services") return [...args];
+
+  const normalized: string[] = [];
+  let format: string | undefined;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--json-output" || arg === "-j") {
+      format ??= "json";
+      if (isBooleanLiteral(args[index + 1])) index++;
+      continue;
+    }
+    if (arg === "--toon-output" || arg === "-t") {
+      format ??= "toon";
+      if (isBooleanLiteral(args[index + 1])) index++;
+      continue;
+    }
+    if (arg) normalized.push(arg);
+  }
+
+  if (!format || hasFormat(normalized)) return normalized;
+
+  const normalizedCommandIndex = firstCommandIndex(normalized);
+  if (normalizedCommandIndex === undefined) return normalized;
+  return [
+    ...normalized.slice(0, normalizedCommandIndex + 1),
+    "--format",
+    format,
+    ...normalized.slice(normalizedCommandIndex + 1),
+  ];
+}
+
+function firstCommandIndex(args: readonly string[]) {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (!arg) continue;
+    if (arg === "--format" || arg === "--token-limit" || arg === "--token-offset") {
+      index++;
+      continue;
+    }
+    if (arg.startsWith("--format=") || arg.startsWith("--token-limit=")) continue;
+    if (arg.startsWith("-")) continue;
+    return index;
+  }
+  return undefined;
+}
+
+function hasFormat(args: readonly string[]) {
+  return args.some((arg) => arg === "--format" || arg.startsWith("--format="));
+}
+
+function isBooleanLiteral(value: string | undefined) {
+  return value === "true" || value === "false";
 }
 
 function handleBuiltinSchema(args: readonly string[]) {

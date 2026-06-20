@@ -27,6 +27,35 @@ describe("generated CLI metadata", () => {
     expect(schema.options.properties.search.description).toContain("Search by name");
   });
 
+  it("normalizes legacy services output aliases before schema dispatch", async () => {
+    for (const args of [
+      ["services", "--json-output", "--schema"],
+      ["services", "-j", "--schema"],
+      ["-j", "services", "--schema"],
+      ["services", "--json-output", "true", "--schema"],
+      ["services", "--toon-output", "--format", "json", "--schema"],
+      ["services", "-t", "--format", "json", "--schema"],
+    ]) {
+      const schema = JSON.parse(await walletCli(args)) as {
+        args: { properties: { serviceId: { type: string } } };
+      };
+      expect(schema.args.properties.serviceId.type).toBe("string");
+    }
+  });
+
+  it("keeps explicit services --format precedence over quick output aliases", async () => {
+    const output = await walletCli(["services", "--json-output", "--format", "json", "--schema"]);
+    const schema = JSON.parse(output) as {
+      options: { properties: { search: { type: string } } };
+    };
+
+    expect(schema.options.properties.search.type).toBe("string");
+
+    const toon = await walletCli(["services", "--json-output", "--format", "toon", "--schema"]);
+    expect(toon).toContain("args:");
+    expect(toon).toContain("serviceId:");
+  });
+
   it("includes built-in mcp and skills commands in --describe", async () => {
     const output = await walletCli(["--describe"]);
     const manifest = JSON.parse(output) as {
