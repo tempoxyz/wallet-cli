@@ -1,4 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Actions } from "viem/tempo";
+
+vi.mock("viem/tempo", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("viem/tempo")>();
+  return {
+    ...actual,
+    Actions: {
+      ...actual.Actions,
+      accessKey: {
+        ...actual.Actions.accessKey,
+        revoke: vi.fn(),
+      },
+    },
+  };
+});
 
 import {
   currentKeysOutput,
@@ -418,18 +433,28 @@ limit = "100000000"
   it("revokes an access key and removes the local key", async () => {
     await useTempHome();
     await writeWalletState(walletState());
-    const request = vi.fn().mockResolvedValue(undefined);
+    const account = { address: testWallet };
+    const chain = { id: 4217 };
+    const client = { chain, request: vi.fn() };
+    const provider = {
+      getAccount: vi.fn(() => account),
+      getClient: vi.fn(() => client),
+    };
+    const revoke = vi.mocked(Actions.accessKey.revoke);
+    revoke.mockClear();
+    revoke.mockResolvedValue("0x123" as never);
 
-    const result = await revokeHandler({ accessKey: testAccessKey }, {}, () => ({ request }));
+    const result = await revokeHandler({ accessKey: testAccessKey }, {}, () => provider as never);
 
-    expect(request).toHaveBeenCalledWith({
-      method: "wallet_revokeAccessKey",
-      params: [
-        {
-          address: testWallet,
-          accessKeyAddress: testAccessKey,
-        },
-      ],
+    expect(provider.getAccount).toHaveBeenCalledWith({
+      address: testWallet,
+      signable: true,
+    });
+    expect(provider.getClient).toHaveBeenCalledWith({ chainId: 4217 });
+    expect(revoke).toHaveBeenCalledWith(client, {
+      account,
+      accessKey: testAccessKey,
+      chain,
     });
     expect(result).toEqual({
       status: "success",
@@ -438,6 +463,47 @@ limit = "100000000"
       local_key_removed: true,
     });
     expect((await loadWalletState()).accessKeys).toEqual([]);
+  });
+
+  it("only removes the revoked local key for the active wallet and chain", async () => {
+    await useTempHome();
+    const key = walletState().accessKeys[0]!;
+    const otherWalletKey = {
+      ...key,
+      access: testWallet2,
+      privateKey: testPrivateKey2,
+    };
+    const otherChainKey = {
+      ...key,
+      chainId: 42431,
+      privateKey: testPrivateKey2,
+    };
+    await writeWalletState(
+      walletState({
+        accessKeys: [key, otherWalletKey, otherChainKey],
+      }),
+    );
+    const provider = {
+      getAccount: vi.fn(),
+      getClient: vi.fn(),
+    };
+    const revokeAccessKey = vi.fn().mockResolvedValue(undefined);
+
+    const result = await revokeHandler(
+      { accessKey: testAccessKey },
+      {},
+      () => provider as never,
+      revokeAccessKey,
+    );
+
+    expect(revokeAccessKey).toHaveBeenCalledWith({
+      provider,
+      walletAddress: testWallet,
+      accessKeyAddress: testAccessKey,
+      chainId: 4217,
+    });
+    expect(result).toMatchObject({ local_key_removed: true });
+    expect((await loadWalletState()).accessKeys).toEqual([otherWalletKey, otherChainKey]);
   });
 
   it("rejects malformed access key addresses", async () => {
