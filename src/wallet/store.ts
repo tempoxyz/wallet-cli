@@ -111,6 +111,7 @@ function parseAccessKeyLimits(value: unknown): AccessKeyLimit[] {
 }
 
 function parseAccessKeyScopes(value: unknown): AccessKeyScope[] | undefined {
+  if (!Array.isArray(value)) return undefined;
   const scopes = getArray(value).flatMap((scope) => {
     const item = getRecord(scope);
     if (typeof item.address !== "string") return [];
@@ -124,7 +125,7 @@ function parseAccessKeyScopes(value: unknown): AccessKeyScope[] | undefined {
       },
     ];
   });
-  return scopes.length ? scopes : undefined;
+  return scopes;
 }
 
 export async function saveWalletState(state: WalletState) {

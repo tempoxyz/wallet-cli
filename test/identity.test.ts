@@ -347,6 +347,26 @@ limit = "100000000"
     });
   });
 
+  it("keys output preserves explicit empty scopes", async () => {
+    const result = await currentKeysOutput({
+      walletAddress: null,
+      chain: 4217,
+      accessKeys: [
+        {
+          ...walletState().accessKeys[0]!,
+          keyAuthorization: {
+            scopes: [{ address: usdc, recipients: [testWallet2] }],
+          },
+          scopes: [],
+        },
+      ],
+    });
+
+    expect(result.keys[0]).toMatchObject({
+      scopes: [],
+    });
+  });
+
   it.each([
     {
       name: "expired",

@@ -254,8 +254,7 @@ function accessKeyScopesOutput(key: WalletState["accessKeys"][number]) {
 }
 
 function accessKeyScopes(key: WalletState["accessKeys"][number]) {
-  const storedScopes = key.scopes ?? [];
-  if (storedScopes.length) return storedScopes;
+  if (key.scopes !== undefined) return key.scopes;
   return parseKeyAuthorizationScopes(key.keyAuthorization);
 }
 

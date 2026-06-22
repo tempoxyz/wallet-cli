@@ -222,6 +222,22 @@ describe("wallet store file", () => {
     expect(await loadWalletState()).toEqual(state);
   });
 
+  it("round trips explicit empty access key scopes", async () => {
+    await useTempHome();
+    const state = walletState({
+      accessKeys: [
+        {
+          ...walletState().accessKeys[0]!,
+          scopes: [],
+        },
+      ],
+    });
+
+    await saveWalletState(state);
+
+    expect(await loadWalletState()).toEqual(state);
+  });
+
   it("can save a state after loading revived bigint authorizations", async () => {
     await useTempHome();
     await writeRawWalletStore(
