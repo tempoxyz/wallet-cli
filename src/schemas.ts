@@ -52,9 +52,29 @@ export const whoamiOutput = z.union([
         spending_limit: z.object({
           unlimited: z.boolean(),
           limit: z.string(),
+          period_seconds: z.number().nullable(),
           remaining: z.string().nullable(),
           spent: z.string().nullable(),
         }),
+        spending_limits: z.array(
+          z.object({
+            unlimited: z.boolean(),
+            symbol: z.string(),
+            token: z.string(),
+            limit: z.string(),
+            period_seconds: z.number().nullable(),
+            remaining: z.string().nullable(),
+            spent: z.string().nullable(),
+          }),
+        ),
+        scopes: z.array(
+          z.object({
+            address: z.string(),
+            selector: z.string().nullable(),
+            recipients: z.array(z.string()),
+          }),
+        ),
+        status: z.string().nullable(),
         expires_at: z.string().nullable(),
       })
       .nullable(),
@@ -75,9 +95,29 @@ export const keysOutput = z.object({
       spending_limit: z.object({
         unlimited: z.boolean(),
         limit: z.string(),
+        period_seconds: z.number().nullable(),
         remaining: z.string().nullable(),
         spent: z.string().nullable(),
       }),
+      spending_limits: z.array(
+        z.object({
+          unlimited: z.boolean(),
+          symbol: z.string(),
+          token: z.string(),
+          limit: z.string(),
+          period_seconds: z.number().nullable(),
+          remaining: z.string().nullable(),
+          spent: z.string().nullable(),
+        }),
+      ),
+      scopes: z.array(
+        z.object({
+          address: z.string(),
+          selector: z.string().nullable(),
+          recipients: z.array(z.string()),
+        }),
+      ),
+      status: z.string().nullable(),
       expires_at: z.string().nullable(),
     }),
   ),

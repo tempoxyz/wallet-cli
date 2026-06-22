@@ -95,9 +95,19 @@ describe("wallet store file", () => {
                 keyType: 1,
                 privateKey: false,
                 limits: [
-                  { token: usdc, limit: "100000000#__bigint" },
+                  { token: usdc, limit: "100000000#__bigint", period: 86_400 },
                   { token: usdc, limit: 100000000 },
                   { token: 1, limit: "100000000#__bigint" },
+                  { token: usdc, limit: "250000000#__bigint", period: "86400" },
+                  null,
+                ],
+                scopes: [
+                  {
+                    address: usdc,
+                    selector: "transfer(address,uint256)",
+                    recipients: [testWallet2, 42],
+                  },
+                  { address: 42 },
                   null,
                 ],
               },
@@ -134,7 +144,14 @@ describe("wallet store file", () => {
           },
           keyType: undefined,
           privateKey: undefined,
-          limits: [{ token: usdc, limit: "100000000#__bigint" }],
+          limits: [{ token: usdc, limit: "100000000#__bigint", period: 86_400 }],
+          scopes: [
+            {
+              address: usdc,
+              selector: "transfer(address,uint256)",
+              recipients: [testWallet2],
+            },
+          ],
         },
       ],
       activeAccount: undefined,
@@ -170,6 +187,39 @@ describe("wallet store file", () => {
         ],
       }),
     );
+  });
+
+  it("round trips access key limit periods and call scopes", async () => {
+    await useTempHome();
+    const state = walletState({
+      accessKeys: [
+        {
+          ...walletState().accessKeys[0]!,
+          limits: [
+            { token: usdc, limit: "100000000#__bigint", period: 86_400 },
+            {
+              token: "0x1111111111111111111111111111111111111111",
+              limit: "2500000#__bigint",
+            },
+          ],
+          scopes: [
+            {
+              address: usdc,
+              selector: "transfer(address,uint256)",
+              recipients: [testWallet2],
+            },
+            {
+              address: "0x1111111111111111111111111111111111111111",
+              recipients: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    await saveWalletState(state);
+
+    expect(await loadWalletState()).toEqual(state);
   });
 
   it("can save a state after loading revived bigint authorizations", async () => {

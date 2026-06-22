@@ -16,6 +16,7 @@ import {
 } from "../shared/utils.js";
 import { connect, createProvider } from "../provider.js";
 import {
+  type AccessKeyScope,
   emptyWalletState,
   loadWalletState,
   saveWalletState,
@@ -158,6 +159,7 @@ export async function currentWhoamiOutput(options: {
       walletAddress: options.walletAddress,
       chain: options.chain,
       balance,
+      status: null,
     }),
   };
 }
@@ -184,6 +186,7 @@ export async function currentKeysOutput(options: {
       walletAddress: options.walletAddress,
       chain: options.chain,
       balance,
+      status: localKeyStatus(key),
     });
     if (output) keys.push(output);
   }
@@ -199,10 +202,12 @@ function currentKeyOutput(options: {
   walletAddress: string | null;
   chain: number | null;
   balance: TokenBalance | null;
+  status: string | null;
 }) {
   if (!options.key) return null;
   const limit = options.key.limits[0];
   const token = limit?.token ?? "0x20c000000000000000000000b9537d11c60e8b50";
+  const spendingLimits = accessKeyLimitsOutput(options.key);
   return {
     address: options.key.address.toLowerCase(),
     chain_id: options.key.chainId,
@@ -217,11 +222,65 @@ function currentKeyOutput(options: {
     spending_limit: {
       unlimited: false,
       limit: limit ? formatMicroUnits(cleanStoredScalar(limit.limit)) : "0.000000",
+      period_seconds: limit?.period ?? null,
       remaining: null,
       spent: null,
     },
+    spending_limits: spendingLimits,
+    scopes: accessKeyScopesOutput(options.key),
+    status: options.status,
     expires_at: formatUnixTimestamp(options.key.expiry),
   };
+}
+
+function accessKeyLimitsOutput(key: WalletState["accessKeys"][number]) {
+  return key.limits.map((limit) => ({
+    unlimited: false,
+    symbol: tokenSymbol(limit.token),
+    token: limit.token.toLowerCase(),
+    limit: formatMicroUnits(cleanStoredScalar(limit.limit)),
+    period_seconds: limit.period ?? null,
+    remaining: null,
+    spent: null,
+  }));
+}
+
+function accessKeyScopesOutput(key: WalletState["accessKeys"][number]) {
+  return accessKeyScopes(key).map((scope) => ({
+    address: scope.address.toLowerCase(),
+    selector: scope.selector ?? null,
+    recipients: scope.recipients.map((recipient) => recipient.toLowerCase()),
+  }));
+}
+
+function accessKeyScopes(key: WalletState["accessKeys"][number]) {
+  const storedScopes = key.scopes ?? [];
+  if (storedScopes.length) return storedScopes;
+  return parseKeyAuthorizationScopes(key.keyAuthorization);
+}
+
+function parseKeyAuthorizationScopes(value: unknown): readonly AccessKeyScope[] {
+  const scopes = getArray(getRecord(value).scopes).flatMap((scope) => {
+    const item = getRecord(scope);
+    if (typeof item.address !== "string") return [];
+    return [
+      {
+        address: item.address,
+        selector: typeof item.selector === "string" ? item.selector : undefined,
+        recipients: getArray(item.recipients).flatMap((recipient) =>
+          typeof recipient === "string" ? [recipient] : [],
+        ),
+      },
+    ];
+  });
+  return scopes;
+}
+
+function localKeyStatus(key: WalletState["accessKeys"][number]) {
+  if (key.expiry !== undefined && key.expiry <= Math.floor(Date.now() / 1000)) return "expired";
+  if (!key.privateKey) return "unusable";
+  if (key.keyAuthorization) return "pending";
+  return "ready";
 }
 
 type TokenBalance = {
