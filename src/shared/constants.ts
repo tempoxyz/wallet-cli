@@ -1,4 +1,4 @@
-export const version = process.env.TEMPO_WALLET_VERSION ?? "0.6.0";
+export const version = process.env.TEMPO_WALLET_VERSION ?? "0.6.1";
 export const usdcToken = "0x20c000000000000000000000b9537d11c60e8b50" as const;
 export const mainnetEscrow = "0x33b901018174ddabe4841042ab76ba85d4e24f25" as const;
 export const moderatoEscrow = "0xe1c4d3dce17bc111181ddf716f75bae49e61a336" as const;
