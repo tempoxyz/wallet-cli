@@ -1,2 +1,5 @@
+overrides:
+  ws: 8.21.0
+
 allowBuilds:
   esbuild: true
