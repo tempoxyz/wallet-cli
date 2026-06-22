@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -54,6 +54,32 @@ describe("wallet store file", () => {
         version: 0,
       },
     });
+  });
+
+  it("stores wallet state under private directory and file permissions", async () => {
+    const home = await useTempHome();
+    await saveWalletState(walletState());
+
+    await expectMode(join(home, ".tempo"), 0o700);
+    await expectMode(join(home, ".tempo", "wallet"), 0o700);
+    await expectMode(join(home, ".tempo", "wallet", "store.json"), 0o600);
+  });
+
+  it("tightens permissions for existing wallet store paths", async () => {
+    const home = await useTempHome();
+    const tempoDir = join(home, ".tempo");
+    const walletDir = join(tempoDir, "wallet");
+    const storePath = join(walletDir, "store.json");
+    await chmod(tempoDir, 0o755);
+    await chmod(walletDir, 0o755);
+    await writeFile(storePath, "{}");
+    await chmod(storePath, 0o644);
+
+    await saveWalletState(walletState());
+
+    await expectMode(tempoDir, 0o700);
+    await expectMode(walletDir, 0o700);
+    await expectMode(storePath, 0o600);
   });
 
   it("loads an empty state from missing or malformed envelopes", async () => {
@@ -305,3 +331,8 @@ limit = "100000000"
     );
   });
 });
+
+async function expectMode(path: string, mode: number) {
+  if (process.platform === "win32") return;
+  expect((await stat(path)).mode & 0o777).toBe(mode);
+}

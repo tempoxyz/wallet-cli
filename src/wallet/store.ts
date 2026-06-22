@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -19,6 +20,9 @@ export type WalletState = {
   activeAccount?: number | undefined;
   chainId?: number | undefined;
 };
+
+const privateDirMode = 0o700;
+const privateFileMode = 0o600;
 
 export async function loadWalletState(): Promise<WalletState> {
   const path = walletStorePath();
@@ -87,8 +91,8 @@ function reviveBigInts(value: unknown): unknown {
 
 export async function saveWalletState(state: WalletState) {
   const path = walletStorePath();
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(
+  await ensurePrivateWalletDirectory(path);
+  await writePrivateFile(
     path,
     JSON.stringify(
       {
@@ -248,6 +252,40 @@ function parseTomlValue(value: string) {
   if (trimmed === "true") return true;
   if (trimmed === "false") return false;
   return trimmed;
+}
+
+async function ensurePrivateWalletDirectory(path: string) {
+  const walletDir = dirname(path);
+  const tempoDir = dirname(walletDir);
+  await mkdir(tempoDir, { recursive: true, mode: privateDirMode });
+  await chmodIfSupported(tempoDir, privateDirMode);
+  await mkdir(walletDir, { recursive: true, mode: privateDirMode });
+  await chmodIfSupported(walletDir, privateDirMode);
+}
+
+async function writePrivateFile(path: string, contents: string) {
+  const tempPath = join(
+    dirname(path),
+    `.store.json.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
+  );
+  try {
+    await writeFile(tempPath, contents, { mode: privateFileMode });
+    await chmodIfSupported(tempPath, privateFileMode);
+    await rename(tempPath, path);
+    await chmodIfSupported(path, privateFileMode);
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function chmodIfSupported(path: string, mode: number) {
+  try {
+    await chmod(path, mode);
+  } catch (error) {
+    if (process.platform === "win32") return;
+    throw error;
+  }
 }
 
 type LegacyKey = {
