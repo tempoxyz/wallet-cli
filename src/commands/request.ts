@@ -40,6 +40,7 @@ import {
   upsertSessionRecord,
 } from "../payment/session-store.js";
 import { connect, createProvider } from "../provider.js";
+import { resolveRequestMaxSpend, saveOriginMaxSpend } from "../request-policy.js";
 import { escrowAbi, version } from "../shared/constants.js";
 import { networkError, paymentError, usageError } from "../shared/errors.js";
 import {
@@ -86,6 +87,7 @@ export type RequestOptions = {
   retryBackoffMs?: number | undefined;
   retryHttp?: string | undefined;
   retryJitter?: number | undefined;
+  saveMaxSpend?: boolean | undefined;
   sse?: boolean | undefined;
   sseJson?: boolean | undefined;
   stream?: boolean | undefined;
@@ -153,6 +155,9 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
         break;
       case "--max-spend":
         options.maxSpend = requireValue(argv, ++index, arg);
+        break;
+      case "--save-max-spend":
+        options.saveMaxSpend = true;
         break;
       case "--private-key":
         options.privateKey = requireValue(argv, ++index, arg);
@@ -318,26 +323,27 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
 }
 
 export async function executeRequest(options: RequestOptions, io: RequestRunOptions = {}) {
+  const resolvedOptions = await applyRequestSpendPolicy(options);
   const stdout = io.stdout ?? process.stdout;
   const started = Date.now();
-  const request = await buildFetchRequest(options);
-  let response = await fetchWithRetries(request, options);
+  const request = await buildFetchRequest(resolvedOptions);
+  let response = await fetchWithRetries(request, resolvedOptions);
 
-  if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
-  if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
+  if (resolvedOptions.dumpHeader) await writeHeadersFile(resolvedOptions.dumpHeader, response);
+  if (resolvedOptions.writeMeta) await writeMetaFile(resolvedOptions.writeMeta, response, started);
 
   if (response.status === 402) {
-    if (options.dryRun) {
-      await writeResponseBody(response, options, stdout);
+    if (resolvedOptions.dryRun) {
+      await writeResponseBody(response, resolvedOptions, stdout);
       return;
     }
 
-    response = await payAndRetryRequest(response, request, options);
+    response = await payAndRetryRequest(response, request, resolvedOptions);
   }
 
   if (response.status >= 400) {
     const body = await response.text().catch(() => "");
-    if (options.sseJson) {
+    if (resolvedOptions.sseJson) {
       write(
         stdout,
         `${JSON.stringify({ event: "error", message: `HTTP ${response.status}${body ? `: ${body}` : ""}`, ts: new Date().toISOString() })}\n`,
@@ -346,7 +352,23 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
     throw networkError(`HTTP ${response.status}${body ? `: ${body}` : ""}`);
   }
 
-  await writeResponseBody(response, options, stdout);
+  await writeResponseBody(response, resolvedOptions, stdout);
+}
+
+async function applyRequestSpendPolicy(options: RequestOptions): Promise<RequestOptions> {
+  if (options.saveMaxSpend && !options.maxSpend)
+    throw usageError("--save-max-spend requires --max-spend");
+
+  if (options.saveMaxSpend && options.maxSpend)
+    await saveOriginMaxSpend(options.url, options.maxSpend);
+
+  return {
+    ...options,
+    maxSpend: await resolveRequestMaxSpend({
+      explicit: options.maxSpend,
+      url: options.url,
+    }),
+  };
 }
 
 async function buildFetchRequest(options: RequestOptions) {

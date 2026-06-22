@@ -25,6 +25,11 @@ import {
 } from "../src/payment/session-store.js";
 import { withSessionLock } from "../src/payment/session-lock.js";
 import {
+  loadRequestSpendPolicy,
+  resolveRequestMaxSpend,
+  saveOriginMaxSpend,
+} from "../src/request-policy.js";
+import {
   testAccessKey,
   testWallet,
   useTempHome,
@@ -334,6 +339,7 @@ describe("request command", () => {
         "-t",
         "--max-spend",
         "1.00",
+        "--save-max-spend",
         "--connect-timeout",
         "2",
         "--insecure",
@@ -346,7 +352,57 @@ describe("request command", () => {
       insecure: true,
       maxRedirs: 3,
       maxSpend: "1.00",
+      saveMaxSpend: true,
       url: "https://example.com",
+    });
+  });
+
+  it("resolves max-spend from explicit flags, env, then persisted origin policy", async () => {
+    await useTempHome();
+    await saveOriginMaxSpend("https://paid.example.com/path", "2.50");
+
+    const cases = [
+      { explicit: "3.00", env: { TEMPO_MAX_SPEND: "4.00" }, expected: "3.00" },
+      { explicit: undefined, env: { TEMPO_MAX_SPEND: "4.00" }, expected: "4.00" },
+      { explicit: undefined, env: { TEMPO_MAX_SPEND: "" }, expected: "2.50" },
+    ];
+
+    for (const item of cases) {
+      await expect(
+        resolveRequestMaxSpend({
+          explicit: item.explicit,
+          env: item.env,
+          url: "https://paid.example.com/other",
+        }),
+      ).resolves.toBe(item.expected);
+    }
+  });
+
+  it("saves a per-origin max-spend default from request flags", async () => {
+    await useTempHome();
+    const server = await testServer((_request, response) => {
+      response.end("ok");
+    });
+
+    await runRequest(["--max-spend", "1.25", "--save-max-spend", server.url("/paid")], {
+      stdout: captureStdout(),
+    });
+
+    expect(await loadRequestSpendPolicy()).toEqual({
+      origins: {
+        [new URL(server.url("/")).origin]: { maxSpend: "1.25" },
+      },
+    });
+  });
+
+  it("requires --max-spend when saving a max-spend default", async () => {
+    await useTempHome();
+
+    await expect(
+      runRequest(["--save-max-spend", "https://paid.example.com"], { stdout: captureStdout() }),
+    ).rejects.toMatchObject({
+      code: "E_USAGE",
+      message: "--save-max-spend requires --max-spend",
     });
   });
 

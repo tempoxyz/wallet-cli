@@ -11,6 +11,10 @@ const args = z.object({
 const options = z.object({
   "dry-run": z.boolean().optional().describe("Show payment challenge without paying"),
   "max-spend": z.string().optional().describe("Hard cap for cumulative payment spend"),
+  "save-max-spend": z
+    .boolean()
+    .optional()
+    .describe("Persist --max-spend as the default for this URL origin"),
   "private-key": z.string().optional().describe("Sign payments with an ephemeral private key"),
   network: z
     .string()
@@ -161,6 +165,7 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
     retryBackoffMs: options["retry-backoff"],
     retryHttp: options["retry-http"],
     retryJitter: options["retry-jitter"],
+    saveMaxSpend: options["save-max-spend"],
     sse: options.sse,
     sseJson: options["sse-json"],
     stream: options.stream,
@@ -210,6 +215,11 @@ function describeRequestCli() {
         long: "--max-spend",
         value_name: "AMOUNT",
         help: "Hard cap for cumulative payment spend",
+      },
+      {
+        name: "save_max_spend",
+        long: "--save-max-spend",
+        help: "Persist --max-spend as the default for this URL origin",
       },
       {
         name: "private_key",
