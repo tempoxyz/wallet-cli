@@ -124,6 +124,22 @@ export const keysOutput = z.object({
   total: z.number(),
 });
 
+export const revokeArgs = z.object({
+  accessKey: z.string().describe("Access key address to revoke (0x...)"),
+});
+
+export const revokeOptions = z.object({
+  ...globalOptionShape,
+  "dry-run": z.boolean().optional().describe("Show the revoke request without submitting it"),
+});
+
+export const revokeOutput = z.object({
+  status: z.union([z.literal("success"), z.literal("dry_run")]),
+  wallet: z.string(),
+  access_key: z.string(),
+  local_key_removed: z.boolean(),
+});
+
 export const transferDryRunOutput = z.object({
   status: z.literal("dry_run"),
   chain_id: z.number(),

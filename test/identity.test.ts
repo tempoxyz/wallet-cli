@@ -4,6 +4,7 @@ import {
   currentKeysOutput,
   keysHandler,
   logoutHandler,
+  revokeHandler,
   whoamiHandler,
 } from "../src/commands/identity.js";
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
@@ -391,6 +392,64 @@ limit = "100000000"
     });
 
     expect(result.keys[0]?.status).toBe(status);
+  });
+
+  it("dry-runs access key revocation without calling the provider", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const createProvider = vi.fn();
+
+    const result = await revokeHandler(
+      { accessKey: testAccessKey },
+      { "dry-run": true },
+      createProvider,
+    );
+
+    expect(result).toEqual({
+      status: "dry_run",
+      wallet: testWallet.toLowerCase(),
+      access_key: testAccessKey.toLowerCase(),
+      local_key_removed: false,
+    });
+    expect(createProvider).not.toHaveBeenCalled();
+    expect((await loadWalletState()).accessKeys).toHaveLength(1);
+  });
+
+  it("revokes an access key and removes the local key", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const request = vi.fn().mockResolvedValue(undefined);
+
+    const result = await revokeHandler({ accessKey: testAccessKey }, {}, () => ({ request }));
+
+    expect(request).toHaveBeenCalledWith({
+      method: "wallet_revokeAccessKey",
+      params: [
+        {
+          address: testWallet,
+          accessKeyAddress: testAccessKey,
+        },
+      ],
+    });
+    expect(result).toEqual({
+      status: "success",
+      wallet: testWallet.toLowerCase(),
+      access_key: testAccessKey.toLowerCase(),
+      local_key_removed: true,
+    });
+    expect((await loadWalletState()).accessKeys).toEqual([]);
+  });
+
+  it("rejects malformed access key addresses", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+
+    try {
+      await revokeHandler({ accessKey: "not-an-address" }, {});
+      expect.unreachable("expected revokeHandler to throw");
+    } catch (error) {
+      expectUsageError(error, "Invalid access key address: expected a 0x address");
+    }
   });
 
   it("logout clears the store", async () => {

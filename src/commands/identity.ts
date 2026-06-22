@@ -1,5 +1,5 @@
 import { arch, platform } from "node:process";
-import { erc20Abi, formatUnits, type Address } from "viem";
+import { erc20Abi, formatUnits, isAddress, type Address } from "viem";
 
 import { version } from "../shared/constants.js";
 import { chainId, createTempoPublicClient, networkName, tokenSymbol } from "../shared/network.js";
@@ -110,6 +110,69 @@ export async function keysHandler() {
     chain,
     accessKeys: state.accessKeys,
   });
+}
+
+type RevokeProvider = {
+  request(args: {
+    method: "wallet_revokeAccessKey";
+    params: [{ address: Address; accessKeyAddress: Address }];
+  }): Promise<unknown>;
+};
+
+export async function revokeHandler(
+  args: { accessKey: string },
+  options: { network?: string | undefined; "dry-run"?: boolean | undefined },
+  createRevokeProvider: (options: {
+    network?: string | undefined;
+  }) => RevokeProvider = createProvider,
+) {
+  if (!isAddress(args.accessKey))
+    throw usageError("Invalid access key address: expected a 0x address");
+
+  const state = await loadWalletState();
+  const activeAccount = state.accounts[state.activeAccount ?? 0];
+  if (!activeAccount)
+    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
+  if (!walletStateMatchesNetwork(state, options.network))
+    throw usageError(
+      "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
+    );
+
+  const accessKeyAddress = args.accessKey as Address;
+  const output = {
+    access_key: accessKeyAddress.toLowerCase(),
+    wallet: activeAccount.address.toLowerCase(),
+  };
+
+  if (options["dry-run"])
+    return {
+      ...output,
+      status: "dry_run" as const,
+      local_key_removed: false,
+    };
+
+  const provider = createRevokeProvider({ network: options.network });
+  await provider.request({
+    method: "wallet_revokeAccessKey",
+    params: [
+      {
+        address: activeAccount.address as Address,
+        accessKeyAddress,
+      },
+    ],
+  });
+
+  const accessKeys = state.accessKeys.filter(
+    (key) => key.address.toLowerCase() !== accessKeyAddress.toLowerCase(),
+  );
+  const localKeyRemoved = accessKeys.length !== state.accessKeys.length;
+  if (localKeyRemoved) await saveWalletState({ ...state, accessKeys });
+
+  return {
+    ...output,
+    status: "success" as const,
+    local_key_removed: localKeyRemoved,
+  };
 }
 
 export async function debugHandler(options: { network?: string | undefined }) {
