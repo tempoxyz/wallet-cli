@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
 
@@ -8,6 +9,13 @@ const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
 
 describe("generated CLI metadata", () => {
+  it.each([
+    ["wallet", walletCli],
+    ["request", requestCli],
+  ])("reports the package version for the %s entrypoint", async (_, cli) => {
+    expect((await cli(["--version"])).trim()).toBe(await packageVersion());
+  });
+
   it("documents direct service lookup and search in services help", async () => {
     const output = await walletCli(["services", "--help"]);
 
@@ -101,9 +109,17 @@ describe("generated CLI metadata", () => {
 });
 
 async function walletCli(args: string[]) {
+  return tsxCli("src/cli.ts", args);
+}
+
+async function requestCli(args: string[]) {
+  return tsxCli("src/request-cli.ts", args);
+}
+
+async function tsxCli(entrypoint: string, args: string[]) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    ["--import", "tsx", "src/cli.ts", ...args],
+    ["--import", "tsx", entrypoint, ...args],
     {
       cwd: root,
       env: { ...process.env, NO_COLOR: "1" },
@@ -111,4 +127,11 @@ async function walletCli(args: string[]) {
     },
   );
   return stdout;
+}
+
+async function packageVersion() {
+  const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8")) as {
+    version: string;
+  };
+  return packageJson.version;
 }
