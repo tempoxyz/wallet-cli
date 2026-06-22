@@ -1,51 +1,147 @@
-# wallet-cli
+<br>
+<br>
 
-TypeScript/Incur implementation of the Tempo wallet CLI, built on the released `accounts` SDK.
+<p align="center">
+  <a href="https://tempo.xyz">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tempoxyz/tempo/refs/heads/main/.github/assets/tempo-wordmark-white.svg">
+      <img alt="Tempo wordmark" src="https://raw.githubusercontent.com/tempoxyz/tempo/refs/heads/main/.github/assets/tempo-wordmark-black.svg" width="360">
+    </picture>
+  </a>
+</p>
+
+<br>
+<br>
+
+# Tempo Wallet CLI
+
+TypeScript implementation of the Tempo wallet and request extension CLIs.
+
+`tempo-wallet` manages local wallet state, access keys, funding handoffs, service discovery, token transfers, credits, and payment sessions. `tempo-request` is an HTTP client that handles Tempo Machine Payments Protocol challenges automatically.
+
+## Install
+
+Install the Tempo launcher:
+
+```sh
+curl -fsSL https://tempo.xyz/install | bash
+```
+
+The launcher manages `tempo wallet` and `tempo request` extensions automatically.
+
+## Quick Start
+
+```sh
+# Log in with your passkey
+tempo wallet login
+
+# Remote-host login when your browser is on another device
+tempo wallet login --no-browser
+
+# Check wallet status
+tempo wallet whoami
+
+# Fund your wallet
+tempo wallet fund
+
+# Discover available paid services
+tempo wallet services --search ai
+```
+
+Make a paid HTTP request:
+
+```sh
+# Preview payment details
+tempo request --dry-run https://example.mpp.tempo.xyz/v1/resource
+
+# Pay and retry automatically
+tempo request https://example.mpp.tempo.xyz/v1/resource
+```
+
+Session-based services open a reusable payment channel:
+
+```sh
+tempo request -X POST \
+  --json '{"input":"hello"}' \
+  https://service.mpp.tempo.xyz/v1/stream
+
+tempo wallet sessions list
+tempo wallet sessions close https://service.mpp.tempo.xyz
+```
+
+## Commands
+
+`tempo wallet` includes:
+
+- `login`, `logout`, `refresh`, `whoami`, `keys`
+- `fund`
+- `transfer`
+- `credits`
+- `services`
+- `sessions list`, `sessions close`, `sessions sync`
+- `debug`
+- `completions`
+
+`tempo request` supports common curl-style flags for methods, headers, bodies, output files, redirects, retries, proxies, and streaming responses.
+
+## Local State
+
+Wallet state is stored under:
+
+```sh
+~/.tempo/wallet/store.json
+~/.tempo/wallet/channels.db
+```
+
+Tests use isolated temporary `HOME` directories so they do not mutate a developer's real wallet state.
 
 ## Development
+
+Requirements:
+
+- Node.js 22
+- pnpm 11
 
 ```sh
 pnpm install
 pnpm dev -- --help
+node --import tsx src/request-cli.ts --help
 ```
 
-The CLI stores local wallet state in `~/.tempo/wallet/store.json`, matching the accounts SDK-oriented store shape used by this project.
-
-## Checks
-
-Use the aggregate check before shipping changes:
+Useful commands:
 
 ```sh
 pnpm check
-```
-
-It runs:
-
-- `pnpm check:types` — production TypeScript build typecheck
-- `pnpm test:types` — test/helper TypeScript typecheck
-- `pnpm test` — Vitest command/unit coverage
-
-Useful individual commands:
-
-```sh
 pnpm test
 pnpm build
 pnpm bundle
 pnpm package
 ```
 
-## Test strategy
+`pnpm check` runs formatting/lint checks, production TypeScript typecheck, test/helper TypeScript typecheck, and Vitest.
 
-Tests live under `test/` and use isolated temporary `HOME` directories so they do not mutate a developer's real wallet state.
+## Release Artifacts
 
-Current coverage focuses on command behavior that can run deterministically without a live wallet service:
+The release workflow builds standalone Linux and macOS binaries for both `tempo-wallet` and `tempo-request`. Each binary is published with a checksum, SBOM, Sigstore bundle, and GitHub attestations.
 
-- identity and store behavior
-- token and credits transfer dry-run/error paths
-- MPP challenge parsing/error paths
-- funding URL/action/error behavior
-- service directory normalization/search/detail with mocked `fetch`
-- session dry-run/local behavior
-- compatibility completions output
+## Security
 
-Live wallet/payment flows are exercised manually or by higher-level release validation when funded wallets and service fixtures are available.
+Please do not report vulnerabilities through public issues. Email `security@tempo.xyz`.
+
+Local wallet files may contain access key material. Do not commit files from `~/.tempo/`, `.env`, or generated release artifacts.
+
+## Contributing
+
+Use conventional commit titles and include a `.changelog/*.md` entry for pull requests:
+
+```markdown
+---
+wallet-cli: patch
+---
+
+Brief description of the change.
+```
+
+Supported bump levels are `major`, `minor`, `patch`, and `none`.
+
+Run `pnpm check` before submitting changes.
