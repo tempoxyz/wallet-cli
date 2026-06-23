@@ -1,7 +1,16 @@
 {
   "name": "wallet-cli",
   "version": "0.6.1",
-  "private": true,
+  "description": "Tempo wallet and request CLI extension package",
+  "homepage": "https://github.com/tempoxyz/wallet-cli#readme",
+  "bugs": {
+    "url": "https://github.com/tempoxyz/wallet-cli/issues"
+  },
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tempoxyz/wallet-cli.git"
+  },
   "bin": {
     "tempo-request": "./dist/request-cli.js",
     "tempo-wallet": "./dist/cli.js"
