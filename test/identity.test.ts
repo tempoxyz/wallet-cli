@@ -1,9 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Actions } from "viem/tempo";
+
+vi.mock("viem/tempo", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("viem/tempo")>();
+  return {
+    ...actual,
+    Actions: {
+      ...actual.Actions,
+      accessKey: {
+        ...actual.Actions.accessKey,
+        revoke: vi.fn(),
+      },
+    },
+  };
+});
 
 import {
   currentKeysOutput,
   keysHandler,
   logoutHandler,
+  revokeHandler,
   whoamiHandler,
 } from "../src/commands/identity.js";
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
@@ -391,6 +407,115 @@ limit = "100000000"
     });
 
     expect(result.keys[0]?.status).toBe(status);
+  });
+
+  it("dry-runs access key revocation without calling the provider", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const createProvider = vi.fn();
+
+    const result = await revokeHandler(
+      { accessKey: testAccessKey },
+      { "dry-run": true },
+      createProvider,
+    );
+
+    expect(result).toEqual({
+      status: "dry_run",
+      wallet: testWallet.toLowerCase(),
+      access_key: testAccessKey.toLowerCase(),
+      local_key_removed: false,
+    });
+    expect(createProvider).not.toHaveBeenCalled();
+    expect((await loadWalletState()).accessKeys).toHaveLength(1);
+  });
+
+  it("revokes an access key and removes the local key", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const account = { address: testWallet };
+    const chain = { id: 4217 };
+    const client = { chain, request: vi.fn() };
+    const provider = {
+      getAccount: vi.fn(() => account),
+      getClient: vi.fn(() => client),
+    };
+    const revoke = vi.mocked(Actions.accessKey.revoke);
+    revoke.mockClear();
+    revoke.mockResolvedValue("0x123" as never);
+
+    const result = await revokeHandler({ accessKey: testAccessKey }, {}, () => provider as never);
+
+    expect(provider.getAccount).toHaveBeenCalledWith({
+      address: testWallet,
+      signable: true,
+    });
+    expect(provider.getClient).toHaveBeenCalledWith({ chainId: 4217 });
+    expect(revoke).toHaveBeenCalledWith(client, {
+      account,
+      accessKey: testAccessKey,
+      chain,
+    });
+    expect(result).toEqual({
+      status: "success",
+      wallet: testWallet.toLowerCase(),
+      access_key: testAccessKey.toLowerCase(),
+      local_key_removed: true,
+    });
+    expect((await loadWalletState()).accessKeys).toEqual([]);
+  });
+
+  it("only removes the revoked local key for the active wallet and chain", async () => {
+    await useTempHome();
+    const key = walletState().accessKeys[0]!;
+    const otherWalletKey = {
+      ...key,
+      access: testWallet2,
+      privateKey: testPrivateKey2,
+    };
+    const otherChainKey = {
+      ...key,
+      chainId: 42431,
+      privateKey: testPrivateKey2,
+    };
+    await writeWalletState(
+      walletState({
+        accessKeys: [key, otherWalletKey, otherChainKey],
+      }),
+    );
+    const provider = {
+      getAccount: vi.fn(),
+      getClient: vi.fn(),
+    };
+    const revokeAccessKey = vi.fn().mockResolvedValue(undefined);
+
+    const result = await revokeHandler(
+      { accessKey: testAccessKey },
+      {},
+      () => provider as never,
+      revokeAccessKey,
+    );
+
+    expect(revokeAccessKey).toHaveBeenCalledWith({
+      provider,
+      walletAddress: testWallet,
+      accessKeyAddress: testAccessKey,
+      chainId: 4217,
+    });
+    expect(result).toMatchObject({ local_key_removed: true });
+    expect((await loadWalletState()).accessKeys).toEqual([otherWalletKey, otherChainKey]);
+  });
+
+  it("rejects malformed access key addresses", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+
+    try {
+      await revokeHandler({ accessKey: "not-an-address" }, {});
+      expect.unreachable("expected revokeHandler to throw");
+    } catch (error) {
+      expectUsageError(error, "Invalid access key address: expected a 0x address");
+    }
   });
 
   it("logout clears the store", async () => {

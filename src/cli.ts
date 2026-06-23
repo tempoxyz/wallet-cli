@@ -9,6 +9,7 @@ import {
   loginHandler,
   logoutHandler,
   refreshHandler,
+  revokeHandler,
   whoamiHandler,
 } from "./commands/identity.js";
 import { transferCredits, transferTokens } from "./commands/transfer.js";
@@ -35,6 +36,9 @@ import {
   logoutOptions,
   logoutOutput,
   refreshOutput,
+  revokeArgs,
+  revokeOptions,
+  revokeOutput,
   servicesArgs,
   servicesOutput,
   servicesOptions,
@@ -110,6 +114,17 @@ cli.command("keys", {
   output: keysOutput,
   async run() {
     return keysHandler();
+  },
+});
+
+cli.command("revoke", {
+  description: "Revoke an access key",
+  args: revokeArgs,
+  options: revokeOptions,
+  alias: globalAlias,
+  output: revokeOutput,
+  async run({ args, options }) {
+    return revokeHandler(args, options);
   },
 });
 
@@ -478,6 +493,14 @@ function describeCli() {
         args: [flag("credits", "--credits", "Show Coinflow credits balance")],
       },
       { name: "keys", about: "List keys and their spending limits" },
+      {
+        name: "revoke",
+        about: "Revoke an access key",
+        args: [
+          positional("access_key", "Access key address to revoke (0x...)"),
+          flag("dry_run", "--dry-run", "Show the revoke request without submitting it"),
+        ],
+      },
       {
         name: "transfer",
         about: "Transfer tokens to an address",

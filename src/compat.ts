@@ -82,6 +82,7 @@ Commands:
   logout    Log out and disconnect your wallet
   whoami    Show who you are: wallet, balances, keys
   keys      List keys and their spending limits
+  revoke    Revoke an access key
   transfer  Transfer tokens to an address
   fund      Open add-funds flows in the wallet app
   sessions  Manage payment sessions
@@ -119,7 +120,7 @@ using namespace System.Management.Automation.Language
 
 Register-ArgumentCompleter -Native -CommandName 'tempo wallet' -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
-    $commands = @('login', 'refresh', 'logout', 'whoami', 'keys', 'transfer', 'fund', 'sessions', 'services', 'debug', 'completions', 'help')
+    $commands = @('login', 'refresh', 'logout', 'whoami', 'keys', 'revoke', 'transfer', 'fund', 'sessions', 'services', 'debug', 'completions', 'help')
     $options = @('-n', '--network', '-v', '--verbose', '-s', '--silent', '-j', '--json-output', '-t', '--toon-output', '-h', '--help', '-V', '--version')
     @($commands + $options) |
         Where-Object { $_ -like "$wordToComplete*" } |
@@ -141,6 +142,7 @@ set edit:completion:arg-completer[tempo wallet] = {|@words|
             cand logout 'Log out and disconnect your wallet'
             cand whoami 'Show who you are: wallet, balances, keys'
             cand keys 'List keys and their spending limits'
+            cand revoke 'Revoke an access key'
             cand transfer 'Transfer tokens to an address'
             cand fund 'Open add-funds flows in the wallet app'
             cand sessions 'Manage payment sessions'

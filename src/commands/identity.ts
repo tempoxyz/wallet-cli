@@ -1,5 +1,7 @@
 import { arch, platform } from "node:process";
-import { erc20Abi, formatUnits, type Address } from "viem";
+import type { Provider as CoreProvider } from "accounts";
+import { erc20Abi, formatUnits, isAddress, type Address } from "viem";
+import { Actions } from "viem/tempo";
 
 import { version } from "../shared/constants.js";
 import { chainId, createTempoPublicClient, networkName, tokenSymbol } from "../shared/network.js";
@@ -110,6 +112,108 @@ export async function keysHandler() {
     chain,
     accessKeys: state.accessKeys,
   });
+}
+
+type RevokeProvider = Pick<CoreProvider.Provider, "getAccount" | "getClient">;
+
+type AccessKeyRevoker = (options: {
+  provider: RevokeProvider;
+  walletAddress: Address;
+  accessKeyAddress: Address;
+  chainId: number;
+}) => Promise<unknown>;
+
+export async function revokeHandler(
+  args: { accessKey: string },
+  options: { network?: string | undefined; "dry-run"?: boolean | undefined },
+  createRevokeProvider: (options: {
+    network?: string | undefined;
+  }) => RevokeProvider = createProvider,
+  revokeAccessKey: AccessKeyRevoker = revokeAccessKeyOnChain,
+) {
+  if (!isAddress(args.accessKey))
+    throw usageError("Invalid access key address: expected a 0x address");
+
+  const state = await loadWalletState();
+  const activeAccount = state.accounts[state.activeAccount ?? 0];
+  if (!activeAccount)
+    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
+  if (!walletStateMatchesNetwork(state, options.network))
+    throw usageError(
+      "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
+    );
+
+  const accessKeyAddress = args.accessKey as Address;
+  const walletAddress = activeAccount.address as Address;
+  const selectedChainId = state.chainId ?? chainId(options.network);
+  const output = {
+    access_key: accessKeyAddress.toLowerCase(),
+    wallet: walletAddress.toLowerCase(),
+  };
+
+  if (options["dry-run"])
+    return {
+      ...output,
+      status: "dry_run" as const,
+      local_key_removed: false,
+    };
+
+  const provider = createRevokeProvider({ network: options.network });
+  await revokeAccessKey({
+    provider,
+    walletAddress,
+    accessKeyAddress,
+    chainId: selectedChainId,
+  });
+
+  const accessKeys = state.accessKeys.filter(
+    (key) =>
+      !localKeyMatchesRevoke({
+        key,
+        accessKeyAddress,
+        walletAddress,
+        chainId: selectedChainId,
+      }),
+  );
+  const localKeyRemoved = accessKeys.length !== state.accessKeys.length;
+  if (localKeyRemoved) await saveWalletState({ ...state, accessKeys });
+
+  return {
+    ...output,
+    status: "success" as const,
+    local_key_removed: localKeyRemoved,
+  };
+}
+
+async function revokeAccessKeyOnChain(options: {
+  provider: RevokeProvider;
+  walletAddress: Address;
+  accessKeyAddress: Address;
+  chainId: number;
+}) {
+  const account = options.provider.getAccount({
+    address: options.walletAddress,
+    signable: true,
+  });
+  const client = options.provider.getClient({ chainId: options.chainId });
+  await Actions.accessKey.revoke(client, {
+    account,
+    accessKey: options.accessKeyAddress,
+    chain: client.chain,
+  });
+}
+
+function localKeyMatchesRevoke(options: {
+  key: WalletState["accessKeys"][number];
+  accessKeyAddress: Address;
+  walletAddress: Address;
+  chainId: number;
+}) {
+  return (
+    options.key.address.toLowerCase() === options.accessKeyAddress.toLowerCase() &&
+    options.key.access.toLowerCase() === options.walletAddress.toLowerCase() &&
+    options.key.chainId === options.chainId
+  );
 }
 
 export async function debugHandler(options: { network?: string | undefined }) {
