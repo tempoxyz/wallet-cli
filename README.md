@@ -15,9 +15,15 @@
 
 # Tempo Wallet CLI
 
-TypeScript implementation of the Tempo wallet and request extension CLIs.
+**Command-line wallet and HTTP client for the [Tempo](https://tempo.xyz) blockchain, with built-in [Machine Payments Protocol](https://mpp.dev) support.**
 
-`tempo-wallet` manages local wallet state, access keys, funding handoffs, service discovery, token transfers, credits, and payment sessions. `tempo-request` is an HTTP client that handles Tempo Machine Payments Protocol challenges automatically.
+**[Website](https://wallet.tempo.xyz)**
+| [Docs](https://docs.tempo.xyz/cli)
+| [MPP Spec](https://mpp.dev)
+
+## What is Tempo Wallet CLI?
+
+Tempo Wallet is a CLI that lets you create a wallet, manage keys, and make HTTP requests that pay automatically — no API keys required. It uses the [Machine Payments Protocol (MPP)](https://mpp.dev) to handle `402 Payment Required` challenges natively, turning any paid API into a simple HTTP call.
 
 ## Install
 
