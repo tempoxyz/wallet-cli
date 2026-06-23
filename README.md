@@ -76,11 +76,12 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 - `login`, `logout`, `refresh`, `whoami`, `keys`
 - `fund`
 - `transfer`
-- `credits`
 - `services`
 - `sessions list`, `sessions close`, `sessions sync`
 - `debug`
 - `completions`
+
+Credit-related flows use `whoami --credits`, `fund --credits`, and `transfer --credits`.
 
 `tempo request` supports common curl-style flags for methods, headers, bodies, output files, redirects, retries, proxies, and streaming responses.
 
