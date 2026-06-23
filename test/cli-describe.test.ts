@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
 
+import { Parser } from "incur";
 import { describe, expect, it } from "vitest";
+
+import { fundOptions, loginOptions } from "../src/schemas.js";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -105,6 +108,15 @@ describe("generated CLI metadata", () => {
       output: { items: { properties: { installed: { type: string } } } };
     };
     expect(skillsList.output.items.properties.installed.type).toBe("boolean");
+  });
+
+  it("accepts --no-browser for browser-backed wallet commands", () => {
+    expect(Parser.parse(["--no-browser"], { options: loginOptions }).options).toMatchObject({
+      browser: false,
+    });
+    expect(Parser.parse(["--no-browser"], { options: fundOptions }).options).toMatchObject({
+      browser: false,
+    });
   });
 });
 

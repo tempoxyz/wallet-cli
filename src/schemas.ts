@@ -229,7 +229,7 @@ export const fundOutput = z.object({
 
 export const loginOptions = z.object({
   ...globalOptionShape,
-  "no-browser": z.boolean().optional().describe("Do not attempt to open a browser"),
+  browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
 });
 
 export const globalOptions = z.object(globalOptionShape);
@@ -287,7 +287,7 @@ export const transferOutput = z.union([
 export const fundOptions = z.object({
   ...globalOptionShape,
   address: z.string().optional().describe("Wallet address to fund (defaults to current wallet)"),
-  "no-browser": z.boolean().optional().describe("Do not attempt to open a browser"),
+  browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
   crypto: z.boolean().optional().describe("Open the direct crypto funding flow"),
   credits: z.boolean().optional().describe("Open the credits purchase flow"),
   "referral-code": z.string().optional().describe("Open referral-code redeem flow"),
