@@ -149,7 +149,7 @@ cli.command("fund", {
       }),
       address: options.address,
       code: options["referral-code"] ?? options.claim,
-      noBrowser: options["no-browser"],
+      noBrowser: options.browser === false,
       network: options.network,
     });
   },

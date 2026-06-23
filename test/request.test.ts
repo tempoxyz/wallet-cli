@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import { Challenge, Credential, Method, z } from "mppx";
 import { Mppx } from "mppx/client";
@@ -40,6 +42,8 @@ type SeenRequest = {
   url: string;
 };
 
+const execFileAsync = promisify(execFile);
+const root = resolve(import.meta.dirname, "..");
 const servers: { close: () => Promise<void> }[] = [];
 
 afterEach(async () => {
@@ -57,6 +61,24 @@ describe("request command", () => {
     await runRequest([server.url("/test")], { stdout });
 
     expect(stdout.text()).toBe("hello world");
+  });
+
+  it("accepts --no-proxy through the request CLI entrypoint", async () => {
+    const server = await testServer((_request, response) => {
+      response.end("no proxy");
+    });
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "src/request-cli.ts", server.url("/test"), "--no-proxy"],
+      {
+        cwd: root,
+        env: { ...process.env, NO_COLOR: "1" },
+        maxBuffer: 1024 * 1024,
+      },
+    );
+
+    expect(stdout).toBe("no proxy");
   });
 
   it("posts JSON with the expected method and content type", async () => {

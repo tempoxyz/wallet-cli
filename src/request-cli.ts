@@ -50,8 +50,10 @@ const options = z.object({
     .describe("Treat response as SSE and output each event as NDJSON"),
   bearer: z.string().optional().describe("Authorization bearer token"),
   "write-meta": z.string().optional().describe("Write response metadata JSON to file"),
-  proxy: z.string().optional().describe("Use an HTTP/HTTPS proxy"),
-  "no-proxy": z.boolean().optional().describe("Disable all proxy use"),
+  proxy: z
+    .union([z.string(), z.literal(false)])
+    .optional()
+    .describe("Use an HTTP/HTTPS proxy; use --no-proxy to disable"),
   "max-redirs": z.coerce.number().optional().describe("Maximum redirects when -L is used"),
   http2: z.boolean().optional().describe("Enable HTTP/2"),
   "http1.1": z.boolean().optional().describe("Force HTTP/1.1 only"),
@@ -127,6 +129,8 @@ async function main() {
 type ParsedOptions = z.infer<typeof options>;
 
 function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
+  const proxy = options.proxy === false ? undefined : options.proxy;
+
   return {
     bearer: options.bearer,
     compressed: options.compressed,
@@ -148,10 +152,10 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
     method: options.request,
     maxSpend: options["max-spend"],
     network: options.network,
-    noProxy: options["no-proxy"],
+    noProxy: options.proxy === false,
     output: options.output,
     privateKey: options["private-key"],
-    proxy: options.proxy,
+    proxy,
     referer: options.referer,
     remoteName: options["remote-name"],
     requestHttp1: options["http1.1"],
