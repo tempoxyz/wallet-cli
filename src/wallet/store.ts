@@ -5,6 +5,18 @@ import { dirname, join } from "node:path";
 
 import { getArray, getRecord } from "../shared/utils.js";
 
+export type AccessKeyLimit = {
+  token: string;
+  limit: string;
+  period?: number | undefined;
+};
+
+export type AccessKeyScope = {
+  address: string;
+  selector?: string | undefined;
+  recipients: readonly string[];
+};
+
 export type WalletState = {
   accounts: readonly { address: string }[];
   accessKeys: readonly {
@@ -15,7 +27,8 @@ export type WalletState = {
     keyAuthorization?: unknown | undefined;
     keyType?: string | undefined;
     privateKey?: string | undefined;
-    limits: readonly { token: string; limit: string }[];
+    limits: readonly AccessKeyLimit[];
+    scopes?: readonly AccessKeyScope[] | undefined;
   }[];
   activeAccount?: number | undefined;
   chainId?: number | undefined;
@@ -63,11 +76,8 @@ export async function loadWalletState(): Promise<WalletState> {
         keyAuthorization: reviveBigInts(item.keyAuthorization),
         keyType: typeof item.keyType === "string" ? item.keyType : undefined,
         privateKey: typeof item.privateKey === "string" ? item.privateKey : undefined,
-        limits: getArray(item.limits).flatMap((limit) => {
-          const value = getRecord(limit);
-          if (typeof value.token !== "string" || typeof value.limit !== "string") return [];
-          return [{ token: value.token, limit: value.limit }];
-        }),
+        limits: parseAccessKeyLimits(item.limits),
+        scopes: parseAccessKeyScopes(item.scopes),
       },
     ];
   });
@@ -87,6 +97,39 @@ function reviveBigInts(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(reviveBigInts);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, reviveBigInts(item)]));
+}
+
+function parseAccessKeyLimits(value: unknown): AccessKeyLimit[] {
+  return getArray(value).flatMap((limit) => {
+    const item = getRecord(limit);
+    if (typeof item.token !== "string" || typeof item.limit !== "string") return [];
+    if (item.period !== undefined && typeof item.period !== "number") return [];
+    return [
+      {
+        token: item.token,
+        limit: item.limit,
+        period: typeof item.period === "number" ? item.period : undefined,
+      },
+    ];
+  });
+}
+
+function parseAccessKeyScopes(value: unknown): AccessKeyScope[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const scopes = getArray(value).flatMap((scope) => {
+    const item = getRecord(scope);
+    if (typeof item.address !== "string") return [];
+    return [
+      {
+        address: item.address,
+        selector: typeof item.selector === "string" ? item.selector : undefined,
+        recipients: getArray(item.recipients).flatMap((recipient) =>
+          typeof recipient === "string" ? [recipient] : [],
+        ),
+      },
+    ];
+  });
+  return scopes;
 }
 
 export async function saveWalletState(state: WalletState) {

@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { keysHandler, logoutHandler, whoamiHandler } from "../src/commands/identity.js";
+import {
+  currentKeysOutput,
+  keysHandler,
+  logoutHandler,
+  whoamiHandler,
+} from "../src/commands/identity.js";
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
 
@@ -286,6 +291,106 @@ limit = "100000000"
       chain_id: 4217,
       wallet_address: testWallet.toLowerCase(),
     });
+  });
+
+  it("keys output includes all spending limits, periods, scopes, and local status", async () => {
+    const result = await currentKeysOutput({
+      walletAddress: null,
+      chain: 4217,
+      accessKeys: [
+        {
+          ...walletState().accessKeys[0]!,
+          expiry: 4_102_444_800,
+          limits: [
+            { token: usdc, limit: "100000000#__bigint", period: 86_400 },
+            {
+              token: "0x1111111111111111111111111111111111111111",
+              limit: "2500000#__bigint",
+            },
+          ],
+          scopes: [
+            {
+              address: usdc,
+              selector: "transfer(address,uint256)",
+              recipients: [testWallet2],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.keys[0]).toMatchObject({
+      status: "ready",
+      spending_limit: {
+        limit: "100.000000",
+        period_seconds: 86_400,
+      },
+      spending_limits: [
+        {
+          limit: "100.000000",
+          period_seconds: 86_400,
+          token: usdc.toLowerCase(),
+        },
+        {
+          limit: "2.500000",
+          period_seconds: null,
+          token: "0x1111111111111111111111111111111111111111",
+        },
+      ],
+      scopes: [
+        {
+          address: usdc.toLowerCase(),
+          selector: "transfer(address,uint256)",
+          recipients: [testWallet2.toLowerCase()],
+        },
+      ],
+    });
+  });
+
+  it("keys output preserves explicit empty scopes", async () => {
+    const result = await currentKeysOutput({
+      walletAddress: null,
+      chain: 4217,
+      accessKeys: [
+        {
+          ...walletState().accessKeys[0]!,
+          keyAuthorization: {
+            scopes: [{ address: usdc, recipients: [testWallet2] }],
+          },
+          scopes: [],
+        },
+      ],
+    });
+
+    expect(result.keys[0]).toMatchObject({
+      scopes: [],
+    });
+  });
+
+  it.each([
+    {
+      name: "expired",
+      overrides: { expiry: 1 },
+      status: "expired",
+    },
+    {
+      name: "unusable",
+      overrides: { expiry: 4_102_444_800, privateKey: undefined },
+      status: "unusable",
+    },
+    {
+      name: "pending",
+      overrides: { expiry: 4_102_444_800, keyAuthorization: { signature: "0x1234" } },
+      status: "pending",
+    },
+  ])("keys output reports $name local key status", async ({ overrides, status }) => {
+    const result = await currentKeysOutput({
+      walletAddress: null,
+      chain: 4217,
+      accessKeys: [{ ...walletState().accessKeys[0]!, ...overrides }],
+    });
+
+    expect(result.keys[0]?.status).toBe(status);
   });
 
   it("logout clears the store", async () => {
