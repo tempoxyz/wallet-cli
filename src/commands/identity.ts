@@ -26,7 +26,7 @@ import { queryCreditBalance } from "./credits.js";
 
 export async function loginHandler(options: {
   network?: string | undefined;
-  "no-browser"?: boolean | undefined;
+  browser?: boolean | undefined;
 }) {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
@@ -38,7 +38,10 @@ export async function loginHandler(options: {
       network: options.network,
     });
 
-  const provider = createProvider({ network: options.network, noBrowser: options["no-browser"] });
+  const provider = createProvider({
+    network: options.network,
+    noBrowser: options.browser === false,
+  });
   const result = await connect(provider);
 
   return {
