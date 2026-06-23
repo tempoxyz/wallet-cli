@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.2 (2026-06-23)
+
+### Patch Changes
+
+- Show all stored access key limits, periods, scopes, and local key status in wallet key output.
+- Automatically dispatch the build and publish workflow after creating a release tag, so release assets and extension manifests publish without manual intervention.
+- Migrate legacy `keys.toml` wallet state into the new `store.json` format on first run.
+- Fix `tempo wallet login --no-browser` and `tempo wallet fund --no-browser` option parsing.
+- Update production dependencies and pin transitive WebSocket dependencies to patched advisory ranges.
+- Harden wallet store writes so local key material is saved under private file and directory permissions.
+- Keep local CLI version output aligned with the package version.
+- Add a wallet command to revoke access keys and remove revoked local key state.
+- Align generated wallet command metadata for service discovery and integration schema requests.
+
 ## 0.6.1 (2026-06-19)
 
 ### Patch Changes
