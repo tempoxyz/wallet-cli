@@ -188,7 +188,7 @@ jobs:
       contents: write
     needs: [parse-tag, build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/')
     strategy:
       fail-fast: false
       matrix:
