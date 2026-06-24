@@ -1,4 +1,10 @@
-export const version = process.env.TEMPO_WALLET_VERSION ?? "0.6.2";
+import { readFileSync } from "node:fs";
+
+type PackageJson = {
+  version?: string;
+};
+
+export const version = process.env.TEMPO_WALLET_VERSION ?? packageVersion();
 export const usdcToken = "0x20c000000000000000000000b9537d11c60e8b50" as const;
 export const mainnetEscrow = "0x33b901018174ddabe4841042ab76ba85d4e24f25" as const;
 export const moderatoEscrow = "0xe1c4d3dce17bc111181ddf716f75bae49e61a336" as const;
@@ -6,6 +12,16 @@ export const defaultGracePeriodSeconds = 900;
 export const logQueryBlockRange = 50_000n;
 export const logScanDepth = 100_000n;
 export const logHeadMargin = 10n;
+
+function packageVersion() {
+  const packageJson = JSON.parse(
+    readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+  ) as PackageJson;
+
+  if (!packageJson.version) throw new Error("package.json is missing version");
+
+  return packageJson.version;
+}
 
 export const escrowAbi = [
   {
