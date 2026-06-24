@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.4 (2026-06-24)
+
+### Patch Changes
+
+- Read CLI version output from package metadata instead of a hardcoded source fallback.
+
 ## 0.6.3 (2026-06-24)
 
 ### Patch Changes
