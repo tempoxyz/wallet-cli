@@ -100,14 +100,19 @@ jobs:
         run: pnpm changelog:version
 
       - name: Check release tree is clean
+        id: diff
         run: |
-          if ! git diff --quiet; then
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "Pending changelog changes exist. Merge the generated release PR before dispatching a release." >&2
             git diff -- package.json CHANGELOG.md .changelog
             exit 1
           fi
 
       - name: Create release tag when version is unreleased
+        if: steps.diff.outputs.changed == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
