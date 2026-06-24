@@ -18,29 +18,52 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check changelog entry exists
+      - name: Classify changed files
+        id: changes
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
+          CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD")
           CHANGELOGS=$(git diff --name-only "origin/${BASE_REF}...HEAD" -- '.changelog/*.md' | grep -v '^.changelog/README.md$' || true)
-          if [ -z "$CHANGELOGS" ]; then
+          RELEASE_CHANGES=$(echo "$CHANGED" | grep -vE '^(\.changelog/|\.github/|\.gitignore|README\.md|AGENTS\.md|LICENSE(\.md)?$)' || true)
+
+          if [ -n "$CHANGELOGS" ]; then
+            echo "has_changelog=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changelog=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "$RELEASE_CHANGES" ]; then
+            echo "requires_changelog=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "requires_changelog=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check changelog entry exists
+        if: steps.changes.outputs.requires_changelog == 'true'
+        run: |
+          if [ "${{ steps.changes.outputs.has_changelog }}" != "true" ]; then
             echo "::error::A changelog entry is required for this PR. Add a .changelog/*.md file."
             exit 1
           fi
 
       - name: Setup Node.js
+        if: steps.changes.outputs.has_changelog == 'true'
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22"
 
       - name: Setup pnpm
+        if: steps.changes.outputs.has_changelog == 'true'
         run: |
           corepack enable
           corepack prepare pnpm@11.0.8 --activate
 
       - name: Install dependencies
+        if: steps.changes.outputs.has_changelog == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Validate changelog entries
+        if: steps.changes.outputs.has_changelog == 'true'
         run: pnpm changelog:validate
