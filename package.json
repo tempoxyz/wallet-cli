@@ -1,6 +1,6 @@
 {
   "name": "wallet-cli",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Tempo wallet and request CLI extension package",
   "homepage": "https://github.com/tempoxyz/wallet-cli#readme",
   "bugs": {
