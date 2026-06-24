@@ -51,7 +51,7 @@ const options = z.object({
   bearer: z.string().optional().describe("Authorization bearer token"),
   "write-meta": z.string().optional().describe("Write response metadata JSON to file"),
   proxy: z.string().optional().describe("Use an HTTP/HTTPS proxy"),
-  "no-proxy": z.boolean().optional().describe("Disable all proxy use"),
+  noProxy: z.boolean().optional().describe("Disable all proxy use"),
   "max-redirs": z.coerce.number().optional().describe("Maximum redirects when -L is used"),
   http2: z.boolean().optional().describe("Enable HTTP/2"),
   "http1.1": z.boolean().optional().describe("Force HTTP/1.1 only"),
@@ -148,7 +148,7 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
     method: options.request,
     maxSpend: options["max-spend"],
     network: options.network,
-    noProxy: options["no-proxy"],
+    noProxy: options.noProxy,
     output: options.output,
     privateKey: options["private-key"],
     proxy: options.proxy,
@@ -188,6 +188,13 @@ function normalizeIncurArgv(argv: readonly string[]) {
         index++;
         continue;
       }
+    }
+    if (arg === "--no-proxy") {
+      // Incur treats --no-foo as boolean negation of --foo. `tempo request`
+      // intentionally supports curl's separate --proxy <url> and --no-proxy
+      // flags, so route the spelling around Incur's negation parser.
+      out.push("--noProxy");
+      continue;
     }
     if (arg === "-j" || arg === "--json-output") {
       out.push("--format", "json");

@@ -337,6 +337,7 @@ describe("request command", () => {
         "--connect-timeout",
         "2",
         "--insecure",
+        "--no-proxy",
         "--max-redirs",
         "3",
         "https://example.com",
@@ -346,6 +347,7 @@ describe("request command", () => {
       insecure: true,
       maxRedirs: 3,
       maxSpend: "1.00",
+      noProxy: true,
       url: "https://example.com",
     });
   });
