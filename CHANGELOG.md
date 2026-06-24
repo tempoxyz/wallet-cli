@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.3 (2026-06-24)
+
+### Patch Changes
+
+- Fix `tempo request --no-proxy` so it disables proxy use instead of being parsed as an invalid negation of `--proxy`.
+
 ## 0.6.2 (2026-06-23)
 
 ### Patch Changes
