@@ -17,7 +17,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -51,7 +51,6 @@ jobs:
         if: steps.diff.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          PUSH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
@@ -61,7 +60,7 @@ jobs:
           git checkout -B "$BRANCH"
           git add package.json CHANGELOG.md .changelog
           git commit -m "chore: release ${VERSION}"
-          git push --force "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:"$BRANCH"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:"$BRANCH"
 
           PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')
           if [ -n "$PR_NUMBER" ]; then
@@ -78,7 +77,7 @@ jobs:
       actions: write
       contents: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false

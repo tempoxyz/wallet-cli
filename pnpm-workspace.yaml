@@ -1,5 +1,11 @@
 overrides:
+  esbuild: 0.28.1
   ws: 8.21.0
+
+onlyBuiltDependencies:
+  - esbuild
 
 allowBuilds:
   esbuild: true
+
+minimumReleaseAge: 1440
