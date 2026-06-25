@@ -1,10 +1,7 @@
 name: Changelog Generate
 
-# pull_request_target runs in the context of the base branch, giving access
-# to secrets even for fork PRs. This workflow only writes to same-repo branches
-# and never executes code from forked PRs.
 on:
-  pull_request_target:
+  pull_request:
     types: [labeled]
 
 concurrency: ${{ github.workflow }}-${{ github.event.number }}
@@ -13,7 +10,7 @@ permissions: {}
 
 jobs:
   generate:
-    if: startsWith(github.event.label.name, 'changelog:')
+    if: startsWith(github.event.label.name, 'changelog:') && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     environment: release
     permissions: {}
@@ -57,7 +54,7 @@ jobs:
           permission-pull-requests: write
           permission-metadata: read
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         if: steps.source.outputs.same_repo == 'true'
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
