@@ -20,7 +20,7 @@ import {
   listSessions,
   syncSessions,
 } from "./commands/sessions.js";
-import { fetchServiceList, fetchServices } from "./commands/services.js";
+import { fetchServices } from "./commands/services.js";
 import { handleCompatCommand } from "./compat.js";
 import {
   completionsArgs,
@@ -230,11 +230,11 @@ cli.command("services", {
   alias: globalAlias,
   output: servicesOutput,
   async run({ args, options }) {
-    if (args.serviceId === "list" && !options.search) return fetchServiceList();
-    return fetchServices({
+    const result = await fetchServices({
       search: options.search,
       serviceId: args.serviceId === "list" ? undefined : args.serviceId,
     });
+    return Array.isArray(result) ? { services: result } : result;
   },
 });
 

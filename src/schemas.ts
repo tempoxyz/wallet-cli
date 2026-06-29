@@ -329,9 +329,11 @@ export const servicesOptions = z.object({
   search: z.string().optional().describe("Search by name, description, tags, or category"),
 });
 
-export const servicesOutput = z.union([z.array(serviceOutput), serviceDetailOutput]);
+export const servicesListOutput = z.object({
+  services: z.array(serviceOutput),
+});
 
-export const servicesListOutput = z.array(serviceOutput);
+export const servicesOutput = z.union([servicesListOutput, serviceDetailOutput]);
 
 export const completionsArgs = z.object({
   shell: z.enum(["bash", "elvish", "fish", "powershell", "zsh"]).optional(),

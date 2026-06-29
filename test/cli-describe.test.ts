@@ -118,6 +118,21 @@ describe("generated CLI metadata", () => {
       browser: false,
     });
   });
+
+  it("returns services wrapped in an object for services command schema", async () => {
+    const output = await walletCli(["services", "--schema", "--format", "json"]);
+    const schema = JSON.parse(output) as {
+      output: { anyOf?: { properties?: { services?: unknown } }[] };
+    };
+    expect(schema.output.anyOf?.[0]?.properties).toHaveProperty("services");
+  });
+
+  it("returns services list wrapped in an object when executed with --format json", async () => {
+    const output = await walletCli(["services", "--format", "json"]);
+    const json = JSON.parse(output) as { services?: unknown };
+    expect(json).toHaveProperty("services");
+    expect(Array.isArray(json.services)).toBe(true);
+  });
 });
 
 async function walletCli(args: string[]) {
