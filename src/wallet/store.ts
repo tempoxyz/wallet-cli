@@ -24,9 +24,12 @@ export type WalletState = {
     access: string;
     chainId: number;
     expiry?: number | undefined;
+    handle?: unknown | undefined;
+    keyPair?: unknown | undefined;
     keyAuthorization?: unknown | undefined;
     keyType?: string | undefined;
     privateKey?: string | undefined;
+    publicKey?: string | undefined;
     limits: readonly AccessKeyLimit[];
     scopes?: readonly AccessKeyScope[] | undefined;
   }[];
@@ -73,9 +76,12 @@ export async function loadWalletState(): Promise<WalletState> {
         access: item.access,
         chainId: item.chainId,
         expiry: typeof item.expiry === "number" ? item.expiry : undefined,
+        ...(isRecord(item.handle) ? { handle: reviveBigInts(item.handle) } : {}),
+        ...(isRecord(item.keyPair) ? { keyPair: reviveBigInts(item.keyPair) } : {}),
         keyAuthorization: reviveBigInts(item.keyAuthorization),
         keyType: typeof item.keyType === "string" ? item.keyType : undefined,
         privateKey: typeof item.privateKey === "string" ? item.privateKey : undefined,
+        publicKey: typeof item.publicKey === "string" ? item.publicKey : undefined,
         limits: parseAccessKeyLimits(item.limits),
         scopes: parseAccessKeyScopes(item.scopes),
       },
@@ -97,6 +103,10 @@ function reviveBigInts(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(reviveBigInts);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, reviveBigInts(item)]));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function parseAccessKeyLimits(value: unknown): AccessKeyLimit[] {

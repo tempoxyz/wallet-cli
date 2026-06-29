@@ -399,6 +399,29 @@ limit = "100000000"
       overrides: { expiry: 4_102_444_800, keyAuthorization: { signature: "0x1234" } },
       status: "pending",
     },
+    {
+      name: "managed pending",
+      overrides: {
+        expiry: 4_102_444_800,
+        handle: { jwk: { crv: "P-256", kty: "EC" }, kind: "webcrypto-p256" },
+        keyAuthorization: { signature: "0x1234" },
+        keyType: "p256",
+        privateKey: undefined,
+        publicKey: "0x04abcd",
+      },
+      status: "pending",
+    },
+    {
+      name: "managed ready",
+      overrides: {
+        expiry: 4_102_444_800,
+        handle: { jwk: { crv: "P-256", kty: "EC" }, kind: "webcrypto-p256" },
+        keyType: "p256",
+        privateKey: undefined,
+        publicKey: "0x04abcd",
+      },
+      status: "ready",
+    },
   ])("keys output reports $name local key status", async ({ overrides, status }) => {
     const result = await currentKeysOutput({
       walletAddress: null,

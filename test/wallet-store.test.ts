@@ -215,6 +215,21 @@ describe("wallet store file", () => {
     );
   });
 
+  it("round trips accounts SDK managed access key material", async () => {
+    await useTempHome();
+    const managedKey = {
+      ...walletState().accessKeys[0]!,
+      handle: { jwk: { crv: "P-256", kty: "EC" }, kind: "webcrypto-p256" },
+      keyType: "p256",
+      privateKey: undefined,
+      publicKey: "0x04abcd",
+    };
+
+    await saveWalletState(walletState({ accessKeys: [managedKey] }));
+
+    expect(await loadWalletState()).toEqual(walletState({ accessKeys: [managedKey] }));
+  });
+
   it("round trips access key limit periods and call scopes", async () => {
     await useTempHome();
     const state = walletState({

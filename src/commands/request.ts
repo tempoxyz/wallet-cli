@@ -50,7 +50,7 @@ import {
   rpcUrl,
 } from "../shared/network.js";
 import { getRecord, nowSeconds, parseOnChainBigInt, stringValue } from "../shared/utils.js";
-import { loadWalletState, type WalletState } from "../wallet/store.js";
+import type { WalletState } from "../wallet/store.js";
 
 export type RequestOptions = {
   bearer?: string | undefined;
@@ -522,7 +522,7 @@ async function payAndRetryRequest(
     payment.onChallengeReceived(async ({ challenge, createCredential }) => {
       enforceMaxSpend(challenge, options);
       if (provider && providerState!.store.getState().accounts.length === 0)
-        await connect(provider);
+        await ensureProviderAccounts(provider);
       return await createCredential(paymentContext(challenge, options) as never);
     });
 
@@ -662,15 +662,11 @@ async function resolvePaymentIdentity(options: RequestOptions) {
     };
   }
 
-  const walletState = await loadWalletState();
-  const stored = await storedAccessKeyIdentity(walletState, options);
-  if (stored) return stored;
-
   const provider = createProvider({ network: options.network });
   const providerState = provider as unknown as {
     store: { getState(): { accounts: { address: string }[]; activeAccount: number } };
   };
-  if (providerState.store.getState().accounts.length === 0) await connect(provider);
+  await ensureProviderAccounts(provider);
   const getClient = ({ chainId }: { chainId?: number | undefined }) => {
     const client = provider.getClient({ chainId });
     const state = providerState.store.getState();
@@ -697,6 +693,12 @@ async function resolvePaymentIdentity(options: RequestOptions) {
       ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
     },
   };
+}
+
+async function ensureProviderAccounts(provider: Parameters<typeof connect>[0]) {
+  const accounts = (await provider.request({ method: "eth_accounts" })) as unknown[];
+  if (accounts.length > 0) return;
+  await connect(provider);
 }
 
 export async function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptions) {
