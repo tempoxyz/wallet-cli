@@ -118,6 +118,26 @@ describe("generated CLI metadata", () => {
       browser: false,
     });
   });
+
+  it("returns strongly typed schema properties for sessions list output", async () => {
+    const output = await walletCli(["sessions", "list", "--schema", "--format", "json"]);
+    const schema = JSON.parse(output) as {
+      output: {
+        properties: {
+          sessions: {
+            items: {
+              properties: {
+                channel_id: { type: string };
+                status: { type: string };
+              };
+            };
+          };
+        };
+      };
+    };
+    expect(schema.output.properties.sessions.items.properties.channel_id.type).toBe("string");
+    expect(schema.output.properties.sessions.items.properties.status.type).toBe("string");
+  });
 });
 
 async function walletCli(args: string[]) {
