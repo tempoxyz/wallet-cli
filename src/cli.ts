@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Cli } from "incur";
+import { Cli, Mcp } from "incur";
 
 import { version } from "./shared/constants.js";
 import {
@@ -40,6 +40,7 @@ import {
   revokeOptions,
   revokeOutput,
   servicesArgs,
+  servicesMcpOutput,
   servicesOutput,
   servicesOptions,
   sessionsCloseArgs,
@@ -263,6 +264,28 @@ void main();
 
 export default cli;
 
+function createMcpCommands() {
+  const commands = Cli.toCommands.get(cli);
+  if (!commands) throw new Error("Unable to access wallet commands for MCP server");
+
+  const mcpCommands = new Map<string, unknown>(commands);
+  const servicesCommand = mcpCommands.get("services");
+  if (isRunnableCommand(servicesCommand)) {
+    mcpCommands.set("services", {
+      ...servicesCommand,
+      output: servicesMcpOutput,
+      async run(context: unknown) {
+        const value = await servicesCommand.run(context);
+        // MCP structuredContent must be a top-level object. Keep normal CLI output unchanged.
+        if (Array.isArray(value)) return { services: value };
+        return value;
+      },
+    });
+  }
+
+  return mcpCommands;
+}
+
 async function main() {
   const rawArgs = process.argv.slice(2);
   if (rawArgs.includes("--describe")) {
@@ -274,9 +297,27 @@ async function main() {
 
   if (handleBuiltinSchema(args)) process.exit(0);
 
+  if (args.includes("--mcp")) {
+    await Mcp.serve(cli.name, version, createMcpCommands(), {
+      env: cli.env,
+      vars: cli.vars,
+      version,
+    });
+    return;
+  }
+
   if (await handleCompatCommand(args)) process.exit(0);
 
   await cli.serve(args);
+}
+
+function isRunnableCommand(value: unknown): value is {
+  output?: unknown;
+  run: (context: unknown) => unknown | Promise<unknown>;
+} {
+  return (
+    typeof value === "object" && value !== null && "run" in value && typeof value.run === "function"
+  );
 }
 
 function normalizeServicesOutputAliases(args: readonly string[]) {
