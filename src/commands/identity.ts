@@ -384,9 +384,16 @@ function parseKeyAuthorizationScopes(value: unknown): readonly AccessKeyScope[] 
 
 function localKeyStatus(key: WalletState["accessKeys"][number]) {
   if (key.expiry !== undefined && key.expiry <= Math.floor(Date.now() / 1000)) return "expired";
-  if (!key.privateKey) return "unusable";
+  if (!hasLocalSigningMaterial(key)) return "unusable";
   if (key.keyAuthorization) return "pending";
   return "ready";
+}
+
+function hasLocalSigningMaterial(key: WalletState["accessKeys"][number]) {
+  if (key.privateKey) return true;
+  if (key.publicKey && key.handle && typeof key.handle === "object") return true;
+  if (key.keyPair && typeof key.keyPair === "object") return true;
+  return false;
 }
 
 type TokenBalance = {
