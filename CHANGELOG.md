@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.5 (2026-07-01)
+
+### Patch Changes
+
+- Use accounts SDK managed access keys for request payments and report their local key status correctly.
+- Harden supply chain configuration, dependency updates, and release workflows.
+
 ## 0.6.4 (2026-06-24)
 
 ### Patch Changes
