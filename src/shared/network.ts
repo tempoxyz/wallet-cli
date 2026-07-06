@@ -1,7 +1,7 @@
 import { createPublicClient, http, type Address } from "viem";
 import { Chain } from "viem/tempo";
 
-import { mainnetEscrow, moderatoEscrow, usdcToken } from "./constants.js";
+import { mainnetEscrow, moderatoEscrow, moderatoToken, usdcToken } from "./constants.js";
 
 export function chainId(network: string | undefined) {
   return network === "testnet" ? 42431 : 4217;
@@ -24,6 +24,10 @@ export function escrowContract(chain: number) {
   return (chain === 42431 ? moderatoEscrow : mainnetEscrow) as Address;
 }
 
+export function tokenAddress(chain: number) {
+  return (chain === 42431 ? moderatoToken : usdcToken) as Address;
+}
+
 export function createTempoPublicClient(network: string | undefined) {
   const chain = chainId(network) === 42431 ? Chain.tempoModerato : Chain.tempo;
   return createPublicClient({
@@ -33,12 +37,20 @@ export function createTempoPublicClient(network: string | undefined) {
 }
 
 export function tokenDecimals(token: string) {
-  if (token.toLowerCase() === "0x20c000000000000000000000b9537d11c60e8b50") return 6;
+  if (
+    token.toLowerCase() === usdcToken ||
+    token.toLowerCase() === moderatoToken
+  )
+    return 6;
   return 18;
 }
 
 export function tokenSymbol(token: string) {
-  if (token.toLowerCase() === usdcToken) return "USDC.e";
+  if (
+    token.toLowerCase() === usdcToken ||
+    token.toLowerCase() === moderatoToken
+  )
+    return "USDC.e";
   return token;
 }
 

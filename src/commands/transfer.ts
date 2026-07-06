@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { encodeFunctionData, keccak256, parseUnits, serializeTypedData } from "viem";
 import { Actions } from "viem/tempo";
 
-import { usdcToken, version } from "../shared/constants.js";
+import { usdcToken, moderatoToken, version } from "../shared/constants.js";
 import { networkError, usageError } from "../shared/errors.js";
 import { authUrl, chainId, tokenDecimals, tokenSymbol } from "../shared/network.js";
 import { decodeBase64UrlJson, getRecord, stringValue } from "../shared/utils.js";
@@ -212,8 +212,8 @@ function buildMppCreditsTransfer(options: {
     throw usageError(
       `Invalid configuration: MPP challenge is for chain ${requestChainId}, but selected chain is ${selectedChainId}`,
     );
-  if (token !== usdcToken)
-    throw usageError(`Invalid configuration: MPP challenge currency ${token} is not ${usdcToken}`);
+  if (token !== usdcToken && token !== moderatoToken)
+    throw usageError(`Invalid configuration: MPP challenge currency ${token} is not a supported USDC.e token`);
   if (!/^0x[0-9a-f]{40}$/.test(recipient))
     throw usageError("Invalid configuration: MPP challenge is missing a recipient address");
   if (!/^\d+$/.test(amount))

@@ -4,7 +4,7 @@ import { erc20Abi, formatUnits, isAddress, type Address } from "viem";
 import { Actions } from "viem/tempo";
 
 import { version } from "../shared/constants.js";
-import { chainId, createTempoPublicClient, networkName, tokenSymbol } from "../shared/network.js";
+import { chainId, createTempoPublicClient, networkName, tokenAddress, tokenSymbol } from "../shared/network.js";
 import { usageError } from "../shared/errors.js";
 import { channelsDbPath, runProcess } from "../shared/process.js";
 import {
@@ -279,7 +279,7 @@ export async function currentKeysOutput(options: {
   const balances = new Map<string, TokenBalance | null>();
   const keys = [];
   for (const key of options.accessKeys) {
-    const token = key.limits[0]?.token ?? "0x20c000000000000000000000b9537d11c60e8b50";
+    const token = key.limits[0]?.token ?? tokenAddress(key.chainId);
     const balance = balances.has(token.toLowerCase())
       ? (balances.get(token.toLowerCase()) ?? null)
       : await tokenBalance({
@@ -313,7 +313,7 @@ function currentKeyOutput(options: {
 }) {
   if (!options.key) return null;
   const limit = options.key.limits[0];
-  const token = limit?.token ?? "0x20c000000000000000000000b9537d11c60e8b50";
+  const token = limit?.token ?? tokenAddress(options.chain ?? options.key.chainId);
   const spendingLimits = accessKeyLimitsOutput(options.key);
   return {
     address: options.key.address.toLowerCase(),
@@ -414,7 +414,7 @@ async function tokenBalance(options: {
   network?: string | undefined;
 }): Promise<TokenBalance | null> {
   if (!options.walletAddress) return null;
-  const token = options.token ?? "0x20c000000000000000000000b9537d11c60e8b50";
+  const token = options.token ?? tokenAddress(chainId(options.network));
   try {
     const client = createTempoPublicClient(options.network);
     const raw = await client.readContract({
