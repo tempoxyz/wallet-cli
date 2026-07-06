@@ -89,7 +89,7 @@ async function mcpCall(params: Record<string, unknown>) {
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params })}\n`);
 
   try {
-    const response = await waitForResponse(responses, 2);
+    const response = await waitForResponse(responses, 2, () => stderr);
     child.stdin.end();
     const exitCode = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     if (exitCode !== 0) throw new Error(stderr || `MCP process exited with ${exitCode}`);
@@ -100,13 +100,18 @@ async function mcpCall(params: Record<string, unknown>) {
   }
 }
 
-async function waitForResponse(responses: unknown[], id: number) {
-  for (let index = 0; index < 100; index++) {
+async function waitForResponse(responses: unknown[], id: number, getStderr: () => string) {
+  for (let index = 0; index < 500; index++) {
     const response = responses.find((item) => isRpcResponse(item, id));
     if (response) return response;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  throw new Error(`Timed out waiting for MCP response ${id}`);
+  const diagnostic = getStderr().trim();
+  throw new Error(
+    diagnostic
+      ? `Timed out waiting for MCP response ${id}: ${diagnostic}`
+      : `Timed out waiting for MCP response ${id}`,
+  );
 }
 
 function isRpcResponse(
