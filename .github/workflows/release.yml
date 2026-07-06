@@ -13,6 +13,8 @@ jobs:
   prepare:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
     permissions:
       contents: write
       pull-requests: write
@@ -70,7 +72,8 @@ jobs:
           fi
 
   release:
-    if: github.event_name == 'workflow_dispatch'
+    needs: [prepare]
+    if: always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.prepare.result == 'success' && needs.prepare.outputs.changed == 'false'))
     runs-on: ubuntu-latest
     environment: release
     permissions:
