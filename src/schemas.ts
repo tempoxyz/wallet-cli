@@ -333,6 +333,11 @@ export const servicesOutput = z.union([z.array(serviceOutput), serviceDetailOutp
 
 export const servicesListOutput = z.array(serviceOutput);
 
+export const servicesMcpOutput = z.union([
+  z.object({ services: z.array(serviceOutput) }),
+  serviceDetailOutput,
+]);
+
 export const completionsArgs = z.object({
   shell: z.enum(["bash", "elvish", "fish", "powershell", "zsh"]).optional(),
 });
