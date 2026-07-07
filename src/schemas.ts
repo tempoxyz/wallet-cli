@@ -178,8 +178,8 @@ export const sessionOutput = z.object({
   remaining: z.string(),
   status: z.string(),
   remaining_secs: z.number().optional(),
-  created_at: z.string(),
-  last_used_at: z.string(),
+  created_at: z.string().nullable(),
+  last_used_at: z.string().nullable(),
 });
 
 export const sessionsListOutput = z.object({
