@@ -44,7 +44,7 @@
     "viem": "2.53.1"
   },
   "devDependencies": {
-    "@types/node": "25.9.2",
+    "@types/node": "26.1.0",
     "@yao-pkg/pkg": "6.20.0",
     "esbuild": "0.28.1",
     "tsx": "4.22.4",
