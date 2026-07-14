@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { Challenge, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession, tempo } from "mppx/client";
+import { Keystore } from "accounts";
 import { Session as TempoSession } from "mppx/tempo";
 import {
   Agent,
@@ -50,7 +51,7 @@ import {
   rpcUrl,
 } from "../shared/network.js";
 import { getRecord, nowSeconds, parseOnChainBigInt, stringValue } from "../shared/utils.js";
-import type { WalletState } from "../wallet/store.js";
+import { loadWalletState, type WalletState } from "../wallet/store.js";
 
 export type RequestOptions = {
   bearer?: string | undefined;
@@ -644,7 +645,7 @@ async function paySessionAndRetryRequest(
   }
 }
 
-async function resolvePaymentIdentity(options: RequestOptions) {
+export async function resolvePaymentIdentity(options: RequestOptions) {
   const privateKey = options.privateKey ?? process.env.TEMPO_PRIVATE_KEY;
   if (privateKey) {
     const account = privateKeyToAccount(privateKey as `0x${string}`);
@@ -661,6 +662,9 @@ async function resolvePaymentIdentity(options: RequestOptions) {
       signerAddress: account.address,
     };
   }
+
+  const storedIdentity = await storedAccessKeyIdentity(await loadWalletState(), options);
+  if (storedIdentity) return storedIdentity;
 
   const provider = createProvider({ network: options.network });
   const providerState = provider as unknown as {
@@ -707,7 +711,7 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
 
   const expectedChain = chainId(options.network);
   for (const key of walletState.accessKeys) {
-    if (key.chainId !== expectedChain || !key.privateKey) continue;
+    if (key.chainId !== expectedChain) continue;
     if (key.keyType && key.keyType !== "secp256k1" && key.keyType !== "p256") continue;
 
     const keyAuthorizationManager = KeyAuthorizationManager.memory();
@@ -722,8 +726,8 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
       );
     }
 
-    const account =
-      key.keyType === "p256"
+    const account = key.privateKey
+      ? key.keyType === "p256"
         ? TempoAccount.fromP256(key.privateKey as `0x${string}`, {
             access: activeAccount.address as `0x${string}`,
             keyAuthorizationManager,
@@ -731,7 +735,21 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
         : TempoAccount.fromSecp256k1(key.privateKey as `0x${string}`, {
             access: activeAccount.address as `0x${string}`,
             keyAuthorizationManager,
-          });
+          })
+      : key.keyType === "p256" && key.handle && key.publicKey
+        ? await Keystore.webCryptoP256({ extractable: true }).toAccount(
+            {
+              handle: key.handle as Keystore.Handle,
+              keyType: key.keyType,
+              publicKey: key.publicKey as `0x${string}`,
+            },
+            {
+              access: activeAccount.address as `0x${string}`,
+              keyAuthorizationManager,
+            },
+          )
+        : undefined;
+    if (!account) continue;
     if (key.address.toLowerCase() !== account.accessKeyAddress.toLowerCase()) continue;
 
     const getClient = ({ chainId }: { chainId?: number | undefined }) =>

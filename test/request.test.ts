@@ -4,14 +4,16 @@ import { join } from "node:path";
 
 import { Challenge, Credential, Method, z } from "mppx";
 import { Mppx } from "mppx/client";
+import { Keystore } from "accounts";
 import { decodeFunctionData } from "viem";
-import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
+import { Abis as TempoAbis, Channel as TempoChannel, KeyAuthorizationManager } from "viem/tempo";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildTopUpTransactionRequest,
   isSessionInvalidationResponse,
   parseRequestArgs,
+  resolvePaymentIdentity,
   runRequest,
   storedAccessKeyIdentity,
   tempoPaymentChallengeResponse,
@@ -452,6 +454,41 @@ describe("request command", () => {
 
     expect(identity?.signerAddress.toLowerCase()).toBe(testAccessKey.toLowerCase());
     expect(stored).toStrictEqual(keyAuthorization);
+  });
+
+  it("uses stored P-256 access keys for payment identity resolution", async () => {
+    await useTempHome();
+    const keystore = Keystore.webCryptoP256({ extractable: true });
+    const { handle, publicKey } = await keystore.createKey();
+    const account = await keystore.toAccount(
+      { handle, keyType: "p256", publicKey },
+      { access: testWallet, keyAuthorizationManager: KeyAuthorizationManager.memory() },
+    );
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            address: account.accessKeyAddress,
+            access: testWallet,
+            chainId: 4217,
+            expiry: 1783809942,
+            handle,
+            keyType: "p256",
+            limits: [],
+            publicKey,
+          },
+        ],
+      }),
+    );
+
+    const identity = await resolvePaymentIdentity(requestOptions("https://paid.example.com"));
+
+    expect(identity.address.toLowerCase()).toBe(testWallet.toLowerCase());
+    expect(identity.signerAddress.toLowerCase()).toBe(account.accessKeyAddress.toLowerCase());
+    expect(identity.methodOptions).toMatchObject({
+      account: { accessKeyAddress: account.accessKeyAddress, keyType: "p256" },
+      mode: "pull",
+    });
   });
 
   it("keeps v2 session descriptors for reuse", async () => {
