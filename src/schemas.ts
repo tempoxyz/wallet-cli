@@ -168,8 +168,22 @@ export const spendCreditsOutput = z.object({
   dry_run: z.boolean().optional(),
 });
 
+export const sessionOutput = z.object({
+  channel_id: z.string(),
+  network: z.string(),
+  origin: z.string(),
+  symbol: z.string(),
+  deposit: z.string(),
+  spent: z.string(),
+  remaining: z.string(),
+  status: z.string(),
+  remaining_secs: z.number().optional(),
+  created_at: z.string().nullable(),
+  last_used_at: z.string().nullable(),
+});
+
 export const sessionsListOutput = z.object({
-  sessions: z.array(z.unknown()),
+  sessions: z.array(sessionOutput),
   total: z.number(),
 });
 
