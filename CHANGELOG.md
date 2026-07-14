@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.6 (2026-07-14)
+
+### Patch Changes
+
+- Use stored P-256 access keys when creating MPP payment credentials.
+- Fix typed sessionOutput schema to allow nullable created_at and last_used_at fields.
+- Wrap `tempo wallet services` list results in a `services` object for MCP tool calls.
+- Use the network-appropriate TIP-20 token for wallet balances, funding, sessions, and transfers, including six-decimal PathUSD support on Moderato testnet.
+
 ## 0.6.5 (2026-07-01)
 
 ### Patch Changes
