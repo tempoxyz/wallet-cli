@@ -1,9 +1,8 @@
 import type { Provider as CoreProvider } from "accounts";
 import { Actions } from "viem/tempo";
 
-import { usdcToken } from "../shared/constants.js";
 import { usageError } from "../shared/errors.js";
-import { chainId } from "../shared/network.js";
+import { chainId, tokenAddress } from "../shared/network.js";
 import { openExternal } from "../shared/process.js";
 import { formatMicroUnits, sleep } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
@@ -104,7 +103,7 @@ async function fundingBalance(options: {
   }) as CoreProvider.Provider & { getClient: () => unknown };
   const rawBalance = (await Actions.token.getBalance(provider.getClient() as never, {
     account: options.walletAddress as `0x${string}`,
-    token: usdcToken,
+    token: tokenAddress(options.chainId),
   })) as bigint;
 
   return {

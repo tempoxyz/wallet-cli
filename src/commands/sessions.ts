@@ -12,7 +12,6 @@ import {
   logHeadMargin,
   logQueryBlockRange,
   logScanDepth,
-  usdcToken,
 } from "../shared/constants.js";
 import { usageError } from "../shared/errors.js";
 import {
@@ -20,6 +19,7 @@ import {
   createTempoPublicClient,
   escrowContract,
   networkName,
+  tokenAddress,
   tokenDecimals,
   tokenSymbol,
 } from "../shared/network.js";
@@ -623,7 +623,7 @@ function virtualChannelRecord(options: { channelId: string; chain: number }): Ch
     escrow_contract: escrowContract(options.chain),
     payer: "",
     authorized_signer: "0x0000000000000000000000000000000000000000",
-    token: usdcToken,
+    token: tokenAddress(options.chain),
     deposit: 0n,
     cumulative_amount: 0n,
     accepted_cumulative: 0n,
@@ -663,9 +663,9 @@ function sessionItem(record: ChannelRecord) {
     network: record.network,
     origin: record.origin,
     symbol: tokenSymbol(record.token),
-    deposit: formatTokenUnits(record.deposit, tokenDecimals(record.token)),
-    spent: formatTokenUnits(spent, tokenDecimals(record.token)),
-    remaining: formatTokenUnits(remaining, tokenDecimals(record.token)),
+    deposit: formatTokenUnits(record.deposit, tokenDecimals()),
+    spent: formatTokenUnits(spent, tokenDecimals()),
+    remaining: formatTokenUnits(remaining, tokenDecimals()),
     status,
     ...(status === "closing" || status === "finalizable"
       ? {
@@ -834,7 +834,7 @@ async function getOnChainChannel(options: {
     const settled = parseOnChainBigInt(record.settled ?? tuple[0]);
     const closeRequestedAt = parseOnChainBigInt(record.closeRequestedAt ?? tuple[2]);
     if (deposit === 0n) return null;
-    return { token: usdcToken, deposit, settled, closeRequestedAt };
+    return { token: tokenAddress(chainId(options.network)), deposit, settled, closeRequestedAt };
   }
 
   const value = (await createTempoPublicClient(options.network).readContract({

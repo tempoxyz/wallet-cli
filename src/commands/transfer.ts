@@ -3,9 +3,9 @@ import { readFile } from "node:fs/promises";
 import { encodeFunctionData, keccak256, parseUnits, serializeTypedData } from "viem";
 import { Actions } from "viem/tempo";
 
-import { usdcToken, version } from "../shared/constants.js";
+import { version } from "../shared/constants.js";
 import { networkError, usageError } from "../shared/errors.js";
-import { authUrl, chainId, tokenDecimals, tokenSymbol } from "../shared/network.js";
+import { authUrl, chainId, tokenAddress, tokenDecimals, tokenSymbol } from "../shared/network.js";
 import { decodeBase64UrlJson, getRecord, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -53,7 +53,7 @@ export async function transferTokens(options: {
 
   const provider = createProvider({ network: options.options.network });
   const call = Actions.token.transfer.call({
-    amount: parseUnits(args.amount, tokenDecimals(args.token)),
+    amount: parseUnits(args.amount, tokenDecimals()),
     token,
     to,
   });
@@ -212,8 +212,11 @@ function buildMppCreditsTransfer(options: {
     throw usageError(
       `Invalid configuration: MPP challenge is for chain ${requestChainId}, but selected chain is ${selectedChainId}`,
     );
-  if (token !== usdcToken)
-    throw usageError(`Invalid configuration: MPP challenge currency ${token} is not ${usdcToken}`);
+  const selectedToken = tokenAddress(selectedChainId);
+  if (token !== selectedToken)
+    throw usageError(
+      `Invalid configuration: MPP challenge currency ${token} does not match token ${selectedToken} for chain ${selectedChainId}`,
+    );
   if (!/^0x[0-9a-f]{40}$/.test(recipient))
     throw usageError("Invalid configuration: MPP challenge is missing a recipient address");
   if (!/^\d+$/.test(amount))

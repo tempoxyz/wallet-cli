@@ -4,7 +4,13 @@ import { erc20Abi, formatUnits, isAddress, type Address } from "viem";
 import { Actions } from "viem/tempo";
 
 import { version } from "../shared/constants.js";
-import { chainId, createTempoPublicClient, networkName, tokenSymbol } from "../shared/network.js";
+import {
+  chainId,
+  createTempoPublicClient,
+  networkName,
+  tokenAddress,
+  tokenSymbol,
+} from "../shared/network.js";
 import { usageError } from "../shared/errors.js";
 import { channelsDbPath, runProcess } from "../shared/process.js";
 import {
@@ -248,19 +254,22 @@ export async function currentWhoamiOutput(options: {
   accessKeys: WalletState["accessKeys"];
   network?: string | undefined;
 }) {
+  const token =
+    options.accessKeys[0]?.limits[0]?.token ??
+    tokenAddress(options.chain ?? chainId(options.network));
   const balance = await tokenBalance({
-    token: options.accessKeys[0]?.limits[0]?.token,
+    token,
     walletAddress: options.walletAddress,
     network: options.network,
   });
   const sessions = await activeSessionStats({
-    token: balance?.token ?? options.accessKeys[0]?.limits[0]?.token,
+    token: balance?.token ?? token,
     walletAddress: options.walletAddress,
   });
   return {
     ready: Boolean(options.walletAddress),
     wallet: options.walletAddress?.toLowerCase() ?? null,
-    balance: balanceOutput(balance, sessions),
+    balance: balanceOutput(balance, sessions, tokenSymbol(token)),
     key: currentKeyOutput({
       key: options.accessKeys[0],
       walletAddress: options.walletAddress,
@@ -279,7 +288,7 @@ export async function currentKeysOutput(options: {
   const balances = new Map<string, TokenBalance | null>();
   const keys = [];
   for (const key of options.accessKeys) {
-    const token = key.limits[0]?.token ?? "0x20c000000000000000000000b9537d11c60e8b50";
+    const token = key.limits[0]?.token ?? tokenAddress(key.chainId);
     const balance = balances.has(token.toLowerCase())
       ? (balances.get(token.toLowerCase()) ?? null)
       : await tokenBalance({
@@ -313,7 +322,7 @@ function currentKeyOutput(options: {
 }) {
   if (!options.key) return null;
   const limit = options.key.limits[0];
-  const token = limit?.token ?? "0x20c000000000000000000000b9537d11c60e8b50";
+  const token = limit?.token ?? tokenAddress(options.chain ?? options.key.chainId);
   const spendingLimits = accessKeyLimitsOutput(options.key);
   return {
     address: options.key.address.toLowerCase(),
@@ -414,7 +423,7 @@ async function tokenBalance(options: {
   network?: string | undefined;
 }): Promise<TokenBalance | null> {
   if (!options.walletAddress) return null;
-  const token = options.token ?? "0x20c000000000000000000000b9537d11c60e8b50";
+  const token = options.token ?? tokenAddress(chainId(options.network));
   try {
     const client = createTempoPublicClient(options.network);
     const raw = await client.readContract({
@@ -468,7 +477,11 @@ async function activeSessionStats(options: {
   }
 }
 
-function balanceOutput(balance: TokenBalance | null, sessions: SessionStats) {
+function balanceOutput(
+  balance: TokenBalance | null,
+  sessions: SessionStats,
+  fallbackSymbol: string,
+) {
   const available = balance?.raw ?? 0n;
   const total = available + sessions.locked;
   return {
@@ -476,7 +489,7 @@ function balanceOutput(balance: TokenBalance | null, sessions: SessionStats) {
     locked: formatTokenUnits(sessions.locked, 6),
     available: balance?.formatted ?? "0.000000",
     active_sessions: sessions.active,
-    symbol: balance?.symbol ?? "USDC.e",
+    symbol: balance?.symbol ?? fallbackSymbol,
   };
 }
 
