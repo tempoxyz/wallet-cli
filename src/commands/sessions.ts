@@ -12,7 +12,6 @@ import {
   logHeadMargin,
   logQueryBlockRange,
   logScanDepth,
-  moderatoToken,
 } from "../shared/constants.js";
 import { usageError } from "../shared/errors.js";
 import {
@@ -664,9 +663,9 @@ function sessionItem(record: ChannelRecord) {
     network: record.network,
     origin: record.origin,
     symbol: tokenSymbol(record.token),
-    deposit: formatTokenUnits(record.deposit, tokenDecimals(record.token)),
-    spent: formatTokenUnits(spent, tokenDecimals(record.token)),
-    remaining: formatTokenUnits(remaining, tokenDecimals(record.token)),
+    deposit: formatTokenUnits(record.deposit, tokenDecimals()),
+    spent: formatTokenUnits(spent, tokenDecimals()),
+    remaining: formatTokenUnits(remaining, tokenDecimals()),
     status,
     ...(status === "closing" || status === "finalizable"
       ? {

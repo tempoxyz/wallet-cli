@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Actions } from "viem/tempo";
 
+const mocks = vi.hoisted(() => ({
+  readContract: vi.fn(async () => 0n),
+}));
+
+vi.mock("viem", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("viem")>();
+  return {
+    ...actual,
+    createPublicClient: vi.fn(() => ({ readContract: mocks.readContract })),
+  };
+});
+
 vi.mock("viem/tempo", async (importOriginal) => {
   const actual = await importOriginal<typeof import("viem/tempo")>();
   return {
@@ -16,6 +28,7 @@ vi.mock("viem/tempo", async (importOriginal) => {
 });
 
 import {
+  currentWhoamiOutput,
   currentKeysOutput,
   keysHandler,
   logoutHandler,
@@ -23,6 +36,7 @@ import {
   whoamiHandler,
 } from "../src/commands/identity.js";
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
+import { moderatoToken } from "../src/shared/constants.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
 
 import {
@@ -45,6 +59,8 @@ import {
 
 afterEach(() => {
   vi.useRealTimers();
+  mocks.readContract.mockReset();
+  mocks.readContract.mockResolvedValue(0n);
 });
 
 describe("wallet store", () => {
@@ -235,6 +251,45 @@ key = "${testPrivateKey}"
 });
 
 describe("identity commands", () => {
+  it("whoami queries and formats the PathUSD balance on testnet", async () => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({
+        accessKeys: [],
+        chainId: 42431,
+      }),
+    );
+    mocks.readContract.mockResolvedValueOnce(1_000_004_996_912n);
+
+    const result = await whoamiHandler({ network: "testnet" });
+
+    expect(mocks.readContract).toHaveBeenCalledWith({
+      address: moderatoToken,
+      abi: expect.any(Array),
+      functionName: "balanceOf",
+      args: [testWallet],
+    });
+    expect(result).toMatchObject({
+      ready: true,
+      balance: {
+        total: "1000004.996912",
+        available: "1000004.996912",
+        symbol: "PathUSD",
+      },
+    });
+  });
+
+  it("uses the PathUSD symbol for an unavailable testnet balance", async () => {
+    const result = await currentWhoamiOutput({
+      walletAddress: null,
+      chain: 42431,
+      accessKeys: [],
+      network: "testnet",
+    });
+
+    expect(result.balance.symbol).toBe("PathUSD");
+  });
+
   it("whoami reports ready with a wallet", async () => {
     await useTempHome();
     await writeWalletState(walletState());

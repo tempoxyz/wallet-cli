@@ -36,21 +36,13 @@ export function createTempoPublicClient(network: string | undefined) {
   });
 }
 
-export function tokenDecimals(token: string) {
-  if (
-    token.toLowerCase() === usdcToken ||
-    token.toLowerCase() === moderatoToken
-  )
-    return 6;
-  return 18;
+export function tokenDecimals() {
+  return 6;
 }
 
 export function tokenSymbol(token: string) {
-  if (
-    token.toLowerCase() === usdcToken ||
-    token.toLowerCase() === moderatoToken
-  )
-    return "USDC.e";
+  if (token.toLowerCase() === usdcToken) return "USDC.e";
+  if (token.toLowerCase() === moderatoToken) return "PathUSD";
   return token;
 }
 
