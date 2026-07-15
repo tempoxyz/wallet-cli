@@ -101,10 +101,12 @@ async function fundingBalance(options: {
   const provider = createProvider({
     network: options.chainId === 42431 ? "testnet" : undefined,
   }) as CoreProvider.Provider & { getClient: () => unknown };
-  const rawBalance = (await Actions.token.getBalance(provider.getClient() as never, {
-    account: options.walletAddress as `0x${string}`,
-    token: tokenAddress(options.chainId),
-  })) as bigint;
+  const rawBalance = (
+    await Actions.token.getBalance(provider.getClient() as never, {
+      account: options.walletAddress as `0x${string}`,
+      token: tokenAddress(options.chainId),
+    })
+  ).amount;
 
   return {
     balance: formatMicroUnits(rawBalance.toString()),

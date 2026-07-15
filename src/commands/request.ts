@@ -1056,10 +1056,12 @@ async function assertSufficientSessionBalance(
   depositRaw: bigint,
 ) {
   const client = createTempoPublicClient(details.chainId === 42431 ? "testnet" : undefined);
-  const balance = (await Actions.token.getBalance(client as never, {
-    account: payer as `0x${string}`,
-    token: details.token as `0x${string}`,
-  })) as bigint;
+  const balance = (
+    await Actions.token.getBalance(client as never, {
+      account: payer as `0x${string}`,
+      token: details.token as `0x${string}`,
+    })
+  ).amount;
   if (balance >= depositRaw) return;
   throw paymentError(
     `Insufficient balance for session deposit: available=${formatTokenAmount(balance)} required=${formatTokenAmount(depositRaw)}`,

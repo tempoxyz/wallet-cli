@@ -52,7 +52,7 @@ export async function transferTokens(options: {
   }
 
   const provider = createProvider({ network: options.options.network });
-  const call = Actions.token.transfer.call({
+  const call = Actions.token.transfer.call(provider.getClient() as never, {
     amount: parseUnits(args.amount, tokenDecimals()),
     token,
     to,

@@ -3,9 +3,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Challenge, Credential, Method, z } from "mppx";
-import { Mppx } from "mppx/client";
+import { Mppx, session as tempoSession } from "mppx/client";
 import { Keystore } from "accounts";
-import { decodeFunctionData } from "viem";
+import { createClient, custom, decodeFunctionData } from "viem";
 import { Abis as TempoAbis, Channel as TempoChannel, KeyAuthorizationManager } from "viem/tempo";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -488,6 +488,61 @@ describe("request command", () => {
     expect(identity.methodOptions).toMatchObject({
       account: { accessKeyAddress: account.accessKeyAddress, keyType: "p256" },
       mode: "pull",
+    });
+
+    if (!("account" in identity)) throw new Error("expected a stored access-key identity");
+    const client = createClient({
+      account: identity.account,
+      chain: { id: 4217 } as never,
+      transport: custom({
+        async request({ method }) {
+          if (method === "eth_chainId") return "0x1079";
+          throw new Error(`unexpected RPC request: ${method}`);
+        },
+      }),
+    });
+    const payment = tempoSession({
+      account: identity.account,
+      decimals: 0,
+      getClient: () => client,
+    });
+    const descriptor = {
+      authorizedSigner: account.accessKeyAddress,
+      expiringNonceHash: `0x${"22".repeat(32)}` as `0x${string}`,
+      operator: "0x0000000000000000000000000000000000000000",
+      payee: "0x0000000000000000000000000000000000000002",
+      payer: account.address,
+      salt: `0x${"11".repeat(32)}` as `0x${string}`,
+      token: "0x20C000000000000000000000b9537d11c60E8b50",
+    } as const;
+    const credential = await payment.createCredential({
+      challenge: {
+        id: "test",
+        intent: "session",
+        method: "tempo",
+        realm: "rpc.mpp.tempo.xyz",
+        request: {
+          amount: "1",
+          currency: descriptor.token,
+          methodDetails: {
+            chainId: 4217,
+            escrowContract: "0x4d50500000000000000000000000000000000000",
+            sessionProtocol: "v2",
+          },
+          recipient: descriptor.payee,
+        },
+      } as never,
+      context: {
+        action: "voucher",
+        cumulativeAmountRaw: "1",
+        descriptor,
+      },
+    });
+    const payload = Credential.deserialize<Record<string, unknown>>(credential).payload;
+
+    expect(payload).toMatchObject({
+      action: "voucher",
+      descriptor: { authorizedSigner: account.accessKeyAddress },
     });
   });
 
