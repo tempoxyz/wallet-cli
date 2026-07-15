@@ -39,9 +39,9 @@
   "dependencies": {
     "accounts": "0.14.11",
     "incur": "0.4.8",
-    "mppx": "0.7.0",
+    "mppx": "0.8.9",
     "undici": "8.5.0",
-    "viem": "2.53.1"
+    "viem": "2.54.0"
   },
   "devDependencies": {
     "@types/node": "25.9.2",
