@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.7 (2026-07-15)
+
+### Patch Changes
+
+- Support P-256 access keys for V2 MPP session vouchers.
+
 ## 0.6.6 (2026-07-14)
 
 ### Patch Changes
