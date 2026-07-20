@@ -37,11 +37,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "accounts": "0.14.11",
-    "incur": "0.4.8",
+    "accounts": "0.15.1",
+    "incur": "0.4.13",
     "mppx": "0.8.9",
-    "undici": "8.5.0",
-    "viem": "2.54.0"
+    "undici": "8.7.0",
+    "viem": "2.55.1"
   },
   "devDependencies": {
     "@types/node": "25.9.2",
