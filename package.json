@@ -39,7 +39,7 @@
   "dependencies": {
     "accounts": "0.14.11",
     "incur": "0.4.8",
-    "mppx": "0.8.9",
+    "mppx": "https://pkg.pr.new/mppx@8b64593",
     "undici": "8.5.0",
     "viem": "2.54.0"
   },

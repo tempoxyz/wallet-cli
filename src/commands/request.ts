@@ -5,10 +5,9 @@ import { basename, dirname } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { Challenge, Credential, PaymentRequest } from "mppx";
-import { Mppx, session as tempoSession, tempo } from "mppx/client";
+import { Challenge } from "mppx";
+import { Mppx, tempo } from "mppx/client";
 import { Keystore } from "accounts";
-import { Session as TempoSession } from "mppx/tempo";
 import {
   Agent,
   EnvHttpProxyAgent,
@@ -17,40 +16,16 @@ import {
   FormData as UndiciFormData,
   ProxyAgent,
 } from "undici";
-import { createWalletClient, encodeFunctionData, http, parseUnits } from "viem";
-import { prepareTransactionRequest, signTransaction } from "viem/actions";
+import { createWalletClient, http, parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import {
-  Abis as TempoAbis,
-  Account as TempoAccount,
-  Actions,
-  Chain,
-  Channel as TempoChannel,
-  KeyAuthorizationManager,
-} from "viem/tempo";
+import { Account as TempoAccount, Chain, KeyAuthorizationManager } from "viem/tempo";
 
 import { withSessionLock } from "../payment/session-lock.js";
-import { requireSessionDescriptor } from "../payment/session-descriptor.js";
-import {
-  deleteSessionRecord,
-  findReusableSession,
-  originFromUrl,
-  type PersistedSessionRecord,
-  preserveSessionCumulative,
-  updateSessionReceipt,
-  upsertSessionRecord,
-} from "../payment/session-store.js";
+import { fetchManagedSession } from "../payment/managed-session.js";
 import { connect, createProvider } from "../provider.js";
-import { escrowAbi, version } from "../shared/constants.js";
+import { version } from "../shared/constants.js";
 import { networkError, paymentError, usageError } from "../shared/errors.js";
-import {
-  chainId,
-  createTempoPublicClient,
-  escrowContract,
-  networkName,
-  rpcUrl,
-} from "../shared/network.js";
-import { getRecord, nowSeconds, parseOnChainBigInt, stringValue } from "../shared/utils.js";
+import { chainId, rpcUrl } from "../shared/network.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
 
 export type RequestOptions = {
@@ -501,9 +476,7 @@ async function payAndRetryRequest(
 
   const sessionChallenge = sessionChallengeFromHeader(header);
   if (sessionChallenge)
-    return withSessionLock(request.url, () =>
-      paySessionAndRetryRequest(paymentRequiredResponse, request, options, sessionChallenge),
-    );
+    return withSessionLock(request.url, () => payManagedSessionAndRetryRequest(request, options));
 
   try {
     const identity = await resolvePaymentIdentity(options);
@@ -544,96 +517,24 @@ async function payAndRetryRequest(
   }
 }
 
-async function paySessionAndRetryRequest(
-  paymentRequiredResponse: Response,
-  request: FetchPlan,
-  options: RequestOptions,
-  challenge: Challenge.Challenge,
-  skipChannelId?: string | undefined,
-) {
+async function payManagedSessionAndRetryRequest(request: FetchPlan, options: RequestOptions) {
   try {
     const identity = await resolvePaymentIdentity(options);
-    const details = sessionDetails(challenge, request.url, options);
-    const reusable = await reusableSessionRecord(details, identity, skipChannelId);
-    const challengeResponse = tempoPaymentChallengeResponse(paymentRequiredResponse);
-    const payment = Mppx.create({
-      methods: [
-        tempoSession({
-          ...identity.methodOptions,
-          ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
-        }),
-      ],
-      polyfill: false,
-    });
-
-    let signedCumulative: bigint;
-    let credential: string;
-    let record: PersistedSessionRecord | undefined;
-
-    if (reusable) {
-      signedCumulative =
-        maxBigInt(reusable.cumulative_amount, reusable.accepted_cumulative, reusable.server_spent) +
-        details.amount;
-      enforceSessionMaxSpend(signedCumulative, options);
-      await preserveSessionCumulative(reusable.channel_id, signedCumulative);
-      credential = await payment.createCredential(challengeResponse, {
-        action: "voucher",
-        channelId: reusable.channel_id as `0x${string}`,
-        cumulativeAmountRaw: signedCumulative.toString(),
-        ...(reusable.descriptor_json ? { descriptor: requireSessionDescriptor(reusable) } : {}),
-      });
-      record = reusable;
-    } else {
-      const depositRaw = sessionDepositRaw(details, options);
-      await assertSufficientSessionBalance(identity.address, details, depositRaw);
-      signedCumulative = details.amount;
-      enforceSessionMaxSpend(signedCumulative, options);
-      credential = await payment.createCredential(challengeResponse, {
-        depositRaw: depositRaw.toString(),
-      });
-      record = sessionRecordFromOpenCredential({
-        challenge,
-        credential,
-        depositRaw,
-        details,
-        identity,
-        signedCumulative,
-      });
-      await upsertSessionRecord(record);
-    }
-
-    const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
-    const response = await fetchWithRetries(
-      { init: paidInit, url: paymentRequiredResponse.url || request.url },
-      options,
-    );
-    if (reusable && response.status === 402) {
-      const recovered = await tryTopUpAndRetry({
-        credential,
-        details,
-        identity,
+    const managedFetch: typeof globalThis.fetch = (input, init) =>
+      fetchWithRetries(
+        {
+          init: cloneRequestInit((init ?? {}) as RequestInitWithDispatcher),
+          url: input instanceof Request ? input.url : input.toString(),
+        },
         options,
-        payment,
-        paymentRequiredResponse,
-        record: reusable,
-        request,
-        response,
-        signedCumulative,
-      });
-      if (recovered) return recovered;
-    }
-    if (reusable && (await isSessionInvalidationResponse(response))) {
-      await deleteSessionRecord(reusable.channel_id);
-      return paySessionAndRetryRequest(
-        paymentRequiredResponse,
-        request,
-        options,
-        challenge,
-        reusable.channel_id,
       );
-    }
-    await persistSessionReceipt(response, record.channel_id, signedCumulative);
-    return response;
+    return await fetchManagedSession({
+      fetch: managedFetch,
+      init: cloneRequestInit(request.init),
+      managerOptions: identity.methodOptions,
+      ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
+      url: request.url,
+    });
   } catch (error) {
     if (
       error &&
@@ -770,421 +671,6 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
   return undefined;
 }
 
-type PaymentIdentity = Awaited<ReturnType<typeof resolvePaymentIdentity>>;
-
-function sessionDetails(
-  challenge: Challenge.Challenge,
-  requestUrl: string,
-  options: RequestOptions,
-) {
-  const request = challenge.request as Record<string, unknown>;
-  const methodDetails = getRecord(request.methodDetails);
-  const resolvedChainId =
-    typeof methodDetails.chainId === "number" ? methodDetails.chainId : chainId(options.network);
-  const amount = bigintField(request.amount, "amount");
-  const token = stringValue(request.currency).toLowerCase();
-  const payee = stringValue(request.recipient).toLowerCase();
-  if (!token) throw paymentError("Session challenge is missing currency");
-  if (!payee) throw paymentError("Session challenge is missing recipient");
-
-  return {
-    amount,
-    chainId: resolvedChainId,
-    escrowContract: stringValue(
-      methodDetails.escrowContract || escrowContract(resolvedChainId),
-    ).toLowerCase(),
-    feePayer: Boolean(methodDetails.feePayer),
-    origin: originFromUrl(requestUrl),
-    payee,
-    requestUrl,
-    suggestedDeposit:
-      typeof request.suggestedDeposit === "string" && /^\d+$/.test(request.suggestedDeposit)
-        ? BigInt(request.suggestedDeposit)
-        : undefined,
-    token,
-  };
-}
-
-type SessionDetails = ReturnType<typeof sessionDetails>;
-
-async function reusableSessionRecord(
-  details: SessionDetails,
-  identity: PaymentIdentity,
-  skipChannelId?: string | undefined,
-): Promise<PersistedSessionRecord | undefined> {
-  const record = await findReusableSession({
-    authorizedSigner: identity.signerAddress,
-    chainId: details.chainId,
-    escrowContract: details.escrowContract,
-    origin: details.origin,
-    payee: details.payee,
-    payer: identity.address,
-    token: details.token,
-  });
-  if (!record) return undefined;
-  if (skipChannelId && record.channel_id.toLowerCase() === skipChannelId.toLowerCase())
-    return undefined;
-  if (
-    record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase() &&
-    !record.descriptor_json
-  ) {
-    await deleteSessionRecord(record.channel_id);
-    return await reusableSessionRecord(details, identity, skipChannelId);
-  }
-
-  const onChain = await readOnChainChannel(record);
-  if (!onChain) {
-    await deleteSessionRecord(record.channel_id);
-    return undefined;
-  }
-  if (onChain.closeRequestedAt !== 0n || onChain.deposit <= onChain.settled) {
-    await deleteSessionRecord(record.channel_id);
-    return undefined;
-  }
-  if (
-    onChain.payer.toLowerCase() !== identity.address.toLowerCase() ||
-    onChain.payee.toLowerCase() !== details.payee ||
-    onChain.token.toLowerCase() !== details.token ||
-    onChain.authorizedSigner.toLowerCase() !== identity.signerAddress.toLowerCase()
-  ) {
-    await deleteSessionRecord(record.channel_id);
-    return undefined;
-  }
-  return record;
-}
-
-export async function isSessionInvalidationResponse(response: Response) {
-  if (response.status !== 404 && response.status !== 410) return false;
-
-  const authenticate = response.headers.get("www-authenticate")?.toLowerCase() ?? "";
-  if (authenticate.includes("mpp") || authenticate.includes("payment")) return true;
-
-  const body = await response
-    .clone()
-    .text()
-    .catch(() => "");
-  const text = body.toLowerCase();
-  return (
-    (text.includes("session") || text.includes("channel")) &&
-    (text.includes("not found") ||
-      text.includes("invalid") ||
-      text.includes("expired") ||
-      text.includes("closed"))
-  );
-}
-
-async function tryTopUpAndRetry(options: {
-  credential: string;
-  details: SessionDetails;
-  identity: PaymentIdentity;
-  options: RequestOptions;
-  payment: ReturnType<typeof Mppx.create>;
-  paymentRequiredResponse: Response;
-  record: PersistedSessionRecord;
-  request: FetchPlan;
-  response: Response;
-  signedCumulative: bigint;
-}) {
-  const body = await options.response.text().catch(() => "");
-  const additionalDeposit = topUpAmountFromProblem(body, options.record, options.signedCumulative);
-  if (additionalDeposit <= 0n) return undefined;
-  if (options.options.maxSpend) {
-    const maxSpend = parseUnits(options.options.maxSpend, 6);
-    if (options.record.deposit + additionalDeposit > maxSpend) return undefined;
-  }
-
-  const transaction = await buildTopUpTransaction({
-    additionalDeposit,
-    details: options.details,
-    identity: options.identity,
-    record: options.record,
-  });
-  const topUpCredential = await options.payment.createCredential(
-    tempoPaymentChallengeResponse(options.paymentRequiredResponse),
-    {
-      action: "topUp",
-      additionalDepositRaw: additionalDeposit.toString(),
-      channelId: options.record.channel_id,
-      ...(options.record.descriptor_json
-        ? { descriptor: requireSessionDescriptor(options.record) }
-        : {}),
-      transaction,
-    } as never,
-  );
-  const topUpInit = topUpRequestInit(options.request.init);
-  const authorizedTopUp = options.payment.transport.setCredential(topUpInit, topUpCredential);
-  const topUpResponse = await fetchWithRetries(
-    { init: authorizedTopUp, url: options.paymentRequiredResponse.url || options.request.url },
-    options.options,
-  );
-  if (topUpResponse.status >= 400) return topUpResponse;
-
-  await upsertSessionRecord({
-    ...options.record,
-    deposit: options.record.deposit + additionalDeposit,
-    last_used_at: nowSeconds(),
-  });
-  await persistSessionReceipt(topUpResponse, options.record.channel_id, options.signedCumulative);
-
-  const paidInit = options.payment.transport.setCredential(
-    cloneRequestInit(options.request.init),
-    options.credential,
-  );
-  const retried = await fetchWithRetries(
-    { init: paidInit, url: options.paymentRequiredResponse.url || options.request.url },
-    options.options,
-  );
-  await persistSessionReceipt(retried, options.record.channel_id, options.signedCumulative);
-  return retried;
-}
-
-async function buildTopUpTransaction(options: {
-  additionalDeposit: bigint;
-  details: SessionDetails;
-  identity: PaymentIdentity;
-  record: PersistedSessionRecord;
-}) {
-  const request = buildTopUpTransactionRequest({
-    additionalDeposit: options.additionalDeposit,
-    details: options.details,
-    record: options.record,
-  });
-  const client = options.identity.getClient({ chainId: options.details.chainId });
-  const prepared = await prepareTransactionRequest(
-    client as never,
-    {
-      account: (client as { account: unknown }).account,
-      ...request,
-    } as never,
-  );
-  prepared.gas = (prepared.gas ?? 0n) + 5_000n;
-  return (await signTransaction(client as never, prepared as never)) as `0x${string}`;
-}
-
-export function buildTopUpTransactionRequest(options: {
-  additionalDeposit: bigint;
-  details: Pick<SessionDetails, "feePayer" | "token">;
-  record: Pick<PersistedSessionRecord, "channel_id" | "descriptor_json" | "escrow_contract">;
-}) {
-  const isPrecompile =
-    options.record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase();
-  const topUpData = encodeFunctionData({
-    abi: isPrecompile ? TempoAbis.tip20ChannelReserve : escrowAbi,
-    functionName: "topUp",
-    args: isPrecompile
-      ? [requireSessionDescriptor(options.record), options.additionalDeposit]
-      : [options.record.channel_id as `0x${string}`, options.additionalDeposit],
-  } as never);
-  const calls = isPrecompile
-    ? [{ to: options.record.escrow_contract as `0x${string}`, data: topUpData }]
-    : [
-        {
-          to: options.details.token as `0x${string}`,
-          data: encodeFunctionData({
-            abi: tip20Abi,
-            functionName: "approve",
-            args: [options.record.escrow_contract as `0x${string}`, options.additionalDeposit],
-          }),
-        },
-        { to: options.record.escrow_contract as `0x${string}`, data: topUpData },
-      ];
-  return {
-    calls,
-    ...(options.details.feePayer ? { feePayer: true } : {}),
-    feeToken: options.details.token,
-  };
-}
-
-function topUpRequestInit(init: RequestInitWithDispatcher) {
-  const next = cloneRequestInit(init);
-  next.method = "POST";
-  delete next.body;
-  const headers = new Headers(next.headers);
-  headers.delete("content-length");
-  headers.delete("content-type");
-  next.headers = headers;
-  return next;
-}
-
-function topUpAmountFromProblem(
-  body: string,
-  record: PersistedSessionRecord,
-  signedCumulative: bigint,
-) {
-  const problem = parseProblemDetails(body);
-  if (!problem) return 0n;
-  const type = `${problem.type ?? ""} ${problem.title ?? ""} ${problem.detail ?? ""}`.toLowerCase();
-  if (!type.includes("insufficient") && !type.includes("exceeds") && !type.includes("deposit"))
-    return 0n;
-  const requiredTopUp = stringValue(problem.requiredTopUp ?? problem.required_top_up);
-  if (/^\d+$/.test(requiredTopUp)) return BigInt(requiredTopUp);
-  return signedCumulative > record.deposit ? signedCumulative - record.deposit : 0n;
-}
-
-function parseProblemDetails(body: string) {
-  try {
-    return getRecord(JSON.parse(body) as unknown);
-  } catch {
-    return null;
-  }
-}
-
-const tip20Abi = [
-  {
-    type: "function",
-    name: "approve",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "spender", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [],
-  },
-] as const;
-
-function sessionDepositRaw(details: SessionDetails, options: RequestOptions) {
-  const maxSpend = options.maxSpend ? parseUnits(options.maxSpend, 6) : undefined;
-  const preferred = details.suggestedDeposit ?? maxSpend ?? details.amount;
-  const deposit = maxSpend && preferred > maxSpend ? maxSpend : preferred;
-  if (deposit < details.amount) throw paymentError("Session payment exceeds --max-spend");
-  return deposit;
-}
-
-async function assertSufficientSessionBalance(
-  payer: string,
-  details: SessionDetails,
-  depositRaw: bigint,
-) {
-  const client = createTempoPublicClient(details.chainId === 42431 ? "testnet" : undefined);
-  const balance = (
-    await Actions.token.getBalance(client as never, {
-      account: payer as `0x${string}`,
-      token: details.token as `0x${string}`,
-    })
-  ).amount;
-  if (balance >= depositRaw) return;
-  throw paymentError(
-    `Insufficient balance for session deposit: available=${formatTokenAmount(balance)} required=${formatTokenAmount(depositRaw)}`,
-  );
-}
-
-function sessionRecordFromOpenCredential(options: {
-  challenge: Challenge.Challenge;
-  credential: string;
-  depositRaw: bigint;
-  details: SessionDetails;
-  identity: PaymentIdentity;
-  signedCumulative: bigint;
-}): PersistedSessionRecord {
-  const parsed = Credential.deserialize<Record<string, unknown>>(options.credential);
-  const payload = getRecord(parsed.payload);
-  const channelId = stringValue(payload.channelId).toLowerCase();
-  if (!channelId) throw paymentError("Session open credential did not include channelId");
-  const now = nowSeconds();
-  return {
-    accepted_cumulative: 0n,
-    authorized_signer: stringValue(
-      payload.authorizedSigner || options.identity.signerAddress,
-    ).toLowerCase(),
-    chain_id: options.details.chainId,
-    challenge_echo: challengeEchoJson(options.challenge),
-    channel_id: channelId,
-    close_requested_at: 0,
-    created_at: now,
-    cumulative_amount: options.signedCumulative,
-    deposit: options.depositRaw,
-    descriptor_json: payload.descriptor ? JSON.stringify(payload.descriptor) : undefined,
-    escrow_contract: options.details.escrowContract,
-    grace_ready_at: 0,
-    last_used_at: now,
-    network: networkName(options.details.chainId) ?? `chain-${options.details.chainId}`,
-    origin: options.details.origin,
-    payee: options.details.payee,
-    payer: options.identity.address.toLowerCase(),
-    request_url: options.details.requestUrl,
-    salt: "0x00",
-    server_spent: 0n,
-    session_protocol: sessionProtocol(options.challenge) ?? (payload.descriptor ? "v2" : "v1"),
-    state: "active",
-    token: options.details.token,
-  };
-}
-
-function sessionProtocol(challenge: Challenge.Challenge) {
-  const request = challenge.request as Record<string, unknown>;
-  const methodDetails = getRecord(request.methodDetails);
-  return stringValue(methodDetails.sessionProtocol) || undefined;
-}
-
-async function persistSessionReceipt(
-  response: Response,
-  channelId: string,
-  signedCumulative: bigint,
-) {
-  const header = response.headers.get("payment-receipt");
-  if (!header) return;
-  const receipt = TempoSession.Precompile.Receipt.deserializeSessionReceipt(header);
-  if (receipt.method !== "tempo" || receipt.intent !== "session" || receipt.status !== "success")
-    return;
-  if (receipt.channelId.toLowerCase() !== channelId.toLowerCase()) return;
-  const acceptedCumulative = BigInt(receipt.acceptedCumulative);
-  const serverSpent = BigInt(receipt.spent);
-  if (serverSpent > acceptedCumulative || acceptedCumulative > signedCumulative)
-    throw paymentError("Invalid session receipt cumulative values");
-  await updateSessionReceipt({
-    acceptedCumulative,
-    channelId,
-    serverSpent,
-    signedCumulative,
-  });
-}
-
-async function readOnChainChannel(record: PersistedSessionRecord) {
-  const network = record.chain_id === 42431 ? "testnet" : "mainnet";
-  if (record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase()) {
-    const state = (await createTempoPublicClient(network).readContract({
-      address: TempoChannel.address,
-      abi: TempoAbis.tip20ChannelReserve,
-      functionName: "getChannelState",
-      args: [record.channel_id as `0x${string}`],
-    })) as unknown;
-    const object = getRecord(state);
-    const tuple = Array.isArray(state) ? state : [];
-    const deposit = parseOnChainBigInt(object.deposit ?? tuple[1]);
-    const settled = parseOnChainBigInt(object.settled ?? tuple[0]);
-    const closeRequestedAt = parseOnChainBigInt(object.closeRequestedAt ?? tuple[2]);
-    if (deposit === 0n) return null;
-    return {
-      authorizedSigner: record.authorized_signer,
-      closeRequestedAt,
-      deposit,
-      payee: record.payee,
-      payer: record.payer,
-      settled,
-      token: record.token,
-    };
-  }
-
-  const value = (await createTempoPublicClient(network).readContract({
-    address: record.escrow_contract as `0x${string}`,
-    abi: escrowAbi,
-    functionName: "getChannel",
-    args: [record.channel_id as `0x${string}`],
-  })) as unknown;
-  const object = getRecord(value);
-  const tuple = Array.isArray(value) ? value : [];
-  if (object.finalized ?? tuple[0]) return null;
-  return {
-    authorizedSigner: stringValue(object.authorizedSigner ?? tuple[5]),
-    closeRequestedAt: parseOnChainBigInt(object.closeRequestedAt ?? tuple[1]),
-    deposit: parseOnChainBigInt(object.deposit ?? tuple[6]),
-    payee: stringValue(object.payee ?? tuple[3]),
-    payer: stringValue(object.payer ?? tuple[2]),
-    settled: parseOnChainBigInt(object.settled ?? tuple[7]),
-    token: stringValue(object.token ?? tuple[4]),
-  };
-}
-
 function sessionChallengeFromHeader(header: string | null) {
   if (!header) return undefined;
   try {
@@ -1195,37 +681,6 @@ function sessionChallengeFromHeader(header: string | null) {
   } catch {
     return undefined;
   }
-}
-
-function challengeEchoJson(challenge: Challenge.Challenge) {
-  return JSON.stringify({
-    id: challenge.id,
-    realm: challenge.realm,
-    method: challenge.method,
-    intent: challenge.intent,
-    request: PaymentRequest.serialize(challenge.request),
-    ...(challenge.expires ? { expires: challenge.expires } : {}),
-    ...(challenge.digest ? { digest: challenge.digest } : {}),
-    ...(challenge.opaque ? { opaque: challenge.opaque } : {}),
-  });
-}
-
-function enforceSessionMaxSpend(cumulativeAmount: bigint, options: RequestOptions) {
-  if (!options.maxSpend) return;
-  const maxSpend = parseUnits(options.maxSpend, 6);
-  if (cumulativeAmount <= maxSpend) return;
-  throw paymentError(
-    `Payment max spend exceeded: max=${options.maxSpend} required=${formatTokenAmount(cumulativeAmount)}`,
-  );
-}
-
-function bigintField(value: unknown, name: string) {
-  if (typeof value === "string" && /^\d+$/.test(value)) return BigInt(value);
-  throw paymentError(`Session challenge is missing ${name}`);
-}
-
-function maxBigInt(...values: bigint[]) {
-  return values.reduce((max, value) => (value > max ? value : max), 0n);
 }
 
 async function writeResponseBody(
