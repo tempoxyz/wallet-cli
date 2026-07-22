@@ -50,7 +50,7 @@ export async function loginHandler(options: {
     network: options.network,
     noBrowser: options.browser === false,
   });
-  const result = await connect(provider);
+  const result = await connect(provider, options.network);
 
   return {
     accounts: result.accounts.map((account) => account.address),
@@ -61,7 +61,7 @@ export async function loginHandler(options: {
 export async function refreshHandler(options: { network?: string | undefined }) {
   console.error(`Auth URL: ${refreshAuthUrl(options.network)}`);
   const provider = createProvider({ network: options.network });
-  const result = await connect(provider);
+  const result = await connect(provider, options.network);
 
   return {
     accounts: result.accounts.map((account) => account.address),

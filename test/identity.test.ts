@@ -627,10 +627,39 @@ limit = "100000000"
           capabilities: {
             authorizeAccessKey: {
               expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
+              limits: [
+                { limit: "0x5f5e100", token: "0x20c000000000000000000000b9537d11c60e8b50" },
+                { limit: "0x5f5e100", token: "0x20c0000000000000000000000000000000000000" },
+              ],
             },
           },
         },
       ],
     });
+  });
+
+  it("requests only PathUSD spending permission on testnet", async () => {
+    const request = vi.fn().mockResolvedValue({ accounts: [] });
+
+    await connect({ request } as never, "testnet");
+
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: [
+          expect.objectContaining({
+            capabilities: {
+              authorizeAccessKey: expect.objectContaining({
+                limits: [
+                  {
+                    limit: "0x5f5e100",
+                    token: "0x20c0000000000000000000000000000000000000",
+                  },
+                ],
+              }),
+            },
+          }),
+        ],
+      }),
+    );
   });
 });

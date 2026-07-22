@@ -1,7 +1,9 @@
 import type { Provider as CoreProvider } from "accounts";
 import { Provider, Storage } from "accounts/cli";
+import { parseUnits, toHex } from "viem";
 
 import { openExternal } from "./shared/process.js";
+import { moderatoToken, usdcToken } from "./shared/constants.js";
 
 export const accessKeyAuthorizationSeconds = 30 * 86_400;
 
@@ -23,7 +25,12 @@ export function createProvider(
   });
 }
 
-export async function connect(provider: CoreProvider.Provider) {
+export function accessKeyLimits(network: string | undefined) {
+  const tokens = network === "testnet" ? [moderatoToken] : [usdcToken, moderatoToken];
+  return tokens.map((token) => ({ limit: toHex(parseUnits("100", 6)), token }));
+}
+
+export async function connect(provider: CoreProvider.Provider, network?: string | undefined) {
   return provider.request({
     method: "wallet_connect",
     params: [
@@ -31,6 +38,7 @@ export async function connect(provider: CoreProvider.Provider) {
         capabilities: {
           authorizeAccessKey: {
             expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
+            limits: accessKeyLimits(network),
           },
         },
       },
