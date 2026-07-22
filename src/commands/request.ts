@@ -552,7 +552,7 @@ async function paySessionAndRetryRequest(
   skipChannelId?: string | undefined,
 ) {
   try {
-    const identity = await resolvePaymentIdentity(options);
+    const identity = await resolveSessionPaymentIdentity(options);
     const details = sessionDetails(challenge, request.url, options);
     const reusable = await reusableSessionRecord(details, identity, skipChannelId);
     const challengeResponse = tempoPaymentChallengeResponse(paymentRequiredResponse);
@@ -645,6 +645,25 @@ async function paySessionAndRetryRequest(
   }
 }
 
+export async function resolveSessionPaymentIdentity(options: RequestOptions) {
+  if (options.privateKey ?? process.env.TEMPO_PRIVATE_KEY) return resolvePaymentIdentity(options);
+
+  const walletState = await loadWalletState();
+  const secp256k1Identity = await storedAccessKeyIdentity(walletState, options, "secp256k1");
+  if (secp256k1Identity) return secp256k1Identity;
+
+  if (walletState.accounts[walletState.activeAccount ?? 0]) throw sessionAccessKeyError(options);
+
+  return resolvePaymentIdentity(options);
+}
+
+function sessionAccessKeyError(options: RequestOptions) {
+  const networkOption = options.network === "testnet" ? " --network testnet" : "";
+  return paymentError(
+    `MPP session vouchers require an active, unexpired secp256k1 access key; P-256/WebAuthn access keys are incompatible. Your passkey wallet is supported; only its access key needs to change. Run 'tempo wallet refresh${networkOption}' to create and select a secp256k1 access key. Close stale sessions with 'tempo wallet sessions close --all${networkOption}'. If a sponsored transaction was already prepared, discard it before retrying.`,
+  );
+}
+
 export async function resolvePaymentIdentity(options: RequestOptions) {
   const privateKey = options.privateKey ?? process.env.TEMPO_PRIVATE_KEY;
   if (privateKey) {
@@ -705,14 +724,21 @@ async function ensureProviderAccounts(provider: Parameters<typeof connect>[0]) {
   await connect(provider);
 }
 
-export async function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptions) {
+export async function storedAccessKeyIdentity(
+  walletState: WalletState,
+  options: RequestOptions,
+  requiredKeyType?: "secp256k1" | "p256",
+) {
   const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
   if (!activeAccount) return undefined;
 
   const expectedChain = chainId(options.network);
   for (const key of walletState.accessKeys) {
     if (key.chainId !== expectedChain) continue;
+    if (key.access.toLowerCase() !== activeAccount.address.toLowerCase()) continue;
+    if (key.expiry !== undefined && key.expiry <= nowSeconds()) continue;
     if (key.keyType && key.keyType !== "secp256k1" && key.keyType !== "p256") continue;
+    if (requiredKeyType && (key.keyType ?? "secp256k1") !== requiredKeyType) continue;
 
     const keyAuthorizationManager = KeyAuthorizationManager.memory();
     if (key.keyAuthorization) {
@@ -748,7 +774,19 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
               keyAuthorizationManager,
             },
           )
-        : undefined;
+        : key.keyType === "secp256k1" && key.handle && key.publicKey
+          ? await Keystore.secp256k1().toAccount(
+              {
+                handle: key.handle as Keystore.Handle,
+                keyType: key.keyType,
+                publicKey: key.publicKey as `0x${string}`,
+              },
+              {
+                access: activeAccount.address as `0x${string}`,
+                keyAuthorizationManager,
+              },
+            )
+          : undefined;
     if (!account) continue;
     if (key.address.toLowerCase() !== account.accessKeyAddress.toLowerCase()) continue;
 
