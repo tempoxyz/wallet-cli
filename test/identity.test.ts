@@ -627,6 +627,7 @@ limit = "100000000"
           capabilities: {
             authorizeAccessKey: {
               expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
+              keyType: "secp256k1",
             },
           },
         },
