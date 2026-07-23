@@ -318,7 +318,15 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
   return { ...options, url };
 }
 
+export function applyMaxSpendEnv(options: RequestOptions): RequestOptions {
+  if (options.maxSpend !== undefined) return options;
+  const fromEnv = process.env.TEMPO_MAX_SPEND?.trim();
+  if (!fromEnv) return options;
+  return { ...options, maxSpend: fromEnv };
+}
+
 export async function executeRequest(options: RequestOptions, io: RequestRunOptions = {}) {
+  options = applyMaxSpendEnv(options);
   const stdout = io.stdout ?? process.stdout;
   const started = Date.now();
   const request = await buildFetchRequest(options);
