@@ -10,6 +10,7 @@ import { Abis as TempoAbis, Channel as TempoChannel, KeyAuthorizationManager } f
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  applyMaxSpendEnv,
   buildTopUpTransactionRequest,
   isSessionInvalidationResponse,
   parseRequestArgs,
@@ -352,6 +353,35 @@ describe("request command", () => {
       noProxy: true,
       url: "https://example.com",
     });
+  });
+
+  it("applies TEMPO_MAX_SPEND when --max-spend is omitted", () => {
+    const previous = process.env.TEMPO_MAX_SPEND;
+    process.env.TEMPO_MAX_SPEND = " 2.50 ";
+    try {
+      expect(applyMaxSpendEnv(parseRequestArgs(["https://example.com"]))).toMatchObject({
+        maxSpend: "2.50",
+        url: "https://example.com",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.TEMPO_MAX_SPEND;
+      else process.env.TEMPO_MAX_SPEND = previous;
+    }
+  });
+
+  it("prefers --max-spend over TEMPO_MAX_SPEND", () => {
+    const previous = process.env.TEMPO_MAX_SPEND;
+    process.env.TEMPO_MAX_SPEND = "9.00";
+    try {
+      expect(
+        applyMaxSpendEnv(parseRequestArgs(["--max-spend", "1.00", "https://example.com"])),
+      ).toMatchObject({
+        maxSpend: "1.00",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.TEMPO_MAX_SPEND;
+      else process.env.TEMPO_MAX_SPEND = previous;
+    }
   });
 
   it("recovers stale session locks left behind by killed request processes", async () => {
