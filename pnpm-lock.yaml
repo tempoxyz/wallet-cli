@@ -19,8 +19,8 @@ importers:
         specifier: 0.4.8
         version: 0.4.8
       mppx:
-        specifier: https://pkg.pr.new/mppx@8b64593
-        version: https://pkg.pr.new/mppx@8b64593(hono@4.12.25)(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3))
+        specifier: 0.8.13
+        version: 0.8.13(hono@4.12.25)(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3))
       undici:
         specifier: 8.5.0
         version: 8.5.0
@@ -1396,9 +1396,8 @@ packages:
       hono:
         optional: true
 
-  mppx@https://pkg.pr.new/mppx@8b64593:
-    resolution: {tarball: https://pkg.pr.new/mppx@8b64593}
-    version: 0.8.12
+  mppx@0.8.13:
+    resolution: {integrity: sha512-8H01392Cn5tlwUG3wqxKe8qd/lxi2krAdw6MQzWWRMnhv/CDEJD3Ia1Qipy631NYQBWm3VE/pU6aQOYYjmcYbg==}
     hasBin: true
     peerDependencies:
       '@modelcontextprotocol/sdk': '>=1.25.0'
@@ -2878,7 +2877,7 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  mppx@https://pkg.pr.new/mppx@8b64593(hono@4.12.25)(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3)):
+  mppx@0.8.13(hono@4.12.25)(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3)):
     dependencies:
       '@stripe/stripe-js': 9.9.0
       eventsource-parser: 3.1.0
@@ -3412,14 +3411,14 @@ snapshots:
       '@noble/ciphers': 2.2.0
       '@noble/hashes': 2.2.0
       hono: 4.12.25
-      ox: 0.14.29(typescript@6.0.3)(zod@4.4.3)
+      ox: 0.14.30(typescript@6.0.3)(zod@4.4.3)
       zod: 4.4.3
     transitivePeerDependencies:
       - typescript
 
   webauthx@0.1.2(typescript@6.0.3)(zod@4.4.3):
     dependencies:
-      ox: 0.14.29(typescript@6.0.3)(zod@4.4.3)
+      ox: 0.14.30(typescript@6.0.3)(zod@4.4.3)
     transitivePeerDependencies:
       - typescript
       - zod
