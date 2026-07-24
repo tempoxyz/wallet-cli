@@ -7,7 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { Challenge } from "mppx";
 import { Mppx, tempo } from "mppx/client";
-import { Keystore } from "accounts";
+import { resolveTempoWalletAccount } from "mppx/client/node";
 import {
   Agent,
   EnvHttpProxyAgent,
@@ -18,7 +18,7 @@ import {
 } from "undici";
 import { createWalletClient, http, parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { Account as TempoAccount, Chain, KeyAuthorizationManager } from "viem/tempo";
+import { Chain } from "viem/tempo";
 
 import { withSessionLock } from "../payment/session-lock.js";
 import { fetchManagedSession } from "../payment/managed-session.js";
@@ -26,7 +26,6 @@ import { connect, createProvider } from "../provider.js";
 import { version } from "../shared/constants.js";
 import { networkError, paymentError, usageError } from "../shared/errors.js";
 import { chainId, rpcUrl } from "../shared/network.js";
-import { loadWalletState, type WalletState } from "../wallet/store.js";
 
 export type RequestOptions = {
   bearer?: string | undefined;
@@ -564,7 +563,7 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
     };
   }
 
-  const storedIdentity = await storedAccessKeyIdentity(await loadWalletState(), options);
+  const storedIdentity = await storedAccessKeyIdentity(options);
   if (storedIdentity) return storedIdentity;
 
   const provider = createProvider({ network: options.network });
@@ -606,69 +605,27 @@ async function ensureProviderAccounts(provider: Parameters<typeof connect>[0]) {
   await connect(provider);
 }
 
-export async function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptions) {
-  const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
-  if (!activeAccount) return undefined;
-
+export async function storedAccessKeyIdentity(options: RequestOptions) {
   const expectedChain = chainId(options.network);
-  for (const key of walletState.accessKeys) {
-    if (key.chainId !== expectedChain) continue;
-    if (key.keyType && key.keyType !== "secp256k1" && key.keyType !== "p256") continue;
+  const resolved = await resolveTempoWalletAccount({ chainId: expectedChain }).catch(
+    () => undefined,
+  );
+  if (!resolved) return undefined;
 
-    const keyAuthorizationManager = KeyAuthorizationManager.memory();
-    if (key.keyAuthorization) {
-      await keyAuthorizationManager.set(
-        {
-          address: activeAccount.address as `0x${string}`,
-          accessKey: key.address as `0x${string}`,
-          chainId: expectedChain,
-        },
-        key.keyAuthorization as never,
-      );
-    }
-
-    const account = key.privateKey
-      ? key.keyType === "p256"
-        ? TempoAccount.fromP256(key.privateKey as `0x${string}`, {
-            access: activeAccount.address as `0x${string}`,
-            keyAuthorizationManager,
-          })
-        : TempoAccount.fromSecp256k1(key.privateKey as `0x${string}`, {
-            access: activeAccount.address as `0x${string}`,
-            keyAuthorizationManager,
-          })
-      : key.keyType === "p256" && key.handle && key.publicKey
-        ? await Keystore.webCryptoP256({ extractable: true }).toAccount(
-            {
-              handle: key.handle as Keystore.Handle,
-              keyType: key.keyType,
-              publicKey: key.publicKey as `0x${string}`,
-            },
-            {
-              access: activeAccount.address as `0x${string}`,
-              keyAuthorizationManager,
-            },
-          )
-        : undefined;
-    if (!account) continue;
-    if (key.address.toLowerCase() !== account.accessKeyAddress.toLowerCase()) continue;
-
-    const getClient = ({ chainId }: { chainId?: number | undefined }) =>
-      createWalletClient({
-        account,
-        chain: chainId === 42431 ? Chain.tempoModerato : Chain.tempo,
-        transport: http(rpcUrl(chainId === 42431 ? "testnet" : "mainnet")),
-      });
-    return {
+  const account = resolved.account;
+  const getClient = ({ chainId }: { chainId?: number | undefined }) =>
+    createWalletClient({
       account,
-      address: account.address,
-      getClient,
-      methodOptions: { account, getClient, mode: "pull" as const },
-      signerAddress: account.accessKeyAddress,
-    };
-  }
-
-  return undefined;
+      chain: chainId === 42431 ? Chain.tempoModerato : Chain.tempo,
+      transport: http(rpcUrl(chainId === 42431 ? "testnet" : "mainnet")),
+    });
+  return {
+    account,
+    address: account.address,
+    getClient,
+    methodOptions: { account, getClient, mode: "pull" as const },
+    signerAddress: account.accessKeyAddress,
+  };
 }
 
 function sessionChallengeFromHeader(header: string | null) {

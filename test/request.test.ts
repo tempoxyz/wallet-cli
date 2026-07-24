@@ -31,7 +31,6 @@ import {
   walletState,
   writeWalletState,
 } from "./helpers.js";
-import { loadWalletState } from "../src/wallet/store.js";
 
 type SeenRequest = {
   body: string;
@@ -467,7 +466,7 @@ describe("request command", () => {
     const keyAuthorization = {
       address: testAccessKey,
       chainId: 4217n,
-      expiry: 1783809942,
+      expiry: 4_102_444_800,
       limits: [{ token: "0x20C000000000000000000000b9537d11c60E8b50", limit: 100000000n }],
       signature: { type: "secp256k1", signature: "0x1234" },
       type: "secp256k1",
@@ -477,17 +476,14 @@ describe("request command", () => {
         accessKeys: [
           {
             ...walletState().accessKeys[0]!,
+            expiry: 4_102_444_800,
             keyAuthorization,
           },
         ],
       }),
     );
 
-    const state = await loadWalletState();
-    const identity = await storedAccessKeyIdentity(
-      state,
-      requestOptions("https://paid.example.com"),
-    );
+    const identity = await storedAccessKeyIdentity(requestOptions("https://paid.example.com"));
     const stored = await identity?.account.keyAuthorizationManager?.get({
       address: testWallet,
       accessKey: testAccessKey,
@@ -513,7 +509,7 @@ describe("request command", () => {
             address: account.accessKeyAddress,
             access: testWallet,
             chainId: 4217,
-            expiry: 1783809942,
+            expiry: 4_102_444_800,
             handle,
             keyType: "p256",
             limits: [],
