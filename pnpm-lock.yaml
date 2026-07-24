@@ -19,8 +19,8 @@ importers:
         specifier: 0.4.8
         version: 0.4.8
       mppx:
-        specifier: https://pkg.pr.new/mppx@5dcf969
-        version: https://pkg.pr.new/mppx@5dcf969(hono@4.12.25)(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3))
+        specifier: https://pkg.pr.new/mppx@84ef409
+        version: https://pkg.pr.new/mppx@84ef409(hono@4.12.25)(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3))
       undici:
         specifier: 8.5.0
         version: 8.5.0
@@ -1396,8 +1396,8 @@ packages:
       hono:
         optional: true
 
-  mppx@https://pkg.pr.new/mppx@5dcf969:
-    resolution: {integrity: sha512-g1pNUj/vD/xlxOkgi4/z1IBeuRTOs66mYlt3845ItB5l71ZCx3oCBnm1zSrWUNlwSLJfVy4FhNcEoKfoablKsw==, tarball: https://pkg.pr.new/mppx@5dcf969}
+  mppx@https://pkg.pr.new/mppx@84ef409:
+    resolution: {integrity: sha512-rZBWnVSUuTT36JXvu1oHlawZx1aXVpmv8XbmgIqhYCyaJ4vD/WDAmpsE+Ljq6WJt3UNe19ZR6H1KnafPxx6a9A==, tarball: https://pkg.pr.new/mppx@84ef409}
     version: 0.8.14
     hasBin: true
     peerDependencies:
@@ -2878,7 +2878,7 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  mppx@https://pkg.pr.new/mppx@5dcf969(hono@4.12.25)(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3)):
+  mppx@https://pkg.pr.new/mppx@84ef409(hono@4.12.25)(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3)):
     dependencies:
       '@stripe/stripe-js': 9.9.0
       eventsource-parser: 3.1.0

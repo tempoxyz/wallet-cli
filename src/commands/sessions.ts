@@ -40,6 +40,7 @@ import {
 } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
+import { withSessionAdministration } from "../payment/session-administration.js";
 import { loadWalletState } from "../wallet/store.js";
 
 export type ChannelState = "active" | "closing" | "finalizable" | "finalized" | "orphaned";
@@ -102,7 +103,7 @@ export async function listSessions(
   const network = networkName(chainId(options.network)) ?? "tempo";
   const records =
     options.all || options.orphaned
-      ? await discoverAndPersistOrphanedChannels({ network: options.network })
+      ? await discoverAndPersistAllChannels({ network: options.network })
       : await readChannelRecords();
   const sessions = records
     .filter((record) => record.network === network)
@@ -120,9 +121,12 @@ export async function syncSessions(options: {
   network?: string | undefined;
   origin?: string | undefined;
 }) {
+  await withSessionAdministration(options.network, (administration) => administration.sync());
   const chain = chainId(options.network);
   const network = networkName(chain) ?? "tempo";
-  const records = (await readChannelRecords()).filter((record) => record.network === network);
+  const records = (await readChannelRecords()).filter(
+    (record) => record.network === network && record.session_protocol !== "v2",
+  );
   const selected = options.origin
     ? records.filter((record) => record.origin === normalizeOrigin(options.origin ?? ""))
     : records;
@@ -166,7 +170,7 @@ export async function dryRunCloseSessions(options: {
   validateCooperativeCloseOptions(options);
   const records =
     options.all || options.orphaned
-      ? await discoverAndPersistOrphanedChannels({ network: options.network })
+      ? await discoverAndPersistAllChannels({ network: options.network })
       : await readChannelRecords();
   const network = networkName(chainId(options.network)) ?? "tempo";
   const local = records.filter((record) => record.network === network);
@@ -278,7 +282,7 @@ async function closeTargets(options: {
   const network = networkName(chain) ?? "tempo";
   const records =
     options.all || options.orphaned || options.finalize
-      ? await discoverAndPersistOrphanedChannels({ network: options.network })
+      ? await discoverAndPersistAllChannels({ network: options.network })
       : await readChannelRecords();
   const local = records.filter((record) => record.network === network);
 
@@ -319,6 +323,31 @@ async function closeOneSession(
       origin: record.origin,
       error: "no active session",
     };
+
+  if (record.session_protocol === "v2") {
+    const summary = await withSessionAdministration(options.network, (administration) =>
+      administration.close({
+        cooperative: options.cooperative,
+        finalize: options.finalize,
+        target: record.channel_id,
+      }),
+    );
+    const result = summary.results[0];
+    if (!result)
+      return {
+        channel_id: record.channel_id,
+        status: "error",
+        origin: record.origin,
+        error: "no active session",
+      };
+    return {
+      channel_id: result.channelId,
+      status: result.status,
+      ...(result.origin ? { origin: result.origin } : {}),
+      ...(result.remainingSeconds !== undefined ? { remaining_secs: result.remainingSeconds } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    };
+  }
 
   const chain = chainId(options.network);
   const escrow = (record.escrow_contract || escrowContract(chain)) as Address;
@@ -731,6 +760,11 @@ async function readChannelRecords(): Promise<ChannelRecord[]> {
       },
     ];
   });
+}
+
+async function discoverAndPersistAllChannels(options: { network?: string | undefined }) {
+  await withSessionAdministration(options.network, (administration) => administration.sync());
+  return discoverAndPersistOrphanedChannels(options);
 }
 
 async function discoverAndPersistOrphanedChannels(options: { network?: string | undefined }) {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { decodeFunctionData } from "viem";
 import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
+import { createSqliteChannelStore, type SqliteSessionRecord } from "mppx/client/node";
 
 import {
   buildSessionManagementTransactionRequest,
@@ -8,8 +9,17 @@ import {
   listSessions,
 } from "../src/commands/sessions.js";
 import { handleCompatCommand } from "../src/compat.js";
+import { withSessionAdministration } from "../src/payment/session-administration.js";
+import { channelsDbPath } from "../src/shared/process.js";
 
-import { expectUsageError, testAccessKey, testWallet, useTempHome } from "./helpers.js";
+import {
+  expectUsageError,
+  testAccessKey,
+  testWallet,
+  useTempHome,
+  walletState,
+  writeWalletState,
+} from "./helpers.js";
 
 const validChannelId = `0x${"a".repeat(64)}`;
 
@@ -99,9 +109,55 @@ describe("sessions utilities", () => {
     expect(decoded.functionName).toBe("requestClose");
     expect(normalizeDescriptor(decoded.args[0])).toEqual(normalizeDescriptor(descriptor));
   });
+
+  it("administers the exact MPPx channel rows used by paid requests", async () => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            ...walletState().accessKeys[0]!,
+            expiry: 4_102_444_800,
+          },
+        ],
+      }),
+    );
+    const descriptor = sessionDescriptor();
+    const store = createSqliteChannelStore({
+      namespace: "https://openai.mpp.tempo.xyz",
+      path: channelsDbPath(),
+      requestUrl: "wss://openai.mpp.tempo.xyz/v1/responses",
+    });
+    store.set({
+      chainId: 4217,
+      channelId: validChannelId as `0x${string}`,
+      cumulativeAmount: 1_234n,
+      deposit: 5_000_000n,
+      descriptor,
+      escrow: TempoChannel.address,
+      opened: true,
+    });
+    store.close();
+
+    const records = await withSessionAdministration(undefined, (administration) =>
+      administration.list(),
+    );
+
+    expect(records).toEqual([
+      expect.objectContaining({
+        entry: expect.objectContaining({
+          channelId: validChannelId,
+          cumulativeAmount: 1_234n,
+          deposit: 5_000_000n,
+        }),
+        origin: "wss://openai.mpp.tempo.xyz",
+        requestUrl: "wss://openai.mpp.tempo.xyz/v1/responses",
+      }),
+    ]);
+  });
 });
 
-function sessionDescriptor() {
+function sessionDescriptor(): SqliteSessionRecord["entry"]["descriptor"] {
   return {
     authorizedSigner: testAccessKey,
     expiringNonceHash: `0x${"3".repeat(64)}` as `0x${string}`,
