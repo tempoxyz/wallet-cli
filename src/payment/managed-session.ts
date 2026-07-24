@@ -1,6 +1,7 @@
 import { tempo } from "mppx/client";
 import type { ChannelStore } from "mppx/client";
 import { createSqliteChannelStore, type SqliteChannelStore } from "mppx/client/node";
+import type { Address } from "viem";
 
 type SessionManagerParameters = Parameters<typeof tempo.session.manager>[0];
 
@@ -39,6 +40,16 @@ export async function fetchManagedSession(parameters: ManagedSessionRequest) {
     return await manager.fetch(parameters.url, parameters.init);
   } finally {
     ownedStore?.close();
+  }
+}
+
+/** Returns the access key bound to the latest retained session for a protected URL. */
+export function latestManagedSessionAuthorizedSigner(url: string): Address | undefined {
+  const store = createRequestChannelStore(url);
+  try {
+    return store.latestAuthorizedSigner();
+  } finally {
+    store.close();
   }
 }
 

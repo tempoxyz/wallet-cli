@@ -16,12 +16,15 @@ import {
   FormData as UndiciFormData,
   ProxyAgent,
 } from "undici";
-import { createWalletClient, http, parseUnits } from "viem";
+import { createWalletClient, http, parseUnits, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { Chain } from "viem/tempo";
 
 import { withSessionLock } from "../payment/session-lock.js";
-import { fetchManagedSession } from "../payment/managed-session.js";
+import {
+  fetchManagedSession,
+  latestManagedSessionAuthorizedSigner,
+} from "../payment/managed-session.js";
 import { connect, createProvider } from "../provider.js";
 import { version } from "../shared/constants.js";
 import { networkError, paymentError, usageError } from "../shared/errors.js";
@@ -518,7 +521,10 @@ async function payAndRetryRequest(
 
 async function payManagedSessionAndRetryRequest(request: FetchPlan, options: RequestOptions) {
   try {
-    const identity = await resolvePaymentIdentity(options);
+    const identity = await resolvePaymentIdentity(
+      options,
+      latestManagedSessionAuthorizedSigner(request.url),
+    );
     const managedFetch: typeof globalThis.fetch = (input, init) =>
       fetchWithRetries(
         {
@@ -545,7 +551,10 @@ async function payManagedSessionAndRetryRequest(request: FetchPlan, options: Req
   }
 }
 
-export async function resolvePaymentIdentity(options: RequestOptions) {
+export async function resolvePaymentIdentity(
+  options: RequestOptions,
+  preferredAccessKey?: Address | undefined,
+) {
   const privateKey = options.privateKey ?? process.env.TEMPO_PRIVATE_KEY;
   if (privateKey) {
     const account = privateKeyToAccount(privateKey as `0x${string}`);
@@ -563,7 +572,7 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
     };
   }
 
-  const storedIdentity = await storedAccessKeyIdentity(options);
+  const storedIdentity = await storedAccessKeyIdentity(options, preferredAccessKey);
   if (storedIdentity) return storedIdentity;
 
   const provider = createProvider({ network: options.network });
@@ -605,11 +614,15 @@ async function ensureProviderAccounts(provider: Parameters<typeof connect>[0]) {
   await connect(provider);
 }
 
-export async function storedAccessKeyIdentity(options: RequestOptions) {
+export async function storedAccessKeyIdentity(
+  options: RequestOptions,
+  preferredAccessKey?: Address | undefined,
+) {
   const expectedChain = chainId(options.network);
-  const resolved = await resolveTempoWalletAccount({ chainId: expectedChain }).catch(
-    () => undefined,
-  );
+  const resolved = await resolveTempoWalletAccount({
+    chainId: expectedChain,
+    ...(preferredAccessKey ? { preferredAccessKey } : {}),
+  }).catch(() => undefined);
   if (!resolved) return undefined;
 
   const account = resolved.account;
