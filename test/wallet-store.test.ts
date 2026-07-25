@@ -23,7 +23,6 @@ import {
   walletState,
   walletStoreExists,
   writeLegacyKeysToml,
-  writeRawWalletStore,
 } from "./helpers.js";
 
 describe("wallet store file", () => {
@@ -33,7 +32,7 @@ describe("wallet store file", () => {
     expect(walletStorePath()).toBe(join(home, ".tempo", "wallet", "store.json"));
   });
 
-  it("saves the current envelope with default active account and chain", async () => {
+  it("persists through the Accounts SDK filesystem storage", async () => {
     const home = await useTempHome();
     await saveWalletState({
       accounts: [{ address: testWallet }],
@@ -60,7 +59,6 @@ describe("wallet store file", () => {
     const home = await useTempHome();
     await saveWalletState(walletState());
 
-    await expectMode(join(home, ".tempo"), 0o700);
     await expectMode(join(home, ".tempo", "wallet"), 0o700);
     await expectMode(join(home, ".tempo", "wallet", "store.json"), 0o600);
   });
@@ -77,112 +75,14 @@ describe("wallet store file", () => {
 
     await saveWalletState(walletState());
 
-    await expectMode(tempoDir, 0o700);
     await expectMode(walletDir, 0o700);
     await expectMode(storePath, 0o600);
   });
 
-  it("loads an empty state from missing or malformed envelopes", async () => {
+  it("loads the Accounts SDK default state when storage is missing", async () => {
     await useTempHome();
 
     expect(await loadWalletState()).toEqual(emptyWalletState());
-
-    for (const body of [
-      "{}",
-      '{"tempo-cli.store": null}',
-      '{"tempo-cli.store": {}}',
-      '{"tempo-cli.store": {"state": null}}',
-      '{"tempo-cli.store": {"state": "not-an-object"}}',
-    ]) {
-      await writeRawWalletStore(body);
-      expect(await loadWalletState()).toEqual(emptyWalletState());
-    }
-  });
-
-  it("filters malformed accounts, keys, limits, and optional scalar fields", async () => {
-    await useTempHome();
-    await writeRawWalletStore(
-      JSON.stringify({
-        "tempo-cli.store": {
-          state: {
-            accounts: [{ address: testWallet }, { address: 42 }, null, { other: testWallet2 }],
-            activeAccount: "0",
-            chainId: "4217",
-            accessKeys: [
-              {
-                access: testWallet,
-                address: testAccessKey,
-                chainId: 4217,
-                expiry: "1783809942",
-                keyAuthorization: {
-                  address: testAccessKey,
-                  nested: ["100#__bigint", { limit: "250#__bigint" }],
-                },
-                keyType: 1,
-                privateKey: false,
-                limits: [
-                  { token: usdc, limit: "100000000#__bigint", period: 86_400 },
-                  { token: usdc, limit: 100000000 },
-                  { token: 1, limit: "100000000#__bigint" },
-                  { token: usdc, limit: "250000000#__bigint", period: "86400" },
-                  null,
-                ],
-                scopes: [
-                  {
-                    address: usdc,
-                    selector: "transfer(address,uint256)",
-                    recipients: [testWallet2, 42],
-                  },
-                  { address: 42 },
-                  null,
-                ],
-              },
-              {
-                access: testWallet,
-                address: testAccessKey2,
-                chainId: "4217",
-                limits: [],
-              },
-              {
-                access: testWallet,
-                chainId: 4217,
-                limits: [],
-              },
-              null,
-            ],
-          },
-          version: 0,
-        },
-      }),
-    );
-
-    expect(await loadWalletState()).toEqual({
-      accounts: [{ address: testWallet }],
-      accessKeys: [
-        {
-          access: testWallet,
-          address: testAccessKey,
-          chainId: 4217,
-          expiry: undefined,
-          keyAuthorization: {
-            address: testAccessKey,
-            nested: [100n, { limit: 250n }],
-          },
-          keyType: undefined,
-          privateKey: undefined,
-          limits: [{ token: usdc, limit: "100000000#__bigint", period: 86_400 }],
-          scopes: [
-            {
-              address: usdc,
-              selector: "transfer(address,uint256)",
-              recipients: [testWallet2],
-            },
-          ],
-        },
-      ],
-      activeAccount: undefined,
-      chainId: undefined,
-    });
   });
 
   it("round trips nested key authorization bigint values", async () => {
@@ -221,7 +121,6 @@ describe("wallet store file", () => {
       ...walletState().accessKeys[0]!,
       handle: { jwk: { crv: "P-256", kty: "EC" }, kind: "webcrypto-p256" },
       keyType: "p256",
-      privateKey: undefined,
       publicKey: "0x04abcd",
     };
 
@@ -237,10 +136,10 @@ describe("wallet store file", () => {
         {
           ...walletState().accessKeys[0]!,
           limits: [
-            { token: usdc, limit: "100000000#__bigint", period: 86_400 },
+            { token: usdc, limit: 100000000n, period: 86_400 },
             {
               token: "0x1111111111111111111111111111111111111111",
-              limit: "2500000#__bigint",
+              limit: 2500000n,
             },
           ],
           scopes: [
@@ -279,37 +178,6 @@ describe("wallet store file", () => {
     expect(await loadWalletState()).toEqual(state);
   });
 
-  it("can save a state after loading revived bigint authorizations", async () => {
-    await useTempHome();
-    await writeRawWalletStore(
-      JSON.stringify({
-        "tempo-cli.store": {
-          state: {
-            accounts: [{ address: testWallet }],
-            activeAccount: 0,
-            accessKeys: [
-              {
-                access: testWallet,
-                address: testAccessKey,
-                chainId: 4217,
-                keyAuthorization: { chainId: "4217#__bigint" },
-                limits: [{ token: usdc, limit: "100000000#__bigint" }],
-                privateKey: testPrivateKey,
-              },
-            ],
-            chainId: 4217,
-          },
-          version: 0,
-        },
-      }),
-    );
-
-    const loaded = await loadWalletState();
-    await saveWalletState(loaded);
-
-    expect(await loadWalletState()).toEqual(loaded);
-  });
-
   it("migrates legacy TOML with comments, escaped strings, booleans, and CRLF line endings", async () => {
     await useTempHome();
     await writeLegacyKeysToml(
@@ -323,7 +191,7 @@ describe("wallet store file", () => {
         `key = "${testPrivateKey}"`,
         'key_authorization = "0x12#34"',
         "provisioned = true",
-        "expiry = 1783809942",
+        "expiry = 2000000000",
         "",
         "[[keys.limits]]",
         `currency = "${usdc}"`,

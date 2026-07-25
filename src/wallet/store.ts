@@ -1,20 +1,16 @@
-import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
-import { getArray, getRecord } from "../shared/utils.js";
+import { Store } from "accounts";
+import { Storage } from "accounts/cli";
 
-export type AccessKeyLimit = {
-  token: string;
-  limit: string;
-  period?: number | undefined;
-};
+import { createProvider } from "../provider.js";
 
 export type AccessKeyScope = {
   address: string;
   selector?: string | undefined;
-  recipients: readonly string[];
+  recipients?: readonly string[] | undefined;
 };
 
 export type WalletState = {
@@ -30,156 +26,81 @@ export type WalletState = {
     keyType?: string | undefined;
     privateKey?: string | undefined;
     publicKey?: string | undefined;
-    limits: readonly AccessKeyLimit[];
+    limits?: readonly {
+      token: string;
+      limit: bigint | string;
+      period?: number | undefined;
+    }[];
     scopes?: readonly AccessKeyScope[] | undefined;
   }[];
   activeAccount?: number | undefined;
   chainId?: number | undefined;
 };
 
-const privateDirMode = 0o700;
-const privateFileMode = 0o600;
-
+/**
+ * Loads the wallet state through the Accounts SDK provider store.
+ *
+ * The Accounts SDK owns the current `store.json` path, envelope, validation,
+ * hydration, serialization, and filesystem safety. Wallet CLI only retains the
+ * one-time migration from its legacy `keys.toml` format.
+ */
 export async function loadWalletState(): Promise<WalletState> {
-  const path = walletStorePath();
-  let text: string;
+  const persisted = await Storage.filesystem().getItem("store");
+  const store = await loadWalletStore();
+  const state = store.getState();
+  if (persisted !== null || state.accounts.length || state.accessKeys.length)
+    return state as unknown as WalletState;
 
-  try {
-    text = await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return await migrateLegacyWalletState();
-    throw error;
-  }
-
-  const value = JSON.parse(text) as unknown;
-  const envelope = getRecord(value)["tempo-cli.store"];
-  const state = getRecord(envelope).state;
-  if (!state) return emptyWalletState();
-
-  const record = getRecord(state);
-  const accounts = getArray(record.accounts).flatMap((account) => {
-    const item = getRecord(account);
-    return typeof item.address === "string" ? [{ address: item.address }] : [];
-  });
-  const accessKeys = getArray(record.accessKeys).flatMap((key) => {
-    const item = getRecord(key);
-    if (
-      typeof item.address !== "string" ||
-      typeof item.access !== "string" ||
-      typeof item.chainId !== "number"
-    )
-      return [];
-
-    return [
-      {
-        address: item.address,
-        access: item.access,
-        chainId: item.chainId,
-        expiry: typeof item.expiry === "number" ? item.expiry : undefined,
-        ...(isRecord(item.handle) ? { handle: reviveBigInts(item.handle) } : {}),
-        ...(isRecord(item.keyPair) ? { keyPair: reviveBigInts(item.keyPair) } : {}),
-        keyAuthorization: reviveBigInts(item.keyAuthorization),
-        keyType: typeof item.keyType === "string" ? item.keyType : undefined,
-        privateKey: typeof item.privateKey === "string" ? item.privateKey : undefined,
-        publicKey: typeof item.publicKey === "string" ? item.publicKey : undefined,
-        limits: parseAccessKeyLimits(item.limits),
-        scopes: parseAccessKeyScopes(item.scopes),
-      },
-    ];
-  });
-
-  return {
-    accounts,
-    accessKeys,
-    activeAccount: typeof record.activeAccount === "number" ? record.activeAccount : undefined,
-    chainId: typeof record.chainId === "number" ? record.chainId : undefined,
-  };
+  const legacy = await loadLegacyWalletState();
+  if (!legacy.accounts.length && !legacy.accessKeys.length) return state as unknown as WalletState;
+  await replaceWalletState(store, legacy);
+  return store.getState() as unknown as WalletState;
 }
 
-function reviveBigInts(value: unknown): unknown {
-  if (typeof value === "string" && value.endsWith("#__bigint")) {
-    return BigInt(value.slice(0, -"#__bigint".length));
-  }
-  if (Array.isArray(value)) return value.map(reviveBigInts);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, reviveBigInts(item)]));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function parseAccessKeyLimits(value: unknown): AccessKeyLimit[] {
-  return getArray(value).flatMap((limit) => {
-    const item = getRecord(limit);
-    if (typeof item.token !== "string" || typeof item.limit !== "string") return [];
-    if (item.period !== undefined && typeof item.period !== "number") return [];
-    return [
-      {
-        token: item.token,
-        limit: item.limit,
-        period: typeof item.period === "number" ? item.period : undefined,
-      },
-    ];
-  });
-}
-
-function parseAccessKeyScopes(value: unknown): AccessKeyScope[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const scopes = getArray(value).flatMap((scope) => {
-    const item = getRecord(scope);
-    if (typeof item.address !== "string") return [];
-    return [
-      {
-        address: item.address,
-        selector: typeof item.selector === "string" ? item.selector : undefined,
-        recipients: getArray(item.recipients).flatMap((recipient) =>
-          typeof recipient === "string" ? [recipient] : [],
-        ),
-      },
-    ];
-  });
-  return scopes;
-}
-
+/** Replaces the Accounts SDK provider state and waits for filesystem persistence. */
 export async function saveWalletState(state: WalletState) {
-  const path = walletStorePath();
-  await ensurePrivateWalletDirectory(path);
-  await writePrivateFile(
-    path,
-    JSON.stringify(
-      {
-        "tempo-cli.store": {
-          state: {
-            accounts: state.accounts,
-            accessKeys: state.accessKeys,
-            activeAccount: state.activeAccount ?? 0,
-            chainId: state.chainId ?? 4217,
-          },
-          version: 0,
-        },
-      },
-      (_key, value: unknown) => (typeof value === "bigint" ? `${value}#__bigint` : value),
-      2,
-    ),
-  );
+  const store = await loadWalletStore();
+  await replaceWalletState(store, state);
 }
 
+/** Returns the Accounts SDK's default CLI storage path. */
 export function walletStorePath() {
-  return join(homedir(), ".tempo", "wallet", "store.json");
+  return Storage.defaultPath();
 }
 
 export function emptyWalletState(): WalletState {
   return {
     accounts: [],
     accessKeys: [],
+    activeAccount: 0,
+    chainId: 4217,
   };
 }
 
-async function migrateLegacyWalletState() {
-  const state = await loadLegacyWalletState();
-  if (state.accounts.length || state.accessKeys.length) await saveWalletState(state);
-  return state;
+type WalletStore = {
+  getState(): Store.State;
+  setState(state: Store.State): void;
+};
+
+async function loadWalletStore(): Promise<WalletStore> {
+  const provider = createProvider() as unknown as { store: WalletStore };
+  await Store.waitForHydration(provider.store as never);
+  return provider.store;
+}
+
+async function replaceWalletState(store: WalletStore, state: WalletState) {
+  const current = store.getState();
+  store.setState({
+    ...current,
+    accounts: state.accounts as Store.State["accounts"],
+    accessKeys: state.accessKeys as Store.State["accessKeys"],
+    activeAccount: state.activeAccount ?? 0,
+    chainId: state.chainId ?? 4217,
+  });
+
+  // Filesystem storage serializes operations per path. Queueing a read after
+  // Zustand's write gives CLI commands an explicit persistence barrier.
+  await Storage.filesystem().getItem("store");
 }
 
 async function loadLegacyWalletState(): Promise<WalletState> {
@@ -195,7 +116,7 @@ async function loadLegacyWalletState(): Promise<WalletState> {
   const accounts = [...new Set(keys.map((key) => key.access))].map((address) => ({ address }));
   return {
     accounts,
-    accessKeys: keys,
+    accessKeys: keys as unknown as WalletState["accessKeys"],
     ...(accounts.length ? { activeAccount: 0 } : {}),
     ...(keys[0] ? { chainId: keys[0].chainId } : {}),
   };
@@ -205,7 +126,7 @@ function legacyKeysPath() {
   return join(homedir(), ".tempo", "wallet", "keys.toml");
 }
 
-function parseLegacyKeys(text: string): WalletState["accessKeys"] {
+function parseLegacyKeys(text: string): Store.State["accessKeys"] {
   const keys: LegacyKey[] = [];
   let key: LegacyKey | undefined;
   let limit: LegacyLimit | undefined;
@@ -248,7 +169,7 @@ function parseLegacyKeys(text: string): WalletState["accessKeys"] {
     if (field === "key_address" && typeof value === "string") key.address = value;
     if (field === "key" && typeof value === "string") key.privateKey = value;
     if (field === "key_authorization" && typeof value === "string") key.keyAuthorization = value;
-    if (field === "key_type" && typeof value === "string") key.keyType = value;
+    if (field === "key_type" && (value === "p256" || value === "secp256k1")) key.keyType = value;
     if (field === "expiry" && typeof value === "number") key.expiry = value;
   }
 
@@ -269,12 +190,12 @@ function parseLegacyKeys(text: string): WalletState["accessKeys"] {
         keyAuthorization: key.keyAuthorization,
         keyType: key.keyType ?? "secp256k1",
         privateKey: key.privateKey,
-        limits: (key.limits ?? []).flatMap((limit) => {
-          if (typeof limit.token !== "string" || typeof limit.limit !== "string") return [];
-          return [{ token: limit.token, limit: `${limit.limit}#__bigint` }];
+        limits: (key.limits ?? []).flatMap((item) => {
+          if (typeof item.token !== "string" || typeof item.limit !== "string") return [];
+          return [{ token: item.token, limit: BigInt(item.limit) }];
         }),
       },
-    ];
+    ] as Store.State["accessKeys"];
   });
 }
 
@@ -307,47 +228,13 @@ function parseTomlValue(value: string) {
   return trimmed;
 }
 
-async function ensurePrivateWalletDirectory(path: string) {
-  const walletDir = dirname(path);
-  const tempoDir = dirname(walletDir);
-  await mkdir(tempoDir, { recursive: true, mode: privateDirMode });
-  await chmodIfSupported(tempoDir, privateDirMode);
-  await mkdir(walletDir, { recursive: true, mode: privateDirMode });
-  await chmodIfSupported(walletDir, privateDirMode);
-}
-
-async function writePrivateFile(path: string, contents: string) {
-  const tempPath = join(
-    dirname(path),
-    `.store.json.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
-  );
-  try {
-    await writeFile(tempPath, contents, { mode: privateFileMode });
-    await chmodIfSupported(tempPath, privateFileMode);
-    await rename(tempPath, path);
-    await chmodIfSupported(path, privateFileMode);
-  } catch (error) {
-    await unlink(tempPath).catch(() => undefined);
-    throw error;
-  }
-}
-
-async function chmodIfSupported(path: string, mode: number) {
-  try {
-    await chmod(path, mode);
-  } catch (error) {
-    if (process.platform === "win32") return;
-    throw error;
-  }
-}
-
 type LegacyKey = {
   access?: string | undefined;
   address?: string | undefined;
   chainId?: number | undefined;
   expiry?: number | undefined;
   keyAuthorization?: string | undefined;
-  keyType?: string | undefined;
+  keyType?: "p256" | "secp256k1" | undefined;
   privateKey?: string | undefined;
   limits?: LegacyLimit[] | undefined;
 };

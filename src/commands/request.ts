@@ -7,7 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { Challenge, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession, tempo } from "mppx/client";
-import { Keystore } from "accounts";
+import { Store } from "accounts";
 import { Session as TempoSession } from "mppx/tempo";
 import {
   Agent,
@@ -26,7 +26,6 @@ import {
   Actions,
   Chain,
   Channel as TempoChannel,
-  KeyAuthorizationManager,
 } from "viem/tempo";
 
 import { withSessionLock } from "../payment/session-lock.js";
@@ -51,7 +50,6 @@ import {
   rpcUrl,
 } from "../shared/network.js";
 import { getRecord, nowSeconds, parseOnChainBigInt, stringValue } from "../shared/utils.js";
-import { loadWalletState, type WalletState } from "../wallet/store.js";
 
 export type RequestOptions = {
   bearer?: string | undefined;
@@ -663,13 +661,14 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
     };
   }
 
-  const storedIdentity = await storedAccessKeyIdentity(await loadWalletState(), options);
-  if (storedIdentity) return storedIdentity;
-
   const provider = createProvider({ network: options.network });
   const providerState = provider as unknown as {
-    store: { getState(): { accounts: { address: string }[]; activeAccount: number } };
+    store: StoredAccessKeyStore;
   };
+  await Store.waitForHydration(providerState.store as never);
+  const storedIdentity = await storedAccessKeyIdentity(providerState.store, options);
+  if (storedIdentity) return storedIdentity;
+
   await ensureProviderAccounts(provider);
   const getClient = ({ chainId }: { chainId?: number | undefined }) => {
     const client = provider.getClient({ chainId });
@@ -705,69 +704,44 @@ async function ensureProviderAccounts(provider: Parameters<typeof connect>[0]) {
   await connect(provider);
 }
 
-export async function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptions) {
-  const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
+type StoredAccessKeyStore = {
+  accessKeys: {
+    select(options: {
+      account: `0x${string}`;
+      chainId: number;
+    }): Promise<TempoAccount.AccessKeyAccount | undefined>;
+  };
+  getState(): {
+    accounts: readonly { address: string }[];
+    activeAccount: number;
+  };
+};
+
+async function storedAccessKeyIdentity(store: StoredAccessKeyStore, options: RequestOptions) {
+  const state = store.getState();
+  const activeAccount = state.accounts[state.activeAccount];
   if (!activeAccount) return undefined;
 
   const expectedChain = chainId(options.network);
-  for (const key of walletState.accessKeys) {
-    if (key.chainId !== expectedChain) continue;
-    if (key.keyType && key.keyType !== "secp256k1" && key.keyType !== "p256") continue;
+  const account = await store.accessKeys.select({
+    account: activeAccount.address as `0x${string}`,
+    chainId: expectedChain,
+  });
+  if (!account) return undefined;
 
-    const keyAuthorizationManager = KeyAuthorizationManager.memory();
-    if (key.keyAuthorization) {
-      await keyAuthorizationManager.set(
-        {
-          address: activeAccount.address as `0x${string}`,
-          accessKey: key.address as `0x${string}`,
-          chainId: expectedChain,
-        },
-        key.keyAuthorization as never,
-      );
-    }
-
-    const account = key.privateKey
-      ? key.keyType === "p256"
-        ? TempoAccount.fromP256(key.privateKey as `0x${string}`, {
-            access: activeAccount.address as `0x${string}`,
-            keyAuthorizationManager,
-          })
-        : TempoAccount.fromSecp256k1(key.privateKey as `0x${string}`, {
-            access: activeAccount.address as `0x${string}`,
-            keyAuthorizationManager,
-          })
-      : key.keyType === "p256" && key.handle && key.publicKey
-        ? await Keystore.webCryptoP256({ extractable: true }).toAccount(
-            {
-              handle: key.handle as Keystore.Handle,
-              keyType: key.keyType,
-              publicKey: key.publicKey as `0x${string}`,
-            },
-            {
-              access: activeAccount.address as `0x${string}`,
-              keyAuthorizationManager,
-            },
-          )
-        : undefined;
-    if (!account) continue;
-    if (key.address.toLowerCase() !== account.accessKeyAddress.toLowerCase()) continue;
-
-    const getClient = ({ chainId }: { chainId?: number | undefined }) =>
-      createWalletClient({
-        account,
-        chain: chainId === 42431 ? Chain.tempoModerato : Chain.tempo,
-        transport: http(rpcUrl(chainId === 42431 ? "testnet" : "mainnet")),
-      });
-    return {
+  const getClient = ({ chainId }: { chainId?: number | undefined }) =>
+    createWalletClient({
       account,
-      address: account.address,
-      getClient,
-      methodOptions: { account, getClient, mode: "pull" as const },
-      signerAddress: account.accessKeyAddress,
-    };
-  }
-
-  return undefined;
+      chain: chainId === 42431 ? Chain.tempoModerato : Chain.tempo,
+      transport: http(rpcUrl(chainId === 42431 ? "testnet" : "mainnet")),
+    });
+  return {
+    account,
+    address: account.address,
+    getClient,
+    methodOptions: { account, getClient, mode: "pull" as const },
+    signerAddress: account.accessKeyAddress,
+  };
 }
 
 type PaymentIdentity = Awaited<ReturnType<typeof resolvePaymentIdentity>>;
