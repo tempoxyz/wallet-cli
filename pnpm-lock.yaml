@@ -13,8 +13,8 @@ importers:
   .:
     dependencies:
       accounts:
-        specifier: https://pkg.pr.new/tempoxyz/accounts@e730506
-        version: https://pkg.pr.new/tempoxyz/accounts@e730506(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3))
+        specifier: 0.16.0
+        version: 0.16.0(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3))
       incur:
         specifier: 0.4.8
         version: 0.4.8
@@ -952,9 +952,8 @@ packages:
       zod:
         optional: true
 
-  accounts@https://pkg.pr.new/tempoxyz/accounts@e730506:
-    resolution: {integrity: sha512-upRhEA0ycTruQUpQfp9FU1qNoPku3ESeLXoGLmblCwzl4muyMuZ8sT7HPhS8ZhJvshgQUIxjuKeBcTrtYtFWHA==, tarball: https://pkg.pr.new/tempoxyz/accounts@e730506}
-    version: 0.15.5
+  accounts@0.16.0:
+    resolution: {integrity: sha512-nDMLplhoE12yRJrItAMuM1+kvXtJ9nSGjbfX+0O+wodX1k7HuRlB+kWV7n1RcG/6w3VzKspcmv2Rb3e3EJfPqg==}
     peerDependencies:
       '@privy-io/react-auth': '>=3.25.0'
       '@react-native-async-storage/async-storage': ^3.0.2
@@ -2484,7 +2483,7 @@ snapshots:
       typescript: 6.0.3
       zod: 4.4.3
 
-  accounts@https://pkg.pr.new/tempoxyz/accounts@e730506(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3)):
+  accounts@0.16.0(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3)):
     dependencies:
       hono: 4.12.32
       idb-keyval: 6.2.5
