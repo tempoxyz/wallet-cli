@@ -290,17 +290,6 @@ function createMcpCommands() {
   if (!commands) throw new Error("Unable to access wallet commands for MCP server");
 
   const mcpCommands = new Map<string, unknown>(commands);
-  const keysCommand = mcpCommands.get("keys");
-  if (isCommandGroup(keysCommand)) {
-    const listCommand = keysCommand.commands.get("list");
-    const updateCommand = keysCommand.commands.get("update");
-    if (isRunnableCommand(listCommand)) {
-      mcpCommands.set("keys", listCommand);
-      mcpCommands.set("keys_list", listCommand);
-    }
-    if (isRunnableCommand(updateCommand)) mcpCommands.set("keys_update", updateCommand);
-  }
-
   const servicesCommand = mcpCommands.get("services");
   if (isRunnableCommand(servicesCommand)) {
     mcpCommands.set("services", {
@@ -325,7 +314,7 @@ async function main() {
     process.exit(0);
   }
 
-  const args = normalizeKeysCommand(normalizeServicesOutputAliases(rawArgs));
+  const args = normalizeServicesOutputAliases(rawArgs);
 
   if (handleBuiltinSchema(args)) process.exit(0);
 
@@ -349,20 +338,6 @@ function isRunnableCommand(value: unknown): value is {
 } {
   return (
     typeof value === "object" && value !== null && "run" in value && typeof value.run === "function"
-  );
-}
-
-function isCommandGroup(value: unknown): value is {
-  _group: true;
-  commands: Map<string, unknown>;
-} {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "_group" in value &&
-    value._group === true &&
-    "commands" in value &&
-    value.commands instanceof Map
   );
 }
 
@@ -397,15 +372,6 @@ function normalizeServicesOutputAliases(args: readonly string[]) {
     format,
     ...normalized.slice(normalizedCommandIndex + 1),
   ];
-}
-
-function normalizeKeysCommand(args: readonly string[]) {
-  const commandIndex = firstCommandIndex(args);
-  if (commandIndex === undefined || args[commandIndex] !== "keys") return [...args];
-  if (args.includes("--help") || args.includes("-h")) return [...args];
-  if (args.slice(commandIndex + 1).some((arg) => arg === "list" || arg === "update"))
-    return [...args];
-  return [...args.slice(0, commandIndex + 1), "list", ...args.slice(commandIndex + 1)];
 }
 
 function firstCommandIndex(args: readonly string[]) {

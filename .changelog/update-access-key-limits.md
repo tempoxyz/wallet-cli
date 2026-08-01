@@ -1,5 +1,13 @@
 ---
-wallet-cli: minor
+wallet-cli: major
 ---
 
-Added `tempo wallet keys update [access-key]` to update a selected access key's remaining token limit through wallet approval.
+Added access key limit updates and moved key listing from `keys` to `keys list`.
+
+```diff
+-tempo wallet keys
++tempo wallet keys list
+
+-keys
++keys_list
+```

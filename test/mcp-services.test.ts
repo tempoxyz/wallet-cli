@@ -12,14 +12,14 @@ const initParams = {
   clientInfo: { name: "test-client", version: "1.0.0" },
 };
 
-describe("services MCP tool", () => {
-  it("preserves legacy and nested access key tools", async () => {
+describe("MCP tools", () => {
+  it("exposes access key commands as nested tools", async () => {
     const response = await mcpRequest<{ tools: { name: string }[] }>("tools/list", {});
 
     expect(response.error).toBeUndefined();
-    expect(response.result.tools.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(["keys", "keys_list", "keys_update"]),
-    );
+    const names = response.result.tools.map((tool) => tool.name);
+    expect(names).toEqual(expect.arrayContaining(["keys_list", "keys_update"]));
+    expect(names).not.toContain("keys");
   });
 
   it("keeps normal CLI list JSON as a top-level array", async () => {
