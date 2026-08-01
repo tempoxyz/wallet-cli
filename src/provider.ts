@@ -34,6 +34,7 @@ export async function connect(provider: CoreProvider.Provider) {
         capabilities: {
           authorizeAccessKey: {
             expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
+            keyType: "secp256k1",
           },
         },
       },

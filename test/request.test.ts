@@ -14,6 +14,7 @@ import {
   isSessionInvalidationResponse,
   parseRequestArgs,
   resolvePaymentIdentity,
+  resolveSessionPaymentIdentity,
   runRequest,
   storedAccessKeyIdentity,
   tempoPaymentChallengeResponse,
@@ -435,6 +436,7 @@ describe("request command", () => {
         accessKeys: [
           {
             ...walletState().accessKeys[0]!,
+            expiry: 2_000_000_000,
             keyAuthorization,
           },
         ],
@@ -456,6 +458,95 @@ describe("request command", () => {
     expect(stored).toStrictEqual(keyAuthorization);
   });
 
+  it("uses a stored secp256k1 access key for MPP session vouchers", async () => {
+    await useTempHome();
+    const p256Keystore = Keystore.webCryptoP256({ extractable: true });
+    const p256Key = await p256Keystore.createKey();
+    const p256Account = await p256Keystore.toAccount(
+      { ...p256Key, keyType: "p256" },
+      { access: testWallet, keyAuthorizationManager: KeyAuthorizationManager.memory() },
+    );
+    const secp256k1Keystore = Keystore.secp256k1();
+    const secp256k1Key = await secp256k1Keystore.createKey();
+    const secp256k1Account = await secp256k1Keystore.toAccount(
+      { ...secp256k1Key, keyType: "secp256k1" },
+      { access: testWallet, keyAuthorizationManager: KeyAuthorizationManager.memory() },
+    );
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            address: p256Account.accessKeyAddress,
+            access: testWallet,
+            chainId: 4217,
+            handle: p256Key.handle,
+            keyType: "p256",
+            limits: [],
+            publicKey: p256Key.publicKey,
+          },
+          {
+            address: secp256k1Account.accessKeyAddress,
+            access: testWallet,
+            chainId: 4217,
+            handle: secp256k1Key.handle,
+            keyType: "secp256k1",
+            limits: [],
+            publicKey: secp256k1Key.publicKey,
+          },
+        ],
+      }),
+    );
+
+    const identity = await resolveSessionPaymentIdentity(
+      requestOptions("https://paid.example.com"),
+    );
+
+    expect(identity.signerAddress.toLowerCase()).toBe(
+      secp256k1Account.accessKeyAddress.toLowerCase(),
+    );
+    expect(identity.methodOptions).toMatchObject({
+      account: {
+        accessKeyAddress: secp256k1Account.accessKeyAddress,
+        keyType: "secp256k1",
+      },
+      mode: "pull",
+    });
+  });
+
+  it("rejects a P-256 access key before creating an MPP session voucher", async () => {
+    await useTempHome();
+    const keystore = Keystore.webCryptoP256({ extractable: true });
+    const { handle, publicKey } = await keystore.createKey();
+    const account = await keystore.toAccount(
+      { handle, keyType: "p256", publicKey },
+      { access: testWallet, keyAuthorizationManager: KeyAuthorizationManager.memory() },
+    );
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            address: account.accessKeyAddress,
+            access: testWallet,
+            chainId: 4217,
+            handle,
+            keyType: "p256",
+            limits: [],
+            publicKey,
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      resolveSessionPaymentIdentity(requestOptions("https://paid.example.com")),
+    ).rejects.toMatchObject({
+      code: "E_PAYMENT",
+      message: expect.stringMatching(
+        /MPP session vouchers require an active, unexpired secp256k1 access key.*P-256\/WebAuthn.*passkey wallet is supported.*tempo wallet refresh.*tempo wallet sessions close --all.*sponsored transaction.*discard/is,
+      ),
+    });
+  });
+
   it("uses stored P-256 access keys for payment identity resolution", async () => {
     await useTempHome();
     const keystore = Keystore.webCryptoP256({ extractable: true });
@@ -471,7 +562,7 @@ describe("request command", () => {
             address: account.accessKeyAddress,
             access: testWallet,
             chainId: 4217,
-            expiry: 1783809942,
+            expiry: 2_000_000_000,
             handle,
             keyType: "p256",
             limits: [],
