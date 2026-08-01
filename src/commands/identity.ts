@@ -182,7 +182,7 @@ export async function updateAccessKeyHandler(
   const accessKeyAddress = key.address as Address;
   const tokenAddress_resolved = token as Address;
   const provider = createUpdateProvider({
-    network: options.network,
+    network: selectedChainId === 42431 ? "testnet" : undefined,
     noBrowser: options.browser === false,
   });
 

@@ -290,6 +290,17 @@ function createMcpCommands() {
   if (!commands) throw new Error("Unable to access wallet commands for MCP server");
 
   const mcpCommands = new Map<string, unknown>(commands);
+  const keysCommand = mcpCommands.get("keys");
+  if (isCommandGroup(keysCommand)) {
+    const listCommand = keysCommand.commands.get("list");
+    const updateCommand = keysCommand.commands.get("update");
+    if (isRunnableCommand(listCommand)) {
+      mcpCommands.set("keys", listCommand);
+      mcpCommands.set("keys_list", listCommand);
+    }
+    if (isRunnableCommand(updateCommand)) mcpCommands.set("keys_update", updateCommand);
+  }
+
   const servicesCommand = mcpCommands.get("services");
   if (isRunnableCommand(servicesCommand)) {
     mcpCommands.set("services", {
@@ -338,6 +349,20 @@ function isRunnableCommand(value: unknown): value is {
 } {
   return (
     typeof value === "object" && value !== null && "run" in value && typeof value.run === "function"
+  );
+}
+
+function isCommandGroup(value: unknown): value is {
+  _group: true;
+  commands: Map<string, unknown>;
+} {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "_group" in value &&
+    value._group === true &&
+    "commands" in value &&
+    value.commands instanceof Map
   );
 }
 

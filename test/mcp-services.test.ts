@@ -13,6 +13,15 @@ const initParams = {
 };
 
 describe("services MCP tool", () => {
+  it("preserves legacy and nested access key tools", async () => {
+    const response = await mcpRequest<{ tools: { name: string }[] }>("tools/list", {});
+
+    expect(response.error).toBeUndefined();
+    expect(response.result.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["keys", "keys_list", "keys_update"]),
+    );
+  });
+
   it("keeps normal CLI list JSON as a top-level array", async () => {
     const output = await walletCli([
       "services",
@@ -56,6 +65,13 @@ async function walletCli(args: string[]) {
 }
 
 async function mcpCall(params: Record<string, unknown>) {
+  return mcpRequest<{
+    content: { text: string }[];
+    structuredContent?: unknown;
+  }>("tools/call", params);
+}
+
+async function mcpRequest<result>(method: string, params: Record<string, unknown>) {
   const child = spawn(
     process.execPath,
     ["--import", "tsx", "--import", mockFetchModule, "src/cli.ts", "--mcp"],
@@ -86,14 +102,14 @@ async function mcpCall(params: Record<string, unknown>) {
   child.stdin.write(
     `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: initParams })}\n`,
   );
-  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params })}\n`);
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method, params })}\n`);
 
   try {
     const response = await waitForResponse(responses, 2, () => stderr);
     child.stdin.end();
     const exitCode = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     if (exitCode !== 0) throw new Error(stderr || `MCP process exited with ${exitCode}`);
-    return response;
+    return response as { error?: unknown; result: result };
   } catch (error) {
     child.kill();
     throw error;
@@ -119,7 +135,7 @@ function isRpcResponse(
   id: number,
 ): value is {
   error?: unknown;
-  result: { content: { text: string }[]; structuredContent?: unknown };
+  result: unknown;
 } {
   return (
     typeof value === "object" &&

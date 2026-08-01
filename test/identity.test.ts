@@ -619,6 +619,22 @@ limit = "100000000"
     ]);
   });
 
+  it("uses the stored testnet chain for wallet approval", async () => {
+    await useTempHome();
+    const key = {
+      ...walletState().accessKeys[0]!,
+      chainId: 42431,
+      limits: [{ token: moderatoToken, limit: "100000000#__bigint" }],
+    };
+    await writeWalletState(walletState({ accessKeys: [key], chainId: 42431 }));
+    const request = vi.fn().mockResolvedValue(undefined);
+    const createProvider = vi.fn(() => ({ request }));
+
+    await updateAccessKeyHandler({ limit: "250" }, createProvider);
+
+    expect(createProvider).toHaveBeenCalledWith({ network: "testnet", noBrowser: false });
+  });
+
   it("preserves local limits when wallet approval fails", async () => {
     await useTempHome();
     await writeWalletState(walletState());
