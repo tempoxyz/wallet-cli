@@ -10,6 +10,7 @@ import {
   logoutHandler,
   refreshHandler,
   revokeHandler,
+  updateAccessKeyHandler,
   whoamiHandler,
 } from "./commands/identity.js";
 import { transferCredits, transferTokens } from "./commands/transfer.js";
@@ -39,6 +40,9 @@ import {
   revokeArgs,
   revokeOptions,
   revokeOutput,
+  updateAccessKeyOptions,
+  updateAccessKeyOutput,
+  updateAccessKeyArgs,
   servicesArgs,
   servicesMcpOutput,
   servicesOutput,
@@ -108,7 +112,11 @@ cli.command("whoami", {
   },
 });
 
-cli.command("keys", {
+const keys = Cli.create("keys", {
+  description: "Manage access keys",
+});
+
+keys.command("list", {
   description: "List keys and their spending limits",
   options: globalOptions,
   alias: globalAlias,
@@ -117,6 +125,19 @@ cli.command("keys", {
     return keysHandler();
   },
 });
+
+keys.command("update", {
+  description: "Update an access key spending limit",
+  args: updateAccessKeyArgs,
+  options: updateAccessKeyOptions,
+  alias: globalAlias,
+  output: updateAccessKeyOutput,
+  async run({ args, options }) {
+    return updateAccessKeyHandler({ ...options, accessKey: args.accessKey });
+  },
+});
+
+cli.command(keys);
 
 cli.command("revoke", {
   description: "Revoke an access key",
@@ -293,7 +314,7 @@ async function main() {
     process.exit(0);
   }
 
-  const args = normalizeServicesOutputAliases(rawArgs);
+  const args = normalizeKeysCommand(normalizeServicesOutputAliases(rawArgs));
 
   if (handleBuiltinSchema(args)) process.exit(0);
 
@@ -351,6 +372,15 @@ function normalizeServicesOutputAliases(args: readonly string[]) {
     format,
     ...normalized.slice(normalizedCommandIndex + 1),
   ];
+}
+
+function normalizeKeysCommand(args: readonly string[]) {
+  const commandIndex = firstCommandIndex(args);
+  if (commandIndex === undefined || args[commandIndex] !== "keys") return [...args];
+  if (args.includes("--help") || args.includes("-h")) return [...args];
+  if (args.slice(commandIndex + 1).some((arg) => arg === "list" || arg === "update"))
+    return [...args];
+  return [...args.slice(0, commandIndex + 1), "list", ...args.slice(commandIndex + 1)];
 }
 
 function firstCommandIndex(args: readonly string[]) {
@@ -533,7 +563,27 @@ function describeCli() {
         about: "Show who you are: wallet, balances, keys",
         args: [flag("credits", "--credits", "Show Coinflow credits balance")],
       },
-      { name: "keys", about: "List keys and their spending limits" },
+      {
+        name: "keys",
+        about: "Manage access keys",
+        subcommands: [
+          { name: "list", about: "List keys and their spending limits" },
+          {
+            name: "update",
+            about: "Update an access key spending limit",
+            args: [
+              positional("access_key", "Access key address (defaults to the connected key)"),
+              option("limit", "--limit", "New remaining limit in human token units", {
+                valueName: "AMOUNT",
+              }),
+              option("token", "--token", "Token address (defaults to current limit token)", {
+                valueName: "TOKEN",
+              }),
+              flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
+            ],
+          },
+        ],
+      },
       {
         name: "revoke",
         about: "Revoke an access key",

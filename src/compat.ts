@@ -81,7 +81,7 @@ Commands:
   refresh   Refresh your access key without logging out
   logout    Log out and disconnect your wallet
   whoami    Show who you are: wallet, balances, keys
-  keys      List keys and their spending limits
+  keys      Manage access keys
   revoke    Revoke an access key
   transfer  Transfer tokens to an address
   fund      Open add-funds flows in the wallet app
@@ -141,7 +141,7 @@ set edit:completion:arg-completer[tempo wallet] = {|@words|
             cand refresh 'Refresh your access key without logging out'
             cand logout 'Log out and disconnect your wallet'
             cand whoami 'Show who you are: wallet, balances, keys'
-            cand keys 'List keys and their spending limits'
+            cand keys 'Manage access keys'
             cand revoke 'Revoke an access key'
             cand transfer 'Transfer tokens to an address'
             cand fund 'Open add-funds flows in the wallet app'
