@@ -1,5 +1,5 @@
 ---
-wallet-cli: major
+wallet-cli: minor
 ---
 
 Added access key limit updates and moved key listing from `keys` to `keys list`.
@@ -7,7 +7,5 @@ Added access key limit updates and moved key listing from `keys` to `keys list`.
 ```diff
 -tempo wallet keys
 +tempo wallet keys list
-
--keys
-+keys_list
++tempo wallet keys update [access-key] --limit <amount>
 ```
