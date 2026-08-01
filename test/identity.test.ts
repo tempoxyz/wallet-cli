@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { toHex } from "viem";
 import { Actions } from "viem/tempo";
 
 const mocks = vi.hoisted(() => ({
@@ -33,6 +34,7 @@ import {
   keysHandler,
   logoutHandler,
   revokeHandler,
+  updateAccessKeyHandler,
   whoamiHandler,
 } from "../src/commands/identity.js";
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
@@ -582,6 +584,162 @@ limit = "100000000"
     });
     expect(result).toMatchObject({ local_key_removed: true });
     expect((await loadWalletState()).accessKeys).toEqual([otherWalletKey, otherChainKey]);
+  });
+
+  it("updates the connected access key limit through wallet approval", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const request = vi.fn().mockResolvedValue(undefined);
+    const createProvider = vi.fn(() => ({ request }));
+
+    const result = await updateAccessKeyHandler({ limit: "250", browser: false }, createProvider);
+
+    expect(createProvider).toHaveBeenCalledWith({ network: undefined, noBrowser: true });
+    expect(request).toHaveBeenCalledWith({
+      method: "wallet_updateAccessKey",
+      params: [
+        {
+          address: testWallet,
+          accessKeyAddress: testAccessKey,
+          chainId: toHex(4217),
+          limits: [{ token: usdc, limit: toHex(250_000_000n) }],
+        },
+      ],
+    });
+    expect(result).toEqual({
+      status: "success",
+      wallet: testWallet.toLowerCase(),
+      access_key: testAccessKey.toLowerCase(),
+      chain_id: 4217,
+      token: usdc.toLowerCase(),
+      limit: "250",
+    });
+    expect((await loadWalletState()).accessKeys[0]?.limits).toEqual([
+      { token: usdc, limit: "250000000#__bigint" },
+    ]);
+  });
+
+  it("uses the stored testnet chain for wallet approval", async () => {
+    await useTempHome();
+    const key = {
+      ...walletState().accessKeys[0]!,
+      chainId: 42431,
+      limits: [{ token: moderatoToken, limit: "100000000#__bigint" }],
+    };
+    await writeWalletState(walletState({ accessKeys: [key], chainId: 42431 }));
+    const request = vi.fn().mockResolvedValue(undefined);
+    const createProvider = vi.fn(() => ({ request }));
+
+    await updateAccessKeyHandler({ limit: "250" }, createProvider);
+
+    expect(createProvider).toHaveBeenCalledWith({ network: "testnet", noBrowser: false });
+  });
+
+  it("preserves local limits when wallet approval fails", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const request = vi.fn().mockRejectedValue(new Error("rejected"));
+
+    await expect(updateAccessKeyHandler({ limit: "250" }, () => ({ request }))).rejects.toThrow(
+      "rejected",
+    );
+    expect((await loadWalletState()).accessKeys[0]?.limits).toEqual([
+      { token: usdc, limit: "100000000#__bigint" },
+    ]);
+  });
+
+  it("updates a selected access key", async () => {
+    await useTempHome();
+    const first = walletState().accessKeys[0]!;
+    const selected = {
+      ...first,
+      address: testAccessKey2,
+      privateKey: testPrivateKey2,
+    };
+    await writeWalletState(walletState({ accessKeys: [first, selected] }));
+    const request = vi.fn().mockResolvedValue(undefined);
+
+    const result = await updateAccessKeyHandler(
+      { accessKey: testAccessKey2, limit: "250" },
+      () => ({ request }),
+    );
+
+    expect(request).toHaveBeenCalledWith({
+      method: "wallet_updateAccessKey",
+      params: [
+        expect.objectContaining({
+          accessKeyAddress: testAccessKey2,
+          limits: [{ token: usdc, limit: toHex(250_000_000n) }],
+        }),
+      ],
+    });
+    expect(result.access_key).toBe(testAccessKey2.toLowerCase());
+    expect((await loadWalletState()).accessKeys.map((key) => key.limits[0]?.limit)).toEqual([
+      "100000000#__bigint",
+      "250000000#__bigint",
+    ]);
+  });
+
+  it.each(["-1", "not-an-amount", "0.0000001"])(
+    "rejects invalid access key limit %s",
+    async (limit) => {
+      await useTempHome();
+      await writeWalletState(walletState());
+      const createProvider = vi.fn();
+
+      try {
+        await updateAccessKeyHandler({ limit }, createProvider);
+        expect.unreachable("expected updateAccessKeyHandler to throw");
+      } catch (error) {
+        expectUsageError(error, "Invalid limit: expected a non-negative token amount");
+      }
+      expect(createProvider).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects an invalid access key limit token", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const createProvider = vi.fn();
+
+    try {
+      await updateAccessKeyHandler({ limit: "250", token: "not-an-address" }, createProvider);
+      expect.unreachable("expected updateAccessKeyHandler to throw");
+    } catch (error) {
+      expectUsageError(error, "Invalid token address: expected a 0x address");
+    }
+    expect(createProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid selected access key address", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const createProvider = vi.fn();
+
+    try {
+      await updateAccessKeyHandler({ accessKey: "not-an-address", limit: "250" }, createProvider);
+      expect.unreachable("expected updateAccessKeyHandler to throw");
+    } catch (error) {
+      expectUsageError(error, "Invalid access key address: expected a 0x address");
+    }
+    expect(createProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects a selected access key outside the active wallet and network", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const createProvider = vi.fn();
+
+    try {
+      await updateAccessKeyHandler({ accessKey: testAccessKey2, limit: "250" }, createProvider);
+      expect.unreachable("expected updateAccessKeyHandler to throw");
+    } catch (error) {
+      expectUsageError(
+        error,
+        "Selected access key is not configured for the current wallet and network.",
+      );
+    }
+    expect(createProvider).not.toHaveBeenCalled();
   });
 
   it("rejects malformed access key addresses", async () => {

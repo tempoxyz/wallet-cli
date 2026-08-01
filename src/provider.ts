@@ -2,6 +2,7 @@ import type { Provider as CoreProvider } from "accounts";
 import { Provider, Storage } from "accounts/cli";
 
 import { openExternal } from "./shared/process.js";
+import { chainId, cliAuthUrl } from "./shared/network.js";
 
 export const accessKeyAuthorizationSeconds = 30 * 86_400;
 
@@ -11,7 +12,9 @@ export function createProvider(
     noBrowser?: boolean | undefined;
   } = {},
 ): CoreProvider.Provider {
+  const selectedChainId = chainId(options.network);
   return Provider.create({
+    host: cliAuthUrl(selectedChainId),
     open(url) {
       console.error(`Continue at: ${url}`);
       if (!options.noBrowser) openExternal(url);

@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { Parser } from "incur";
 import { describe, expect, it } from "vitest";
 
-import { fundOptions, loginOptions } from "../src/schemas.js";
+import { fundOptions, loginOptions, updateAccessKeyOptions } from "../src/schemas.js";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -25,6 +25,15 @@ describe("generated CLI metadata", () => {
     expect(output).toContain("Usage: tempo wallet services [serviceId] [options]");
     expect(output).toContain("--search <string>");
     expect(output).not.toContain("Usage: tempo wallet services <command>");
+  });
+
+  it("documents access key limit updates", async () => {
+    const output = await walletCli(["keys", "update", "--help"]);
+
+    expect(output).toContain("Usage: tempo wallet keys update [accessKey] [options]");
+    expect(output).toContain("--limit <string>");
+    expect(output).toContain("--token <string>");
+    expect(output).toContain("--no-browser");
   });
 
   it("returns schema for the direct services command", async () => {
@@ -78,6 +87,12 @@ describe("generated CLI metadata", () => {
     const services = manifest.subcommands.find((command) => command.name === "services");
     expect(services?.subcommands).toBeUndefined();
 
+    const keys = manifest.subcommands.find((command) => command.name === "keys");
+    expect(keys?.subcommands?.map((command) => command.name)).toEqual(["list", "update"]);
+    expect(manifest.subcommands.some((command) => command.name === "update-access-key")).toBe(
+      false,
+    );
+
     const mcp = manifest.subcommands.find((command) => command.name === "mcp");
     expect(mcp?.subcommands?.map((command) => command.name)).toEqual(["add"]);
 
@@ -117,6 +132,9 @@ describe("generated CLI metadata", () => {
     expect(Parser.parse(["--no-browser"], { options: fundOptions }).options).toMatchObject({
       browser: false,
     });
+    expect(
+      Parser.parse(["--limit", "250", "--no-browser"], { options: updateAccessKeyOptions }).options,
+    ).toMatchObject({ browser: false, limit: "250" });
   });
 
   it("returns strongly typed schema properties for sessions list output", async () => {

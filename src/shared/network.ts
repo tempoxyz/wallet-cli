@@ -51,3 +51,11 @@ export function authUrl(chain: number | null) {
   if (chain === 42431) return "https://wallet.tempo.xyz/cli-auth";
   return "https://wallet.tempo.xyz/cli-auth";
 }
+
+export function cliAuthUrl(chain: number | null) {
+  const url = new URL(authUrl(chain));
+  url.pathname = "/api/auth/cli";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
