@@ -83,6 +83,7 @@ jobs:
 
       - name: Install changelog dependencies
         if: steps.source.outputs.same_repo == 'true' && steps.existing.outputs.found == 'false'
+        # zizmor: ignore[adhoc-packages] -- workflow-only CLI
         run: |
           corepack enable
           corepack prepare pnpm@11.0.8 --activate
