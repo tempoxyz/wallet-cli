@@ -37,8 +37,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "accounts": "0.14.11",
+    "accounts": "https://pkg.pr.new/tempoxyz/accounts@56477d9",
     "incur": "0.4.8",
+    "koffi": "3.1.2",
     "mppx": "0.8.9",
     "undici": "8.5.0",
     "viem": "2.54.0"
