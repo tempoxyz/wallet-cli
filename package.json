@@ -38,10 +38,10 @@
   },
   "dependencies": {
     "accounts": "0.16.0",
-    "incur": "0.4.8",
-    "mppx": "0.8.9",
-    "undici": "8.5.0",
-    "viem": "2.54.0"
+    "incur": "0.4.20",
+    "mppx": "0.8.14",
+    "undici": "8.9.0",
+    "viem": "2.55.10"
   },
   "devDependencies": {
     "@types/node": "25.9.2",
