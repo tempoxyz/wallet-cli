@@ -15,7 +15,6 @@ import {
   parseRequestArgs,
   resolvePaymentIdentity,
   runRequest,
-  storedAccessKeyIdentity,
   tempoPaymentChallengeResponse,
 } from "../src/commands/request.js";
 import {
@@ -33,7 +32,6 @@ import {
   walletState,
   writeWalletState,
 } from "./helpers.js";
-import { loadWalletState } from "../src/wallet/store.js";
 
 type SeenRequest = {
   body: string;
@@ -425,7 +423,7 @@ describe("request command", () => {
     const keyAuthorization = {
       address: testAccessKey,
       chainId: 4217n,
-      expiry: 1783809942,
+      expiry: 2_000_000_000,
       limits: [{ token: "0x20C000000000000000000000b9537d11c60E8b50", limit: 100000000n }],
       signature: { type: "secp256k1", signature: "0x1234" },
       type: "secp256k1",
@@ -441,11 +439,8 @@ describe("request command", () => {
       }),
     );
 
-    const state = await loadWalletState();
-    const identity = await storedAccessKeyIdentity(
-      state,
-      requestOptions("https://paid.example.com"),
-    );
+    const identity = await resolvePaymentIdentity(requestOptions("https://paid.example.com"));
+    if (!("account" in identity)) throw new Error("expected a stored access-key identity");
     const stored = await identity?.account.keyAuthorizationManager?.get({
       address: testWallet,
       accessKey: testAccessKey,
@@ -471,7 +466,7 @@ describe("request command", () => {
             address: account.accessKeyAddress,
             access: testWallet,
             chainId: 4217,
-            expiry: 1783809942,
+            expiry: 2_000_000_000,
             handle,
             keyType: "p256",
             limits: [],

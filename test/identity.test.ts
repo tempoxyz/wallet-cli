@@ -93,7 +93,7 @@ key_address = "${testAccessKey}"
 key = "${testPrivateKey}"
 key_authorization = "0x1234"
 provisioned = true
-expiry = 1783809942
+expiry = 2000000000
 
 [[keys.limits]]
 currency = "0x20C000000000000000000000b9537d11c60E8b50"
@@ -140,7 +140,7 @@ wallet_address = "${testWallet}" # inline comments are ignored
 chain_id = 4217
 key_address = "${testAccessKey}"
 key = "${testPrivateKey}"
-expiry = 1783809942
+expiry = 2000000000
 
 [[keys.limits]]
 currency = "${usdc}"
@@ -175,13 +175,13 @@ key = "${testPrivateKey2}"
         access: testWallet,
         address: testAccessKey,
         chainId: 4217,
-        expiry: 1783809942,
+        expiry: 2_000_000_000,
         keyAuthorization: undefined,
         keyType: "secp256k1",
         privateKey: testPrivateKey,
         limits: [
-          { token: usdc, limit: "100000000#__bigint" },
-          { token: "0x1111111111111111111111111111111111111111", limit: "2500000#__bigint" },
+          { token: usdc, limit: 100000000n },
+          { token: "0x1111111111111111111111111111111111111111", limit: 2500000n },
         ],
       },
       {
@@ -234,7 +234,7 @@ key_address = "${testAccessKey}"
 key = "${testPrivateKey}"
 `);
 
-    await expect(loadWalletState()).rejects.toThrow(SyntaxError);
+    await expect(loadWalletState()).rejects.toThrow("not valid JSON");
   });
 
   it("prefers store.json over legacy keys.toml", async () => {
@@ -375,10 +375,10 @@ limit = "100000000"
           ...walletState().accessKeys[0]!,
           expiry: 4_102_444_800,
           limits: [
-            { token: usdc, limit: "100000000#__bigint", period: 86_400 },
+            { token: usdc, limit: 100000000n, period: 86_400 },
             {
               token: "0x1111111111111111111111111111111111111111",
-              limit: "2500000#__bigint",
+              limit: 2500000n,
             },
           ],
           scopes: [
@@ -615,7 +615,7 @@ limit = "100000000"
       limit: "250",
     });
     expect((await loadWalletState()).accessKeys[0]?.limits).toEqual([
-      { token: usdc, limit: "250000000#__bigint" },
+      { token: usdc, limit: 250_000_000n },
     ]);
   });
 
@@ -644,7 +644,7 @@ limit = "100000000"
       "rejected",
     );
     expect((await loadWalletState()).accessKeys[0]?.limits).toEqual([
-      { token: usdc, limit: "100000000#__bigint" },
+      { token: usdc, limit: 100_000_000n },
     ]);
   });
 
@@ -674,9 +674,9 @@ limit = "100000000"
       ],
     });
     expect(result.access_key).toBe(testAccessKey2.toLowerCase());
-    expect((await loadWalletState()).accessKeys.map((key) => key.limits[0]?.limit)).toEqual([
-      "100000000#__bigint",
-      "250000000#__bigint",
+    expect((await loadWalletState()).accessKeys.map((key) => key.limits?.[0]?.limit)).toEqual([
+      100_000_000n,
+      250_000_000n,
     ]);
   });
 

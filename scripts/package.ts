@@ -32,6 +32,7 @@ run("esbuild", [
   "--platform=node",
   "--format=cjs",
   "--target=node22",
+  "--external:koffi",
   `--define:process.env.TEMPO_WALLET_VERSION=${JSON.stringify(version)}`,
   `--outfile=${bundlePath}`,
 ]);

@@ -11,8 +11,8 @@ export function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
-export function cleanStoredScalar(value: string) {
-  return value.replace(/#__bigint$/, "");
+export function cleanStoredScalar(value: bigint | string) {
+  return value.toString().replace(/#__bigint$/, "");
 }
 
 export function sleep(ms: number) {
