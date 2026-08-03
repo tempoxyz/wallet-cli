@@ -1,6 +1,6 @@
 {
   "name": "wallet-cli",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "description": "Tempo wallet and request CLI extension package",
   "homepage": "https://github.com/tempoxyz/wallet-cli#readme",
   "bugs": {
@@ -37,7 +37,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "accounts": "https://pkg.pr.new/tempoxyz/accounts@56477d9",
+    "accounts": "https://pkg.pr.new/tempoxyz/accounts@619aec1",
     "incur": "0.4.8",
     "koffi": "3.1.2",
     "mppx": "0.8.9",
@@ -48,6 +48,7 @@
     "@types/node": "25.9.2",
     "@yao-pkg/pkg": "6.20.0",
     "esbuild": "0.28.1",
+    "frog": "1.0.15",
     "tsx": "4.22.4",
     "typescript": "6.0.3",
     "vitest": "4.1.8",

@@ -140,6 +140,26 @@ export const revokeOutput = z.object({
   local_key_removed: z.boolean(),
 });
 
+export const updateAccessKeyOutput = z.object({
+  status: z.literal("success"),
+  wallet: z.string(),
+  access_key: z.string(),
+  chain_id: z.number(),
+  token: z.string(),
+  limit: z.string(),
+});
+
+export const updateAccessKeyOptions = z.object({
+  ...globalOptionShape,
+  limit: z.string().describe("New remaining limit in human token units"),
+  token: z.string().optional().describe("Token address; defaults to the current limit token"),
+  browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
+});
+
+export const updateAccessKeyArgs = z.object({
+  accessKey: z.string().optional().describe("Access key address; defaults to the connected key"),
+});
+
 export const transferDryRunOutput = z.object({
   status: z.literal("dry_run"),
   chain_id: z.number(),

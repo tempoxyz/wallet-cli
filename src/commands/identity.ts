@@ -1,6 +1,6 @@
 import { arch, platform } from "node:process";
 import type { Provider as CoreProvider } from "accounts";
-import { erc20Abi, formatUnits, isAddress, type Address } from "viem";
+import { erc20Abi, formatUnits, isAddress, parseUnits, toHex, type Address } from "viem";
 import { Actions } from "viem/tempo";
 
 import { version } from "../shared/constants.js";
@@ -9,6 +9,7 @@ import {
   createTempoPublicClient,
   networkName,
   tokenAddress,
+  tokenDecimals,
   tokenSymbol,
 } from "../shared/network.js";
 import { usageError } from "../shared/errors.js";
@@ -121,6 +122,134 @@ export async function keysHandler() {
     chain,
     accessKeys: state.accessKeys,
   });
+}
+
+type UpdateAccessKeyProvider = Pick<CoreProvider.Provider, "request">;
+
+type AccessKeyUpdater = (options: {
+  provider: UpdateAccessKeyProvider;
+  walletAddress: Address;
+  accessKeyAddress: Address;
+  chainId: number;
+  token: Address;
+  limit: bigint;
+}) => Promise<unknown>;
+
+export async function updateAccessKeyHandler(
+  options: {
+    network?: string | undefined;
+    accessKey?: string | undefined;
+    limit: string;
+    token?: string | undefined;
+    browser?: boolean | undefined;
+  },
+  createUpdateProvider: (options: {
+    network?: string | undefined;
+    noBrowser?: boolean | undefined;
+  }) => UpdateAccessKeyProvider = createProvider,
+  updateAccessKey: AccessKeyUpdater = updateAccessKeyThroughWallet,
+) {
+  const state = await loadWalletState();
+  const activeAccount = state.accounts[state.activeAccount ?? 0];
+  if (!activeAccount)
+    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
+  if (!walletStateMatchesNetwork(state, options.network))
+    throw usageError(
+      "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
+    );
+
+  const selectedChainId = state.chainId ?? chainId(options.network);
+  if (options.accessKey !== undefined && !isAddress(options.accessKey))
+    throw usageError("Invalid access key address: expected a 0x address");
+  const key = state.accessKeys.find(
+    (candidate) =>
+      candidate.access.toLowerCase() === activeAccount.address.toLowerCase() &&
+      candidate.chainId === selectedChainId &&
+      (options.accessKey === undefined ||
+        candidate.address.toLowerCase() === options.accessKey.toLowerCase()),
+  );
+  if (!key && options.accessKey !== undefined)
+    throw usageError("Selected access key is not configured for the current wallet and network.");
+  if (!key)
+    throw usageError(
+      "No access key configured for the current wallet and network. Run 'tempo wallet login'.",
+    );
+
+  const token = options.token ?? key.limits?.[0]?.token ?? tokenAddress(selectedChainId);
+  if (!isAddress(token)) throw usageError("Invalid token address: expected a 0x address");
+  const limit = parseLimit(options.limit);
+  const walletAddress = activeAccount.address as Address;
+  const accessKeyAddress = key.address as Address;
+  const tokenAddress_resolved = token as Address;
+  const provider = createUpdateProvider({
+    network: selectedChainId === 42431 ? "testnet" : undefined,
+    noBrowser: options.browser === false,
+  });
+
+  await updateAccessKey({
+    provider,
+    walletAddress,
+    accessKeyAddress,
+    chainId: selectedChainId,
+    token: tokenAddress_resolved,
+    limit,
+  });
+
+  const accessKeys = state.accessKeys.map((candidate) => {
+    if (candidate !== key) return candidate;
+    const currentLimits = candidate.limits ?? [];
+    const existing = currentLimits.findIndex(
+      (item) => item.token.toLowerCase() === tokenAddress_resolved.toLowerCase(),
+    );
+    const limits =
+      existing === -1
+        ? [...currentLimits, { token: tokenAddress_resolved, limit }]
+        : currentLimits.map((item, index) => (index === existing ? { ...item, limit } : item));
+    return { ...candidate, limits };
+  });
+  await saveWalletState({ ...state, accessKeys });
+
+  return {
+    status: "success" as const,
+    wallet: walletAddress.toLowerCase(),
+    access_key: accessKeyAddress.toLowerCase(),
+    chain_id: selectedChainId,
+    token: tokenAddress_resolved.toLowerCase(),
+    limit: formatUnits(limit, tokenDecimals()),
+  };
+}
+
+async function updateAccessKeyThroughWallet(options: {
+  provider: UpdateAccessKeyProvider;
+  walletAddress: Address;
+  accessKeyAddress: Address;
+  chainId: number;
+  token: Address;
+  limit: bigint;
+}) {
+  await options.provider.request({
+    method: "wallet_updateAccessKey",
+    params: [
+      {
+        address: options.walletAddress,
+        accessKeyAddress: options.accessKeyAddress,
+        chainId: toHex(options.chainId),
+        limits: [{ token: options.token, limit: toHex(options.limit) }],
+      },
+    ],
+  });
+}
+
+function parseLimit(value: string) {
+  if (!/^\d+(?:\.\d{1,6})?$/.test(value))
+    throw usageError("Invalid limit: expected a non-negative token amount");
+  try {
+    const limit = parseUnits(value, tokenDecimals());
+    if (limit < 0n) throw new Error("negative limit");
+    return limit;
+  } catch {
+    throw usageError("Invalid limit: expected a non-negative token amount");
+  }
 }
 
 type RevokeProvider = Pick<CoreProvider.Provider, "getAccount" | "getClient">;

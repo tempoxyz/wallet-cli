@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0 (2026-08-01)
+
+### Minor Changes
+
+- Added access key limit updates and moved key listing from `keys` to `keys list`.
+
+  ```diff
+  -tempo wallet keys
+  +tempo wallet keys list
+  +tempo wallet keys update [access-key] --limit <amount>
+  ```
+
 ## 0.6.7 (2026-07-15)
 
 ### Patch Changes
