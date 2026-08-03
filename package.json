@@ -37,7 +37,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "accounts": "https://pkg.pr.new/tempoxyz/accounts@619aec1",
+    "accounts": "https://pkg.pr.new/tempoxyz/accounts@1d58599",
     "incur": "0.4.8",
     "koffi": "3.1.2",
     "mppx": "0.8.9",

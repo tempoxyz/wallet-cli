@@ -13,8 +13,8 @@ importers:
   .:
     dependencies:
       accounts:
-        specifier: https://pkg.pr.new/tempoxyz/accounts@619aec1
-        version: https://pkg.pr.new/tempoxyz/accounts@619aec1(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3))
+        specifier: https://pkg.pr.new/tempoxyz/accounts@1d58599
+        version: https://pkg.pr.new/tempoxyz/accounts@1d58599(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3))
       incur:
         specifier: 0.4.8
         version: 0.4.8
@@ -1097,8 +1097,8 @@ packages:
       zod:
         optional: true
 
-  accounts@https://pkg.pr.new/tempoxyz/accounts@619aec1:
-    resolution: {integrity: sha512-iiWJyFg3xXrGXcShLQd+o+kBvvXP/MqtJS02oWsVzUsJDMF6wk8o/s0YwdCSBKuy9oq/h6tSGYDzwkyzWUM+Xw==, tarball: https://pkg.pr.new/tempoxyz/accounts@619aec1}
+  accounts@https://pkg.pr.new/tempoxyz/accounts@1d58599:
+    resolution: {integrity: sha512-aVtZprYbYWjL01imvrPpzWJ7w39IcKkx69TCSyHlA8s9n0ZX3olk7ZYGqBo6eXFFhth6sQXk3HAv6lilb5iYzw==, tarball: https://pkg.pr.new/tempoxyz/accounts@1d58599}
     version: 0.16.0
     peerDependencies:
       '@privy-io/react-auth': '>=3.25.0'
@@ -2791,7 +2791,7 @@ snapshots:
       typescript: 6.0.3
       zod: 4.4.3
 
-  accounts@https://pkg.pr.new/tempoxyz/accounts@619aec1(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3)):
+  accounts@https://pkg.pr.new/tempoxyz/accounts@1d58599(typescript@6.0.3)(viem@2.54.0(typescript@6.0.3)(zod@4.4.3)):
     dependencies:
       hono: 4.12.32
       idb-keyval: 6.2.5
