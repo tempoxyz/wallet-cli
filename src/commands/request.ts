@@ -557,8 +557,8 @@ async function paySessionAndRetryRequest(
   skipChannelId?: string | undefined,
 ) {
   try {
-    const identity = await resolvePaymentIdentity(options);
     const details = sessionDetails(challenge, request.url, options);
+    const identity = await resolvePaymentIdentity(options);
     const reusable = await reusableSessionRecord(details, identity, skipChannelId);
     const challengeResponse = tempoPaymentChallengeResponse(paymentRequiredResponse);
     const payment = Mppx.create({
@@ -807,19 +807,29 @@ function sessionDetails(
   const amount = bigintField(request.amount, "amount");
   const token = stringValue(request.currency).toLowerCase();
   const payee = stringValue(request.recipient).toLowerCase();
+  const sessionProtocol = stringValue(methodDetails.sessionProtocol) || "v1";
   if (!token) throw paymentError("Session challenge is missing currency");
   if (!payee) throw paymentError("Session challenge is missing recipient");
+  if (sessionProtocol !== "v1" && sessionProtocol !== "v2")
+    throw paymentError(`Unsupported Tempo session protocol: ${sessionProtocol}`);
+
+  const expectedEscrow =
+    sessionProtocol === "v2" ? TempoChannel.address : escrowContract(resolvedChainId);
+  const advertisedEscrow = stringValue(methodDetails.escrowContract);
+  if (advertisedEscrow && advertisedEscrow.toLowerCase() !== expectedEscrow.toLowerCase())
+    throw paymentError(
+      `Unsupported Tempo session escrow: expected ${expectedEscrow}, received ${advertisedEscrow}`,
+    );
 
   return {
     amount,
     chainId: resolvedChainId,
-    escrowContract: stringValue(
-      methodDetails.escrowContract || escrowContract(resolvedChainId),
-    ).toLowerCase(),
+    escrowContract: expectedEscrow.toLowerCase(),
     feePayer: Boolean(methodDetails.feePayer),
     origin: originFromUrl(requestUrl),
     payee,
     requestUrl,
+    sessionProtocol,
     suggestedDeposit:
       typeof request.suggestedDeposit === "string" && /^\d+$/.test(request.suggestedDeposit)
         ? BigInt(request.suggestedDeposit)
@@ -987,10 +997,21 @@ async function buildTopUpTransaction(options: {
 export function buildTopUpTransactionRequest(options: {
   additionalDeposit: bigint;
   details: Pick<SessionDetails, "feePayer" | "token">;
-  record: Pick<PersistedSessionRecord, "channel_id" | "descriptor_json" | "escrow_contract">;
+  record: Pick<
+    PersistedSessionRecord,
+    "chain_id" | "channel_id" | "descriptor_json" | "escrow_contract" | "session_protocol"
+  >;
 }) {
-  const isPrecompile =
-    options.record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase();
+  const isPrecompile = options.record.session_protocol === "v2";
+  if (!isPrecompile && options.record.session_protocol !== "v1")
+    throw paymentError(`Unsupported Tempo session protocol: ${options.record.session_protocol}`);
+  const expectedEscrow = isPrecompile
+    ? TempoChannel.address
+    : escrowContract(options.record.chain_id);
+  if (options.record.escrow_contract.toLowerCase() !== expectedEscrow.toLowerCase())
+    throw paymentError(
+      `Unsupported Tempo session escrow: expected ${expectedEscrow}, received ${options.record.escrow_contract}`,
+    );
   const topUpData = encodeFunctionData({
     abi: isPrecompile ? TempoAbis.tip20ChannelReserve : escrowAbi,
     functionName: "topUp",
