@@ -321,6 +321,7 @@ async function main() {
   if (args.includes("--mcp")) {
     await Mcp.serve(cli.name, version, createMcpCommands(), {
       env: cli.env,
+      tools: { discovery: "direct" },
       vars: cli.vars,
       version,
     });
