@@ -42,7 +42,12 @@ import {
 } from "../payment/session-store.js";
 import { connect, createProvider } from "../provider.js";
 import { escrowAbi, version } from "../shared/constants.js";
-import { networkError, paymentError, usageError } from "../shared/errors.js";
+import {
+  authRefreshRequiredError,
+  networkError,
+  paymentError,
+  usageError,
+} from "../shared/errors.js";
 import {
   chainId,
   createTempoPublicClient,
@@ -51,6 +56,11 @@ import {
   rpcUrl,
 } from "../shared/network.js";
 import { getRecord, nowSeconds, parseOnChainBigInt, stringValue } from "../shared/utils.js";
+import {
+  accessKeyMatches,
+  isPaymentCapableAccessKey,
+  localAccessKeyStatus,
+} from "../wallet/access-key.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
 
 export type RequestOptions = {
@@ -534,12 +544,7 @@ async function payAndRetryRequest(
       options,
     );
   } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      (error as Record<string, unknown>).code === "E_PAYMENT"
-    )
-      throw error;
+    if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
     throw paymentError(error instanceof Error ? error.message : String(error));
   }
 }
@@ -635,12 +640,7 @@ async function paySessionAndRetryRequest(
     await persistSessionReceipt(response, record.channel_id, signedCumulative);
     return response;
   } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      (error as Record<string, unknown>).code === "E_PAYMENT"
-    )
-      throw error;
+    if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
     throw paymentError(error instanceof Error ? error.message : String(error));
   }
 }
@@ -663,8 +663,23 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
     };
   }
 
-  const storedIdentity = await storedAccessKeyIdentity(await loadWalletState(), options);
+  const walletState = await loadWalletState();
+  const storedIdentity = await storedAccessKeyIdentity(walletState, options);
   if (storedIdentity) return storedIdentity;
+
+  const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
+  if (activeAccount) {
+    const staleKey = walletState.accessKeys.find((key) =>
+      accessKeyMatches(key, {
+        chainId: chainId(options.network),
+        walletAddress: activeAccount.address,
+      }),
+    );
+    const status = staleKey ? localAccessKeyStatus(staleKey) : "missing";
+    throw authRefreshRequiredError(
+      status === "pending" || status === "ready" ? "unusable" : status,
+    );
+  }
 
   const provider = createProvider({ network: options.network });
   const providerState = provider as unknown as {
@@ -713,6 +728,8 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
   for (const key of walletState.accessKeys) {
     if (key.chainId !== expectedChain) continue;
     if (key.keyType && key.keyType !== "secp256k1" && key.keyType !== "p256") continue;
+    if (key.access.toLowerCase() !== activeAccount.address.toLowerCase()) continue;
+    if (!isPaymentCapableAccessKey(key)) continue;
 
     const keyAuthorizationManager = KeyAuthorizationManager.memory();
     if (key.keyAuthorization) {
@@ -768,6 +785,12 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
   }
 
   return undefined;
+}
+
+function isActionablePaymentError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as Record<string, unknown>).code;
+  return code === "E_PAYMENT" || code === "E_AUTH_REFRESH_REQUIRED";
 }
 
 type PaymentIdentity = Awaited<ReturnType<typeof resolvePaymentIdentity>>;

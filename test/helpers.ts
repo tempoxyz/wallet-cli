@@ -104,7 +104,7 @@ export function walletState(overrides: Partial<WalletState> = {}): WalletState {
         address: testAccessKey,
         access: testWallet,
         chainId: 4217,
-        expiry: 1783809942,
+        expiry: 2_000_000_000,
         keyType: "secp256k1",
         privateKey: testPrivateKey,
         limits: [{ token: usdc, limit: "100000000#__bigint" }],
