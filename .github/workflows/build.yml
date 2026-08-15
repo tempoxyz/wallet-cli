@@ -126,7 +126,7 @@ jobs:
 
       - name: Smoke test host binary
         if: matrix.build.pkg_target == 'node22-linux-x64' || matrix.build.pkg_target == 'node22-linux-arm64' || matrix.build.pkg_target == 'node22-macos-arm64'
-        run: ./artifacts/${PACKAGE}-${{ matrix.build.suffix }} --version
+        run: ./artifacts/"${PACKAGE}"-${{ matrix.build.suffix }} --version
 
       - name: Generate sha256
         shell: bash
