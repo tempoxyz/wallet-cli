@@ -91,7 +91,7 @@ jobs:
       TEMPO_WALLET_PACKAGE_DIR: artifacts
       TEMPO_WALLET_PACKAGE_OUTPUT: artifacts/${{ matrix.package }}-${{ matrix.build.suffix }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -150,13 +150,13 @@ jobs:
           upload-release-assets: false
 
       - name: Attest SBOM
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
           sbom-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
 
       - name: Attest build provenance (SLSA v1)
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
 
@@ -199,7 +199,7 @@ jobs:
       VERSION: ${{ needs.parse-tag.outputs.version }}
       RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -231,7 +231,7 @@ jobs:
         run: gh release upload "$RELEASE_TAG" artifacts/* --clobber
 
       - name: Checkout release signing tool
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: tempoxyz/wallet-rs
           path: wallet-release-tools
