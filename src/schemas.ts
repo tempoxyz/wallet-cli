@@ -367,10 +367,15 @@ export const servicesOutput = z.union([z.array(serviceOutput), serviceDetailOutp
 
 export const servicesListOutput = z.array(serviceOutput);
 
-export const servicesMcpOutput = z.union([
-  z.object({ services: z.array(serviceOutput) }),
-  serviceDetailOutput,
-]);
+export const servicesMcpOutput = z
+  .object({
+    ...serviceDetailOutput.partial().shape,
+    services: z.array(serviceOutput).optional(),
+  })
+  .refine(
+    (value) => value.services !== undefined || (value.id !== undefined && value.name !== undefined),
+    "Expected a services list or service details",
+  );
 
 export const completionsArgs = z.object({
   shell: z.enum(["bash", "elvish", "fish", "powershell", "zsh"]).optional(),
