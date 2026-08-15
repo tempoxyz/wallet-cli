@@ -330,6 +330,49 @@ describe("request command", () => {
     });
   });
 
+  it("fails before payment construction when the stored access key needs refresh", async () => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            ...walletState().accessKeys[0]!,
+            expiry: 1,
+            keyAuthorization: "0x1234",
+          },
+        ],
+      }),
+    );
+    const challenge = Challenge.from({
+      id: "expired-key-test",
+      intent: "charge",
+      method: "tempo",
+      realm: "paid.example.com",
+      request: {
+        amount: "7000",
+        currency: "0x20c000000000000000000000b9537d11c60e8b50",
+        methodDetails: { chainId: 4217 },
+        recipient: "0xCfA26F13c6C18307033EcE13BBb8F470dA5b4dbE",
+      },
+    });
+    let requests = 0;
+    const server = await testServer((_request, response) => {
+      requests += 1;
+      response.statusCode = 402;
+      response.setHeader("www-authenticate", Challenge.serialize(challenge));
+      response.end("Payment Required");
+    });
+
+    await expect(
+      runRequest([server.url("/paid")], { stdout: captureStdout() }),
+    ).rejects.toMatchObject({
+      code: "E_AUTH_REFRESH_REQUIRED",
+      exitCode: 4,
+      message: "The configured access key is expired. Run 'tempo wallet refresh' before retrying.",
+    });
+    expect(requests).toBe(1);
+  });
+
   it("accepts request global/payment compatibility flags", () => {
     expect(
       parseRequestArgs([
@@ -425,7 +468,7 @@ describe("request command", () => {
     const keyAuthorization = {
       address: testAccessKey,
       chainId: 4217n,
-      expiry: 1783809942,
+      expiry: 2_000_000_000,
       limits: [{ token: "0x20C000000000000000000000b9537d11c60E8b50", limit: 100000000n }],
       signature: { type: "secp256k1", signature: "0x1234" },
       type: "secp256k1",
@@ -456,6 +499,26 @@ describe("request command", () => {
     expect(stored).toStrictEqual(keyAuthorization);
   });
 
+  it.each([
+    {
+      name: "expired",
+      overrides: { expiry: 1 },
+    },
+    {
+      name: "legacy authorization",
+      overrides: { expiry: 2_000_000_000, keyAuthorization: "0x1234" },
+    },
+  ])("does not use a stored $name access key for payments", async ({ overrides }) => {
+    const identity = await storedAccessKeyIdentity(
+      walletState({
+        accessKeys: [{ ...walletState().accessKeys[0]!, ...overrides }],
+      }),
+      requestOptions("https://paid.example.com"),
+    );
+
+    expect(identity).toBeUndefined();
+  });
+
   it("uses stored P-256 access keys for payment identity resolution", async () => {
     await useTempHome();
     const keystore = Keystore.webCryptoP256({ extractable: true });
@@ -471,7 +534,7 @@ describe("request command", () => {
             address: account.accessKeyAddress,
             access: testWallet,
             chainId: 4217,
-            expiry: 1783809942,
+            expiry: 2_000_000_000,
             handle,
             keyType: "p256",
             limits: [],

@@ -31,6 +31,11 @@ import {
   saveWalletState,
   type WalletState,
 } from "../wallet/store.js";
+import {
+  accessKeyMatches,
+  localAccessKeyStatus,
+  selectPaymentCapableAccessKey,
+} from "../wallet/access-key.js";
 import { queryCreditBalance } from "./credits.js";
 
 export async function loginHandler(options: {
@@ -385,9 +390,24 @@ export async function currentWhoamiOutput(options: {
   accessKeys: WalletState["accessKeys"];
   network?: string | undefined;
 }) {
-  const token =
-    options.accessKeys[0]?.limits[0]?.token ??
-    tokenAddress(options.chain ?? chainId(options.network));
+  const selectedChain = options.chain ?? chainId(options.network);
+  const paymentKey = options.walletAddress
+    ? selectPaymentCapableAccessKey(options.accessKeys, {
+        chainId: selectedChain,
+        walletAddress: options.walletAddress,
+      })
+    : undefined;
+  const key =
+    paymentKey ??
+    (options.walletAddress
+      ? options.accessKeys.find((candidate) =>
+          accessKeyMatches(candidate, {
+            chainId: selectedChain,
+            walletAddress: options.walletAddress!,
+          }),
+        )
+      : undefined);
+  const token = key?.limits[0]?.token ?? tokenAddress(selectedChain);
   const balance = await tokenBalance({
     token,
     walletAddress: options.walletAddress,
@@ -398,15 +418,15 @@ export async function currentWhoamiOutput(options: {
     walletAddress: options.walletAddress,
   });
   return {
-    ready: Boolean(options.walletAddress),
+    ready: Boolean(options.walletAddress && paymentKey),
     wallet: options.walletAddress?.toLowerCase() ?? null,
     balance: balanceOutput(balance, sessions, tokenSymbol(token)),
     key: currentKeyOutput({
-      key: options.accessKeys[0],
+      key,
       walletAddress: options.walletAddress,
       chain: options.chain,
       balance,
-      status: null,
+      status: key ? localAccessKeyStatus(key) : null,
     }),
   };
 }
@@ -433,7 +453,7 @@ export async function currentKeysOutput(options: {
       walletAddress: options.walletAddress,
       chain: options.chain,
       balance,
-      status: localKeyStatus(key),
+      status: localAccessKeyStatus(key),
     });
     if (output) keys.push(output);
   }
@@ -520,20 +540,6 @@ function parseKeyAuthorizationScopes(value: unknown): readonly AccessKeyScope[] 
     ];
   });
   return scopes;
-}
-
-function localKeyStatus(key: WalletState["accessKeys"][number]) {
-  if (key.expiry !== undefined && key.expiry <= Math.floor(Date.now() / 1000)) return "expired";
-  if (!hasLocalSigningMaterial(key)) return "unusable";
-  if (key.keyAuthorization) return "pending";
-  return "ready";
-}
-
-function hasLocalSigningMaterial(key: WalletState["accessKeys"][number]) {
-  if (key.privateKey) return true;
-  if (key.publicKey && key.handle && typeof key.handle === "object") return true;
-  if (key.keyPair && typeof key.keyPair === "object") return true;
-  return false;
 }
 
 type TokenBalance = {

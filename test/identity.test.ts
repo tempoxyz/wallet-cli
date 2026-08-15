@@ -107,6 +107,7 @@ limit = "100000000"
         accessKeys: [
           {
             ...walletState().accessKeys[0]!,
+            expiry: 1783809942,
             keyAuthorization: "0x1234",
           },
         ],
@@ -272,7 +273,7 @@ describe("identity commands", () => {
       args: [testWallet],
     });
     expect(result).toMatchObject({
-      ready: true,
+      ready: false,
       balance: {
         total: "1000004.996912",
         available: "1000004.996912",
@@ -300,6 +301,48 @@ describe("identity commands", () => {
     expect(result).toMatchObject({
       ready: true,
       wallet: testWallet.toLowerCase(),
+      key: { status: "ready" },
+    });
+  });
+
+  it("whoami reports an expired access key as not ready", async () => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({
+        accessKeys: [{ ...walletState().accessKeys[0]!, expiry: 1 }],
+      }),
+    );
+
+    const result = await whoamiHandler({});
+
+    expect(result).toMatchObject({
+      ready: false,
+      wallet: testWallet.toLowerCase(),
+      key: { address: testAccessKey.toLowerCase(), status: "expired" },
+    });
+  });
+
+  it("whoami selects a later usable access key", async () => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          { ...walletState().accessKeys[0]!, expiry: 1 },
+          {
+            ...walletState().accessKeys[0]!,
+            address: testAccessKey2,
+            expiry: 2_000_000_000,
+            privateKey: testPrivateKey2,
+          },
+        ],
+      }),
+    );
+
+    const result = await whoamiHandler({});
+
+    expect(result).toMatchObject({
+      ready: true,
+      key: { address: testAccessKey2.toLowerCase(), status: "ready" },
     });
   });
 
@@ -453,7 +496,16 @@ limit = "100000000"
     },
     {
       name: "pending",
-      overrides: { expiry: 4_102_444_800, keyAuthorization: { signature: "0x1234" } },
+      overrides: {
+        expiry: 4_102_444_800,
+        keyAuthorization: {
+          address: testAccessKey,
+          chainId: 4217n,
+          expiry: 4_102_444_800,
+          signature: { type: "secp256k1", signature: "0x1234" },
+          type: "secp256k1",
+        },
+      },
       status: "pending",
     },
     {
@@ -461,7 +513,13 @@ limit = "100000000"
       overrides: {
         expiry: 4_102_444_800,
         handle: { jwk: { crv: "P-256", kty: "EC" }, kind: "webcrypto-p256" },
-        keyAuthorization: { signature: "0x1234" },
+        keyAuthorization: {
+          address: testAccessKey,
+          chainId: 4217n,
+          expiry: 4_102_444_800,
+          signature: { type: "p256", signature: "0x1234" },
+          type: "p256",
+        },
         keyType: "p256",
         privateKey: undefined,
         publicKey: "0x04abcd",
