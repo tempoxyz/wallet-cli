@@ -15,6 +15,7 @@ import {
   parseRequestArgs,
   resolvePaymentIdentity,
   runRequest,
+  sessionChallengeFromHeader,
   storedAccessKeyIdentity,
   tempoPaymentChallengeResponse,
 } from "../src/commands/request.js";
@@ -315,6 +316,51 @@ describe("request command", () => {
     expect(response.headers.has("payment-required")).toBe(true);
     expect(Credential.deserialize(credential).payload).toEqual({ ok: true });
   });
+
+  it.each([
+    { name: "unversioned", protocols: [undefined], selectedId: undefined },
+    { name: "v1", protocols: ["v1"], selectedId: undefined },
+    { name: "v2", protocols: ["v2"], selectedId: "session-v2" },
+    { name: "mixed v1 and v2", protocols: ["v1", "v2"], selectedId: "session-v2" },
+  ])(
+    "uses session-first routing only for $name session challenges",
+    ({ protocols, selectedId }) => {
+      const charge = Challenge.from({
+        id: "charge",
+        intent: "charge",
+        method: "tempo",
+        realm: "example",
+        request: {
+          amount: "1",
+          currency: "0x20c000000000000000000000b9537d11c60e8b50",
+          methodDetails: { chainId: 4217 },
+          recipient: "0x0000000000000000000000000000000000000001",
+        },
+      });
+      const sessions = protocols.map((protocol) =>
+        Challenge.from({
+          id: `session-${protocol ?? "unversioned"}`,
+          intent: "session",
+          method: "tempo",
+          realm: "example",
+          request: {
+            amount: "1",
+            currency: "0x20c000000000000000000000b9537d11c60e8b50",
+            methodDetails: {
+              chainId: 4217,
+              ...(protocol ? { sessionProtocol: protocol } : {}),
+            },
+            recipient: "0x0000000000000000000000000000000000000001",
+          },
+        }),
+      );
+      const header = [charge, ...sessions]
+        .map((challenge) => Challenge.serialize(challenge))
+        .join(", ");
+
+      expect(sessionChallengeFromHeader(header)?.id).toBe(selectedId);
+    },
+  );
 
   it("returns E_PAYMENT for non-dry-run 402 responses", async () => {
     const server = await testServer((_request, response) => {

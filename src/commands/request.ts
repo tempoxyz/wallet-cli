@@ -5,7 +5,7 @@ import { basename, dirname } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { Challenge, Credential, PaymentRequest } from "mppx";
+import { Challenge, Constants, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession, tempo } from "mppx/client";
 import { Keystore } from "accounts";
 import { Session as TempoSession } from "mppx/tempo";
@@ -1229,13 +1229,18 @@ async function readOnChainChannel(record: PersistedSessionRecord) {
   };
 }
 
-function sessionChallengeFromHeader(header: string | null) {
+export function sessionChallengeFromHeader(header: string | null) {
   if (!header) return undefined;
   try {
-    const challenges = Challenge.deserializeList(header).filter(
-      (challenge) => challenge.method === "tempo" && challenge.intent === "session",
+    return Challenge.deserializeList(header).find(
+      (challenge) =>
+        challenge.method === "tempo" &&
+        challenge.intent === "session" &&
+        Constants.getMethodDetail(
+          challenge.request.methodDetails,
+          Constants.MethodDetailKeys.sessionProtocol,
+        ) === Constants.SessionProtocols.v2,
     );
-    return challenges[0];
   } catch {
     return undefined;
   }
