@@ -373,6 +373,40 @@ describe("request command", () => {
     expect(requests).toBe(1);
   });
 
+  it("rejects a noncanonical Tempo session escrow before creating a credential", async () => {
+    let requests = 0;
+    const challenge = Challenge.from({
+      id: "untrusted-session-escrow",
+      intent: "session",
+      method: "tempo",
+      realm: "example",
+      request: {
+        amount: "1",
+        currency: "0x20c000000000000000000000b9537d11c60e8b50",
+        methodDetails: {
+          chainId: 4217,
+          escrowContract: "0x0000000000000000000000000000000000000bad",
+          sessionProtocol: "v2",
+        },
+        recipient: "0x0000000000000000000000000000000000000001",
+      },
+    });
+    const server = await testServer((_request, response) => {
+      requests++;
+      response.statusCode = 402;
+      response.setHeader("www-authenticate", Challenge.serialize(challenge));
+      response.end("Payment Required");
+    });
+
+    await expect(
+      runRequest([server.url("/paid")], { stdout: captureStdout() }),
+    ).rejects.toMatchObject({
+      code: "E_PAYMENT",
+      message: expect.stringContaining("Unsupported Tempo session escrow"),
+    });
+    expect(requests).toBe(1);
+  });
+
   it("accepts request global/payment compatibility flags", () => {
     expect(
       parseRequestArgs([
@@ -691,9 +725,11 @@ describe("request command", () => {
         token: descriptor.token,
       },
       record: {
+        chain_id: 4217,
         channel_id: `0x${"5".repeat(64)}`,
         descriptor_json: JSON.stringify(descriptor),
         escrow_contract: TempoChannel.address,
+        session_protocol: "v2",
       },
     });
 
@@ -709,6 +745,25 @@ describe("request command", () => {
     expect(decoded.functionName).toBe("topUp");
     expect(normalizeDescriptor(decoded.args[0])).toEqual(normalizeDescriptor(descriptor));
     expect(decoded.args[1]).toBe(5_000n);
+  });
+
+  it("rejects top-ups for stored noncanonical session escrows", () => {
+    expect(() =>
+      buildTopUpTransactionRequest({
+        additionalDeposit: 5_000n,
+        details: {
+          feePayer: false,
+          token: "0x20c000000000000000000000b9537d11c60e8b50",
+        },
+        record: {
+          chain_id: 4217,
+          channel_id: `0x${"5".repeat(64)}`,
+          descriptor_json: JSON.stringify(sessionDescriptor()),
+          escrow_contract: "0x0000000000000000000000000000000000000bad",
+          session_protocol: "v2",
+        },
+      }),
+    ).toThrow("Unsupported Tempo session escrow");
   });
 });
 
