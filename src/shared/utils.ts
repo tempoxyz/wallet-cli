@@ -38,20 +38,29 @@ export function formatMicroUnits(value: string) {
 }
 
 export function formatTokenUnits(value: bigint, decimals: number) {
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
   const divisor = 10n ** BigInt(decimals);
-  const whole = value / divisor;
-  const fractional = value % divisor;
-  if (decimals === 0) return whole.toString();
-  if (fractional === 0n) return `${whole}.${"0".repeat(decimals)}`;
-  return `${whole}.${fractional.toString().padStart(decimals, "0")}`;
+  const whole = abs / divisor;
+  const fractional = abs % divisor;
+  const formatted =
+    decimals === 0
+      ? whole.toString()
+      : fractional === 0n
+        ? `${whole}.${"0".repeat(decimals)}`
+        : `${whole}.${fractional.toString().padStart(decimals, "0")}`;
+  return negative ? `-${formatted}` : formatted;
 }
 
 export function formatCreditBalance(rawBalance: bigint) {
+  const negative = rawBalance < 0n;
+  const abs = negative ? -rawBalance : rawBalance;
   const divisor = 10_000n;
-  const whole = rawBalance / divisor;
-  const fractional = rawBalance % divisor;
-  if (fractional === 0n) return whole.toString();
-  return `${whole}.${fractional.toString().padStart(4, "0")}`;
+  const whole = abs / divisor;
+  const fractional = abs % divisor;
+  const formatted =
+    fractional === 0n ? whole.toString() : `${whole}.${fractional.toString().padStart(4, "0")}`;
+  return negative ? `-${formatted}` : formatted;
 }
 
 export function isChannelId(value: string) {
