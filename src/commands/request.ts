@@ -474,10 +474,17 @@ async function fetchWithRedirects(
   }
 }
 
-function redirectRequest(request: FetchPlan, status: number, location: string): FetchPlan {
-  const nextUrl = new URL(location, request.url).toString();
+export function redirectRequest(request: FetchPlan, status: number, location: string): FetchPlan {
+  const nextUrl = new URL(location, request.url);
   const init = cloneRequestInit(request.init);
+  const headers = new Headers(init.headers);
   const method = init.method?.toUpperCase() ?? "GET";
+
+  if (new URL(request.url).origin !== nextUrl.origin) {
+    headers.delete("authorization");
+    headers.delete("cookie");
+    headers.delete("proxy-authorization");
+  }
 
   if (
     (status === 301 || status === 302 || status === 303) &&
@@ -486,13 +493,12 @@ function redirectRequest(request: FetchPlan, status: number, location: string): 
   ) {
     init.method = "GET";
     delete init.body;
-    const headers = new Headers(init.headers);
     headers.delete("content-length");
     headers.delete("content-type");
-    init.headers = headers;
   }
 
-  return { init, url: nextUrl };
+  init.headers = headers;
+  return { init, url: nextUrl.toString() };
 }
 
 function isRedirectStatus(status: number) {

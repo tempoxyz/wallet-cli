@@ -13,6 +13,7 @@ import {
   buildTopUpTransactionRequest,
   isSessionInvalidationResponse,
   parseRequestArgs,
+  redirectRequest,
   resolvePaymentIdentity,
   runRequest,
   sessionChallengeFromHeader,
@@ -175,6 +176,52 @@ describe("request command", () => {
 
     expect(calls).toBe(2);
     expect(stdout.text()).toBe("target");
+  });
+
+  it("strips credentials on cross-origin redirects", () => {
+    const redirected = redirectRequest(
+      {
+        init: {
+          headers: {
+            Authorization: "Bearer secret-token",
+            Cookie: "session=secret-cookie",
+            "Proxy-Authorization": "Basic proxy-secret",
+          },
+          method: "GET",
+        },
+        url: "https://api.example.com/redirect",
+      },
+      302,
+      "https://other.example.com/target",
+    );
+    const headers = new Headers(redirected.init.headers);
+
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("cookie")).toBeNull();
+    expect(headers.get("proxy-authorization")).toBeNull();
+  });
+
+  it("preserves credentials on same-origin redirects", () => {
+    const redirected = redirectRequest(
+      {
+        init: {
+          headers: {
+            Authorization: "Bearer secret-token",
+            Cookie: "session=secret-cookie",
+            "Proxy-Authorization": "Basic proxy-secret",
+          },
+          method: "GET",
+        },
+        url: "https://api.example.com/redirect",
+      },
+      302,
+      "/target",
+    );
+    const headers = new Headers(redirected.init.headers);
+
+    expect(headers.get("authorization")).toBe("Bearer secret-token");
+    expect(headers.get("cookie")).toBe("session=secret-cookie");
+    expect(headers.get("proxy-authorization")).toBe("Basic proxy-secret");
   });
 
   it("fails when the redirect limit is exceeded", async () => {
