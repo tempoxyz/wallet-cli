@@ -324,7 +324,6 @@ export const fundOptions = z.object({
   browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
   crypto: z.boolean().optional().describe("Open the direct crypto funding flow"),
   credits: z.boolean().optional().describe("Open the credits purchase flow"),
-  "machine-usd": z.boolean().optional().describe("Open the machineUSD purchase flow"),
   "referral-code": z.string().optional().describe("Open referral-code redeem flow"),
   claim: z.string().optional().describe("Alias for --referral-code"),
 });
