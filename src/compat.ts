@@ -61,6 +61,7 @@ async function runFundCompat(args: readonly string[]) {
     }),
     address: stringArg(args, "--address"),
     code: stringArg(args, "--referral-code") ?? stringArg(args, "--claim"),
+    network: stringArg(args, "--network") ?? stringArg(args, "-n"),
     noBrowser: args.includes("--no-browser"),
   });
   printCompatOutput(result, args);
