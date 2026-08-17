@@ -182,6 +182,7 @@ cli.command("fund", {
       action: fundAction({
         credits: options.credits,
         crypto: options.crypto,
+        machineUsd: options["machine-usd"],
         referralCode: options["referral-code"] ?? options.claim,
       }),
       address: options.address,
@@ -654,6 +655,7 @@ function describeCli() {
             "Open the direct crypto funding flow (bridge on mainnet, faucet on testnet)",
           ),
           flag("credits", "--credits", "Open the credits purchase flow"),
+          flag("machine_usd", "--machine-usd", "Open the machineUSD purchase flow"),
           option("referral_code", "--referral-code", "Referral code to claim while funding", {
             valueName: "CODE",
           }),

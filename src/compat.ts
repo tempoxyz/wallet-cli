@@ -56,6 +56,7 @@ async function runFundCompat(args: readonly string[]) {
     action: fundAction({
       credits: args.includes("--credits"),
       crypto: args.includes("--crypto"),
+      machineUsd: args.includes("--machine-usd"),
       referralCode: stringArg(args, "--referral-code") ?? stringArg(args, "--claim"),
     }),
     address: stringArg(args, "--address"),
