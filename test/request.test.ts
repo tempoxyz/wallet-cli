@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildTopUpTransactionRequest,
+  chargeChallengeFromHeader,
+  chargeFallbackError,
   isSessionInvalidationResponse,
   parseRequestArgs,
   resolvePaymentIdentity,
@@ -362,6 +364,55 @@ describe("request command", () => {
     },
   );
 
+  it("selects the least expensive charge matching the session network and currency", () => {
+    const session = paymentChallenge({
+      amount: "15000",
+      id: "session",
+      intent: "session",
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+      sessionProtocol: "v2",
+    });
+    const matchingHigh = paymentChallenge({
+      amount: "20000",
+      id: "charge-high",
+      intent: "charge",
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+    });
+    const matchingLow = paymentChallenge({
+      amount: "15000",
+      id: "charge-low",
+      intent: "charge",
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+    });
+    const otherNetwork = paymentChallenge({
+      amount: "1",
+      id: "charge-other-network",
+      intent: "charge",
+      chainId: 42431,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+    });
+    const header = [matchingHigh, otherNetwork, matchingLow, session]
+      .map((challenge) => Challenge.serialize(challenge))
+      .join(", ");
+
+    expect(chargeChallengeFromHeader(header, session)?.id).toBe("charge-low");
+    expect(
+      chargeFallbackError(
+        header,
+        session,
+        requestOptions("https://example.com"),
+        "extension failed",
+      ),
+    ).toMatchObject({
+      code: "E_PAYMENT",
+      message:
+        "Session payment failed: extension failed\nA one-time charge of 0.015 is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --payment-intent charge.",
+    });
+  });
+
   it("returns E_PAYMENT for non-dry-run 402 responses", async () => {
     const server = await testServer((_request, response) => {
       response.statusCode = 402;
@@ -459,6 +510,8 @@ describe("request command", () => {
         "-t",
         "--max-spend",
         "1.00",
+        "--payment-intent",
+        "charge",
         "--connect-timeout",
         "2",
         "--insecure",
@@ -472,9 +525,17 @@ describe("request command", () => {
       insecure: true,
       maxRedirs: 3,
       maxSpend: "1.00",
+      paymentIntent: "charge",
       noProxy: true,
       url: "https://example.com",
     });
+  });
+
+  it("defaults payment intent to auto and rejects unknown values", () => {
+    expect(parseRequestArgs(["https://example.com"]).paymentIntent).toBe("auto");
+    expect(() => parseRequestArgs(["--payment-intent", "refund", "https://example.com"])).toThrow(
+      "--payment-intent must be one of: auto, session, charge",
+    );
   });
 
   it("recovers stale session locks left behind by killed request processes", async () => {
@@ -815,6 +876,31 @@ describe("request command", () => {
 
 function requestOptions(url: string): ReturnType<typeof parseRequestArgs> {
   return parseRequestArgs([url]);
+}
+
+function paymentChallenge(options: {
+  amount: string;
+  chainId: number;
+  currency: string;
+  id: string;
+  intent: "charge" | "session";
+  sessionProtocol?: "v2" | undefined;
+}) {
+  return Challenge.from({
+    id: options.id,
+    intent: options.intent,
+    method: "tempo",
+    realm: "example",
+    request: {
+      amount: options.amount,
+      currency: options.currency,
+      methodDetails: {
+        chainId: options.chainId,
+        ...(options.sessionProtocol ? { sessionProtocol: options.sessionProtocol } : {}),
+      },
+      recipient: "0x0000000000000000000000000000000000000001",
+    },
+  });
 }
 
 function sessionDescriptor() {

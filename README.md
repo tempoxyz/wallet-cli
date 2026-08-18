@@ -68,6 +68,18 @@ tempo request --dry-run https://example.mpp.tempo.xyz/v1/resource
 tempo request https://example.mpp.tempo.xyz/v1/resource
 ```
 
+When a server offers both reusable sessions and one-time charges, choose an intent explicitly:
+
+```sh
+tempo request --payment-intent session https://example.mpp.tempo.xyz/v1/resource
+tempo request --payment-intent charge https://example.mpp.tempo.xyz/v1/resource
+```
+
+`--payment-intent auto` is the default. It prefers a reusable session and permits one session
+extension attempt. If that fails and a compatible charge is available, the CLI reports its exact
+amount and requires an explicit retry with `--payment-intent charge`; it never silently purchases
+non-refundable charge capacity.
+
 Session-based services open a reusable payment channel:
 
 ```sh

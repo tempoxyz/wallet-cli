@@ -36,6 +36,18 @@ describe("generated CLI metadata", () => {
     expect(output).toContain("--no-browser");
   });
 
+  it("documents request payment intent selection", async () => {
+    const help = await requestCli(["--help"]);
+    expect(help).toContain("--payment-intent <auto|session|charge>");
+
+    const description = JSON.parse(await requestCli(["--describe"])) as {
+      args: { long?: string | undefined; name: string }[];
+    };
+    expect(description.args).toContainEqual(
+      expect.objectContaining({ long: "--payment-intent", name: "payment_intent" }),
+    );
+  });
+
   it("returns schema for the direct services command", async () => {
     const output = await walletCli(["services", "--schema", "--format", "json"]);
     const schema = JSON.parse(output) as {
