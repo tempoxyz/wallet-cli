@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildTopUpTransactionRequest,
-  chargeChallengeFromHeader,
   chargeFallbackError,
   isSessionInvalidationResponse,
   parseRequestArgs,
@@ -364,7 +363,7 @@ describe("request command", () => {
     },
   );
 
-  it("selects the least expensive charge matching the session network and currency", () => {
+  it("reports an offered charge without submitting it after session failure", () => {
     const session = paymentChallenge({
       amount: "15000",
       id: "session",
@@ -373,39 +372,17 @@ describe("request command", () => {
       currency: "0x20c000000000000000000000b9537d11c60e8b50",
       sessionProtocol: "v2",
     });
-    const matchingHigh = paymentChallenge({
-      amount: "20000",
-      id: "charge-high",
-      intent: "charge",
-      chainId: 4217,
-      currency: "0x20c000000000000000000000b9537d11c60e8b50",
-    });
-    const matchingLow = paymentChallenge({
+    const charge = paymentChallenge({
       amount: "15000",
-      id: "charge-low",
+      id: "charge",
       intent: "charge",
       chainId: 4217,
       currency: "0x20c000000000000000000000b9537d11c60e8b50",
     });
-    const otherNetwork = paymentChallenge({
-      amount: "1",
-      id: "charge-other-network",
-      intent: "charge",
-      chainId: 42431,
-      currency: "0x20c000000000000000000000b9537d11c60e8b50",
-    });
-    const header = [matchingHigh, otherNetwork, matchingLow, session]
-      .map((challenge) => Challenge.serialize(challenge))
-      .join(", ");
+    const header = [charge, session].map((challenge) => Challenge.serialize(challenge)).join(", ");
 
-    expect(chargeChallengeFromHeader(header, session)?.id).toBe("charge-low");
     expect(
-      chargeFallbackError(
-        header,
-        session,
-        requestOptions("https://example.com"),
-        "extension failed",
-      ),
+      chargeFallbackError(header, requestOptions("https://example.com"), "extension failed"),
     ).toMatchObject({
       code: "E_PAYMENT",
       message:

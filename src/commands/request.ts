@@ -525,7 +525,7 @@ async function payAndRetryRequest(
       );
     } catch (error) {
       if (options.paymentIntent === "auto")
-        throw chargeFallbackError(header, sessionChallenge, options, error) ?? error;
+        throw chargeFallbackError(header, options, error) ?? error;
       throw error;
     }
     if (options.paymentIntent === "auto" && response.status >= 400) {
@@ -534,7 +534,7 @@ async function payAndRetryRequest(
         .text()
         .catch(() => "");
       const reason = `HTTP ${response.status}${body ? `: ${body}` : ""}`;
-      const fallback = chargeFallbackError(header, sessionChallenge, options, reason);
+      const fallback = chargeFallbackError(header, options, reason);
       if (fallback) throw fallback;
     }
     return response;
@@ -554,7 +554,10 @@ async function payAndRetryRequest(
       ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
     };
     const payment = Mppx.create({
-      methods: [tempo(methodOptions), tempo.subscription({ getClient })],
+      methods: [
+        tempo.charge(methodOptions),
+        ...(options.paymentIntent === "auto" ? [tempo.subscription({ getClient })] : []),
+      ],
       polyfill: false,
     });
 
@@ -565,11 +568,7 @@ async function payAndRetryRequest(
       return await createCredential(paymentContext(challenge, options) as never);
     });
 
-    const credential = await payment.createCredential(
-      options.paymentIntent === "charge"
-        ? paymentChallengeResponseForIntent(challengeResponse, "charge")
-        : challengeResponse,
-    );
+    const credential = await payment.createCredential(challengeResponse);
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
     return await fetchWithRetries(
       { init: paidInit, url: paymentRequiredResponse.url || request.url },
@@ -1278,31 +1277,12 @@ export function sessionChallengeFromHeader(header: string | null) {
   }
 }
 
-export function chargeChallengeFromHeader(
-  header: string | null,
-  sessionChallenge: Challenge.Challenge,
-) {
+function chargeChallengeFromHeader(header: string | null) {
   if (!header) return undefined;
   try {
-    const sessionRequest = sessionChallenge.request as Record<string, unknown>;
-    const sessionMethodDetails = getRecord(sessionRequest.methodDetails);
-    const sessionChainId = sessionMethodDetails.chainId;
-    const sessionCurrency = stringValue(sessionRequest.currency).toLowerCase();
-    return Challenge.deserializeList(header)
-      .filter((challenge) => {
-        if (challenge.method !== "tempo" || challenge.intent !== "charge") return false;
-        const request = challenge.request as Record<string, unknown>;
-        const methodDetails = getRecord(request.methodDetails);
-        return (
-          methodDetails.chainId === sessionChainId &&
-          stringValue(request.currency).toLowerCase() === sessionCurrency
-        );
-      })
-      .sort((left, right) => {
-        const leftAmount = challengeAmount(left);
-        const rightAmount = challengeAmount(right);
-        return leftAmount < rightAmount ? -1 : leftAmount > rightAmount ? 1 : 0;
-      })[0];
+    return Challenge.deserializeList(header).find(
+      (challenge) => challenge.method === "tempo" && challenge.intent === "charge",
+    );
   } catch {
     return undefined;
   }
@@ -1310,11 +1290,10 @@ export function chargeChallengeFromHeader(
 
 export function chargeFallbackError(
   header: string | null,
-  sessionChallenge: Challenge.Challenge,
   options: RequestOptions,
   reason: unknown,
 ) {
-  const challenge = chargeChallengeFromHeader(header, sessionChallenge);
+  const challenge = chargeChallengeFromHeader(header);
   if (!challenge) return undefined;
   const amount = challengeAmount(challenge);
   if (options.maxSpend && amount > parseUnits(options.maxSpend, 6)) return undefined;
@@ -1322,31 +1301,6 @@ export function chargeFallbackError(
   return paymentError(
     `Session payment failed: ${message}\nA one-time charge of ${formatTokenAmount(amount)} is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --payment-intent charge.`,
   );
-}
-
-function paymentChallengeResponseForIntent(response: Response, intent: PaymentIntent) {
-  if (intent === "auto") return response;
-  const header = response.headers.get("www-authenticate");
-  let challenges: Challenge.Challenge[] = [];
-  try {
-    challenges = Challenge.deserializeList(header ?? "").filter(
-      (challenge) => challenge.method === "tempo" && challenge.intent === intent,
-    );
-  } catch {
-    // The preflight validation reports malformed headers before this helper runs.
-  }
-  if (challenges.length === 0)
-    throw paymentError(`Server did not offer a compatible '${intent}' payment intent`);
-  const headers = new Headers(response.headers);
-  headers.set(
-    "www-authenticate",
-    challenges.map((challenge) => Challenge.serialize(challenge)).join(", "),
-  );
-  return new Response(null, {
-    headers,
-    status: response.status,
-    statusText: response.statusText,
-  });
 }
 
 function challengeAmount(challenge: Challenge.Challenge) {
