@@ -33,8 +33,14 @@ describe("fundAction", () => {
 });
 
 describe("fundUrl", () => {
-  it("routes every funding handoff to the /agent page", () => {
-    expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/agent?action=fund");
+  it("routes default funding to the recipient-prefilled onramp", () => {
+    expect(fundUrl("fund", { address: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" })).toBe(
+      "https://wallet.tempo.xyz/onramp?recipient=0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    );
+    expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/onramp");
+  });
+
+  it("keeps specialized funding handoffs on the agent page", () => {
     expect(fundUrl("crypto")).toBe("https://wallet.tempo.xyz/agent?action=crypto");
     expect(fundUrl("credits")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=credits");
     expect(fundUrl("claim", { code: "ABC123" })).toBe(

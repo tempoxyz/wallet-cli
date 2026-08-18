@@ -31,7 +31,10 @@ export async function runFundingFlow(options: {
     chainId: chainId(options.network),
     walletAddress,
   });
-  const url = fundUrl(options.action, { code: options.code });
+  const url = fundUrl(options.action, {
+    address: walletAddress ?? undefined,
+    code: options.code,
+  });
 
   console.error(`Fund URL: ${url}`);
   console.error(`Open this link on your device: ${url}`);
@@ -135,9 +138,16 @@ async function waitForFunding(options: {
   }
 }
 
-export function fundUrl(action: FundAction, options: { code?: string | undefined } = {}) {
-  // The CLI is an agent/MPP surface, so all funding handoffs land on the dedicated
-  // /agent page rather than the consumer wallet home.
+export function fundUrl(
+  action: FundAction,
+  options: { address?: string | undefined; code?: string | undefined } = {},
+) {
+  if (action === "fund") {
+    const url = new URL("https://wallet.tempo.xyz/onramp");
+    if (options.address) url.searchParams.set("recipient", options.address);
+    return url.toString();
+  }
+
   const url = new URL("https://wallet.tempo.xyz/agent");
   if (action === "claim" && options.code) {
     url.searchParams.set("claim", options.code);
