@@ -11,6 +11,10 @@ const args = z.object({
 const options = z.object({
   "dry-run": z.boolean().optional().describe("Show payment challenge without paying"),
   "max-spend": z.string().optional().describe("Hard cap for cumulative payment spend"),
+  "payment-intent": z
+    .enum(["auto", "session", "charge"])
+    .default("auto")
+    .describe("Payment intent: auto, session, or charge"),
   "private-key": z.string().optional().describe("Sign payments with an ephemeral private key"),
   network: z
     .string()
@@ -147,6 +151,7 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
     maxTime: options.timeout,
     method: options.request,
     maxSpend: options["max-spend"],
+    paymentIntent: options["payment-intent"],
     network: options.network,
     noProxy: options.noProxy,
     output: options.output,
@@ -217,6 +222,12 @@ function describeRequestCli() {
         long: "--max-spend",
         value_name: "AMOUNT",
         help: "Hard cap for cumulative payment spend",
+      },
+      {
+        name: "payment_intent",
+        long: "--payment-intent",
+        value_name: "INTENT",
+        help: "Payment intent: auto, session, or charge",
       },
       {
         name: "private_key",

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildTopUpTransactionRequest,
+  chargeFallbackError,
   isSessionInvalidationResponse,
   parseRequestArgs,
   resolvePaymentIdentity,
@@ -362,6 +363,71 @@ describe("request command", () => {
     },
   );
 
+  it("reports an offered charge without submitting it after session failure", () => {
+    const session = paymentChallenge({
+      amount: "15000",
+      id: "session",
+      intent: "session",
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+      sessionProtocol: "v2",
+    });
+    const charge = paymentChallenge({
+      amount: "15000",
+      id: "charge",
+      intent: "charge",
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+    });
+    const header = [charge, session].map((challenge) => Challenge.serialize(challenge)).join(", ");
+
+    expect(
+      chargeFallbackError(
+        header,
+        session,
+        requestOptions("https://example.com"),
+        "extension failed",
+      ),
+    ).toMatchObject({
+      code: "E_PAYMENT",
+      message:
+        "Session payment failed: extension failed\nA one-time charge of 0.015 is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --max-spend 0.015 --payment-intent charge.",
+    });
+  });
+
+  it("selects the cheapest compatible charge using normalized chain IDs", () => {
+    const currency = "0x20c000000000000000000000b9537d11c60e8b50";
+    const session = paymentChallenge({
+      amount: "15000",
+      id: "session",
+      intent: "session",
+      currency,
+      sessionProtocol: "v2",
+    });
+    const expensive = paymentChallenge({
+      amount: "25000",
+      id: "expensive",
+      intent: "charge",
+      chainId: 4217,
+      currency,
+    });
+    const cheapest = paymentChallenge({
+      amount: "15000",
+      id: "cheapest",
+      intent: "charge",
+      chainId: 4217,
+      currency,
+    });
+    const header = [session, expensive, cheapest]
+      .map((challenge) => Challenge.serialize(challenge))
+      .join(", ");
+
+    expect(
+      chargeFallbackError(header, session, requestOptions("https://example.com"), "failed")
+        ?.message,
+    ).toContain("one-time charge of 0.015");
+  });
+
   it("returns E_PAYMENT for non-dry-run 402 responses", async () => {
     const server = await testServer((_request, response) => {
       response.statusCode = 402;
@@ -389,23 +455,27 @@ describe("request command", () => {
         ],
       }),
     );
-    const challenge = Challenge.from({
-      id: "expired-key-test",
+    const charge = paymentChallenge({
+      amount: "7000",
+      id: "expired-key-charge",
       intent: "charge",
-      method: "tempo",
-      realm: "paid.example.com",
-      request: {
-        amount: "7000",
-        currency: "0x20c000000000000000000000b9537d11c60e8b50",
-        methodDetails: { chainId: 4217 },
-        recipient: "0xCfA26F13c6C18307033EcE13BBb8F470dA5b4dbE",
-      },
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
     });
+    const session = paymentChallenge({
+      amount: "7000",
+      id: "expired-key-session",
+      intent: "session",
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+      sessionProtocol: "v2",
+    });
+    const header = [charge, session].map((challenge) => Challenge.serialize(challenge)).join(", ");
     let requests = 0;
     const server = await testServer((_request, response) => {
       requests += 1;
       response.statusCode = 402;
-      response.setHeader("www-authenticate", Challenge.serialize(challenge));
+      response.setHeader("www-authenticate", header);
       response.end("Payment Required");
     });
 
@@ -459,6 +529,8 @@ describe("request command", () => {
         "-t",
         "--max-spend",
         "1.00",
+        "--payment-intent",
+        "charge",
         "--connect-timeout",
         "2",
         "--insecure",
@@ -472,9 +544,17 @@ describe("request command", () => {
       insecure: true,
       maxRedirs: 3,
       maxSpend: "1.00",
+      paymentIntent: "charge",
       noProxy: true,
       url: "https://example.com",
     });
+  });
+
+  it("defaults payment intent to auto and rejects unknown values", () => {
+    expect(parseRequestArgs(["https://example.com"]).paymentIntent).toBe("auto");
+    expect(() => parseRequestArgs(["--payment-intent", "refund", "https://example.com"])).toThrow(
+      "--payment-intent must be one of: auto, session, charge",
+    );
   });
 
   it("recovers stale session locks left behind by killed request processes", async () => {
@@ -815,6 +895,31 @@ describe("request command", () => {
 
 function requestOptions(url: string): ReturnType<typeof parseRequestArgs> {
   return parseRequestArgs([url]);
+}
+
+function paymentChallenge(options: {
+  amount: string;
+  chainId?: number | undefined;
+  currency: string;
+  id: string;
+  intent: "charge" | "session";
+  sessionProtocol?: "v2" | undefined;
+}) {
+  return Challenge.from({
+    id: options.id,
+    intent: options.intent,
+    method: "tempo",
+    realm: "example",
+    request: {
+      amount: options.amount,
+      currency: options.currency,
+      methodDetails: {
+        ...(options.chainId ? { chainId: options.chainId } : {}),
+        ...(options.sessionProtocol ? { sessionProtocol: options.sessionProtocol } : {}),
+      },
+      recipient: "0x0000000000000000000000000000000000000001",
+    },
+  });
 }
 
 function sessionDescriptor() {
