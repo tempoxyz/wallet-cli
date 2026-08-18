@@ -1,4 +1,5 @@
 import type { Provider as CoreProvider } from "accounts";
+import { isAddress } from "viem";
 import { Actions } from "viem/tempo";
 
 import { usageError } from "../shared/errors.js";
@@ -7,9 +8,15 @@ import { openExternal } from "../shared/process.js";
 import { formatMicroUnits, sleep } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
-import { queryCreditBalance } from "./credits.js";
+
+const defaultMachineUsdOrigin = "https://machine-usd.porto.workers.dev";
 
 export type FundAction = "fund" | "crypto" | "credits" | "claim";
+
+export type MachineUsdConfig = {
+  chainId: number;
+  tokenAddress: `0x${string}`;
+};
 
 export async function runFundingFlow(options: {
   action: FundAction;
@@ -26,9 +33,14 @@ export async function runFundingFlow(options: {
   if (!walletAddress && options.action !== "claim")
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
 
+  const selectedChainId = chainId(options.network);
+  const machineUsdConfig = options.action === "credits" ? await queryMachineUsdConfig() : undefined;
+  if (machineUsdConfig && selectedChainId !== machineUsdConfig.chainId)
+    throw usageError("machineUSD funding is only available on Tempo mainnet.");
+
   const initial = await fundingBalance({
-    action: options.action,
-    chainId: chainId(options.network),
+    chainId: selectedChainId,
+    token: machineUsdConfig?.tokenAddress,
     walletAddress,
   });
   const url = fundUrl(options.action, {
@@ -41,18 +53,18 @@ export async function runFundingFlow(options: {
   if (!options.noBrowser) openExternal(url);
 
   if (options.action === "credits") {
-    console.error("Complete the credits purchase in the wallet app.");
-    console.error("After purchasing credits, return here to continue.");
-    console.error("Waiting for credits...");
+    console.error("Complete the machineUSD purchase in the wallet app.");
+    console.error("After purchasing machineUSD, return here to continue.");
+    console.error("Waiting for machineUSD...");
   } else {
     console.error("After funding is complete, return here to continue.");
     console.error("Waiting for funding...");
   }
 
   const completed = await waitForFunding({
-    action: options.action,
-    chainId: chainId(options.network),
+    chainId: selectedChainId,
     initialRawBalance: initial.rawBalance,
+    token: machineUsdConfig?.tokenAddress,
     walletAddress,
   });
   console.error("Funding received!");
@@ -78,22 +90,10 @@ export function fundAction(options: {
 }
 
 async function fundingBalance(options: {
-  action: FundAction;
   chainId: number;
+  token?: `0x${string}` | undefined;
   walletAddress: string | null;
 }) {
-  if (options.action === "credits") {
-    if (!options.walletAddress) throw new Error("No wallet is logged in");
-    const credits = await queryCreditBalance({
-      chainId: options.chainId,
-      walletAddress: options.walletAddress,
-    });
-    return {
-      balance: credits.balance,
-      rawBalance: BigInt(credits.rawBalance),
-    };
-  }
-
   if (!options.walletAddress) {
     return {
       balance: "0.000000",
@@ -107,7 +107,7 @@ async function fundingBalance(options: {
   const rawBalance = (
     await Actions.token.getBalance(provider.getClient() as never, {
       account: options.walletAddress as `0x${string}`,
-      token: tokenAddress(options.chainId),
+      token: options.token ?? tokenAddress(options.chainId),
     })
   ).amount;
 
@@ -118,9 +118,9 @@ async function fundingBalance(options: {
 }
 
 async function waitForFunding(options: {
-  action: FundAction;
   chainId: number;
   initialRawBalance: bigint;
+  token?: `0x${string}` | undefined;
   walletAddress: string | null;
 }) {
   const pollMs = Number(process.env.TEMPO_WALLET_FUND_POLL_MS ?? 2_000);
@@ -142,9 +142,10 @@ export function fundUrl(
   action: FundAction,
   options: { address?: string | undefined; code?: string | undefined } = {},
 ) {
-  if (action === "fund") {
+  if (action === "fund" || action === "credits") {
     const url = new URL("https://wallet.tempo.xyz/onramp");
     if (options.address) url.searchParams.set("recipient", options.address);
+    if (action === "credits") url.searchParams.set("token", "MACHUSD");
     return url.toString();
   }
 
@@ -153,7 +154,30 @@ export function fundUrl(
     url.searchParams.set("claim", options.code);
     return url.toString();
   }
-  url.searchParams.set("action", action === "credits" ? "fund" : action);
-  if (action === "credits") url.searchParams.set("intent", "credits");
+  url.searchParams.set("action", action);
   return url.toString();
+}
+
+/** Reads the deployed token address and chain used to detect a completed machineUSD purchase. */
+export async function queryMachineUsdConfig(options: { origin?: string | undefined } = {}) {
+  const origin = options.origin || process.env.TEMPO_MACHINE_USD_ORIGIN || defaultMachineUsdOrigin;
+  const response = await fetch(new URL("/v1/config", `${origin.replace(/\/$/, "")}/`).toString());
+  const body = (await response.json().catch(() => null)) as {
+    chain_id?: unknown;
+    token_address?: unknown;
+  } | null;
+  if (!response.ok) throw new Error("Unable to load machineUSD configuration");
+  if (
+    !body ||
+    typeof body.chain_id !== "number" ||
+    !Number.isSafeInteger(body.chain_id) ||
+    typeof body.token_address !== "string" ||
+    !isAddress(body.token_address, { strict: false })
+  )
+    throw new Error("machineUSD configuration is invalid");
+
+  return {
+    chainId: body.chain_id,
+    tokenAddress: body.token_address as `0x${string}`,
+  } satisfies MachineUsdConfig;
 }

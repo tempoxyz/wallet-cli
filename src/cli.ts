@@ -653,7 +653,7 @@ function describeCli() {
             "--crypto",
             "Open the direct crypto funding flow (bridge on mainnet, faucet on testnet)",
           ),
-          flag("credits", "--credits", "Open the credits purchase flow"),
+          flag("credits", "--credits", "Open the machineUSD purchase flow (legacy alias)"),
           option("referral_code", "--referral-code", "Referral code to claim while funding", {
             valueName: "CODE",
           }),

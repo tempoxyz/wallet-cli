@@ -323,7 +323,7 @@ export const fundOptions = z.object({
   address: z.string().optional().describe("Wallet address to fund (defaults to current wallet)"),
   browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
   crypto: z.boolean().optional().describe("Open the direct crypto funding flow"),
-  credits: z.boolean().optional().describe("Open the credits purchase flow"),
+  credits: z.boolean().optional().describe("Open the machineUSD purchase flow (legacy alias)"),
   "referral-code": z.string().optional().describe("Open referral-code redeem flow"),
   claim: z.string().optional().describe("Alias for --referral-code"),
 });
