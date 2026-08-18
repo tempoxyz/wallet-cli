@@ -10,7 +10,10 @@ const args = z.object({
 
 const options = z.object({
   "dry-run": z.boolean().optional().describe("Show payment challenge without paying"),
-  "max-spend": z.string().optional().describe("Hard cap for cumulative payment spend"),
+  "max-spend": z
+    .string()
+    .optional()
+    .describe("Hard cap for cumulative payment spend (or TEMPO_MAX_SPEND)"),
   "private-key": z.string().optional().describe("Sign payments with an ephemeral private key"),
   network: z
     .string()
@@ -216,7 +219,7 @@ function describeRequestCli() {
         name: "max_spend",
         long: "--max-spend",
         value_name: "AMOUNT",
-        help: "Hard cap for cumulative payment spend",
+        help: "Hard cap for cumulative payment spend (or TEMPO_MAX_SPEND)",
       },
       {
         name: "private_key",
