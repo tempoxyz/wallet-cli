@@ -524,17 +524,18 @@ async function payAndRetryRequest(
         paySessionAndRetryRequest(paymentRequiredResponse, request, options, sessionChallenge),
       );
     } catch (error) {
+      if (isAuthRefreshRequiredError(error)) throw error;
       if (options.paymentIntent === "auto")
-        throw chargeFallbackError(header, options, error) ?? error;
+        throw chargeFallbackError(header, sessionChallenge, options, error) ?? error;
       throw error;
     }
-    if (options.paymentIntent === "auto" && response.status >= 400) {
+    if (options.paymentIntent === "auto" && response.status === 402) {
       const body = await response
         .clone()
         .text()
         .catch(() => "");
       const reason = `HTTP ${response.status}${body ? `: ${body}` : ""}`;
-      const fallback = chargeFallbackError(header, options, reason);
+      const fallback = chargeFallbackError(header, sessionChallenge, options, reason);
       if (fallback) throw fallback;
     }
     return response;
@@ -822,6 +823,14 @@ function isActionablePaymentError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const code = (error as Record<string, unknown>).code;
   return code === "E_PAYMENT" || code === "E_AUTH_REFRESH_REQUIRED";
+}
+
+function isAuthRefreshRequiredError(error: unknown) {
+  return (
+    Boolean(error) &&
+    typeof error === "object" &&
+    (error as Record<string, unknown>).code === "E_AUTH_REFRESH_REQUIRED"
+  );
 }
 
 type PaymentIdentity = Awaited<ReturnType<typeof resolvePaymentIdentity>>;
@@ -1277,29 +1286,62 @@ export function sessionChallengeFromHeader(header: string | null) {
   }
 }
 
-function chargeChallengeFromHeader(header: string | null) {
+function chargeChallengeFromHeader(
+  header: string | null,
+  sessionChallenge: Challenge.Challenge,
+  options: RequestOptions,
+) {
   if (!header) return undefined;
   try {
-    return Challenge.deserializeList(header).find(
-      (challenge) => challenge.method === "tempo" && challenge.intent === "charge",
-    );
+    const sessionRequest = sessionChallenge.request as Record<string, unknown>;
+    const sessionMethodDetails = getRecord(sessionRequest.methodDetails);
+    const sessionChainId = normalizedChallengeChainId(sessionMethodDetails, options);
+    const sessionCurrency = stringValue(sessionRequest.currency).toLowerCase();
+    const sessionRecipient = stringValue(sessionRequest.recipient).toLowerCase();
+    return Challenge.deserializeList(header)
+      .filter((challenge) => {
+        if (challenge.method !== "tempo" || challenge.intent !== "charge") return false;
+        const request = challenge.request as Record<string, unknown>;
+        const methodDetails = getRecord(request.methodDetails);
+        return (
+          normalizedChallengeChainId(methodDetails, options) === sessionChainId &&
+          stringValue(request.currency).toLowerCase() === sessionCurrency &&
+          stringValue(request.recipient).toLowerCase() === sessionRecipient
+        );
+      })
+      .sort((left, right) => {
+        const leftAmount = challengeAmount(left);
+        const rightAmount = challengeAmount(right);
+        return leftAmount < rightAmount ? -1 : leftAmount > rightAmount ? 1 : 0;
+      })[0];
   } catch {
     return undefined;
   }
 }
 
+function normalizedChallengeChainId(
+  methodDetails: Record<string, unknown>,
+  options: RequestOptions,
+) {
+  return typeof methodDetails.chainId === "number"
+    ? methodDetails.chainId
+    : chainId(options.network);
+}
+
 export function chargeFallbackError(
   header: string | null,
+  sessionChallenge: Challenge.Challenge,
   options: RequestOptions,
   reason: unknown,
 ) {
-  const challenge = chargeChallengeFromHeader(header);
+  const challenge = chargeChallengeFromHeader(header, sessionChallenge, options);
   if (!challenge) return undefined;
   const amount = challengeAmount(challenge);
   if (options.maxSpend && amount > parseUnits(options.maxSpend, 6)) return undefined;
   const message = reason instanceof Error ? reason.message : String(reason);
+  const formattedAmount = formatTokenAmount(amount);
   return paymentError(
-    `Session payment failed: ${message}\nA one-time charge of ${formatTokenAmount(amount)} is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --payment-intent charge.`,
+    `Session payment failed: ${message}\nA one-time charge of ${formattedAmount} is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --max-spend ${formattedAmount} --payment-intent charge.`,
   );
 }
 
