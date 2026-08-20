@@ -18,7 +18,7 @@ export async function handleCompatCommand(args: readonly string[]) {
     const activeAccount = state.accounts[state.activeAccount ?? 0];
     if (!activeAccount) return false;
     printCompatOutput(
-      currentWhoamiOutput({
+      await currentWhoamiOutput({
         walletAddress: activeAccount.address,
         chain: state.chainId ?? null,
         accessKeys: state.accessKeys,
