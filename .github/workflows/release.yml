@@ -15,9 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.diff.outputs.changed }}
+    # The release branch is pushed and the PR opened with a short-lived
+    # GitHub App token minted via github-sts (authorized by
+    # .github/sts/release-pr.sts.yaml) rather than the built-in GITHUB_TOKEN,
+    # which is not allowed to create pull requests. id-token lets the job
+    # request the OIDC token the STS exchange verifies.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,16 +54,23 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Fetch GitHub token via STS
+        if: steps.diff.outputs.changed == 'true'
+        id: sts
+        uses: tempoxyz/gh-actions/actions/github-sts@183a02178c660ce295e9a262edc5857cb7135f06 # main
+        with:
+          policy: release-pr
+
       - name: Open or update release PR
         if: steps.diff.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.sts.outputs.token }}
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
           BRANCH="changelog-release/main"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "tempo-github-sts[bot]"
+          git config user.email "312736176+tempo-github-sts[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH"
           git add package.json CHANGELOG.md .changelog
           git commit -m "chore: release ${VERSION}"
