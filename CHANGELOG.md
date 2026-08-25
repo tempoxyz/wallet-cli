@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0 (2026-08-25)
+
+### Minor Changes
+
+- Add `tempo request --payment-intent auto|session|charge` with explicit consent for direct-charge
+  fallback after session recovery fails.
+
+### Patch Changes
+
+- Await the whoami payload in the compatibility `login --no-browser` path so it prints wallet details instead of an empty object.
+- Fall back to compatible charge challenges when servers also offer legacy Tempo sessions.
+- Report stale access keys before payment construction and direct users to refresh them.
+- Reject Tempo session challenges and automatic top-ups that target noncanonical escrow contracts.
+- Update production dependencies while preserving direct MCP tool discovery.
+
 ## 0.7.0 (2026-08-01)
 
 ### Minor Changes
