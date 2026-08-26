@@ -1,4 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+
+const environment = vi.hoisted(() => {
+  const authUrl = process.env.TEMPO_AUTH_URL;
+  process.env.TEMPO_AUTH_URL = "https://wallet-jxom-update-access-key-l.tempo.local";
+  return { authUrl };
+});
 
 const mocks = vi.hoisted(() => ({
   create: vi.fn(
@@ -16,20 +22,19 @@ vi.mock("accounts/cli", () => ({
 
 import { createProvider } from "../src/provider.js";
 
-const originalAuthUrl = process.env.TEMPO_AUTH_URL;
+afterAll(() => {
+  if (environment.authUrl === undefined) delete process.env.TEMPO_AUTH_URL;
+  else process.env.TEMPO_AUTH_URL = environment.authUrl;
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
   mocks.create.mockClear();
   mocks.filesystem.mockClear();
-  if (originalAuthUrl === undefined) delete process.env.TEMPO_AUTH_URL;
-  else process.env.TEMPO_AUTH_URL = originalAuthUrl;
 });
 
 describe("provider", () => {
   it("targets the configured wallet device auth endpoint", () => {
-    process.env.TEMPO_AUTH_URL = "https://wallet-jxom-update-access-key-l.tempo.local";
-
     createProvider({ network: "testnet", noBrowser: true });
 
     expect(mocks.create).toHaveBeenCalledWith(

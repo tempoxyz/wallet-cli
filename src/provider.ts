@@ -2,7 +2,7 @@ import type { Provider as CoreProvider } from "accounts";
 import { Provider, Storage } from "accounts/cli";
 
 import { openExternal } from "./shared/process.js";
-import { chainId, deviceAuthUrl } from "./shared/network.js";
+import { appUrl } from "./shared/network.js";
 
 export const accessKeyAuthorizationSeconds = 30 * 86_400;
 
@@ -12,9 +12,8 @@ export function createProvider(
     noBrowser?: boolean | undefined;
   } = {},
 ): CoreProvider.Provider {
-  const selectedChainId = chainId(options.network);
   return Provider.create({
-    host: deviceAuthUrl(selectedChainId),
+    ...(process.env.TEMPO_AUTH_URL ? { host: new URL("/api/auth/device", appUrl).toString() } : {}),
     open(url, prompt) {
       const code = prompt.userCode.replace(/^(.{4})(.{4})$/, "$1-$2");
       console.error(`Device confirmation code: ${code}`);

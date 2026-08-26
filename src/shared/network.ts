@@ -46,15 +46,4 @@ export function tokenSymbol(token: string) {
   return token;
 }
 
-export function authUrl(_chain: number | null) {
-  if (process.env.TEMPO_AUTH_URL) return process.env.TEMPO_AUTH_URL;
-  return "https://wallet.tempo.xyz";
-}
-
-export function deviceAuthUrl(chain: number | null) {
-  const url = new URL(authUrl(chain));
-  url.pathname = "/api/auth/device";
-  url.search = "";
-  url.hash = "";
-  return url.toString();
-}
+export const appUrl = process.env.TEMPO_AUTH_URL ?? "https://wallet.tempo.xyz";

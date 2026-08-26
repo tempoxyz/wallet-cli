@@ -13,8 +13,8 @@ importers:
   .:
     dependencies:
       accounts:
-        specifier: 0.17.2
-        version: 0.17.2(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3))
+        specifier: 0.17.3
+        version: 0.17.3(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3))
       incur:
         specifier: 0.4.20
         version: 0.4.20
@@ -1011,8 +1011,8 @@ packages:
       zod:
         optional: true
 
-  accounts@0.17.2:
-    resolution: {integrity: sha512-cdjJCdBdRXtKcMUJp9hufX/Tugy/Iw7gMx9CjPpls2Juv9U3YE7MeJu7rpC8qM95xPyk36/SlGhGd4no8JxAVA==}
+  accounts@0.17.3:
+    resolution: {integrity: sha512-glC/jL0bGsrEk/rzZG20nbWc4RGXktGVZ8LNwu52HzUnbQO3n6YxHXj3bnNi4subs1NQZv0Gi8yF3DBLQmUzdQ==}
     peerDependencies:
       '@privy-io/react-auth': '>=3.25.0'
       '@react-native-async-storage/async-storage': ^3.0.2
@@ -2736,7 +2736,7 @@ snapshots:
       typescript: 6.0.3
       zod: 4.4.3
 
-  accounts@0.17.2(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3)):
+  accounts@0.17.3(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3)):
     dependencies:
       hono: 4.13.5
       idb-keyval: 6.2.5
