@@ -46,15 +46,14 @@ export function tokenSymbol(token: string) {
   return token;
 }
 
-export function authUrl(chain: number | null) {
+export function authUrl(_chain: number | null) {
   if (process.env.TEMPO_AUTH_URL) return process.env.TEMPO_AUTH_URL;
-  if (chain === 42431) return "https://wallet.tempo.xyz/cli-auth";
-  return "https://wallet.tempo.xyz/cli-auth";
+  return "https://wallet.tempo.xyz";
 }
 
-export function cliAuthUrl(chain: number | null) {
+export function deviceAuthUrl(chain: number | null) {
   const url = new URL(authUrl(chain));
-  url.pathname = "/api/auth/cli";
+  url.pathname = "/api/auth/device";
   url.search = "";
   url.hash = "";
   return url.toString();
