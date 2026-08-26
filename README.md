@@ -103,7 +103,8 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 - `debug`
 - `completions`
 
-Credit-related flows use `whoami --credits`, `fund --credits`, and `transfer --credits`.
+Coinflow balance and payment flows use `whoami --credits` and `transfer --credits`. The legacy
+`fund --credits` flag now opens the machineUSD purchase flow.
 
 `tempo request` supports common curl-style flags for methods, headers, bodies, output files, redirects, retries, proxies, and streaming responses.
 

@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fundAction, fundUrl, runFundingFlow } from "../src/commands/fund.js";
+import {
+  fundAction,
+  fundUrl,
+  queryMachineUsdConfig,
+  runFundingFlow,
+} from "../src/commands/fund.js";
 import { fetchServices, fetchServiceList } from "../src/commands/services.js";
 import { expectUsageError, useTempHome } from "./helpers.js";
 
@@ -33,12 +38,56 @@ describe("fundAction", () => {
 });
 
 describe("fundUrl", () => {
-  it("routes every funding handoff to the /agent page", () => {
-    expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/agent?action=fund");
+  it("routes default funding to the recipient-prefilled onramp", () => {
+    expect(fundUrl("fund", { address: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" })).toBe(
+      "https://wallet.tempo.xyz/onramp?recipient=0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    );
+    expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/onramp");
+  });
+
+  it("routes the legacy credits action to machineUSD", () => {
+    expect(fundUrl("credits", { address: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" })).toBe(
+      "https://wallet.tempo.xyz/onramp?recipient=0x70997970C51812dc3A010C7d01b50e0d17dc79C8&token=MACHUSD",
+    );
+  });
+
+  it("keeps the other specialized funding handoffs on the agent page", () => {
     expect(fundUrl("crypto")).toBe("https://wallet.tempo.xyz/agent?action=crypto");
-    expect(fundUrl("credits")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=credits");
     expect(fundUrl("claim", { code: "ABC123" })).toBe(
       "https://wallet.tempo.xyz/agent?claim=ABC123",
+    );
+  });
+});
+
+describe("queryMachineUsdConfig", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns the public chain and token configuration", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          chain_id: 4217,
+          token_address: "0x20C0000000000000000000000000000000000001",
+        }),
+      ),
+    );
+
+    await expect(queryMachineUsdConfig({ origin: "https://machine.example" })).resolves.toEqual({
+      chainId: 4217,
+      tokenAddress: "0x20C0000000000000000000000000000000000001",
+    });
+    expect(fetch).toHaveBeenCalledWith("https://machine.example/v1/config");
+  });
+
+  it("rejects malformed public configuration", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ chain_id: 4217, token_address: "not-an-address" })),
+    );
+
+    await expect(queryMachineUsdConfig({ origin: "https://machine.example" })).rejects.toThrow(
+      "machineUSD configuration is invalid",
     );
   });
 });
