@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0 (2026-08-26)
+
+### Minor Changes
+
+- Updated authentication to the new device-code flow.
+
 ## 0.8.0 (2026-08-25)
 
 ### Minor Changes
