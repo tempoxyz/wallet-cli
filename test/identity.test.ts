@@ -829,7 +829,7 @@ limit = "100000000"
     });
   });
 
-  it("requests 30-day access keys when connecting", async () => {
+  it("requests 30-day access keys and the deposit screen when connecting", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
     const request = vi.fn().mockResolvedValue({ accounts: [] });
@@ -844,6 +844,7 @@ limit = "100000000"
             authorizeAccessKey: {
               expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
             },
+            showDeposit: true,
           },
         },
       ],

@@ -36,6 +36,7 @@ export async function connect(provider: CoreProvider.Provider) {
           authorizeAccessKey: {
             expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
           },
+          showDeposit: true,
         },
       },
     ],
