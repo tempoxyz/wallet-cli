@@ -13,14 +13,14 @@ importers:
   .:
     dependencies:
       accounts:
-        specifier: 0.16.0
-        version: 0.16.0(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3))
+        specifier: 0.17.3
+        version: 0.17.3(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3))
       incur:
         specifier: 0.4.20
         version: 0.4.20
       mppx:
         specifier: 0.8.14
-        version: 0.8.14(hono@4.12.32)(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3))
+        version: 0.8.14(hono@4.13.5)(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3))
       undici:
         specifier: 8.9.0
         version: 8.9.0
@@ -1011,8 +1011,8 @@ packages:
       zod:
         optional: true
 
-  accounts@0.16.0:
-    resolution: {integrity: sha512-nDMLplhoE12yRJrItAMuM1+kvXtJ9nSGjbfX+0O+wodX1k7HuRlB+kWV7n1RcG/6w3VzKspcmv2Rb3e3EJfPqg==}
+  accounts@0.17.3:
+    resolution: {integrity: sha512-glC/jL0bGsrEk/rzZG20nbWc4RGXktGVZ8LNwu52HzUnbQO3n6YxHXj3bnNi4subs1NQZv0Gi8yF3DBLQmUzdQ==}
     peerDependencies:
       '@privy-io/react-auth': '>=3.25.0'
       '@react-native-async-storage/async-storage': ^3.0.2
@@ -1288,6 +1288,10 @@ packages:
 
   hono@4.12.32:
     resolution: {integrity: sha512-XcuyW9qE2kJn07PkecMOBd5Vq/hMy7mmGw+idz1yblbg9N17ijJODrvPkn7/dwL3Kulj8LcRJ69DLOWf91dRUg==}
+    engines: {node: '>=16.9.0'}
+
+  hono@4.13.5:
+    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
     engines: {node: '>=16.9.0'}
 
   https-proxy-agent@5.0.1:
@@ -2732,14 +2736,14 @@ snapshots:
       typescript: 6.0.3
       zod: 4.4.3
 
-  accounts@0.16.0(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3)):
+  accounts@0.17.3(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3)):
     dependencies:
-      hono: 4.12.32
+      hono: 4.13.5
       idb-keyval: 6.2.5
       jose: 6.2.3
       mipd: 0.0.7(typescript@6.0.3)
-      mppx: 0.8.14(hono@4.12.32)(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3))
-      ox: 0.14.30(typescript@6.0.3)(zod@4.4.3)
+      mppx: 0.8.14(hono@4.13.5)(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3))
+      ox: 0.14.33(typescript@6.0.3)(zod@4.4.3)
       wata: 0.4.0(typescript@6.0.3)
       webauthx: 0.1.2(typescript@6.0.3)(zod@4.4.3)
       zod: 4.4.3
@@ -2972,6 +2976,8 @@ snapshots:
 
   hono@4.12.32: {}
 
+  hono@4.13.5: {}
+
   https-proxy-agent@5.0.1:
     dependencies:
       agent-base: 6.0.2
@@ -3153,7 +3159,7 @@ snapshots:
 
   mkdirp-classic@0.5.3: {}
 
-  mppx@0.8.14(hono@4.12.32)(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3)):
+  mppx@0.8.14(hono@4.13.5)(typescript@6.0.3)(viem@2.55.10(typescript@6.0.3)(zod@4.4.3)):
     dependencies:
       '@stripe/stripe-js': 9.9.0
       eventsource-parser: 3.1.0
@@ -3162,7 +3168,7 @@ snapshots:
       viem: 2.55.10(typescript@6.0.3)(zod@4.4.3)
       zod: 4.4.3
     optionalDependencies:
-      hono: 4.12.32
+      hono: 4.13.5
     transitivePeerDependencies:
       - typescript
 
@@ -3686,14 +3692,14 @@ snapshots:
       '@noble/ciphers': 2.2.0
       '@noble/hashes': 2.2.0
       hono: 4.12.32
-      ox: 0.14.30(typescript@6.0.3)(zod@4.4.3)
+      ox: 0.14.33(typescript@6.0.3)(zod@4.4.3)
       zod: 4.4.3
     transitivePeerDependencies:
       - typescript
 
   webauthx@0.1.2(typescript@6.0.3)(zod@4.4.3):
     dependencies:
-      ox: 0.14.30(typescript@6.0.3)(zod@4.4.3)
+      ox: 0.14.33(typescript@6.0.3)(zod@4.4.3)
     transitivePeerDependencies:
       - typescript
       - zod

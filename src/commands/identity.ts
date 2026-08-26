@@ -65,7 +65,6 @@ export async function loginHandler(options: {
 }
 
 export async function refreshHandler(options: { network?: string | undefined }) {
-  console.error(`Auth URL: ${refreshAuthUrl(options.network)}`);
   const provider = createProvider({ network: options.network });
   const result = await connect(provider);
 
@@ -632,15 +631,6 @@ function balanceOutput(
 
 function maxBigInt(...values: bigint[]) {
   return values.reduce((max, value) => (value > max ? value : max), 0n);
-}
-
-function refreshAuthUrl(network: string | undefined) {
-  const chain = chainId(network);
-  const url = new URL("https://wallet.tempo.xyz/cli-auth");
-  url.searchParams.set("network", network === "testnet" ? "testnet" : "mainnet");
-  url.searchParams.set("chainId", `0x${chain.toString(16)}`);
-  url.searchParams.set("code", Math.random().toString(36).slice(2, 10).toUpperCase());
-  return url.toString();
 }
 
 function debugOs() {
