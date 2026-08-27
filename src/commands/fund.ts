@@ -173,7 +173,7 @@ export function fundUrl(
   if (action === "credits") url.searchParams.set("intent", "credits");
   if (action === "mach") {
     url.searchParams.set("intent", "mach");
-    if (options.address) url.searchParams.set("address", options.address);
+    if (options.address) url.searchParams.set("recipient", options.address);
   }
   return url.toString();
 }

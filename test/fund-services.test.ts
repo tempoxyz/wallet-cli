@@ -48,7 +48,7 @@ describe("fundUrl", () => {
     expect(fundUrl("crypto")).toBe("https://wallet.tempo.xyz/agent?action=crypto");
     expect(fundUrl("credits")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=credits");
     expect(fundUrl("mach", { address: "0x1111111111111111111111111111111111111111" })).toBe(
-      "https://wallet.tempo.xyz/agent?action=fund&intent=mach&address=0x1111111111111111111111111111111111111111",
+      "https://wallet.tempo.xyz/agent?action=fund&intent=mach&recipient=0x1111111111111111111111111111111111111111",
     );
     expect(fundUrl("claim", { code: "ABC123" })).toBe(
       "https://wallet.tempo.xyz/agent?claim=ABC123",
