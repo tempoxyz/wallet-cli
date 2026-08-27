@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0 (2026-08-27)
+
+### Minor Changes
+
+- Add a MACH funding flow that opens the Wallet onramp and waits for the mainnet token balance to increase.
+
 ## 0.9.0 (2026-08-26)
 
 ### Minor Changes
