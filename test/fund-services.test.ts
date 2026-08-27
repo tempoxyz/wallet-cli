@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fundAction, fundUrl, runFundingFlow } from "../src/commands/fund.js";
+import { fundAction, fundUrl, queryMachConfig, runFundingFlow } from "../src/commands/fund.js";
 import { fetchServices, fetchServiceList } from "../src/commands/services.js";
 import { expectUsageError, useTempHome } from "./helpers.js";
 
@@ -19,12 +19,22 @@ describe("fundAction", () => {
     expect(fundAction({ crypto: true })).toBe("crypto");
   });
 
+  it('returns "mach" when mach is set', () => {
+    expect(fundAction({ mach: true })).toBe("mach");
+  });
+
   it('returns "claim" when a referral code is provided', () => {
     expect(fundAction({ referralCode: "ABC" })).toBe("claim");
   });
 
   it("prioritizes credits over crypto and referral code", () => {
     expect(fundAction({ credits: true, crypto: true, referralCode: "ABC" })).toBe("credits");
+  });
+
+  it("prioritizes MACH over the other funding intents", () => {
+    expect(fundAction({ credits: true, crypto: true, mach: true, referralCode: "ABC" })).toBe(
+      "mach",
+    );
   });
 
   it("prioritizes crypto over referral code", () => {
@@ -37,8 +47,44 @@ describe("fundUrl", () => {
     expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/agent?action=fund");
     expect(fundUrl("crypto")).toBe("https://wallet.tempo.xyz/agent?action=crypto");
     expect(fundUrl("credits")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=credits");
+    expect(fundUrl("mach", { address: "0x1111111111111111111111111111111111111111" })).toBe(
+      "https://wallet.tempo.xyz/agent?action=fund&intent=mach&recipient=0x1111111111111111111111111111111111111111",
+    );
     expect(fundUrl("claim", { code: "ABC123" })).toBe(
       "https://wallet.tempo.xyz/agent?claim=ABC123",
+    );
+  });
+});
+
+describe("queryMachConfig", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns the public chain and token configuration", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          chain_id: 4217,
+          token_address: "0x20C0000000000000000000000000000000000001",
+        }),
+      ),
+    );
+
+    await expect(queryMachConfig({ origin: "https://mach.example" })).resolves.toEqual({
+      chainId: 4217,
+      tokenAddress: "0x20C0000000000000000000000000000000000001",
+    });
+    expect(fetch).toHaveBeenCalledWith("https://mach.example/v1/config");
+  });
+
+  it("rejects malformed public configuration", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ chain_id: 4217, token_address: "not-an-address" })),
+    );
+
+    await expect(queryMachConfig({ origin: "https://mach.example" })).rejects.toThrow(
+      "MACH configuration is invalid",
     );
   });
 });

@@ -4,7 +4,11 @@ import { Chain } from "viem/tempo";
 import { mainnetEscrow, moderatoEscrow, moderatoToken, usdcToken } from "./constants.js";
 
 export function chainId(network: string | undefined) {
-  return network === "testnet" ? 42431 : 4217;
+  return isTestnet(network) ? 42431 : 4217;
+}
+
+export function isTestnet(network: string | undefined) {
+  return network === "testnet" || process.env.TEMPO_WALLET_NETWORK === "testnet";
 }
 
 export function networkName(chain: number | null) {
