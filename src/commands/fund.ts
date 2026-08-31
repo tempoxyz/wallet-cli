@@ -10,7 +10,7 @@ import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
 import { queryCreditBalance } from "./credits.js";
 
-const defaultMachOrigin = "https://mach-web.porto.workers.dev";
+const defaultMachConfigUrl = "https://mercator.tempo.xyz/v1/onramp/config";
 
 export type FundAction = "fund" | "crypto" | "credits" | "mach" | "claim";
 
@@ -180,8 +180,11 @@ export function fundUrl(
 
 /** Reads the deployed token address and chain used to detect a completed MACH purchase. */
 export async function queryMachConfig(options: { origin?: string | undefined } = {}) {
-  const origin = options.origin || process.env.TEMPO_MACH_ORIGIN || defaultMachOrigin;
-  const response = await fetch(new URL("/v1/config", `${origin.replace(/\/$/, "")}/`).toString());
+  const overrideOrigin = options.origin || process.env.TEMPO_MACH_ORIGIN;
+  const configUrl = overrideOrigin
+    ? new URL("/v1/config", `${overrideOrigin.replace(/\/$/, "")}/`).toString()
+    : defaultMachConfigUrl;
+  const response = await fetch(configUrl);
   const body = (await response.json().catch(() => null)) as {
     chain_id?: unknown;
     token_address?: unknown;
