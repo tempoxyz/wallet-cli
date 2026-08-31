@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.2 (2026-08-31)
+
+### Patch Changes
+
+- Stage release assets in a draft before publishing immutable GitHub releases.
+
 ## 0.10.1 (2026-08-31)
 
 ### Patch Changes
