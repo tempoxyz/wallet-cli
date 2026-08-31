@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.1 (2026-08-31)
+
+### Patch Changes
+
+- Added exact payment-token selection and actionable delegated-key limit diagnostics.
+- Route the default MACH configuration lookup through Mercator's production onramp API.
+
 ## 0.10.0 (2026-08-27)
 
 ### Minor Changes
