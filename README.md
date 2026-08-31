@@ -80,6 +80,12 @@ extension attempt. If that fails and a compatible charge is available, the CLI r
 amount and requires an explicit retry with `--payment-intent charge`; it never silently purchases
 non-refundable charge capacity.
 
+When a service offers the same payment in multiple tokens, select the exact token address:
+
+```sh
+tempo request --payment-intent charge --payment-token 0x20c000000000000000000000b9537d11c60e8b50 https://example.mpp.tempo.xyz/v1/resource
+```
+
 Session-based services open a reusable payment channel:
 
 ```sh

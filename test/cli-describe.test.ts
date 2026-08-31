@@ -39,12 +39,16 @@ describe("generated CLI metadata", () => {
   it("documents request payment intent selection", async () => {
     const help = await requestCli(["--help"]);
     expect(help).toContain("--payment-intent <auto|session|charge>");
+    expect(help).toContain("--payment-token <string>");
 
     const description = JSON.parse(await requestCli(["--describe"])) as {
       args: { long?: string | undefined; name: string }[];
     };
     expect(description.args).toContainEqual(
       expect.objectContaining({ long: "--payment-intent", name: "payment_intent" }),
+    );
+    expect(description.args).toContainEqual(
+      expect.objectContaining({ long: "--payment-token", name: "payment_token" }),
     );
   });
 

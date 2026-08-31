@@ -15,6 +15,7 @@ const options = z.object({
     .enum(["auto", "session", "charge"])
     .default("auto")
     .describe("Payment intent: auto, session, or charge"),
+  "payment-token": z.string().optional().describe("Select an exact payment token address"),
   "private-key": z.string().optional().describe("Sign payments with an ephemeral private key"),
   network: z
     .string()
@@ -152,6 +153,7 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
     method: options.request,
     maxSpend: options["max-spend"],
     paymentIntent: options["payment-intent"],
+    paymentToken: options["payment-token"],
     network: options.network,
     noProxy: options.noProxy,
     output: options.output,
@@ -228,6 +230,12 @@ function describeRequestCli() {
         long: "--payment-intent",
         value_name: "INTENT",
         help: "Payment intent: auto, session, or charge",
+      },
+      {
+        name: "payment_token",
+        long: "--payment-token",
+        value_name: "ADDRESS",
+        help: "Select an exact payment token address",
       },
       {
         name: "private_key",
