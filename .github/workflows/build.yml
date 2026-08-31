@@ -7,6 +7,11 @@ on:
       - "tempo-wallet@*"
       - "tempo-request@*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag whose source should be built and published
+        required: false
+        type: string
 
 jobs:
   parse-tag:
@@ -25,7 +30,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          TAG="${GITHUB_REF#refs/tags/}"
+          TAG="${{ inputs.release_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
 
           if [[ "$TAG" == v* ]]; then
             VERSION="${TAG#v}"
@@ -93,6 +101,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.parse-tag.outputs.release_tag }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -189,7 +198,7 @@ jobs:
       contents: write
     needs: [parse-tag, build]
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
     strategy:
       fail-fast: false
       matrix:
@@ -198,9 +207,12 @@ jobs:
       PACKAGE: ${{ matrix.package }}
       VERSION: ${{ needs.parse-tag.outputs.version }}
       RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
+      AWS_RETRY_MODE: standard
+      AWS_MAX_ATTEMPTS: "10"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.parse-tag.outputs.release_tag }}
           persist-credentials: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -315,7 +327,7 @@ jobs:
       contents: write
     needs: [parse-tag, publish]
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
     env:
       RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
     steps:

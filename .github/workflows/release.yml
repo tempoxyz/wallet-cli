@@ -153,4 +153,4 @@ jobs:
             gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file /tmp/release-notes.md
           fi
 
-          gh workflow run build.yml --ref "$TAG"
+          gh workflow run build.yml --ref main -f release_tag="$TAG"
