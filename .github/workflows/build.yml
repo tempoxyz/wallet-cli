@@ -316,12 +316,6 @@ jobs:
             aws s3 cp "SKILL.md" "s3://tempo-cli/${PREFIX}/${VTAG}/SKILL.md" --endpoint-url "$AWS_ENDPOINT_URL" --content-type "text/markdown"
           fi
 
-          for f in "artifacts/${PACKAGE}"-linux-* "artifacts/${PACKAGE}"-darwin-*; do
-            [ -f "$f" ] || continue
-            BASENAME=$(basename "$f")
-            aws s3 cp "$f" "s3://tempo-cli/${PREFIX}/${BASENAME}" --endpoint-url "$AWS_ENDPOINT_URL"
-          done
-
           aws s3 cp "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/manifest.json" --endpoint-url "$AWS_ENDPOINT_URL"
           echo "${VERSION}" | aws s3 cp - "s3://tempo-cli/${PREFIX}/VERSION" --endpoint-url "$AWS_ENDPOINT_URL" --content-type "text/plain"
 
