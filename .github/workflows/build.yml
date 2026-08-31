@@ -209,6 +209,7 @@ jobs:
       RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
       AWS_RETRY_MODE: standard
       AWS_MAX_ATTEMPTS: "10"
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -306,17 +307,22 @@ jobs:
           for f in "artifacts/${PACKAGE}"-linux-* "artifacts/${PACKAGE}"-darwin-*; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
-            aws s3 cp "$f" "s3://tempo-cli/${PREFIX}/${BASENAME}" --endpoint-url "$AWS_ENDPOINT_URL"
             aws s3 cp "$f" "s3://tempo-cli/${PREFIX}/${VTAG}/${BASENAME}" --endpoint-url "$AWS_ENDPOINT_URL"
           done
 
-          aws s3 cp "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/manifest.json" --endpoint-url "$AWS_ENDPOINT_URL"
           aws s3 cp "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/${VTAG}/manifest.json" --endpoint-url "$AWS_ENDPOINT_URL"
 
           if [ "$PACKAGE" = "tempo-request" ] && [ -f "SKILL.md" ]; then
             aws s3 cp "SKILL.md" "s3://tempo-cli/${PREFIX}/${VTAG}/SKILL.md" --endpoint-url "$AWS_ENDPOINT_URL" --content-type "text/markdown"
           fi
 
+          for f in "artifacts/${PACKAGE}"-linux-* "artifacts/${PACKAGE}"-darwin-*; do
+            [ -f "$f" ] || continue
+            BASENAME=$(basename "$f")
+            aws s3 cp "$f" "s3://tempo-cli/${PREFIX}/${BASENAME}" --endpoint-url "$AWS_ENDPOINT_URL"
+          done
+
+          aws s3 cp "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/manifest.json" --endpoint-url "$AWS_ENDPOINT_URL"
           echo "${VERSION}" | aws s3 cp - "s3://tempo-cli/${PREFIX}/VERSION" --endpoint-url "$AWS_ENDPOINT_URL" --content-type "text/plain"
 
           echo "Released ${PACKAGE}@${VERSION}"
