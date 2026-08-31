@@ -298,26 +298,56 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
         run: |
+          set -euo pipefail
+
           aws configure set default.s3.multipart_threshold 8MB
           aws configure set default.s3.multipart_chunksize 8MB
 
           PREFIX="extensions/${PACKAGE}"
           VTAG="v${VERSION}"
 
+          upload_to_r2() {
+            local source="$1"
+            local destination="$2"
+            local content_type="${3:-}"
+            local attempt
+            local -a args
+
+            for attempt in 1 2 3; do
+              args=(s3 cp "$source" "$destination" --endpoint-url "$AWS_ENDPOINT_URL" --only-show-errors)
+              if [ -n "$content_type" ]; then
+                args+=(--content-type "$content_type")
+              fi
+
+              if aws "${args[@]}"; then
+                return 0
+              fi
+
+              if [ "$attempt" -lt 3 ]; then
+                echo "::warning::R2 upload failed for ${destination}; retrying outer attempt $((attempt + 1))/3"
+                sleep $((attempt * 10))
+              fi
+            done
+
+            echo "R2 upload failed after 3 outer attempts: ${destination}" >&2
+            return 1
+          }
+
           for f in "artifacts/${PACKAGE}"-linux-* "artifacts/${PACKAGE}"-darwin-*; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
-            aws s3 cp "$f" "s3://tempo-cli/${PREFIX}/${VTAG}/${BASENAME}" --endpoint-url "$AWS_ENDPOINT_URL"
+            upload_to_r2 "$f" "s3://tempo-cli/${PREFIX}/${VTAG}/${BASENAME}"
           done
 
-          aws s3 cp "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/${VTAG}/manifest.json" --endpoint-url "$AWS_ENDPOINT_URL"
+          upload_to_r2 "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/${VTAG}/manifest.json"
 
           if [ "$PACKAGE" = "tempo-request" ] && [ -f "SKILL.md" ]; then
-            aws s3 cp "SKILL.md" "s3://tempo-cli/${PREFIX}/${VTAG}/SKILL.md" --endpoint-url "$AWS_ENDPOINT_URL" --content-type "text/markdown"
+            upload_to_r2 "SKILL.md" "s3://tempo-cli/${PREFIX}/${VTAG}/SKILL.md" "text/markdown"
           fi
 
-          aws s3 cp "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/manifest.json" --endpoint-url "$AWS_ENDPOINT_URL"
-          echo "${VERSION}" | aws s3 cp - "s3://tempo-cli/${PREFIX}/VERSION" --endpoint-url "$AWS_ENDPOINT_URL" --content-type "text/plain"
+          upload_to_r2 "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/manifest.json"
+          printf '%s\n' "$VERSION" > "artifacts/${PACKAGE}-VERSION"
+          upload_to_r2 "artifacts/${PACKAGE}-VERSION" "s3://tempo-cli/${PREFIX}/VERSION" "text/plain"
 
           echo "Released ${PACKAGE}@${VERSION}"
 
