@@ -16,6 +16,7 @@ import {
   parseRequestArgs,
   resolvePaymentIdentity,
   runRequest,
+  selectPaymentTokenResponse,
   sessionChallengeFromHeader,
   storedAccessKeyIdentity,
   tempoPaymentChallengeResponse,
@@ -318,6 +319,61 @@ describe("request command", () => {
     expect(Credential.deserialize(credential).payload).toEqual({ ok: true });
   });
 
+  it("selects only challenges for the requested payment token", () => {
+    const selectedToken = "0x1111111111111111111111111111111111111111";
+    const otherToken = "0x2222222222222222222222222222222222222222";
+    const selected = paymentChallenge({
+      amount: "15000",
+      id: "selected-token",
+      intent: "charge",
+      chainId: 4217,
+      currency: selectedToken,
+    });
+    const other = paymentChallenge({
+      amount: "15000",
+      id: "other-token",
+      intent: "charge",
+      chainId: 4217,
+      currency: otherToken,
+    });
+    const response = new Response(null, {
+      headers: {
+        "www-authenticate": [other, selected]
+          .map((challenge) => Challenge.serialize(challenge))
+          .join(", "),
+      },
+      status: 402,
+    });
+
+    const filtered = selectPaymentTokenResponse(response, selectedToken.toUpperCase());
+
+    expect(Challenge.fromResponseList(filtered).map((challenge) => challenge.id)).toEqual([
+      "selected-token",
+    ]);
+  });
+
+  it("reports available tokens when the selected token was not offered", () => {
+    const offeredToken = "0x1111111111111111111111111111111111111111";
+    const response = new Response(null, {
+      headers: {
+        "www-authenticate": Challenge.serialize(
+          paymentChallenge({
+            amount: "15000",
+            id: "offered-token",
+            intent: "charge",
+            chainId: 4217,
+            currency: offeredToken,
+          }),
+        ),
+      },
+      status: 402,
+    });
+
+    expect(() =>
+      selectPaymentTokenResponse(response, "0x2222222222222222222222222222222222222222"),
+    ).toThrow(`Available tokens: ${offeredToken}`);
+  });
+
   it.each([
     { name: "unversioned", protocols: [undefined], selectedId: undefined },
     { name: "v1", protocols: ["v1"], selectedId: undefined },
@@ -554,6 +610,16 @@ describe("request command", () => {
     expect(parseRequestArgs(["https://example.com"]).paymentIntent).toBe("auto");
     expect(() => parseRequestArgs(["--payment-intent", "refund", "https://example.com"])).toThrow(
       "--payment-intent must be one of: auto, session, charge",
+    );
+  });
+
+  it("accepts an exact payment token address and rejects ambiguous names", () => {
+    const token = "0x1111111111111111111111111111111111111111";
+    expect(parseRequestArgs(["--payment-token", token, "https://example.com"]).paymentToken).toBe(
+      token,
+    );
+    expect(() => parseRequestArgs(["--payment-token", "MACH", "https://example.com"])).toThrow(
+      "--payment-token must be a 0x token address",
     );
   });
 

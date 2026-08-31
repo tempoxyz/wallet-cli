@@ -17,7 +17,7 @@ import {
   FormData as UndiciFormData,
   ProxyAgent,
 } from "undici";
-import { createWalletClient, encodeFunctionData, http, parseUnits } from "viem";
+import { createWalletClient, encodeFunctionData, http, isAddress, parseUnits } from "viem";
 import { prepareTransactionRequest, signTransaction } from "viem/actions";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -87,6 +87,7 @@ export type RequestOptions = {
   noProxy?: boolean | undefined;
   output?: string | undefined;
   paymentIntent: PaymentIntent;
+  paymentToken?: string | undefined;
   privateKey?: string | undefined;
   proxy?: string | undefined;
   referer?: string | undefined;
@@ -171,6 +172,9 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
         break;
       case "--payment-intent":
         options.paymentIntent = paymentIntentValue(requireValue(argv, ++index, arg));
+        break;
+      case "--payment-token":
+        options.paymentToken = paymentTokenValue(requireValue(argv, ++index, arg));
         break;
       case "--private-key":
         options.privateKey = requireValue(argv, ++index, arg);
@@ -511,17 +515,21 @@ async function payAndRetryRequest(
   request: FetchPlan,
   options: RequestOptions,
 ) {
-  const header = paymentRequiredResponse.headers.get("www-authenticate");
+  const selectedResponse = selectPaymentTokenResponse(
+    paymentRequiredResponse,
+    options.paymentToken,
+  );
+  const header = selectedResponse.headers.get("www-authenticate");
   const preflightError = paymentChallengeError(header);
   if (preflightError) throw preflightError;
-  const challengeResponse = tempoPaymentChallengeResponse(paymentRequiredResponse);
+  const challengeResponse = tempoPaymentChallengeResponse(selectedResponse);
 
   const sessionChallenge = sessionChallengeFromHeader(header);
   if (options.paymentIntent !== "charge" && sessionChallenge) {
     let response: Response;
     try {
       response = await withSessionLock(request.url, () =>
-        paySessionAndRetryRequest(paymentRequiredResponse, request, options, sessionChallenge),
+        paySessionAndRetryRequest(selectedResponse, request, options, sessionChallenge),
       );
     } catch (error) {
       if (isAuthRefreshRequiredError(error)) throw error;
@@ -577,6 +585,8 @@ async function payAndRetryRequest(
     );
   } catch (error) {
     if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
+    const diagnostic = spendingLimitDiagnostic(error, header, options);
+    if (diagnostic) throw diagnostic;
     throw paymentError(error instanceof Error ? error.message : String(error));
   }
 }
@@ -1387,6 +1397,43 @@ function paymentIntentValue(value: string): PaymentIntent {
   throw usageError("--payment-intent must be one of: auto, session, charge");
 }
 
+function paymentTokenValue(value: string) {
+  if (!isAddress(value)) throw usageError("--payment-token must be a 0x token address");
+  return value.toLowerCase();
+}
+
+function spendingLimitDiagnostic(error: unknown, header: string | null, options: RequestOptions) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!/SpendingLimitExceeded|spending limit exceeded/i.test(message)) return undefined;
+  const currencies = offeredTempoCurrencies(header);
+  const token = options.paymentToken ?? (currencies.length === 1 ? currencies[0] : undefined);
+  if (!token)
+    return paymentError(
+      `${message}\nThe delegated key may not cover the payment token. Retry with --payment-token <token-address> to select one offer, then update that token limit with 'tempo wallet keys update --token <token-address> --limit <amount>'.`,
+    );
+  return paymentError(
+    `${message}\nThe delegated key may not cover payment token ${token}. Review the key with 'tempo wallet keys list', then authorize that token with 'tempo wallet keys update --token ${token} --limit <amount>'.`,
+  );
+}
+
+function offeredTempoCurrencies(header: string | null) {
+  if (!header) return [];
+  try {
+    return [
+      ...new Set(
+        Challenge.deserializeList(header).flatMap((challenge) => {
+          if (challenge.method !== "tempo") return [];
+          const request = challenge.request as Record<string, unknown>;
+          const currency = stringValue(request.currency).toLowerCase();
+          return currency ? [currency] : [];
+        }),
+      ),
+    ];
+  } catch {
+    return [];
+  }
+}
+
 async function writeResponseBody(
   response: Response,
   options: RequestOptions,
@@ -1475,6 +1522,41 @@ export function tempoPaymentChallengeResponse(response: Response) {
 
   const headers = new Headers(response.headers);
   headers.delete("payment-required");
+  return new Response(null, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+}
+
+export function selectPaymentTokenResponse(response: Response, token: string | undefined) {
+  if (!token) return response;
+  const header = response.headers.get("www-authenticate");
+  if (!header) return response;
+
+  let challenges: Challenge.Challenge[];
+  try {
+    challenges = Challenge.deserializeList(header).filter((challenge) => {
+      if (challenge.method !== "tempo") return false;
+      const request = challenge.request as Record<string, unknown>;
+      return stringValue(request.currency).toLowerCase() === token.toLowerCase();
+    });
+  } catch {
+    return response;
+  }
+
+  if (challenges.length === 0) {
+    const available = offeredTempoCurrencies(header);
+    throw paymentError(
+      `Server did not offer payment token ${token}.${available.length > 0 ? ` Available tokens: ${available.join(", ")}.` : ""}`,
+    );
+  }
+
+  const headers = new Headers(response.headers);
+  headers.set(
+    "www-authenticate",
+    challenges.map((challenge) => Challenge.serialize(challenge)).join(", "),
+  );
   return new Response(null, {
     headers,
     status: response.status,
