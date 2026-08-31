@@ -58,7 +58,23 @@ describe("fundUrl", () => {
 
 describe("queryMachConfig", () => {
   afterEach(() => {
+    delete process.env.TEMPO_MACH_ORIGIN;
     vi.restoreAllMocks();
+  });
+
+  it("reads the default MACH configuration through Mercator", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          chain_id: 4217,
+          token_address: "0x20C0000000000000000000000000000000000001",
+        }),
+      ),
+    );
+
+    await queryMachConfig();
+
+    expect(fetch).toHaveBeenCalledWith("https://mercator.tempo.xyz/v1/onramp/config");
   });
 
   it("returns the public chain and token configuration", async () => {
@@ -76,6 +92,22 @@ describe("queryMachConfig", () => {
       tokenAddress: "0x20C0000000000000000000000000000000000001",
     });
     expect(fetch).toHaveBeenCalledWith("https://mach.example/v1/config");
+  });
+
+  it("preserves the TEMPO_MACH_ORIGIN development override", async () => {
+    process.env.TEMPO_MACH_ORIGIN = "https://mach.local/";
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          chain_id: 4217,
+          token_address: "0x20C0000000000000000000000000000000000001",
+        }),
+      ),
+    );
+
+    await queryMachConfig();
+
+    expect(fetch).toHaveBeenCalledWith("https://mach.local/v1/config");
   });
 
   it("rejects malformed public configuration", async () => {
