@@ -133,10 +133,24 @@ jobs:
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
           TAG="v${VERSION}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release ${TAG} already exists"
+
+          RELEASE_IS_DRAFT=$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)
+          if [ "$RELEASE_IS_DRAFT" = "false" ]; then
+            echo "Release ${TAG} is already published"
             exit 0
           fi
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${TAG}" \
+              -f sha="${GITHUB_SHA}"
+          fi
+
           pnpm changelog:notes > /tmp/release-notes.md
-          gh release create "$TAG" --draft --target main --title "$TAG" --notes-file /tmp/release-notes.md
+          if [ "$RELEASE_IS_DRAFT" = "true" ]; then
+            echo "Resuming draft release ${TAG}"
+          else
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file /tmp/release-notes.md
+          fi
+
           gh workflow run build.yml --ref "$TAG"
