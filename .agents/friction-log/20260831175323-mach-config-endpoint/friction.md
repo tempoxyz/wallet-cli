@@ -1,6 +1,7 @@
 ---
 title: 'MACH config endpoint had an undocumented external caller'
 severity: 'major'
+issue: 'tempoxyz/wallet-cli#111'
 ---
 
 ## Expected Behavior
