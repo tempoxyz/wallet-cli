@@ -2,4 +2,4 @@
 wallet-cli: patch
 ---
 
-Remove an unsupported legacy funding option and its configuration dependency.
+Remove the unsupported MACH funding option and its configuration dependency.

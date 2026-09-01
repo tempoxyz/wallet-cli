@@ -100,14 +100,21 @@ const fundCompatValueOptions = new Set([
 ]);
 
 export function validateFundCompatArgs(args: readonly string[]) {
-  const commandIndex = args.indexOf("fund");
-  for (let index = commandIndex + 1; index < args.length; index++) {
+  for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (!arg?.startsWith("-")) continue;
     if (fundCompatFlags.has(arg)) continue;
-    if (fundCompatValueOptions.has(arg)) {
+
+    const equalsIndex = arg.indexOf("=");
+    const option = equalsIndex === -1 ? arg : arg.slice(0, equalsIndex);
+    if (fundCompatValueOptions.has(option)) {
+      if (equalsIndex !== -1) {
+        if (equalsIndex === arg.length - 1) throw usageError(`${option} requires a value`);
+        continue;
+      }
+
       const value = args[index + 1];
-      if (!value || value.startsWith("-")) throw usageError(`${arg} requires a value`);
+      if (!value || value.startsWith("-")) throw usageError(`${option} requires a value`);
       index++;
       continue;
     }
@@ -116,9 +123,15 @@ export function validateFundCompatArgs(args: readonly string[]) {
 }
 
 function stringArg(args: readonly string[], name: string) {
-  const index = args.indexOf(name);
-  const value = index >= 0 ? args[index + 1] : undefined;
-  return value && !value.startsWith("-") ? value : undefined;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === name) {
+      const value = args[index + 1];
+      return value && !value.startsWith("-") ? value : undefined;
+    }
+    if (arg?.startsWith(`${name}=`)) return arg.slice(name.length + 1) || undefined;
+  }
+  return undefined;
 }
 
 function printCompatHelp() {
