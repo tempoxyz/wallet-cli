@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.3 (2026-09-01)
+
+### Patch Changes
+
+- Verify and reuse identical versioned R2 objects while rejecting version collisions.
+
 ## 0.10.2 (2026-08-31)
 
 ### Patch Changes
