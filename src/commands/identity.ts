@@ -5,6 +5,7 @@ import { Actions } from "viem/tempo";
 
 import { version } from "../shared/constants.js";
 import {
+  appUrl,
   chainId,
   createTempoPublicClient,
   networkName,
@@ -412,6 +413,12 @@ export async function currentWhoamiOutput(options: {
     walletAddress: options.walletAddress,
     network: options.network,
   });
+  const balances = await walletBalances({
+    accessKey: key,
+    chain: selectedChain,
+    fallback: balance,
+    walletAddress: options.walletAddress,
+  });
   const sessions = await activeSessionStats({
     token: balance?.token ?? token,
     walletAddress: options.walletAddress,
@@ -420,6 +427,7 @@ export async function currentWhoamiOutput(options: {
     ready: Boolean(options.walletAddress && paymentKey),
     wallet: options.walletAddress?.toLowerCase() ?? null,
     balance: balanceOutput(balance, sessions, tokenSymbol(token)),
+    balances,
     key: currentKeyOutput({
       key,
       walletAddress: options.walletAddress,
@@ -547,6 +555,113 @@ type TokenBalance = {
   symbol: string;
   token: string;
 };
+
+type WalletAsset = {
+  address: string;
+  balance: string;
+  decimals: number;
+  symbol: string;
+  verified: boolean;
+};
+
+async function walletBalances(options: {
+  accessKey: WalletState["accessKeys"][number] | undefined;
+  chain: number;
+  fallback: TokenBalance | null;
+  walletAddress: string | null;
+}) {
+  if (!options.walletAddress) return [];
+
+  const assets = await fetchWalletAssets({
+    chain: options.chain,
+    walletAddress: options.walletAddress,
+  });
+  const balances = assets.map((asset) => {
+    const limit = options.accessKey?.limits.find(
+      (candidate) => candidate.token.toLowerCase() === asset.address.toLowerCase(),
+    );
+    return {
+      token: asset.address.toLowerCase(),
+      symbol: asset.symbol,
+      decimals: asset.decimals,
+      balance: formatUnits(BigInt(asset.balance), asset.decimals),
+      verified: asset.verified,
+      access_key_limit: formatAccessKeyLimit(limit?.limit, asset.decimals),
+    };
+  });
+
+  if (
+    options.fallback &&
+    !balances.some(
+      (balance) => balance.token.toLowerCase() === options.fallback?.token.toLowerCase(),
+    )
+  ) {
+    const limit = options.accessKey?.limits.find(
+      (candidate) => candidate.token.toLowerCase() === options.fallback?.token.toLowerCase(),
+    );
+    balances.push({
+      token: options.fallback.token.toLowerCase(),
+      symbol: options.fallback.symbol,
+      decimals: 6,
+      balance: options.fallback.formatted,
+      verified: true,
+      access_key_limit: formatAccessKeyLimit(limit?.limit, 6),
+    });
+  }
+
+  return balances;
+}
+
+async function fetchWalletAssets(options: {
+  chain: number;
+  walletAddress: string;
+}): Promise<WalletAsset[]> {
+  const url = new URL("/api/assets", appUrl);
+  url.searchParams.set("address", options.walletAddress);
+  url.searchParams.set("chainId", String(options.chain));
+  url.searchParams.set("fresh", "true");
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    return getArray(await response.json()).flatMap((value) => {
+      const asset = getRecord(value);
+      if (
+        typeof asset.address !== "string" ||
+        !isAddress(asset.address) ||
+        typeof asset.balance !== "string" ||
+        !/^\d+$/.test(asset.balance) ||
+        BigInt(asset.balance) === 0n ||
+        typeof asset.decimals !== "number" ||
+        !Number.isInteger(asset.decimals) ||
+        asset.decimals < 0 ||
+        asset.decimals > 77 ||
+        typeof asset.symbol !== "string"
+      )
+        return [];
+      return [
+        {
+          address: asset.address,
+          balance: asset.balance,
+          decimals: asset.decimals,
+          symbol: asset.symbol,
+          verified: asset.verified === true,
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function formatAccessKeyLimit(value: string | undefined, decimals: number) {
+  if (!value) return null;
+  try {
+    return formatUnits(BigInt(cleanStoredScalar(value)), decimals);
+  } catch {
+    return null;
+  }
+}
 
 type SessionStats = {
   active: number;
