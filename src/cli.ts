@@ -13,6 +13,7 @@ import {
   updateAccessKeyHandler,
   whoamiHandler,
 } from "./commands/identity.js";
+import { swapTokens } from "./commands/swap.js";
 import { transferCredits, transferTokens } from "./commands/transfer.js";
 import { fundAction, runFundingFlow } from "./commands/fund.js";
 import {
@@ -53,6 +54,9 @@ import {
   sessionsListOptions,
   sessionsListOutput,
   sessionsSyncOptions,
+  swapArgs,
+  swapOptions,
+  swapOutput,
   transferArgs,
   transferOptions,
   transferOutput,
@@ -169,6 +173,27 @@ cli.command("transfer", {
     if (!options.credits) return transferTokens({ args, options });
 
     return transferCredits({ options });
+  },
+});
+
+cli.command("swap", {
+  description: "Swap TIP-20 tokens on the Tempo Stablecoin DEX",
+  args: swapArgs,
+  options: swapOptions,
+  alias: globalAlias,
+  output: swapOutput,
+  examples: [
+    {
+      args: {
+        amount: "10",
+        tokenIn: "0x20c0000000000000000000000000000000000000",
+        tokenOut: "0x20c000000000000000000000b9537d11c60e8b50",
+      },
+      options: { "dry-run": true },
+    },
+  ],
+  async run({ args, options }) {
+    return swapTokens({ args, options });
   },
 });
 
@@ -638,6 +663,24 @@ function describeCli() {
           option("address", "--address", "Wallet address (defaults to current wallet)", {
             valueName: "ADDRESS",
           }),
+        ],
+      },
+      {
+        name: "swap",
+        about: "Swap TIP-20 tokens on the Tempo Stablecoin DEX",
+        args: [
+          positional("amount", "Exact input amount by default; exact output with --exact-out"),
+          positional("token_in", "Full input token address (0x...)"),
+          positional("token_out", "Full output token address (0x...)"),
+          flag("exact_out", "--exact-out", "Treat amount as the exact output amount"),
+          option("slippage_bps", "--slippage-bps", "Maximum slippage in basis points", {
+            valueName: "BPS",
+          }),
+          option("fee_token", "--fee-token", "Token used to pay fees", {
+            valueName: "FEE_TOKEN",
+          }),
+          flag("dry_run", "--dry-run", "Quote and show calls without submitting"),
+          flag("yes", "--yes", "Confirm the reviewed swap for submission"),
         ],
       },
       {

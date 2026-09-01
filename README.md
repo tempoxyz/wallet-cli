@@ -51,6 +51,12 @@ tempo wallet login --no-browser
 # Check wallet status
 tempo wallet whoami
 
+# Quote a swap without submitting it
+tempo wallet swap 10 <TOKEN_IN> <TOKEN_OUT> --dry-run
+
+# Submit the reviewed swap
+tempo wallet swap 10 <TOKEN_IN> <TOKEN_OUT> --yes
+
 # Fund your wallet
 tempo wallet fund
 
@@ -104,6 +110,7 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 - `login`, `logout`, `refresh`, `whoami`, `keys`
 - `fund`
 - `transfer`
+- `swap`
 - `services`
 - `sessions list`, `sessions close`, `sessions sync`
 - `debug`

@@ -126,6 +126,23 @@ tempo wallet transfer --credits --mpp-challenge-file "$headers"
 - If the user gives a spend cap in natural language (for example "do X for $5", "don't spend more than $10", or "budget is 2 USDC"), include `--max-spend <amount>` on `tempo request` commands. For non-CLI contexts, use `TEMPO_MAX_SPEND`.
 - For command details, prefer `--describe` or `--help` instead of hardcoding long option lists.
 
+## Swap Tokens
+
+Use the first-party wallet CLI for Tempo token swaps. Do not discover or sign in to third-party or legacy DEX websites.
+
+```bash
+# Quote only. Use full token addresses from `tempo wallet whoami`.
+tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --dry-run
+
+# Submit only after the user approves the quote, token addresses, and bounds.
+tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --yes
+```
+
+- The amount is exact input by default. Add `--exact-out` to request an exact output amount.
+- Default maximum slippage is 50 basis points; override it with `--slippage-bps <BPS>`.
+- If `requires_access_key_update` is true, ask the wallet owner to approve the printed `tempo wallet keys update` command before retrying.
+- Always run `--dry-run` first and preserve full token addresses in the approval request.
+
 ## Common Issues
 
 | Issue                                                        | Cause                                                            | Fix                                                                                                                                                                                                                                                                                                                        |
