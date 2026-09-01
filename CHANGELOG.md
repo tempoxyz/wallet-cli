@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.4 (2026-09-01)
+
+### Patch Changes
+
+- Remove the unsupported MACH funding option and its configuration dependency.
+
 ## 0.10.3 (2026-09-01)
 
 ### Patch Changes
