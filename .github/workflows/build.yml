@@ -310,8 +310,25 @@ jobs:
             local source="$1"
             local destination="$2"
             local content_type="${3:-}"
+            local immutable="${4:-false}"
             local attempt
+            local local_sha
+            local remote_sha
             local -a args
+
+            if [ "$immutable" = "true" ]; then
+              local_sha=$(sha256sum "$source" | cut -d' ' -f1)
+              if remote_sha=$(aws s3 cp "$destination" - --endpoint-url "$AWS_ENDPOINT_URL" --only-show-errors 2>/dev/null | sha256sum | cut -d' ' -f1); then
+                if [ "$remote_sha" = "$local_sha" ]; then
+                  echo "Verified existing immutable R2 object: ${destination}"
+                  return 0
+                fi
+
+                echo "Immutable R2 object collision at ${destination}" >&2
+                echo "Expected sha256 ${local_sha}, found ${remote_sha}" >&2
+                return 1
+              fi
+            fi
 
             for attempt in 1 2 3; do
               args=(s3 cp "$source" "$destination" --endpoint-url "$AWS_ENDPOINT_URL" --only-show-errors)
@@ -321,6 +338,17 @@ jobs:
 
               if aws "${args[@]}"; then
                 return 0
+              fi
+
+              if [ "$immutable" = "true" ] && remote_sha=$(aws s3 cp "$destination" - --endpoint-url "$AWS_ENDPOINT_URL" --only-show-errors 2>/dev/null | sha256sum | cut -d' ' -f1); then
+                if [ "$remote_sha" = "$local_sha" ]; then
+                  echo "Verified immutable R2 object after an ambiguous upload response: ${destination}"
+                  return 0
+                fi
+
+                echo "Immutable R2 object collision at ${destination}" >&2
+                echo "Expected sha256 ${local_sha}, found ${remote_sha}" >&2
+                return 1
               fi
 
               if [ "$attempt" -lt 3 ]; then
@@ -336,13 +364,13 @@ jobs:
           for f in "artifacts/${PACKAGE}"-linux-* "artifacts/${PACKAGE}"-darwin-*; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
-            upload_to_r2 "$f" "s3://tempo-cli/${PREFIX}/${VTAG}/${BASENAME}"
+            upload_to_r2 "$f" "s3://tempo-cli/${PREFIX}/${VTAG}/${BASENAME}" "" "true"
           done
 
-          upload_to_r2 "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/${VTAG}/manifest.json"
+          upload_to_r2 "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/${VTAG}/manifest.json" "" "true"
 
           if [ "$PACKAGE" = "tempo-request" ] && [ -f "SKILL.md" ]; then
-            upload_to_r2 "SKILL.md" "s3://tempo-cli/${PREFIX}/${VTAG}/SKILL.md" "text/markdown"
+            upload_to_r2 "SKILL.md" "s3://tempo-cli/${PREFIX}/${VTAG}/SKILL.md" "text/markdown" "true"
           fi
 
           upload_to_r2 "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/manifest.json"
