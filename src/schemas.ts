@@ -318,6 +318,48 @@ export const transferOutput = z.union([
   spendCreditsOutput,
 ]);
 
+export const swapArgs = z.object({
+  amount: z
+    .string()
+    .describe("Exact input amount by default; exact output amount with --exact-out"),
+  tokenIn: z.string().describe("Full input token address (0x...)"),
+  tokenOut: z.string().describe("Full output token address (0x...)"),
+});
+
+export const swapOptions = z.object({
+  ...globalOptionShape,
+  "exact-out": z.boolean().optional().describe("Treat amount as the exact output amount"),
+  "slippage-bps": z.coerce.number().default(50).describe("Maximum slippage in basis points"),
+  "fee-token": z.string().optional().describe("Token used to pay fees; defaults to tokenIn"),
+  "dry-run": z.boolean().optional().describe("Quote and show calls without submitting"),
+  yes: z.boolean().optional().describe("Confirm the reviewed swap for submission"),
+});
+
+const swapBaseOutputShape = {
+  chain_id: z.number(),
+  mode: z.union([z.literal("exact_in"), z.literal("exact_out")]),
+  from: z.string(),
+  dex: z.string(),
+  token_in: z.string(),
+  token_in_symbol: z.string(),
+  token_out: z.string(),
+  token_out_symbol: z.string(),
+  amount_in: z.string(),
+  max_amount_in: z.string(),
+  amount_out: z.string(),
+  min_amount_out: z.string(),
+  slippage_bps: z.number(),
+  fee_token: z.string(),
+  access_key_limit: z.string().nullable(),
+  requires_access_key_update: z.boolean(),
+  calls: z.array(z.object({ to: z.string(), data: z.string() })),
+};
+
+export const swapOutput = z.union([
+  z.object({ status: z.literal("dry_run"), ...swapBaseOutputShape }),
+  z.object({ status: z.literal("success"), tx_hash: z.string(), ...swapBaseOutputShape }),
+]);
+
 export const fundOptions = z.object({
   ...globalOptionShape,
   address: z.string().optional().describe("Wallet address to fund (defaults to current wallet)"),

@@ -36,6 +36,16 @@ describe("generated CLI metadata", () => {
     expect(output).toContain("--no-browser");
   });
 
+  it("documents dry-run-first wallet swaps", async () => {
+    const output = await walletCli(["swap", "--help"]);
+
+    expect(output).toContain("Usage: tempo wallet swap <amount> <tokenIn> <tokenOut> [options]");
+    expect(output).toContain("--exact-out");
+    expect(output).toContain("--slippage-bps <number>");
+    expect(output).toContain("--dry-run");
+    expect(output).toContain("--yes");
+  });
+
   it("documents request payment intent selection", async () => {
     const help = await requestCli(["--help"]);
     expect(help).toContain("--payment-intent <auto|session|charge>");
