@@ -42,6 +42,16 @@ export const whoamiOutput = z.union([
       active_sessions: z.number(),
       symbol: z.string(),
     }),
+    balances: z.array(
+      z.object({
+        token: z.string(),
+        symbol: z.string(),
+        decimals: z.number(),
+        balance: z.string(),
+        verified: z.boolean(),
+        access_key_limit: z.string().nullable(),
+      }),
+    ),
     key: z
       .object({
         address: z.string(),

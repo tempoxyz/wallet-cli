@@ -4,7 +4,10 @@ import { Actions } from "viem/tempo";
 
 const mocks = vi.hoisted(() => ({
   readContract: vi.fn(async () => 0n),
+  fetch: vi.fn(async () => new Response("[]", { status: 200 })),
 }));
+
+vi.stubGlobal("fetch", mocks.fetch);
 
 vi.mock("viem", async (importOriginal) => {
   const actual = await importOriginal<typeof import("viem")>();
@@ -63,6 +66,8 @@ afterEach(() => {
   vi.useRealTimers();
   mocks.readContract.mockReset();
   mocks.readContract.mockResolvedValue(0n);
+  mocks.fetch.mockReset();
+  mocks.fetch.mockResolvedValue(new Response("[]", { status: 200 }));
 });
 
 describe("wallet store", () => {
@@ -303,6 +308,84 @@ describe("identity commands", () => {
       wallet: testWallet.toLowerCase(),
       key: { status: "ready" },
     });
+  });
+
+  it("whoami reports every held token and its active access-key limit", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    mocks.readContract.mockResolvedValueOnce(5_000_000n);
+    mocks.fetch.mockResolvedValueOnce(
+      Response.json([
+        {
+          address: usdc,
+          balance: "5000000",
+          decimals: 6,
+          symbol: "USDC.e",
+          verified: true,
+        },
+        {
+          address: moderatoToken,
+          balance: "2500000",
+          decimals: 6,
+          symbol: "pathUSD",
+          verified: true,
+        },
+        {
+          address: "0x20c0000000000000000000000000000000000001",
+          balance: "0",
+          decimals: 6,
+          symbol: "ZERO",
+          verified: false,
+        },
+      ]),
+    );
+
+    const result = await whoamiHandler({});
+
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      new URL(
+        `/api/assets?address=${testWallet}&chainId=4217&fresh=true`,
+        "https://wallet.tempo.xyz",
+      ),
+    );
+    expect("balances" in result ? result.balances : null).toEqual([
+      {
+        token: usdc.toLowerCase(),
+        symbol: "USDC.e",
+        decimals: 6,
+        balance: "5",
+        verified: true,
+        access_key_limit: "100",
+      },
+      {
+        token: moderatoToken,
+        symbol: "pathUSD",
+        decimals: 6,
+        balance: "2.5",
+        verified: true,
+        access_key_limit: null,
+      },
+    ]);
+  });
+
+  it("whoami preserves the payment-token balance when asset discovery fails", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    mocks.readContract.mockResolvedValueOnce(5_000_000n);
+    mocks.fetch.mockRejectedValueOnce(new Error("offline"));
+
+    const result = await whoamiHandler({});
+
+    expect("balances" in result ? result.balances : null).toEqual([
+      {
+        token: usdc.toLowerCase(),
+        symbol: "USDC.e",
+        decimals: 6,
+        balance: "5",
+        verified: true,
+        access_key_limit: "100",
+      },
+    ]);
   });
 
   it("whoami reports an expired access key as not ready", async () => {
