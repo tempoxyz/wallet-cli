@@ -2,6 +2,7 @@ import { loadWalletState } from "./wallet/store.js";
 import { currentWhoamiOutput } from "./commands/identity.js";
 import { fundAction, runFundingFlow } from "./commands/fund.js";
 import { listSessions } from "./commands/sessions.js";
+import { usageError } from "./shared/errors.js";
 
 export async function handleCompatCommand(args: readonly string[]) {
   if (args[0] === "help") {
@@ -52,11 +53,11 @@ export async function handleCompatCommand(args: readonly string[]) {
 }
 
 async function runFundCompat(args: readonly string[]) {
+  validateFundCompatArgs(args);
   const result = await runFundingFlow({
     action: fundAction({
       credits: args.includes("--credits"),
       crypto: args.includes("--crypto"),
-      mach: args.includes("--mach"),
       referralCode: stringArg(args, "--referral-code") ?? stringArg(args, "--claim"),
     }),
     address: stringArg(args, "--address"),
@@ -65,6 +66,53 @@ async function runFundCompat(args: readonly string[]) {
     noBrowser: args.includes("--no-browser"),
   });
   printCompatOutput(result, args);
+}
+
+const fundCompatFlags = new Set([
+  "--browser",
+  "--credits",
+  "--crypto",
+  "--full-output",
+  "--json-output",
+  "--llms",
+  "--llms-full",
+  "--no-browser",
+  "--silent",
+  "--token-count",
+  "--toon-output",
+  "--verbose",
+  "-j",
+  "-s",
+  "-t",
+  "-v",
+]);
+
+const fundCompatValueOptions = new Set([
+  "--address",
+  "--claim",
+  "--filter-output",
+  "--format",
+  "--network",
+  "--referral-code",
+  "--token-limit",
+  "--token-offset",
+  "-n",
+]);
+
+export function validateFundCompatArgs(args: readonly string[]) {
+  const commandIndex = args.indexOf("fund");
+  for (let index = commandIndex + 1; index < args.length; index++) {
+    const arg = args[index];
+    if (!arg?.startsWith("-")) continue;
+    if (fundCompatFlags.has(arg)) continue;
+    if (fundCompatValueOptions.has(arg)) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) throw usageError(`${arg} requires a value`);
+      index++;
+      continue;
+    }
+    throw usageError(`Unknown option: ${arg}`);
+  }
 }
 
 function stringArg(args: readonly string[], name: string) {

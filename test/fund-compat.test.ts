@@ -9,7 +9,7 @@ vi.mock("../src/commands/fund.js", async (importOriginal) => ({
   runFundingFlow: mocks.runFundingFlow,
 }));
 
-import { handleCompatCommand } from "../src/compat.js";
+import { handleCompatCommand, validateFundCompatArgs } from "../src/compat.js";
 
 describe("fund compatibility", () => {
   afterEach(() => {
@@ -17,14 +17,20 @@ describe("fund compatibility", () => {
     mocks.runFundingFlow.mockClear();
   });
 
-  it.each(["--network", "-n"])("forwards %s to the MACH funding flow", async (flag) => {
+  it.each(["--network", "-n"])("forwards %s to the funding flow", async (flag) => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await expect(
-      handleCompatCommand(["fund", "--mach", flag, "testnet", "--no-browser"]),
-    ).resolves.toBe(true);
+    await expect(handleCompatCommand(["fund", flag, "testnet", "--no-browser"])).resolves.toBe(
+      true,
+    );
     expect(mocks.runFundingFlow).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "mach", network: "testnet" }),
+      expect.objectContaining({ action: "fund", network: "testnet" }),
+    );
+  });
+
+  it("rejects unknown options before starting a funding flow", () => {
+    expect(() => validateFundCompatArgs(["fund", "--not-a-real-option"])).toThrow(
+      "Unknown option: --not-a-real-option",
     );
   });
 });

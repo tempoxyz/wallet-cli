@@ -17,13 +17,6 @@
 ### Patch Changes
 
 - Added exact payment-token selection and actionable delegated-key limit diagnostics.
-- Route the default MACH configuration lookup through Mercator's production onramp API.
-
-## 0.10.0 (2026-08-27)
-
-### Minor Changes
-
-- Add a MACH funding flow that opens the Wallet onramp and waits for the mainnet token balance to increase.
 
 ## 0.9.0 (2026-08-26)
 

@@ -1,6 +1,6 @@
 ---
-title: 'Immutable releases were published before assets were uploaded'
-severity: 'blocker'
+title: "Immutable releases were published before assets were uploaded"
+severity: "blocker"
 ---
 
 ## Expected Behavior
@@ -21,4 +21,4 @@ Run the v0.10.1 Build workflow and inspect the Upload to GitHub Release steps.
 
 ## Context
 
-Observed while releasing the tempo-wallet MACH config cutover.
+Observed while validating the v0.10.1 release.
