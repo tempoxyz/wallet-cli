@@ -10,6 +10,10 @@ export function openExternal(url: string) {
     detached: true,
     stdio: "ignore",
   });
+  // Spawning emits an asynchronous error when no browser opener is installed
+  // (common on headless VMs). The URL is printed before this best-effort call,
+  // so keep the CLI alive and let the user open it elsewhere.
+  child.on("error", () => undefined);
   child.unref();
 }
 
