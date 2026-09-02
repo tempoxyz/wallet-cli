@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.5 (2026-09-02)
+
+### Patch Changes
+
+- Handled missing browser opener errors on headless systems without terminating the CLI.
+
 ## 0.10.4 (2026-09-01)
 
 ### Patch Changes
