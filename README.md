@@ -97,6 +97,8 @@ tempo wallet sessions list
 tempo wallet sessions close https://service.mpp.tempo.xyz
 ```
 
+`tempo wallet sessions close` preserves its per-session result summary and exits with status 1 if any close failed. A pending close awaiting the grace period is successful initiation, so pending-only results still exit 0; dry runs also exit 0.
+
 ## Commands
 
 `tempo wallet` includes:

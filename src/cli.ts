@@ -60,6 +60,8 @@ import {
   whoamiOutput,
 } from "./schemas.js";
 
+let closeCommandFailed = false;
+
 const cli = Cli.create("tempo wallet", {
   version,
   description: "Wallet identity and custody operations",
@@ -222,7 +224,7 @@ sessions.command("close", {
         orphaned: options.orphaned,
         target: args.url,
       });
-    return closeSessions({
+    const summary = await closeSessions({
       all: options.all,
       cooperative: options.cooperative,
       finalize: options.finalize,
@@ -230,6 +232,8 @@ sessions.command("close", {
       orphaned: options.orphaned,
       target: args.url,
     });
+    closeCommandFailed = summary.failed > 0;
+    return summary;
   },
 });
 
@@ -331,6 +335,8 @@ async function main() {
   if (await handleCompatCommand(args)) process.exit(0);
 
   await cli.serve(args);
+  // Preserve the summary on stdout; only a one-shot CLI invocation changes exit status.
+  if (closeCommandFailed) process.exitCode = 1;
 }
 
 function isRunnableCommand(value: unknown): value is {
