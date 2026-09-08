@@ -1471,13 +1471,17 @@ async function writeResponseBody(
     return;
   }
 
-  const body = await response.text();
-  await writeOutput(outputPath, `${headerText}${body}`, stdout);
+  const body = Buffer.from(await response.arrayBuffer());
+  await writeOutput(
+    outputPath,
+    headerText ? Buffer.concat([Buffer.from(headerText), body]) : body,
+    stdout,
+  );
 }
 
 async function writeOutput(
   path: string | undefined,
-  text: string,
+  text: string | Uint8Array,
   stdout: Pick<NodeJS.WriteStream, "write">,
 ) {
   if (!path) {
@@ -1811,6 +1815,6 @@ function parseSimpleToon(value: string) {
   return out;
 }
 
-function write(stdout: Pick<NodeJS.WriteStream, "write">, text: string) {
+function write(stdout: Pick<NodeJS.WriteStream, "write">, text: string | Uint8Array) {
   stdout.write(text);
 }

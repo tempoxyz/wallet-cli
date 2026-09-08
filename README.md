@@ -113,6 +113,8 @@ Credit-related flows use `whoami --credits`, `fund --credits`, and `transfer --c
 
 `tempo request` supports common curl-style flags for methods, headers, bodies, output files, redirects, retries, proxies, and streaming responses.
 
+Response bytes are preserved when writing to stdout or a file, including binary audio and images. Use `-o output.wav` to save a response; add `--stream` to write chunks as they arrive instead of buffering the body. `--sse-json` explicitly converts event-stream text to NDJSON.
+
 ## Local State
 
 Wallet state is stored under:

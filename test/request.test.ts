@@ -111,6 +111,40 @@ describe("request command", () => {
     expect(await readFile(headersPath, "utf8")).toContain("x-file: yes");
   });
 
+  it.each([
+    { file: false, headers: false },
+    { file: true, headers: false },
+    { file: false, headers: true },
+    { file: true, headers: true },
+  ])(
+    "preserves binary response bytes with $file file output and $headers headers",
+    async ({ file, headers }) => {
+      const home = await useTempHome();
+      const outputPath = join(home, "audio", "output.wav");
+      // NULs and invalid UTF-8 must survive the default buffered output path.
+      const body = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x80, 0xff, 0xc3, 0x28]);
+      const server = await testServer((_request, response) => {
+        response.setHeader("content-type", "audio/wav");
+        response.end(body);
+      });
+      const stdout = captureStdout();
+
+      await runRequest(
+        [...(file ? ["-o", outputPath] : []), ...(headers ? ["-i"] : []), server.url("/audio.wav")],
+        { stdout },
+      );
+
+      const actual = file ? await readFile(outputPath) : stdout.bytes();
+      if (headers) {
+        expect(actual.toString("utf8")).toContain("HTTP 200");
+        expect(actual.subarray(-body.length)).toEqual(body);
+      } else {
+        expect(actual).toEqual(body);
+      }
+      if (file) expect(stdout.bytes()).toHaveLength(0);
+    },
+  );
+
   it("appends data to the query string with -G", async () => {
     let seen: SeenRequest | undefined;
     const server = await testServer(async (request, response) => {
@@ -1036,14 +1070,17 @@ async function testServer(
 }
 
 function captureStdout() {
-  let output = "";
+  const chunks: Buffer[] = [];
   return {
     write(chunk: string | Uint8Array) {
-      output += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      chunks.push(Buffer.from(chunk));
       return true;
     },
     text() {
-      return output;
+      return Buffer.concat(chunks).toString("utf8");
+    },
+    bytes() {
+      return Buffer.concat(chunks);
     },
   };
 }
