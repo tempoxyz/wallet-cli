@@ -38,6 +38,7 @@ export const whoamiOutput = z.union([
     balance: z.object({
       total: z.string(),
       locked: z.string(),
+      pending_refund: z.string(),
       available: z.string(),
       active_sessions: z.number(),
       symbol: z.string(),

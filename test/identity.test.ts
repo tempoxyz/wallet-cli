@@ -39,6 +39,7 @@ import {
 } from "../src/commands/identity.js";
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
 import { moderatoToken } from "../src/shared/constants.js";
+import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
 
 import {
@@ -278,6 +279,75 @@ describe("identity commands", () => {
         total: "1000004.996912",
         available: "1000004.996912",
         symbol: "PathUSD",
+      },
+    });
+  });
+
+  it("keeps closing reserves in pending_refund until they return to the wallet", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    mocks.readContract.mockResolvedValue(1_000_000n);
+    const channel = identitySession();
+    await upsertSessionRecord(channel);
+    expect(await whoamiHandler({})).toMatchObject({
+      balance: {
+        total: "1.008000",
+        available: "1",
+        locked: "0.008000",
+        pending_refund: "0.000000",
+        active_sessions: 1,
+      },
+    });
+
+    for (const state of ["closing", "finalizable"]) {
+      await upsertSessionRecord({ ...channel, state, close_requested_at: 1 });
+      expect(await whoamiHandler({})).toMatchObject({
+        balance: {
+          total: "1.008000",
+          available: "1",
+          locked: "0.000000",
+          pending_refund: "0.008000",
+          active_sessions: 0,
+        },
+      });
+    }
+
+    await upsertSessionRecord({ ...channel, state: "finalized", close_requested_at: 1 });
+    mocks.readContract.mockResolvedValue(1_008_000n);
+    expect(await whoamiHandler({})).toMatchObject({
+      balance: {
+        total: "1.008000",
+        available: "1.008",
+        locked: "0.000000",
+        pending_refund: "0.000000",
+        active_sessions: 0,
+      },
+    });
+  });
+
+  it("scopes pending refunds to the wallet and token and uses the highest spent amount", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const records = [
+      identitySession({ state: "closing", close_requested_at: 1, server_spent: 3_000n }),
+      identitySession({ state: "finalizable", close_requested_at: 1, accepted_cumulative: 4_000n }),
+      identitySession({ state: "closing", close_requested_at: 1, cumulative_amount: 11_000n }),
+      identitySession({ state: "closing", close_requested_at: 1, payer: testWallet2 }),
+      identitySession({ state: "closing", close_requested_at: 1, token: moderatoToken }),
+      identitySession({ state: "finalized", close_requested_at: 1 }),
+      identitySession(),
+    ];
+    for (const [index, record] of records.entries()) {
+      await upsertSessionRecord({ ...record, channel_id: `0x${String(index + 1).repeat(64)}` });
+    }
+
+    expect(await whoamiHandler({})).toMatchObject({
+      balance: {
+        total: "0.021000",
+        available: "0",
+        locked: "0.008000",
+        pending_refund: "0.013000",
+        active_sessions: 1,
       },
     });
   });
@@ -851,3 +921,31 @@ limit = "100000000"
     });
   });
 });
+
+function identitySession(overrides: Partial<PersistedSessionRecord> = {}): PersistedSessionRecord {
+  return {
+    accepted_cumulative: 2_000n,
+    authorized_signer: testAccessKey,
+    chain_id: 4217,
+    challenge_echo: "{}",
+    channel_id: `0x${"a".repeat(64)}`,
+    close_requested_at: 0,
+    created_at: 1,
+    cumulative_amount: 2_000n,
+    deposit: 10_000n,
+    escrow_contract: "0x0000000000000000000000000000000000000001",
+    grace_ready_at: 901,
+    last_used_at: 1,
+    network: "tempo",
+    origin: "https://example.com",
+    payee: testWallet2,
+    payer: testWallet,
+    request_url: "https://example.com/",
+    salt: `0x${"0".repeat(64)}`,
+    server_spent: 2_000n,
+    session_protocol: "v1",
+    state: "active",
+    token: usdc,
+    ...overrides,
+  };
+}

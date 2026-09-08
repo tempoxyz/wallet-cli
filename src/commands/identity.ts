@@ -412,7 +412,7 @@ export async function currentWhoamiOutput(options: {
     walletAddress: options.walletAddress,
     network: options.network,
   });
-  const sessions = await activeSessionStats({
+  const sessions = await sessionStats({
     token: balance?.token ?? token,
     walletAddress: options.walletAddress,
   });
@@ -551,6 +551,7 @@ type TokenBalance = {
 type SessionStats = {
   active: number;
   locked: bigint;
+  pendingRefund: bigint;
 };
 
 async function tokenBalance(options: {
@@ -579,22 +580,22 @@ async function tokenBalance(options: {
   }
 }
 
-async function activeSessionStats(options: {
+async function sessionStats(options: {
   token: string | undefined;
   walletAddress: string | null;
 }): Promise<SessionStats> {
-  if (!options.walletAddress) return { active: 0, locked: 0n };
+  if (!options.walletAddress) return { active: 0, locked: 0n, pendingRefund: 0n };
   const token = options.token?.toLowerCase();
-  const query = `SELECT token, deposit, cumulative_amount, accepted_cumulative, server_spent
+  const query = `SELECT token, deposit, cumulative_amount, accepted_cumulative, server_spent, state, close_requested_at
              FROM channels
              WHERE LOWER(payer) = LOWER('${options.walletAddress.replaceAll("'", "''")}')
-               AND state = 'active'
-               AND close_requested_at = 0`;
+               AND state IN ('active', 'closing', 'finalizable')`;
   try {
     const stdout = await runProcess("sqlite3", ["-json", channelsDbPath(), query]);
     const rows = getArray(JSON.parse(stdout || "[]") as unknown);
     let active = 0;
     let locked = 0n;
+    let pendingRefund = 0n;
     for (const row of rows) {
       const item = getRecord(row);
       if (token && String(item.token).toLowerCase() !== token) continue;
@@ -604,12 +605,17 @@ async function activeSessionStats(options: {
         parseStoredBigInt(item.server_spent),
       );
       const deposit = parseStoredBigInt(item.deposit);
-      active += 1;
-      locked += deposit > spent ? deposit - spent : 0n;
+      const remaining = deposit > spent ? deposit - spent : 0n;
+      if (item.state === "active" && Number(item.close_requested_at) === 0) {
+        active += 1;
+        locked += remaining;
+      } else {
+        pendingRefund += remaining;
+      }
     }
-    return { active, locked };
+    return { active, locked, pendingRefund };
   } catch {
-    return { active: 0, locked: 0n };
+    return { active: 0, locked: 0n, pendingRefund: 0n };
   }
 }
 
@@ -619,10 +625,11 @@ function balanceOutput(
   fallbackSymbol: string,
 ) {
   const available = balance?.raw ?? 0n;
-  const total = available + sessions.locked;
+  const total = available + sessions.locked + sessions.pendingRefund;
   return {
     total: formatTokenUnits(total, 6),
     locked: formatTokenUnits(sessions.locked, 6),
+    pending_refund: formatTokenUnits(sessions.pendingRefund, 6),
     available: balance?.formatted ?? "0.000000",
     active_sessions: sessions.active,
     symbol: balance?.symbol ?? fallbackSymbol,

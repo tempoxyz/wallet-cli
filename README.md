@@ -58,6 +58,8 @@ tempo wallet fund
 tempo wallet services --search ai
 ```
 
+`tempo wallet whoami` separates available funds, active-session `locked` reserves, and `pending_refund` reserves in closing or finalizable sessions. `total` includes all three; pending refunds remain unavailable until withdrawal completes.
+
 Make a paid HTTP request:
 
 ```sh
