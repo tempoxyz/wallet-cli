@@ -200,3 +200,9 @@ Brief description of the change.
 Supported bump levels are `major`, `minor`, `patch`, and `none`.
 
 Run `pnpm check` before submitting changes.
+
+## Request failures and payment recovery
+
+HTTP errors return `E_HTTP` (exit 3) and preserve the response body through the usual output options, including `-o`. Transport failures return `E_NETWORK`. `--dump-header` and `--write-meta` describe the final response after any payment retry. A final HTTP error after submitting a payment credential does not by itself prove that no payment occurred.
+
+If a credential-bearing request or its response delivery fails, `E_PAYMENT_OUTCOME_UNKNOWN` (exit 4) means payment may have completed. Available challenge, transaction, or session references help the provider investigate; they do not prove settlement. Check with the provider before creating another payment. A transaction hash is only reported when the credential supplies one; signed pull transactions are never printed. The CLI cannot guarantee result recovery or a refund.

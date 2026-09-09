@@ -23,3 +23,11 @@ export function authRefreshRequiredError(reason: "expired" | "missing" | "unusab
     exitCode: 4,
   });
 }
+
+export function httpError(status: number) {
+  return new Errors.IncurError({ code: "E_HTTP", message: `HTTP ${status}`, exitCode: 3 });
+}
+
+export function paymentOutcomeUnknownError(message: string) {
+  return new Errors.IncurError({ code: "E_PAYMENT_OUTCOME_UNKNOWN", message, exitCode: 4 });
+}

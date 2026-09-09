@@ -123,10 +123,31 @@ async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--describe")) {
     process.stdout.write(`${JSON.stringify(describeRequestCli())}\n`);
-    process.exit(0);
+    return;
   }
 
-  await cli.serve(normalizeIncurArgv(argv));
+  const output: string[] = [];
+  let exitCode: number | undefined;
+  await cli.serve(normalizeIncurArgv(argv), {
+    exit(code) {
+      exitCode = code;
+    },
+    stdout(text) {
+      output.push(text);
+    },
+  });
+  if (output.length > 0)
+    await writeProcessOutput(
+      exitCode === undefined ? process.stdout : process.stderr,
+      output.join(""),
+    );
+  if (exitCode !== undefined) process.exitCode = exitCode;
+}
+
+function writeProcessOutput(stream: NodeJS.WriteStream, text: string) {
+  return new Promise<void>((resolve, reject) => {
+    stream.write(text, (error) => (error ? reject(error) : resolve()));
+  });
 }
 
 type ParsedOptions = z.infer<typeof options>;

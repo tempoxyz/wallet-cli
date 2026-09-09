@@ -46,6 +46,8 @@ import { escrowAbi, version } from "../shared/constants.js";
 import {
   authRefreshRequiredError,
   networkError,
+  httpError,
+  paymentOutcomeUnknownError,
   paymentError,
   usageError,
 } from "../shared/errors.js";
@@ -426,12 +428,13 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
   const started = Date.now();
   let { request, response } = await fetchWithRetries(await buildFetchRequest(options), options);
 
-  if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
-  if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
+  let paid = false;
 
   if (response.status === 402) {
     if (options.dryRun) {
       const { challenge } = preparePaymentChallenge(response, options, request.url);
+      if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
+      if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
       await writeOutput(
         options.output,
         `${JSON.stringify(
@@ -459,20 +462,42 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
     }
 
     response = await payAndRetryRequest(response, request, options);
+    paid = true;
   }
 
-  if (response.status >= 400) {
-    const body = await response.text().catch(() => "");
-    if (options.sseJson) {
-      write(
+  try {
+    if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
+    if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
+    if (response.status >= 400 && options.sseJson) {
+      const body = await response.text().catch(responseBodyNetworkError);
+      await writeOutput(
+        options.output ?? (options.remoteName ? remoteNamePath(options.url) : undefined),
+        `${JSON.stringify({ event: "error", status: response.status, message: `HTTP ${response.status}${body ? `: ${body}` : ""}`, ts: new Date().toISOString() })}\n`,
         stdout,
-        `${JSON.stringify({ event: "error", message: `HTTP ${response.status}${body ? `: ${body}` : ""}`, ts: new Date().toISOString() })}\n`,
       );
+    } else {
+      await writeResponseBody(response, options, stdout);
     }
-    throw networkError(`HTTP ${response.status}${body ? `: ${body}` : ""}`);
+    if (paidResponseFailures.has(response))
+      throw paymentOutcomeUnknownError(
+        `Paid response processing failed; payment may have completed.${paymentReferences.get(response) ?? ""} Check any saved response metadata and contact the provider before retrying.`,
+      );
+    if (response.status >= 400) throw httpError(response.status);
+  } catch (error) {
+    if (
+      paid &&
+      !(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error.code === "E_HTTP" || error.code === "E_PAYMENT_OUTCOME_UNKNOWN")
+      )
+    )
+      throw paymentOutcomeUnknownError(
+        `Paid response delivery failed; payment may have completed.${paymentReferences.get(response) ?? ""} Check any saved response metadata and contact the provider before retrying.`,
+      );
+    throw error;
   }
-
-  await writeResponseBody(response, options, stdout);
 }
 
 async function buildFetchRequest(options: RequestOptions) {
@@ -576,10 +601,59 @@ async function fetchWithRetries(
   throw networkError(lastError instanceof Error ? lastError.message : String(lastError));
 }
 
+// Credentials may authorize payment even when the response never arrives. Never
+// include the credential itself (or transport error text that might echo it).
+export async function fetchPaidRequest(
+  request: FetchPlan,
+  options: RequestOptions,
+  credential: string,
+  fetchImpl: typeof fetch = undiciFetch as unknown as typeof fetch,
+) {
+  const reference = paymentRecoveryReference(credential);
+  try {
+    const { response } = await fetchWithRedirects(request, options, fetchImpl, true);
+    paymentReferences.set(response, reference);
+    return response;
+  } catch {
+    throw paymentOutcomeUnknownError(
+      `A payment credential was sent or attempted, but no final response was received; payment may have completed.${reference} Check with the provider before creating another payment.`,
+    );
+  }
+}
+
+const paymentReferences = new WeakMap<Response, string>();
+const paidResponseFailures = new WeakSet<Response>();
+
+function paymentRecoveryReference(credential: string) {
+  let reference = "";
+  try {
+    const parsed = Credential.deserialize<Record<string, unknown>>(credential);
+    reference = ` Challenge ID: ${recoveryReferenceValue(parsed.challenge.id)}. Intent: ${recoveryReferenceValue(parsed.challenge.intent)}.`;
+    const hash = parsed.payload.hash;
+    if (
+      parsed.payload.type === "hash" &&
+      typeof hash === "string" &&
+      /^0x[0-9a-fA-F]{64}$/.test(hash)
+    )
+      reference += ` Transaction hash: ${hash}.`;
+    const channelId = parsed.payload.channelId;
+    if (typeof channelId === "string" && /^0x[0-9a-fA-F]{64}$/.test(channelId))
+      reference += ` Channel ID: ${channelId}.`;
+  } catch {
+    // Recovery hints must never replace the original outcome classification.
+  }
+  return reference;
+}
+
+function recoveryReferenceValue(value: unknown) {
+  return JSON.stringify(String(value).slice(0, 200));
+}
+
 async function fetchWithRedirects(
   request: FetchPlan,
   options: RequestOptions,
   fetchImpl: typeof fetch,
+  sameOriginOnly = false,
 ) {
   let current = { init: cloneRequestInit(request.init), url: request.url };
   const limit = options.followRedirects ? (options.maxRedirs ?? 10) : 0;
@@ -593,7 +667,11 @@ async function fetchWithRedirects(
     if (!location) return { request: current, response };
     if (redirects >= limit) throw networkError(`Too many redirects: exceeded ${limit}`);
 
-    current = redirectRequest(current, response.status, location);
+    const nextUrl = new URL(location, current.url);
+    if (sameOriginOnly && nextUrl.origin !== new URL(current.url).origin)
+      throw networkError("Refusing to forward a payment credential to another origin");
+
+    current = redirectRequest(current, response.status, nextUrl.toString());
   }
 }
 
@@ -646,19 +724,17 @@ async function payAndRetryRequest(
         paySessionAndRetryRequest(selectedResponse, request, options, sessionChallenge),
       );
     } catch (error) {
-      if (isAuthRefreshRequiredError(error)) throw error;
+      if (
+        isAuthRefreshRequiredError(error) ||
+        (error &&
+          typeof error === "object" &&
+          "code" in error &&
+          error.code === "E_PAYMENT_OUTCOME_UNKNOWN")
+      )
+        throw error;
       if (options.paymentIntent === "auto")
         throw chargeFallbackError(header, sessionChallenge, options, error) ?? error;
       throw error;
-    }
-    if (options.paymentIntent === "auto" && response.status === 402) {
-      const body = await response
-        .clone()
-        .text()
-        .catch(() => "");
-      const reason = `HTTP ${response.status}${body ? `: ${body}` : ""}`;
-      const fallback = chargeFallbackError(header, sessionChallenge, options, reason);
-      if (fallback) throw fallback;
     }
     return response;
   }
@@ -693,7 +769,7 @@ async function payAndRetryRequest(
 
     const credential = await payment.createCredential(challengeResponse);
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
-    return (await fetchWithRetries({ init: paidInit, url: request.url }, options)).response;
+    return await fetchPaidRequest({ init: paidInit, url: request.url }, options, credential);
   } catch (error) {
     if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
     const diagnostic = spendingLimitDiagnostic(error, header, options);
@@ -762,8 +838,11 @@ async function paySessionAndRetryRequest(
     }
 
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
-    const response = (await fetchWithRetries({ init: paidInit, url: request.url }, options))
-      .response;
+    const response = await fetchPaidRequest(
+      { init: paidInit, url: request.url },
+      options,
+      credential,
+    );
     if (reusable && response.status === 402) {
       const recovered = await tryTopUpAndRetry({
         credential,
@@ -780,7 +859,12 @@ async function paySessionAndRetryRequest(
       if (recovered) return recovered;
     }
     if (reusable && (await isSessionInvalidationResponse(response))) {
-      await deleteSessionRecord(reusable.channel_id);
+      try {
+        await deleteSessionRecord(reusable.channel_id);
+      } catch {
+        paidResponseFailures.add(response);
+        return response;
+      }
       return paySessionAndRetryRequest(
         paymentRequiredResponse,
         request,
@@ -789,7 +873,11 @@ async function paySessionAndRetryRequest(
         reusable.channel_id,
       );
     }
-    await persistSessionReceipt(response, record.channel_id, signedCumulative);
+    try {
+      await persistSessionReceipt(response, record.channel_id, signedCumulative);
+    } catch {
+      paidResponseFailures.add(response);
+    }
     return response;
   } catch (error) {
     if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
@@ -952,7 +1040,11 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
 function isActionablePaymentError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const code = (error as Record<string, unknown>).code;
-  return code === "E_PAYMENT" || code === "E_AUTH_REFRESH_REQUIRED";
+  return (
+    code === "E_PAYMENT_OUTCOME_UNKNOWN" ||
+    code === "E_PAYMENT" ||
+    code === "E_AUTH_REFRESH_REQUIRED"
+  );
 }
 
 function isAuthRefreshRequiredError(error: unknown) {
@@ -1090,7 +1182,10 @@ async function tryTopUpAndRetry(options: {
   response: Response;
   signedCumulative: bigint;
 }) {
-  const body = await options.response.text().catch(() => "");
+  const body = await options.response
+    .clone()
+    .text()
+    .catch(() => "");
   const additionalDeposit = topUpAmountFromProblem(body, options.record, options.signedCumulative);
   if (additionalDeposit <= 0n) return undefined;
   if (options.options.maxSpend) {
@@ -1118,26 +1213,39 @@ async function tryTopUpAndRetry(options: {
   );
   const topUpInit = topUpRequestInit(options.request.init);
   const authorizedTopUp = options.payment.transport.setCredential(topUpInit, topUpCredential);
-  const topUpResponse = (
-    await fetchWithRetries({ init: authorizedTopUp, url: options.request.url }, options.options)
-  ).response;
+  const topUpResponse = await fetchPaidRequest(
+    { init: authorizedTopUp, url: options.request.url },
+    options.options,
+    topUpCredential,
+  );
   if (topUpResponse.status >= 400) return topUpResponse;
 
-  await upsertSessionRecord({
-    ...options.record,
-    deposit: options.record.deposit + additionalDeposit,
-    last_used_at: nowSeconds(),
-  });
-  await persistSessionReceipt(topUpResponse, options.record.channel_id, options.signedCumulative);
+  try {
+    await upsertSessionRecord({
+      ...options.record,
+      deposit: options.record.deposit + additionalDeposit,
+      last_used_at: nowSeconds(),
+    });
+    await persistSessionReceipt(topUpResponse, options.record.channel_id, options.signedCumulative);
+  } catch {
+    paidResponseFailures.add(topUpResponse);
+    return topUpResponse;
+  }
 
   const paidInit = options.payment.transport.setCredential(
     cloneRequestInit(options.request.init),
     options.credential,
   );
-  const retried = (
-    await fetchWithRetries({ init: paidInit, url: options.request.url }, options.options)
-  ).response;
-  await persistSessionReceipt(retried, options.record.channel_id, options.signedCumulative);
+  const retried = await fetchPaidRequest(
+    { init: paidInit, url: options.request.url },
+    options.options,
+    options.credential,
+  );
+  try {
+    await persistSessionReceipt(retried, options.record.channel_id, options.signedCumulative);
+  } catch {
+    paidResponseFailures.add(retried);
+  }
   return retried;
 }
 
@@ -1554,6 +1662,30 @@ function offeredTempoCurrencies(header: string | null) {
   }
 }
 
+function responseBodyNetworkError(error: unknown): never {
+  throw networkError(error instanceof Error ? error.message : String(error));
+}
+
+async function* readResponseBody(body: ReadableStream<Uint8Array>, signal?: AbortSignal) {
+  const reader = body.getReader();
+  const cancel = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  try {
+    while (true) {
+      const { done, value } = await reader.read().catch(responseBodyNetworkError);
+      if (done) return;
+      yield value;
+    }
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
 async function writeResponseBody(
   response: Response,
   options: RequestOptions,
@@ -1597,15 +1729,18 @@ async function writeResponseBody(
     if (outputPath) {
       await mkdir(dirname(outputPath), { recursive: true });
       if (headerText) await writeFile(outputPath, headerText);
-      await pipeline(body, createWriteStream(outputPath, { flags: headerText ? "a" : "w" }));
+      await pipeline(
+        ({ signal } = {}) => readResponseBody(body, signal),
+        createWriteStream(outputPath, { flags: headerText ? "a" : "w" }),
+      );
     } else {
-      write(stdout, headerText);
-      await pipeline(body, process.stdout);
+      await write(stdout, headerText);
+      await pipeline(({ signal } = {}) => readResponseBody(body, signal), process.stdout);
     }
     return;
   }
 
-  const body = Buffer.from(await response.arrayBuffer());
+  const body = Buffer.from(await response.arrayBuffer().catch(responseBodyNetworkError));
   await writeOutput(
     outputPath,
     headerText ? Buffer.concat([Buffer.from(headerText), body]) : body,
@@ -1619,7 +1754,7 @@ async function writeOutput(
   stdout: Pick<NodeJS.WriteStream, "write">,
 ) {
   if (!path) {
-    write(stdout, text);
+    await write(stdout, text);
     return;
   }
   await mkdir(dirname(path), { recursive: true });
@@ -1990,5 +2125,24 @@ function parseSimpleToon(value: string) {
 }
 
 function write(stdout: Pick<NodeJS.WriteStream, "write">, text: string | Uint8Array) {
-  stdout.write(text);
+  const stream = stdout as Pick<NodeJS.WriteStream, "write"> & {
+    off?: NodeJS.WriteStream["off"];
+    once?: NodeJS.WriteStream["once"];
+  };
+  if (!stream.once || !stream.off) {
+    stream.write(text);
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    stream.once?.("error", onError);
+    stream.write(text, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      stream.off?.("error", onError);
+      resolve();
+    });
+  });
 }
