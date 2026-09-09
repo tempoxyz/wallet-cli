@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.11.0 (2026-09-09)
+
+### Minor Changes
+
+- Add an access-key-aware `tempo wallet swap` command with quoting, slippage bounds, dry-run review, and explicit submission confirmation.
+- Report every held Tempo token and its active access-key limit from `tempo wallet whoami` while preserving the existing payment balance output.
+
+### Patch Changes
+
+- Preserve binary response bytes in default stdout and file output without requiring `--stream`.
+- Exit nonzero when any session close fails, while preserving the structured summary and successful pending-close exit status.
+- Handled missing browser opener errors on headless systems without terminating the CLI.
+- Preserve final payment responses and HTTP error output, and report uncertain payment outcomes with safe recovery references.
+- Enforce payment caps and network selection before credential creation, validate request options, and preview decoded payment quotes without paying.
+- Show closing and finalizable session reserves as `balance.pending_refund` in `whoami` and include them in `balance.total` until withdrawal completes.
+- Stream SSE JSON incrementally, respect retry deadlines, preserve repeated multipart fields, and route HEAD output consistently.
+- Report unavailable wallet balances as unknown instead of zero and include RPC diagnostics in wallet readiness output.
+
 ## 0.10.4 (2026-09-01)
 
 ### Patch Changes
