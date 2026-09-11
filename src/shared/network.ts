@@ -1,4 +1,4 @@
-import { createPublicClient, http, type Address } from "viem";
+import { createPublicClient, http, type Address, type HttpTransportConfig } from "viem";
 import { Chain } from "viem/tempo";
 
 import { usageError } from "./errors.js";
@@ -34,11 +34,14 @@ export function tokenAddress(chain: number) {
   return (chain === 42431 ? moderatoToken : usdcToken) as Address;
 }
 
-export function createTempoPublicClient(network: string | undefined) {
+export function createTempoPublicClient(
+  network: string | undefined,
+  options: Pick<HttpTransportConfig, "timeout" | "retryCount"> = {},
+) {
   const chain = chainId(network) === 42431 ? Chain.tempoModerato : Chain.tempo;
   return createPublicClient({
     chain,
-    transport: http(rpcUrl(network)),
+    transport: http(rpcUrl(network), options),
   });
 }
 

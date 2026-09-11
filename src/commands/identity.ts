@@ -408,20 +408,22 @@ export async function currentWhoamiOutput(options: {
         )
       : undefined);
   const token = key?.limits[0]?.token ?? tokenAddress(selectedChain);
-  const balance = await tokenBalance({
-    token,
-    walletAddress: options.walletAddress,
-    network: options.network,
-  });
-  const balances = await walletBalances({
+  const [balance, assets, sessions] = await Promise.all([
+    tokenBalance({
+      token,
+      walletAddress: options.walletAddress,
+      network: options.network,
+    }),
+    fetchWalletAssets({
+      chain: selectedChain,
+      walletAddress: options.walletAddress,
+    }),
+    sessionStats({ token, walletAddress: options.walletAddress }),
+  ]);
+  const balances = walletBalances({
     accessKey: key,
-    chain: selectedChain,
+    assets,
     fallback: balance,
-    walletAddress: options.walletAddress,
-  });
-  const sessions = await sessionStats({
-    token: balance?.token ?? token,
-    walletAddress: options.walletAddress,
   });
   return {
     ready: Boolean(options.walletAddress && paymentKey && balance),
@@ -568,19 +570,12 @@ type WalletAsset = {
   verified: boolean;
 };
 
-async function walletBalances(options: {
+function walletBalances(options: {
   accessKey: WalletState["accessKeys"][number] | undefined;
-  chain: number;
+  assets: WalletAsset[];
   fallback: TokenBalance | null;
-  walletAddress: string | null;
 }) {
-  if (!options.walletAddress) return [];
-
-  const assets = await fetchWalletAssets({
-    chain: options.chain,
-    walletAddress: options.walletAddress,
-  });
-  const balances = assets.map((asset) => {
+  const balances = options.assets.map((asset) => {
     const limit = options.accessKey?.limits.find(
       (candidate) => candidate.token.toLowerCase() === asset.address.toLowerCase(),
     );
@@ -616,17 +611,21 @@ async function walletBalances(options: {
   return balances;
 }
 
+// Status queries should return promptly even when an upstream service stalls.
+const statusQueryTimeout = 3_000;
+
 async function fetchWalletAssets(options: {
   chain: number;
-  walletAddress: string;
+  walletAddress: string | null;
 }): Promise<WalletAsset[]> {
+  if (!options.walletAddress) return [];
   const url = new URL("/api/assets", appUrl);
   url.searchParams.set("address", options.walletAddress);
   url.searchParams.set("chainId", String(options.chain));
   url.searchParams.set("fresh", "true");
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(statusQueryTimeout) });
     if (!response.ok) return [];
     return getArray(await response.json()).flatMap((value) => {
       const asset = getRecord(value);
@@ -686,7 +685,10 @@ async function tokenBalance(options: {
   if (!options.walletAddress) return null;
   const token = options.token ?? tokenAddress(chainId(options.network));
   try {
-    const client = createTempoPublicClient(options.network);
+    const client = createTempoPublicClient(options.network, {
+      timeout: statusQueryTimeout,
+      retryCount: 0,
+    });
     const raw = await client.readContract({
       address: token as Address,
       abi: erc20Abi,
