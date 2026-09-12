@@ -1,6 +1,7 @@
 ---
 title: 'Immutable releases were published before assets were uploaded'
 severity: 'blocker'
+issue: 'tempoxyz/wallet-cli#114'
 ---
 
 ## Expected Behavior
