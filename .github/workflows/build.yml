@@ -18,19 +18,25 @@ jobs:
     name: Parse tag
     permissions:
       contents: read
+      id-token: write
     runs-on: ubuntu-latest
     outputs:
       packages: ${{ steps.parse.outputs.packages }}
       version: ${{ steps.parse.outputs.version }}
       release_tag: ${{ steps.parse.outputs.release_tag }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
       - name: Parse release version from tag
         id: parse
         shell: bash
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
 
-          TAG="${{ inputs.release_tag }}"
+          TAG="$INPUT_RELEASE_TAG"
           if [ -z "$TAG" ]; then
             TAG="${GITHUB_REF#refs/tags/}"
           fi
@@ -99,6 +105,9 @@ jobs:
       TEMPO_WALLET_PACKAGE_DIR: artifacts
       TEMPO_WALLET_PACKAGE_OUTPUT: artifacts/${{ matrix.package }}-${{ matrix.build.suffix }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.parse-tag.outputs.release_tag }}
@@ -135,7 +144,7 @@ jobs:
 
       - name: Smoke test host binary
         if: matrix.build.pkg_target == 'node22-linux-x64' || matrix.build.pkg_target == 'node22-linux-arm64' || matrix.build.pkg_target == 'node22-macos-arm64'
-        run: ./artifacts/${PACKAGE}-${{ matrix.build.suffix }} --version
+        run: ./artifacts/"${PACKAGE}"-${{ matrix.build.suffix }} --version
 
       - name: Generate sha256
         shell: bash
@@ -196,6 +205,7 @@ jobs:
     environment: release
     permissions:
       contents: write
+      id-token: write
     needs: [parse-tag, build]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
@@ -211,6 +221,9 @@ jobs:
       AWS_MAX_ATTEMPTS: "10"
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.parse-tag.outputs.release_tag }}
@@ -384,12 +397,16 @@ jobs:
     environment: release
     permissions:
       contents: write
+      id-token: write
     needs: [parse-tag, publish]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
     env:
       RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
       - name: Publish draft release
         env:
           GH_TOKEN: ${{ github.token }}

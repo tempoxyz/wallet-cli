@@ -16,6 +16,9 @@ jobs:
     permissions:
       id-token: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
       - name: Determine PR source
         id: source
         env:
@@ -78,6 +81,7 @@ jobs:
 
       - name: Install changelog dependencies
         if: steps.source.outputs.same_repo == 'true' && steps.existing.outputs.found == 'false'
+        # zizmor: ignore[adhoc-packages] -- workflow-only CLI
         run: |
           corepack enable
           corepack prepare pnpm@11.0.8 --activate
@@ -169,8 +173,12 @@ jobs:
     if: always() && startsWith(github.event.label.name, 'changelog:')
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       pull-requests: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
       - name: Comment for fork PRs
         if: github.event.pull_request.head.repo.full_name != github.repository
         env:
