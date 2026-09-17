@@ -36,6 +36,32 @@ describe("generated CLI metadata", () => {
     expect(output).toContain("--no-browser");
   });
 
+  it("documents dry-run-first wallet swaps", async () => {
+    const output = await walletCli(["swap", "--help"]);
+
+    expect(output).toContain("Usage: tempo wallet swap <amount> <tokenIn> <tokenOut> [options]");
+    expect(output).toContain("--exact-out");
+    expect(output).toContain("--slippage-bps <number>");
+    expect(output).toContain("--dry-run");
+    expect(output).toContain("--yes");
+  });
+
+  it("documents request payment intent selection", async () => {
+    const help = await requestCli(["--help"]);
+    expect(help).toContain("--payment-intent <auto|session|charge>");
+    expect(help).toContain("--payment-token <string>");
+
+    const description = JSON.parse(await requestCli(["--describe"])) as {
+      args: { long?: string | undefined; name: string }[];
+    };
+    expect(description.args).toContainEqual(
+      expect.objectContaining({ long: "--payment-intent", name: "payment_intent" }),
+    );
+    expect(description.args).toContainEqual(
+      expect.objectContaining({ long: "--payment-token", name: "payment_token" }),
+    );
+  });
+
   it("returns schema for the direct services command", async () => {
     const output = await walletCli(["services", "--schema", "--format", "json"]);
     const schema = JSON.parse(output) as {
@@ -45,6 +71,33 @@ describe("generated CLI metadata", () => {
 
     expect(schema.args.properties.serviceId.description).toContain("Service ID");
     expect(schema.options.properties.search.description).toContain("Search by name");
+  });
+
+  it("advertises nullable wallet balances and RPC diagnostics", async () => {
+    const whoami = JSON.parse(await walletCli(["whoami", "--schema", "--format", "json"])) as {
+      output: {
+        anyOf: {
+          properties?: {
+            balance?: { properties: { available: { anyOf: { type: string }[] } } };
+            key?: { anyOf: { properties?: Record<string, unknown> }[] };
+          };
+        }[];
+      };
+    };
+    const detailedWhoami = whoami.output.anyOf.find((item) => item.properties?.balance);
+    expect(detailedWhoami?.properties?.balance?.properties.available.anyOf).toContainEqual({
+      type: "null",
+    });
+    expect(detailedWhoami?.properties?.key?.anyOf[0]?.properties).toHaveProperty("balance_error");
+
+    const keys = JSON.parse(await walletCli(["keys", "list", "--schema", "--format", "json"])) as {
+      output: {
+        properties: {
+          keys: { items: { properties: Record<string, unknown> } };
+        };
+      };
+    };
+    expect(keys.output.properties.keys.items.properties).toHaveProperty("balance_error");
   });
 
   it.each([

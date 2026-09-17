@@ -1,10 +1,16 @@
 import { createPublicClient, http, type Address } from "viem";
 import { Chain } from "viem/tempo";
 
+import { usageError } from "./errors.js";
+
 import { mainnetEscrow, moderatoEscrow, moderatoToken, usdcToken } from "./constants.js";
 
 export function chainId(network: string | undefined) {
-  return network === "testnet" ? 42431 : 4217;
+  return isTestnet(network) ? 42431 : 4217;
+}
+
+export function isTestnet(network: string | undefined) {
+  return normalizeNetwork(network ?? process.env.TEMPO_WALLET_NETWORK ?? "mainnet") === "testnet";
 }
 
 export function networkName(chain: number | null) {
@@ -46,16 +52,10 @@ export function tokenSymbol(token: string) {
   return token;
 }
 
-export function authUrl(chain: number | null) {
-  if (process.env.TEMPO_AUTH_URL) return process.env.TEMPO_AUTH_URL;
-  if (chain === 42431) return "https://wallet.tempo.xyz/cli-auth";
-  return "https://wallet.tempo.xyz/cli-auth";
-}
+export const appUrl = process.env.TEMPO_AUTH_URL ?? "https://wallet.tempo.xyz";
 
-export function cliAuthUrl(chain: number | null) {
-  const url = new URL(authUrl(chain));
-  url.pathname = "/api/auth/cli";
-  url.search = "";
-  url.hash = "";
-  return url.toString();
+export function normalizeNetwork(value: string) {
+  if (value === "testnet" || value === "tempo-moderato" || value === "moderato") return "testnet";
+  if (value === "mainnet" || value === "tempo") return "mainnet";
+  throw usageError(`Unsupported network: ${value}`);
 }

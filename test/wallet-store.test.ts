@@ -337,6 +337,7 @@ describe("wallet store file", () => {
         accessKeys: [
           {
             ...walletState().accessKeys[0]!,
+            expiry: 1783809942,
             keyAuthorization: "0x12#34",
             keyType: "p256",
           },

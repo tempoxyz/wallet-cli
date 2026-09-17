@@ -13,6 +13,7 @@ import {
   updateAccessKeyHandler,
   whoamiHandler,
 } from "./commands/identity.js";
+import { swapTokens } from "./commands/swap.js";
 import { transferCredits, transferTokens } from "./commands/transfer.js";
 import { fundAction, runFundingFlow } from "./commands/fund.js";
 import {
@@ -53,12 +54,17 @@ import {
   sessionsListOptions,
   sessionsListOutput,
   sessionsSyncOptions,
+  swapArgs,
+  swapOptions,
+  swapOutput,
   transferArgs,
   transferOptions,
   transferOutput,
   whoamiOptions,
   whoamiOutput,
 } from "./schemas.js";
+
+let closeCommandFailed = false;
 
 const cli = Cli.create("tempo wallet", {
   version,
@@ -172,6 +178,27 @@ cli.command("transfer", {
   },
 });
 
+cli.command("swap", {
+  description: "Swap TIP-20 tokens on the Tempo Stablecoin DEX",
+  args: swapArgs,
+  options: swapOptions,
+  alias: globalAlias,
+  output: swapOutput,
+  examples: [
+    {
+      args: {
+        amount: "10",
+        tokenIn: "0x20c0000000000000000000000000000000000000",
+        tokenOut: "0x20c000000000000000000000b9537d11c60e8b50",
+      },
+      options: { "dry-run": true },
+    },
+  ],
+  async run({ args, options }) {
+    return swapTokens({ args, options });
+  },
+});
+
 cli.command("fund", {
   description: "Open add-funds flows in the wallet app",
   options: fundOptions,
@@ -222,7 +249,7 @@ sessions.command("close", {
         orphaned: options.orphaned,
         target: args.url,
       });
-    return closeSessions({
+    const summary = await closeSessions({
       all: options.all,
       cooperative: options.cooperative,
       finalize: options.finalize,
@@ -230,6 +257,8 @@ sessions.command("close", {
       orphaned: options.orphaned,
       target: args.url,
     });
+    closeCommandFailed = summary.failed > 0;
+    return summary;
   },
 });
 
@@ -321,6 +350,7 @@ async function main() {
   if (args.includes("--mcp")) {
     await Mcp.serve(cli.name, version, createMcpCommands(), {
       env: cli.env,
+      tools: { discovery: "direct" },
       vars: cli.vars,
       version,
     });
@@ -330,6 +360,8 @@ async function main() {
   if (await handleCompatCommand(args)) process.exit(0);
 
   await cli.serve(args);
+  // Preserve the summary on stdout; only a one-shot CLI invocation changes exit status.
+  if (closeCommandFailed) process.exitCode = 1;
 }
 
 function isRunnableCommand(value: unknown): value is {
@@ -637,6 +669,24 @@ function describeCli() {
           option("address", "--address", "Wallet address (defaults to current wallet)", {
             valueName: "ADDRESS",
           }),
+        ],
+      },
+      {
+        name: "swap",
+        about: "Swap TIP-20 tokens on the Tempo Stablecoin DEX",
+        args: [
+          positional("amount", "Exact input amount by default; exact output with --exact-out"),
+          positional("token_in", "Full input token address (0x...)"),
+          positional("token_out", "Full output token address (0x...)"),
+          flag("exact_out", "--exact-out", "Treat amount as the exact output amount"),
+          option("slippage_bps", "--slippage-bps", "Maximum slippage in basis points", {
+            valueName: "BPS",
+          }),
+          option("fee_token", "--fee-token", "Token used to pay fees", {
+            valueName: "FEE_TOKEN",
+          }),
+          flag("dry_run", "--dry-run", "Quote and show calls without submitting"),
+          flag("yes", "--yes", "Confirm the reviewed swap for submission"),
         ],
       },
       {

@@ -5,7 +5,7 @@ import { Actions } from "viem/tempo";
 
 import { version } from "../shared/constants.js";
 import { networkError, usageError } from "../shared/errors.js";
-import { authUrl, chainId, tokenAddress, tokenDecimals, tokenSymbol } from "../shared/network.js";
+import { appUrl, chainId, tokenAddress, tokenDecimals, tokenSymbol } from "../shared/network.js";
 import { decodeBase64UrlJson, getRecord, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -120,7 +120,7 @@ export async function transferCredits(options: {
     };
   }
 
-  const baseUrl = apiBaseUrl(authUrl(chainId(options.options.network)));
+  const baseUrl = apiBaseUrl(appUrl);
   const provider = createProvider({ network: options.options.network });
   const auth = await requestCreditsAuthMessage({
     baseUrl,

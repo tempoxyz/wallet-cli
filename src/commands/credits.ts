@@ -1,12 +1,12 @@
 import { version } from "../shared/constants.js";
-import { authUrl } from "../shared/network.js";
+import { appUrl } from "../shared/network.js";
 import { formatCreditBalance, getRecord, parseAmount } from "../shared/utils.js";
 
 export async function queryCreditBalance(options: {
   chainId: number | null;
   walletAddress: string;
 }): Promise<{ wallet: string; balance: string; rawBalance: string }> {
-  const url = coinflowBalancesUrl(authUrl(options.chainId), options.walletAddress);
+  const url = coinflowBalancesUrl(appUrl, options.walletAddress);
   const response = await fetch(url, {
     headers: {
       "user-agent": `wallet-cli/${version}`,
@@ -29,8 +29,8 @@ export async function queryCreditBalance(options: {
   };
 }
 
-function coinflowBalancesUrl(authUrl: string, walletAddress: string) {
-  const url = new URL(authUrl);
+function coinflowBalancesUrl(appUrl: string, walletAddress: string) {
+  const url = new URL(appUrl);
   url.pathname = "/api/coinflow/balances";
   url.search = "";
   url.searchParams.set("wallet", walletAddress);

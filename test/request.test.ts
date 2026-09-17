@@ -1,20 +1,31 @@
+import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 
 import { Challenge, Credential, Method, z } from "mppx";
 import { Mppx, session as tempoSession } from "mppx/client";
 import { Keystore } from "accounts";
 import { createClient, custom, decodeFunctionData } from "viem";
-import { Abis as TempoAbis, Channel as TempoChannel, KeyAuthorizationManager } from "viem/tempo";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  Abis as TempoAbis,
+  Actions as TempoActions,
+  Channel as TempoChannel,
+  KeyAuthorizationManager,
+} from "viem/tempo";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildTopUpTransactionRequest,
+  fetchPaidRequest,
+  chargeFallbackError,
   isSessionInvalidationResponse,
   parseRequestArgs,
   resolvePaymentIdentity,
   runRequest,
+  selectPaymentTokenResponse,
+  sessionChallengeFromHeader,
   storedAccessKeyIdentity,
   tempoPaymentChallengeResponse,
 } from "../src/commands/request.js";
@@ -35,6 +46,16 @@ import {
 } from "./helpers.js";
 import { loadWalletState } from "../src/wallet/store.js";
 
+vi.mock("mppx/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("mppx/client")>();
+  return { ...actual, Mppx: { ...actual.Mppx } };
+});
+
+vi.mock("viem/tempo", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("viem/tempo")>();
+  return { ...actual, Actions: { ...actual.Actions, token: { ...actual.Actions.token } } };
+});
+
 type SeenRequest = {
   body: string;
   headers: Record<string, string | string[] | undefined>;
@@ -49,7 +70,431 @@ afterEach(async () => {
   servers.length = 0;
 });
 
+it("pins ephemeral clients without an offered chain to the selected network", async () => {
+  const identity = await resolvePaymentIdentity(
+    parseRequestArgs([
+      "--network",
+      "testnet",
+      "--private-key",
+      `0x${"1".repeat(64)}`,
+      "https://example.com",
+    ]),
+  );
+  const client = await identity.getClient({});
+  expect(client.chain?.id).toBe(42431);
+});
+
 describe("request command", () => {
+  it("writes the paid response headers and status after a 402 retry", async () => {
+    const home = await useTempHome();
+    const challenge = Challenge.from({
+      id: "metadata-test",
+      intent: "charge",
+      method: "tempo",
+      realm: "example.com",
+      request: {
+        amount: "1",
+        currency: "0x20c000000000000000000000b9537d11c60e8b50",
+        recipient: testWallet,
+      },
+    });
+    const credential = Credential.serialize({ challenge, payload: { test: true } });
+    const headers = join(home, "headers.txt");
+    const meta = join(home, "meta.json");
+    const server = await testServer((request, response) => {
+      if (!request.headers.authorization) {
+        response.statusCode = 402;
+        response.setHeader("www-authenticate", Challenge.serialize(challenge));
+        response.end("payment required");
+      } else {
+        response.setHeader("payment-receipt", "test-receipt");
+        if (request.url === "/broken") {
+          response.flushHeaders();
+          setTimeout(() => response.destroy(), 10);
+        } else response.end("paid result");
+      }
+    });
+    const create = vi.spyOn(Mppx, "create").mockReturnValue({
+      onChallengeReceived: vi.fn(),
+      createCredential: vi.fn().mockResolvedValue(credential),
+      transport: {
+        setCredential: (init: RequestInit) => ({ ...init, headers: { authorization: credential } }),
+      },
+    } as unknown as ReturnType<typeof Mppx.create>);
+    const stdout = captureStdout();
+    try {
+      await runRequest(
+        [
+          "--private-key",
+          `0x${"1".repeat(64)}`,
+          "-D",
+          headers,
+          "--write-meta",
+          meta,
+          server.url("/paid"),
+        ],
+        { stdout },
+      );
+      await expect(
+        runRequest(["--private-key", `0x${"1".repeat(64)}`, server.url("/broken")], {
+          stdout: captureStdout(),
+        }),
+      ).rejects.toMatchObject({
+        code: "E_PAYMENT_OUTCOME_UNKNOWN",
+        message: expect.stringContaining("metadata-test"),
+      });
+      for (const flag of ["--stream", "--sse"]) {
+        await expect(
+          runRequest(
+            [
+              "--private-key",
+              `0x${"1".repeat(64)}`,
+              flag,
+              "-o",
+              join(home, "stream.txt"),
+              server.url("/broken"),
+            ],
+            { stdout: captureStdout() },
+          ),
+        ).rejects.toMatchObject({
+          code: "E_PAYMENT_OUTCOME_UNKNOWN",
+          message: expect.stringContaining("metadata-test"),
+        });
+      }
+      await expect(
+        runRequest(["--private-key", `0x${"1".repeat(64)}`, server.url("/paid")], {
+          stdout: new Writable({
+            write(_chunk, _encoding, callback) {
+              callback(new Error("output failed"));
+            },
+          }),
+        }),
+      ).rejects.toMatchObject({ code: "E_PAYMENT_OUTCOME_UNKNOWN" });
+      expect(stdout.text()).toBe("paid result");
+      expect(await readFile(headers, "utf8")).toContain("HTTP 200");
+      expect(await readFile(headers, "utf8")).not.toContain("www-authenticate");
+      expect(JSON.parse(await readFile(meta, "utf8"))).toMatchObject({
+        status: 200,
+        headers: { "payment-receipt": "test-receipt" },
+      });
+    } finally {
+      create.mockRestore();
+    }
+  });
+
+  it("preserves an HTTP error body in the requested file with final metadata", async () => {
+    const home = await useTempHome();
+    const output = join(home, "errors", "body.json");
+    const meta = join(home, "meta.json");
+    const server = await testServer((_request, response) => {
+      response.statusCode = 422;
+      response.end('{"error":"invalid input"}');
+    });
+    const stdout = captureStdout();
+    await expect(
+      runRequest(["-o", output, "--write-meta", meta, server.url("/error")], { stdout }),
+    ).rejects.toMatchObject({ code: "E_HTTP", message: "HTTP 422", exitCode: 3 });
+    expect(await readFile(output, "utf8")).toBe('{"error":"invalid input"}');
+    expect(JSON.parse(await readFile(meta, "utf8"))).toMatchObject({ status: 422 });
+    expect(stdout.text()).toBe("");
+  });
+
+  it("preserves HTTP failures through the actual CLI entrypoint", async () => {
+    const home = await useTempHome();
+    const meta = join(home, "cli", "meta.json");
+    const body = `{"error":"${"x".repeat(256 * 1024)}"}`;
+    const server = await testServer((_request, response) => {
+      response.statusCode = 422;
+      response.end(body);
+    });
+    const result = await new Promise<{
+      code: number | string | null | undefined;
+      stdout: string;
+      stderr: string;
+    }>((resolve) => {
+      execFile(
+        process.execPath,
+        ["--import", "tsx", "src/request-cli.ts", "--write-meta", meta, server.url("/error")],
+        { cwd: join(import.meta.dirname, ".."), timeout: 15000 },
+        (error, stdout, stderr) => resolve({ code: error?.code, stdout, stderr }),
+      );
+    });
+    expect(result.code).toBe(3);
+    expect(result.stdout).toBe(body);
+    expect(result.stderr).toContain("E_HTTP");
+    expect(JSON.parse(await readFile(meta, "utf8"))).toMatchObject({ status: 422 });
+  });
+
+  it.each([
+    { flags: [], file: false },
+    { flags: ["--sse-json"], file: false },
+    { flags: ["--stream"], file: false },
+    { flags: ["--sse"], file: false },
+    { flags: ["--stream"], file: true },
+    { flags: ["--sse"], file: true },
+  ])(
+    "classifies interrupted unpaid error bodies as network failures through the CLI ($flags, file=$file)",
+    async ({ flags, file }) => {
+      const home = await useTempHome();
+      const output = join(home, "partial.txt");
+      const server = await testServer((_request, response) => {
+        response.writeHead(500, { "content-length": "100" });
+        response.write("partial error");
+        setTimeout(() => response.destroy(), 50);
+      });
+      const result = await new Promise<{
+        code: number | string | null | undefined;
+        stderr: string;
+      }>((resolve) => {
+        execFile(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            "src/request-cli.ts",
+            ...flags,
+            ...(file ? ["-o", output] : []),
+            server.url("/error"),
+          ],
+          { cwd: join(import.meta.dirname, ".."), timeout: 15000 },
+          (error, _stdout, stderr) => resolve({ code: error?.code, stderr }),
+        );
+      });
+      expect(result.code).toBe(3);
+      expect(result.stderr).toContain("E_NETWORK");
+    },
+  );
+
+  it("preserves output errors and cancels an unfinished streaming body", async () => {
+    const home = await useTempHome();
+    const server = await testServer((_request, response) => {
+      response.writeHead(200);
+      response.write("still streaming");
+    });
+    const result = await new Promise<{
+      code: number | string | null | undefined;
+      stderr: string;
+    }>((resolve) => {
+      execFile(
+        process.execPath,
+        ["--import", "tsx", "src/request-cli.ts", "--stream", "-o", home, server.url("/stream")],
+        { cwd: join(import.meta.dirname, ".."), timeout: 5000 },
+        (error, _stdout, stderr) => resolve({ code: error?.code, stderr }),
+      );
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("EISDIR");
+    expect(result.stderr).not.toContain("E_NETWORK");
+  });
+
+  it("keeps actual CLI SSE error output valid NDJSON", async () => {
+    const server = await testServer((_request, response) => {
+      response.statusCode = 500;
+      response.end("broken");
+    });
+    const result = await new Promise<{
+      code: number | string | null | undefined;
+      stdout: string;
+    }>((resolve) => {
+      execFile(
+        process.execPath,
+        ["--import", "tsx", "src/request-cli.ts", "--sse-json", server.url("/error")],
+        { cwd: join(import.meta.dirname, ".."), timeout: 15000 },
+        (error, stdout) => resolve({ code: error?.code, stdout }),
+      );
+    });
+    expect(result.code).toBe(3);
+    expect(JSON.parse(result.stdout)).toMatchObject({ event: "error", status: 500 });
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+  });
+
+  it("preserves safe references after an ambiguous paid fetch without leaking credentials", async () => {
+    const challenge = Challenge.from({
+      id: "recovery-test",
+      intent: "charge",
+      method: "tempo",
+      realm: "example.com",
+      request: { amount: "1", currency: "token", recipient: "recipient" },
+    });
+    const hash = `0x${"a".repeat(64)}`;
+    const credential = Credential.serialize({
+      challenge,
+      payload: { type: "hash", hash, secret: "never-print" },
+    });
+    const fetchImpl = vi.fn().mockRejectedValue(new Error(`timeout ${credential}`));
+    const options = parseRequestArgs(["https://example.com"]);
+    await expect(
+      fetchPaidRequest({ url: options.url, init: {} }, options, credential, fetchImpl),
+    ).rejects.toMatchObject({
+      code: "E_PAYMENT_OUTCOME_UNKNOWN",
+      retryable: false,
+      message: expect.stringContaining(`Transaction hash: ${hash}`),
+    });
+    const error = await fetchPaidRequest(
+      { url: options.url, init: {} },
+      options,
+      credential,
+      fetchImpl,
+    ).catch((error) => error);
+    expect(error.message).toContain("recovery-test");
+    expect(error.message).not.toContain(credential);
+    expect(error.message).not.toContain("never-print");
+  });
+
+  it("never retries a credential-bearing request after an ambiguous failure", async () => {
+    const challenge = Challenge.from({
+      id: "single-attempt",
+      intent: "charge",
+      method: "tempo",
+      realm: "example.com",
+      request: { amount: "1", currency: "token", recipient: "recipient" },
+    });
+    const credential = Credential.serialize({ challenge, payload: { test: true } });
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("connection lost"))
+      .mockResolvedValueOnce(new Response("replayed", { status: 402 }));
+
+    await expect(
+      fetchPaidRequest(
+        { init: {}, url: "https://example.com/paid" },
+        { ...requestOptions("https://example.com/paid"), retries: 1 },
+        credential,
+        fetchImpl,
+      ),
+    ).rejects.toMatchObject({ code: "E_PAYMENT_OUTCOME_UNKNOWN" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not forward payment credentials across origins", async () => {
+    const challenge = Challenge.from({
+      id: "redirect",
+      intent: "charge",
+      method: "tempo",
+      realm: "example.com",
+      request: { amount: "1", currency: "token", recipient: "recipient" },
+    });
+    const credential = Credential.serialize({ challenge, payload: { test: true } });
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(null, { headers: { location: "https://other.example/result" }, status: 302 }),
+      );
+
+    await expect(
+      fetchPaidRequest(
+        { init: { headers: { authorization: credential } }, url: "https://example.com/paid" },
+        { ...requestOptions("https://example.com/paid"), followRedirects: true },
+        credential,
+        fetchImpl,
+      ),
+    ).rejects.toMatchObject({ code: "E_PAYMENT_OUTCOME_UNKNOWN" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a final session 402 instead of replacing it with charge advice", async () => {
+    const home = await useTempHome();
+    const output = join(home, "session-402.txt");
+    const headers = join(home, "session-402.headers");
+    const meta = join(home, "session-402.json");
+    const currency = "0x20c000000000000000000000b9537d11c60e8b50";
+    const session = paymentChallenge({
+      amount: "1",
+      id: "session-final-402",
+      intent: "session",
+      chainId: 4217,
+      currency,
+      sessionProtocol: "v2",
+    });
+    const charge = paymentChallenge({
+      amount: "1",
+      id: "charge-fallback",
+      intent: "charge",
+      chainId: 4217,
+      currency,
+    });
+    mockSessionPayment(session, `0x${"6".repeat(64)}`);
+    const server = await testServer((request, response) => {
+      response.statusCode = 402;
+      if (!request.headers.authorization)
+        response.setHeader(
+          "www-authenticate",
+          [session, charge].map((challenge) => Challenge.serialize(challenge)).join(", "),
+        );
+      response.end(request.headers.authorization ? "session payment rejected" : "payment required");
+    });
+
+    const error = await runRequest(
+      [
+        "--private-key",
+        `0x${"1".repeat(64)}`,
+        "-D",
+        headers,
+        "--write-meta",
+        meta,
+        "-o",
+        output,
+        server.url("/paid"),
+      ],
+      { stdout: captureStdout() },
+    ).catch((error) => error);
+
+    expect(error).toMatchObject({ code: "E_HTTP", exitCode: 3, message: "HTTP 402" });
+    expect(error.message).not.toContain("one-time charge");
+    expect(await readFile(output, "utf8")).toBe("session payment rejected");
+    expect(await readFile(headers, "utf8")).toContain("HTTP 402");
+    expect(JSON.parse(await readFile(meta, "utf8"))).toMatchObject({ status: 402 });
+  });
+
+  it.each([200, 500])(
+    "preserves a session %s response before reporting receipt processing failure",
+    async (status) => {
+      const home = await useTempHome();
+      const output = join(home, `session-${status}.txt`);
+      const meta = join(home, `session-${status}.json`);
+      const session = paymentChallenge({
+        amount: "1",
+        id: `session-receipt-${status}`,
+        intent: "session",
+        chainId: 4217,
+        currency: "0x20c000000000000000000000b9537d11c60e8b50",
+        sessionProtocol: "v2",
+      });
+      const channelId = `0x${"7".repeat(64)}`;
+      mockSessionPayment(session, channelId);
+      const server = await testServer((request, response) => {
+        if (!request.headers.authorization) {
+          response.statusCode = 402;
+          response.setHeader("www-authenticate", Challenge.serialize(session));
+          response.end("payment required");
+          return;
+        }
+        response.statusCode = status;
+        response.setHeader("payment-receipt", "not-a-valid-receipt");
+        response.end(`paid response ${status}`);
+      });
+
+      const error = await runRequest(
+        [
+          "--private-key",
+          `0x${"1".repeat(64)}`,
+          "--write-meta",
+          meta,
+          "-o",
+          output,
+          server.url("/paid"),
+        ],
+        { stdout: captureStdout() },
+      ).catch((error) => error);
+
+      expect(error).toMatchObject({ code: "E_PAYMENT_OUTCOME_UNKNOWN", exitCode: 4 });
+      expect(error.message).toContain(channelId);
+      expect(error.message).not.toContain("one-time charge");
+      expect(await readFile(output, "utf8")).toBe(`paid response ${status}`);
+      expect(JSON.parse(await readFile(meta, "utf8"))).toMatchObject({ status });
+    },
+  );
+
   it("performs a non-payment GET request", async () => {
     const server = await testServer((_request, response) => {
       response.end("hello world");
@@ -107,6 +552,40 @@ describe("request command", () => {
     expect(await readFile(outputPath, "utf8")).toBe("file body");
     expect(await readFile(headersPath, "utf8")).toContain("x-file: yes");
   });
+
+  it.each([
+    { file: false, headers: false },
+    { file: true, headers: false },
+    { file: false, headers: true },
+    { file: true, headers: true },
+  ])(
+    "preserves binary response bytes with $file file output and $headers headers",
+    async ({ file, headers }) => {
+      const home = await useTempHome();
+      const outputPath = join(home, "audio", "output.wav");
+      // NULs and invalid UTF-8 must survive the default buffered output path.
+      const body = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x80, 0xff, 0xc3, 0x28]);
+      const server = await testServer((_request, response) => {
+        response.setHeader("content-type", "audio/wav");
+        response.end(body);
+      });
+      const stdout = captureStdout();
+
+      await runRequest(
+        [...(file ? ["-o", outputPath] : []), ...(headers ? ["-i"] : []), server.url("/audio.wav")],
+        { stdout },
+      );
+
+      const actual = file ? await readFile(outputPath) : stdout.bytes();
+      if (headers) {
+        expect(actual.toString("utf8")).toContain("HTTP 200");
+        expect(actual.subarray(-body.length)).toEqual(body);
+      } else {
+        expect(actual).toEqual(body);
+      }
+      if (file) expect(stdout.bytes()).toHaveLength(0);
+    },
+  );
 
   it("appends data to the query string with -G", async () => {
     let seen: SeenRequest | undefined;
@@ -220,7 +699,7 @@ describe("request command", () => {
 
     await expect(
       runRequest(["--sse-json", server.url("/stream")], { stdout }),
-    ).rejects.toMatchObject({ code: "E_NETWORK" });
+    ).rejects.toMatchObject({ code: "E_HTTP" });
 
     const line = JSON.parse(stdout.text().trim()) as Record<string, unknown>;
     expect(line).toMatchObject({ event: "error" });
@@ -247,14 +726,21 @@ describe("request command", () => {
     expect(seen?.body).toContain("file-content");
   });
 
-  it("dry-runs a 402 by returning headers/body without payment execution", async () => {
+  it("dry-runs a 402 by returning a decoded quote without payment execution", async () => {
     const home = await useTempHome();
     const headersPath = join(home, "payment-headers.txt");
     const server = await testServer((_request, response) => {
       response.statusCode = 402;
       response.setHeader(
         "www-authenticate",
-        'Payment realm="example", method="tempo", intent="charge", request="abc"',
+        Challenge.serialize(
+          paymentChallenge({
+            amount: "6000",
+            currency: "0x20c0000000000000000000000000000000000000",
+            id: "dry-run",
+            intent: "charge",
+          }),
+        ),
       );
       response.end("Payment Required");
     });
@@ -262,7 +748,7 @@ describe("request command", () => {
 
     await runRequest(["--dry-run", "-D", headersPath, server.url("/paid")], { stdout });
 
-    expect(stdout.text()).toBe("Payment Required");
+    expect(JSON.parse(stdout.text())).toMatchObject({ amount: "0.006", within_budget: null });
     expect(await readFile(headersPath, "utf8")).toContain("www-authenticate");
   });
 
@@ -316,6 +802,171 @@ describe("request command", () => {
     expect(Credential.deserialize(credential).payload).toEqual({ ok: true });
   });
 
+  it("selects only challenges for the requested payment token", () => {
+    const selectedToken = "0x1111111111111111111111111111111111111111";
+    const otherToken = "0x2222222222222222222222222222222222222222";
+    const selected = paymentChallenge({
+      amount: "15000",
+      id: "selected-token",
+      intent: "charge",
+      chainId: 4217,
+      currency: selectedToken,
+    });
+    const other = paymentChallenge({
+      amount: "15000",
+      id: "other-token",
+      intent: "charge",
+      chainId: 4217,
+      currency: otherToken,
+    });
+    const response = new Response(null, {
+      headers: {
+        "www-authenticate": [other, selected]
+          .map((challenge) => Challenge.serialize(challenge))
+          .join(", "),
+      },
+      status: 402,
+    });
+
+    const filtered = selectPaymentTokenResponse(response, selectedToken.toUpperCase());
+
+    expect(Challenge.fromResponseList(filtered).map((challenge) => challenge.id)).toEqual([
+      "selected-token",
+    ]);
+  });
+
+  it("reports available tokens when the selected token was not offered", () => {
+    const offeredToken = "0x1111111111111111111111111111111111111111";
+    const response = new Response(null, {
+      headers: {
+        "www-authenticate": Challenge.serialize(
+          paymentChallenge({
+            amount: "15000",
+            id: "offered-token",
+            intent: "charge",
+            chainId: 4217,
+            currency: offeredToken,
+          }),
+        ),
+      },
+      status: 402,
+    });
+
+    expect(() =>
+      selectPaymentTokenResponse(response, "0x2222222222222222222222222222222222222222"),
+    ).toThrow(`Available tokens: ${offeredToken}`);
+  });
+
+  it.each([
+    { name: "unversioned", protocols: [undefined], selectedId: undefined },
+    { name: "v1", protocols: ["v1"], selectedId: undefined },
+    { name: "v2", protocols: ["v2"], selectedId: "session-v2" },
+    { name: "mixed v1 and v2", protocols: ["v1", "v2"], selectedId: "session-v2" },
+  ])(
+    "uses session-first routing only for $name session challenges",
+    ({ protocols, selectedId }) => {
+      const charge = Challenge.from({
+        id: "charge",
+        intent: "charge",
+        method: "tempo",
+        realm: "example",
+        request: {
+          amount: "1",
+          currency: "0x20c000000000000000000000b9537d11c60e8b50",
+          methodDetails: { chainId: 4217 },
+          recipient: "0x0000000000000000000000000000000000000001",
+        },
+      });
+      const sessions = protocols.map((protocol) =>
+        Challenge.from({
+          id: `session-${protocol ?? "unversioned"}`,
+          intent: "session",
+          method: "tempo",
+          realm: "example",
+          request: {
+            amount: "1",
+            currency: "0x20c000000000000000000000b9537d11c60e8b50",
+            methodDetails: {
+              chainId: 4217,
+              ...(protocol ? { sessionProtocol: protocol } : {}),
+            },
+            recipient: "0x0000000000000000000000000000000000000001",
+          },
+        }),
+      );
+      const header = [charge, ...sessions]
+        .map((challenge) => Challenge.serialize(challenge))
+        .join(", ");
+
+      expect(sessionChallengeFromHeader(header)?.id).toBe(selectedId);
+    },
+  );
+
+  it("reports an offered charge without submitting it after session failure", () => {
+    const session = paymentChallenge({
+      amount: "15000",
+      id: "session",
+      intent: "session",
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+      sessionProtocol: "v2",
+    });
+    const charge = paymentChallenge({
+      amount: "15000",
+      id: "charge",
+      intent: "charge",
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+    });
+    const header = [charge, session].map((challenge) => Challenge.serialize(challenge)).join(", ");
+
+    expect(
+      chargeFallbackError(
+        header,
+        session,
+        requestOptions("https://example.com"),
+        "extension failed",
+      ),
+    ).toMatchObject({
+      code: "E_PAYMENT",
+      message:
+        "Session payment failed: extension failed\nA one-time charge of 0.015 is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --max-spend 0.015 --payment-intent charge.",
+    });
+  });
+
+  it("selects the cheapest compatible charge using normalized chain IDs", () => {
+    const currency = "0x20c000000000000000000000b9537d11c60e8b50";
+    const session = paymentChallenge({
+      amount: "15000",
+      id: "session",
+      intent: "session",
+      currency,
+      sessionProtocol: "v2",
+    });
+    const expensive = paymentChallenge({
+      amount: "25000",
+      id: "expensive",
+      intent: "charge",
+      chainId: 4217,
+      currency,
+    });
+    const cheapest = paymentChallenge({
+      amount: "15000",
+      id: "cheapest",
+      intent: "charge",
+      chainId: 4217,
+      currency,
+    });
+    const header = [session, expensive, cheapest]
+      .map((challenge) => Challenge.serialize(challenge))
+      .join(", ");
+
+    expect(
+      chargeFallbackError(header, session, requestOptions("https://example.com"), "failed")
+        ?.message,
+    ).toContain("one-time charge of 0.015");
+  });
+
   it("returns E_PAYMENT for non-dry-run 402 responses", async () => {
     const server = await testServer((_request, response) => {
       response.statusCode = 402;
@@ -330,12 +981,95 @@ describe("request command", () => {
     });
   });
 
+  it("fails before payment construction when the stored access key needs refresh", async () => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            ...walletState().accessKeys[0]!,
+            expiry: 1,
+            keyAuthorization: "0x1234",
+          },
+        ],
+      }),
+    );
+    const charge = paymentChallenge({
+      amount: "7000",
+      id: "expired-key-charge",
+      intent: "charge",
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+    });
+    const session = paymentChallenge({
+      amount: "7000",
+      id: "expired-key-session",
+      intent: "session",
+      chainId: 4217,
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+      sessionProtocol: "v2",
+    });
+    const header = [charge, session].map((challenge) => Challenge.serialize(challenge)).join(", ");
+    let requests = 0;
+    const server = await testServer((_request, response) => {
+      requests += 1;
+      response.statusCode = 402;
+      response.setHeader("www-authenticate", header);
+      response.end("Payment Required");
+    });
+
+    await expect(
+      runRequest([server.url("/paid")], { stdout: captureStdout() }),
+    ).rejects.toMatchObject({
+      code: "E_AUTH_REFRESH_REQUIRED",
+      exitCode: 4,
+      message: "The configured access key is expired. Run 'tempo wallet refresh' before retrying.",
+    });
+    expect(requests).toBe(1);
+  });
+
+  it("rejects a noncanonical Tempo session escrow before creating a credential", async () => {
+    let requests = 0;
+    const challenge = Challenge.from({
+      id: "untrusted-session-escrow",
+      intent: "session",
+      method: "tempo",
+      realm: "example",
+      request: {
+        amount: "1",
+        currency: "0x20c000000000000000000000b9537d11c60e8b50",
+        methodDetails: {
+          chainId: 4217,
+          escrowContract: "0x0000000000000000000000000000000000000bad",
+          sessionProtocol: "v2",
+        },
+        recipient: "0x0000000000000000000000000000000000000001",
+      },
+    });
+    const server = await testServer((_request, response) => {
+      requests++;
+      response.statusCode = 402;
+      response.setHeader("www-authenticate", Challenge.serialize(challenge));
+      response.end("Payment Required");
+    });
+
+    await expect(
+      runRequest([server.url("/paid")], { stdout: captureStdout() }),
+    ).rejects.toMatchObject({
+      code: "E_PAYMENT",
+      message: expect.stringContaining("Unsupported Tempo session escrow"),
+    });
+    expect(requests).toBe(1);
+  });
+
   it("accepts request global/payment compatibility flags", () => {
     expect(
       parseRequestArgs([
         "-t",
         "--max-spend",
         "1.00",
+        "--payment-intent",
+        "charge",
         "--connect-timeout",
         "2",
         "--insecure",
@@ -349,9 +1083,27 @@ describe("request command", () => {
       insecure: true,
       maxRedirs: 3,
       maxSpend: "1.00",
+      paymentIntent: "charge",
       noProxy: true,
       url: "https://example.com",
     });
+  });
+
+  it("defaults payment intent to auto and rejects unknown values", () => {
+    expect(parseRequestArgs(["https://example.com"]).paymentIntent).toBe("auto");
+    expect(() => parseRequestArgs(["--payment-intent", "refund", "https://example.com"])).toThrow(
+      "--payment-intent must be one of: auto, session, charge",
+    );
+  });
+
+  it("accepts an exact payment token address and rejects ambiguous names", () => {
+    const token = "0x1111111111111111111111111111111111111111";
+    expect(parseRequestArgs(["--payment-token", token, "https://example.com"]).paymentToken).toBe(
+      token,
+    );
+    expect(() => parseRequestArgs(["--payment-token", "USDC", "https://example.com"])).toThrow(
+      "--payment-token must be a 0x token address",
+    );
   });
 
   it("recovers stale session locks left behind by killed request processes", async () => {
@@ -425,7 +1177,7 @@ describe("request command", () => {
     const keyAuthorization = {
       address: testAccessKey,
       chainId: 4217n,
-      expiry: 1783809942,
+      expiry: 2_000_000_000,
       limits: [{ token: "0x20C000000000000000000000b9537d11c60E8b50", limit: 100000000n }],
       signature: { type: "secp256k1", signature: "0x1234" },
       type: "secp256k1",
@@ -456,6 +1208,26 @@ describe("request command", () => {
     expect(stored).toStrictEqual(keyAuthorization);
   });
 
+  it.each([
+    {
+      name: "expired",
+      overrides: { expiry: 1 },
+    },
+    {
+      name: "legacy authorization",
+      overrides: { expiry: 2_000_000_000, keyAuthorization: "0x1234" },
+    },
+  ])("does not use a stored $name access key for payments", async ({ overrides }) => {
+    const identity = await storedAccessKeyIdentity(
+      walletState({
+        accessKeys: [{ ...walletState().accessKeys[0]!, ...overrides }],
+      }),
+      requestOptions("https://paid.example.com"),
+    );
+
+    expect(identity).toBeUndefined();
+  });
+
   it("uses stored P-256 access keys for payment identity resolution", async () => {
     await useTempHome();
     const keystore = Keystore.webCryptoP256({ extractable: true });
@@ -471,7 +1243,7 @@ describe("request command", () => {
             address: account.accessKeyAddress,
             access: testWallet,
             chainId: 4217,
-            expiry: 1783809942,
+            expiry: 2_000_000_000,
             handle,
             keyType: "p256",
             limits: [],
@@ -628,9 +1400,11 @@ describe("request command", () => {
         token: descriptor.token,
       },
       record: {
+        chain_id: 4217,
         channel_id: `0x${"5".repeat(64)}`,
         descriptor_json: JSON.stringify(descriptor),
         escrow_contract: TempoChannel.address,
+        session_protocol: "v2",
       },
     });
 
@@ -647,10 +1421,66 @@ describe("request command", () => {
     expect(normalizeDescriptor(decoded.args[0])).toEqual(normalizeDescriptor(descriptor));
     expect(decoded.args[1]).toBe(5_000n);
   });
+
+  it("rejects top-ups for stored noncanonical session escrows", () => {
+    expect(() =>
+      buildTopUpTransactionRequest({
+        additionalDeposit: 5_000n,
+        details: {
+          feePayer: false,
+          token: "0x20c000000000000000000000b9537d11c60e8b50",
+        },
+        record: {
+          chain_id: 4217,
+          channel_id: `0x${"5".repeat(64)}`,
+          descriptor_json: JSON.stringify(sessionDescriptor()),
+          escrow_contract: "0x0000000000000000000000000000000000000bad",
+          session_protocol: "v2",
+        },
+      }),
+    ).toThrow("Unsupported Tempo session escrow");
+  });
 });
 
 function requestOptions(url: string): ReturnType<typeof parseRequestArgs> {
   return parseRequestArgs([url]);
+}
+
+function paymentChallenge(options: {
+  amount: string;
+  chainId?: number | undefined;
+  currency: string;
+  id: string;
+  intent: "charge" | "session";
+  sessionProtocol?: "v2" | undefined;
+}) {
+  return Challenge.from({
+    id: options.id,
+    intent: options.intent,
+    method: "tempo",
+    realm: "example",
+    request: {
+      amount: options.amount,
+      currency: options.currency,
+      methodDetails: {
+        ...(options.chainId ? { chainId: options.chainId } : {}),
+        ...(options.sessionProtocol ? { sessionProtocol: options.sessionProtocol } : {}),
+      },
+      recipient: "0x0000000000000000000000000000000000000001",
+    },
+  });
+}
+
+function mockSessionPayment(challenge: Challenge.Challenge, channelId: string) {
+  const credential = Credential.serialize({ challenge, payload: { channelId } });
+  vi.spyOn(TempoActions.token, "getBalance").mockResolvedValue({ amount: 1_000_000n } as never);
+  vi.spyOn(Mppx, "create").mockReturnValue({
+    onChallengeReceived: vi.fn(),
+    createCredential: vi.fn().mockResolvedValue(credential),
+    transport: {
+      setCredential: (init: RequestInit) => ({ ...init, headers: { authorization: credential } }),
+    },
+  } as unknown as ReturnType<typeof Mppx.create>);
 }
 
 function sessionDescriptor() {
@@ -701,14 +1531,17 @@ async function testServer(
 }
 
 function captureStdout() {
-  let output = "";
+  const chunks: Buffer[] = [];
   return {
     write(chunk: string | Uint8Array) {
-      output += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      chunks.push(Buffer.from(chunk));
       return true;
     },
     text() {
-      return output;
+      return Buffer.concat(chunks).toString("utf8");
+    },
+    bytes() {
+      return Buffer.concat(chunks);
     },
   };
 }

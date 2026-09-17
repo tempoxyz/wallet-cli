@@ -1,11 +1,81 @@
 # Changelog
 
+## 0.11.0 (2026-09-09)
+
+### Minor Changes
+
+- Add an access-key-aware `tempo wallet swap` command with quoting, slippage bounds, dry-run review, and explicit submission confirmation.
+- Report every held Tempo token and its active access-key limit from `tempo wallet whoami` while preserving the existing payment balance output.
+
+### Patch Changes
+
+- Preserve binary response bytes in default stdout and file output without requiring `--stream`.
+- Exit nonzero when any session close fails, while preserving the structured summary and successful pending-close exit status.
+- Handled missing browser opener errors on headless systems without terminating the CLI.
+- Preserve final payment responses and HTTP error output, and report uncertain payment outcomes with safe recovery references.
+- Enforce payment caps and network selection before credential creation, validate request options, and preview decoded payment quotes without paying.
+- Show closing and finalizable session reserves as `balance.pending_refund` in `whoami` and include them in `balance.total` until withdrawal completes.
+- Stream SSE JSON incrementally, respect retry deadlines, preserve repeated multipart fields, and route HEAD output consistently.
+- Report unavailable wallet balances as unknown instead of zero and include RPC diagnostics in wallet readiness output.
+
+## 0.10.4 (2026-09-01)
+
+### Patch Changes
+
+- Remove the unsupported MACH funding option and its configuration dependency.
+
+## 0.10.3 (2026-09-01)
+
+### Patch Changes
+
+- Verify and reuse identical versioned R2 objects while rejecting version collisions.
+
+## 0.10.2 (2026-08-31)
+
+### Patch Changes
+
+- Stage release assets in a draft before publishing immutable GitHub releases.
+
+## 0.10.1 (2026-08-31)
+
+### Patch Changes
+
+- Added exact payment-token selection and actionable delegated-key limit diagnostics.
+- Route the default MACH configuration lookup through Mercator's production onramp API.
+
+## 0.10.0 (2026-08-27)
+
+### Minor Changes
+
+- Add a MACH funding flow that opens the Wallet onramp and waits for the mainnet token balance to increase.
+
+## 0.9.0 (2026-08-26)
+
+### Minor Changes
+
+- Updated authentication to the new device-code flow.
+
+## 0.8.0 (2026-08-25)
+
+### Minor Changes
+
+- Add `tempo request --payment-intent auto|session|charge` with explicit consent for direct-charge
+  fallback after session recovery fails.
+
+### Patch Changes
+
+- Await the whoami payload in the compatibility `login --no-browser` path so it prints wallet details instead of an empty object.
+- Fall back to compatible charge challenges when servers also offer legacy Tempo sessions.
+- Report stale access keys before payment construction and direct users to refresh them.
+- Reject Tempo session challenges and automatic top-ups that target noncanonical escrow contracts.
+- Update production dependencies while preserving direct MCP tool discovery.
+
 ## 0.7.0 (2026-08-01)
 
 ### Minor Changes
 
 - Added access key limit updates and moved key listing from `keys` to `keys list`.
-  
+
   ```diff
   -tempo wallet keys
   +tempo wallet keys list

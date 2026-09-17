@@ -2,10 +2,11 @@ import { createWriteStream } from "node:fs";
 import { File } from "node:buffer";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
+import { Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { Challenge, Credential, PaymentRequest } from "mppx";
+import { Challenge, Constants, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession, tempo } from "mppx/client";
 import { Keystore } from "accounts";
 import { Session as TempoSession } from "mppx/tempo";
@@ -17,7 +18,7 @@ import {
   FormData as UndiciFormData,
   ProxyAgent,
 } from "undici";
-import { createWalletClient, encodeFunctionData, http, parseUnits } from "viem";
+import { createWalletClient, encodeFunctionData, http, isAddress, parseUnits } from "viem";
 import { prepareTransactionRequest, signTransaction } from "viem/actions";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -42,15 +43,28 @@ import {
 } from "../payment/session-store.js";
 import { connect, createProvider } from "../provider.js";
 import { escrowAbi, version } from "../shared/constants.js";
-import { networkError, paymentError, usageError } from "../shared/errors.js";
+import {
+  authRefreshRequiredError,
+  networkError,
+  httpError,
+  paymentOutcomeUnknownError,
+  paymentError,
+  usageError,
+} from "../shared/errors.js";
 import {
   chainId,
   createTempoPublicClient,
   escrowContract,
   networkName,
+  normalizeNetwork,
   rpcUrl,
 } from "../shared/network.js";
 import { getRecord, nowSeconds, parseOnChainBigInt, stringValue } from "../shared/utils.js";
+import {
+  accessKeyMatches,
+  isPaymentCapableAccessKey,
+  localAccessKeyStatus,
+} from "../wallet/access-key.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
 
 export type RequestOptions = {
@@ -76,6 +90,8 @@ export type RequestOptions = {
   network?: string | undefined;
   noProxy?: boolean | undefined;
   output?: string | undefined;
+  paymentIntent: PaymentIntent;
+  paymentToken?: string | undefined;
   privateKey?: string | undefined;
   proxy?: string | undefined;
   referer?: string | undefined;
@@ -96,6 +112,8 @@ export type RequestOptions = {
   userAgent?: string | undefined;
   writeMeta?: string | undefined;
 };
+
+export type PaymentIntent = "auto" | "session" | "charge";
 
 export type RequestRunOptions = {
   stdout?: Pick<NodeJS.WriteStream, "write"> | undefined;
@@ -124,6 +142,7 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
     dataUrlencode: [],
     form: [],
     headers: [],
+    paymentIntent: "auto",
   };
   const positionals: string[] = [];
 
@@ -154,6 +173,12 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
         break;
       case "--max-spend":
         options.maxSpend = requireValue(argv, ++index, arg);
+        break;
+      case "--payment-intent":
+        options.paymentIntent = paymentIntentValue(requireValue(argv, ++index, arg));
+        break;
+      case "--payment-token":
+        options.paymentToken = paymentTokenValue(requireValue(argv, ++index, arg));
         break;
       case "--private-key":
         options.privateKey = requireValue(argv, ++index, arg);
@@ -224,10 +249,10 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
         break;
       case "-m":
       case "--timeout":
-        options.maxTime = parsePositiveInteger(requireValue(argv, ++index, arg), arg);
+        options.maxTime = Number(requireValue(argv, ++index, arg));
         break;
       case "--connect-timeout":
-        options.connectTimeout = parsePositiveInteger(requireValue(argv, ++index, arg), arg);
+        options.connectTimeout = Number(requireValue(argv, ++index, arg));
         break;
       case "-d":
       case "--data":
@@ -296,12 +321,55 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
     }
   }
 
+  if (positionals.length !== 1) throw usageError("URL is required");
+  const url = positionals[0];
+  if (!url) throw usageError("URL is required");
+  const result = { ...options, url };
+  validateRequestOptions(result);
+  return result;
+}
+
+function validateRequestOptions(options: RequestOptions) {
+  validateUrl(options.url);
+  options.network = normalizeNetwork(
+    options.network ?? process.env.TEMPO_WALLET_NETWORK ?? "mainnet",
+  );
+  if (options.maxSpend !== undefined && !/^\d+(?:\.\d{1,6})?$/.test(options.maxSpend))
+    throw usageError("--max-spend must be a non-negative amount with at most 6 decimal places");
+  if (options.paymentToken !== undefined)
+    options.paymentToken = paymentTokenValue(options.paymentToken);
+  if (options.paymentIntent !== undefined) paymentIntentValue(options.paymentIntent);
+  for (const [value, flag] of [
+    [options.maxTime, "--timeout"],
+    [options.connectTimeout, "--connect-timeout"],
+  ] as const) {
+    if (
+      value !== undefined &&
+      (!Number.isFinite(value) || value <= 0 || Math.ceil(value * 1000) > 2_147_483_647)
+    )
+      throw usageError(`${flag} must be positive and at most 2147483.647 seconds`);
+  }
+  for (const [value, flag] of [
+    [options.retries, "--retries"],
+    [options.retryBackoffMs, "--retry-backoff"],
+    [options.retryJitter, "--retry-jitter"],
+    [options.maxRedirs, "--max-redirs"],
+  ] as const) {
+    if (value !== undefined) parseNonNegativeInteger(String(value), flag);
+  }
+  if (options.retryHttp !== undefined) {
+    const statuses = parseRetryStatuses(options.retryHttp, options.retries);
+    if (!options.retryHttp || [...statuses].some((status) => status < 100 || status > 599))
+      throw usageError("--retry-http must contain HTTP status codes between 100 and 599");
+  }
+  if (options.json !== undefined && options.toon !== undefined)
+    throw usageError("--json cannot be used with --toon");
   if (options.requestHttp1 && options.requestHttp2)
     throw usageError("--http2 cannot be used with --http1.1");
   if (
-    options.form.length > 0 &&
-    (options.data.length > 0 ||
-      options.dataUrlencode.length > 0 ||
+    options.form.length &&
+    (options.data.length ||
+      options.dataUrlencode.length ||
       options.json !== undefined ||
       options.toon !== undefined ||
       options.get)
@@ -309,45 +377,127 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
     throw usageError(
       "--form cannot be used with --data, --data-urlencode, --json, --toon, or --get",
     );
-  if (positionals.length !== 1) throw usageError("URL is required");
+}
 
-  const url = positionals[0];
-  if (!url) throw usageError("URL is required");
-  validateUrl(url);
-
-  return { ...options, url };
+// Pass exactly the validated offer to mppx. Observation hooks cannot reject payment.
+function preparePaymentChallenge(response: Response, options: RequestOptions, requestUrl: string) {
+  const selected = selectPaymentTokenResponse(response, options.paymentToken);
+  const header = selected.headers.get("www-authenticate");
+  const error = paymentChallengeError(header);
+  if (error) throw error;
+  let challenges: Challenge.Challenge[];
+  try {
+    challenges = Challenge.deserializeList(header!);
+  } catch {
+    throw paymentError("Malformed payment challenge");
+  }
+  const session =
+    options.paymentIntent !== "charge" ? sessionChallengeFromHeader(header) : undefined;
+  const challenge =
+    session ??
+    challenges.find(
+      (offer) =>
+        offer.method === "tempo" &&
+        (offer.intent === "charge" ||
+          (options.paymentIntent === "auto" && offer.intent === "subscription")),
+    );
+  if (!challenge || (options.paymentIntent === "session" && !session))
+    throw paymentError("Server did not offer a compatible payment intent");
+  const details = getRecord(challenge.request.methodDetails);
+  const offeredChain =
+    details.chainId ?? (challenge.intent === "subscription" ? 42431 : chainId(options.network));
+  if (offeredChain !== chainId(options.network))
+    throw paymentError(
+      `Payment network mismatch: expected chain ${chainId(options.network)}, received ${String(offeredChain)}`,
+    );
+  if (challenge.intent === "subscription" && options.maxSpend !== undefined)
+    throw paymentError(
+      "--max-spend cannot enforce cumulative spending for recurring subscriptions; choose a charge or session offer",
+    );
+  enforceMaxSpend(challenge, options);
+  validatePaymentAddresses(challenge);
+  if (challenge.intent === "session") sessionDetails(challenge, requestUrl, options);
+  const headers = new Headers(selected.headers);
+  headers.set("www-authenticate", Challenge.serialize(challenge));
+  return { challenge, response: new Response(null, { status: selected.status, headers }) };
 }
 
 export async function executeRequest(options: RequestOptions, io: RequestRunOptions = {}) {
+  validateRequestOptions(options);
   const stdout = io.stdout ?? process.stdout;
   const started = Date.now();
-  const request = await buildFetchRequest(options);
-  let response = await fetchWithRetries(request, options);
+  let { request, response } = await fetchWithRetries(await buildFetchRequest(options), options);
 
-  if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
-  if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
+  let paid = false;
 
   if (response.status === 402) {
     if (options.dryRun) {
-      await writeResponseBody(response, options, stdout);
+      const { challenge } = preparePaymentChallenge(response, options, request.url);
+      if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
+      if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
+      await writeOutput(
+        options.output,
+        `${JSON.stringify(
+          {
+            payment_required: true,
+            method: challenge.method,
+            intent: challenge.intent,
+            recurring: challenge.intent === "subscription",
+            amount: formatTokenAmount(challengeAmount(challenge)),
+            amount_raw: challenge.request.amount,
+            token: challenge.request.currency,
+            chain_id: normalizedChallengeChainId(
+              getRecord(challenge.request.methodDetails),
+              options,
+            ),
+            max_spend: options.maxSpend ?? null,
+            within_budget: options.maxSpend ? true : null,
+          },
+          null,
+          2,
+        )}\n`,
+        stdout,
+      );
       return;
     }
 
     response = await payAndRetryRequest(response, request, options);
+    paid = true;
   }
 
-  if (response.status >= 400) {
-    const body = await response.text().catch(() => "");
-    if (options.sseJson) {
-      write(
+  try {
+    if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
+    if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
+    if (response.status >= 400 && options.sseJson) {
+      const body = await response.text().catch(responseBodyNetworkError);
+      await writeOutput(
+        options.output ?? (options.remoteName ? remoteNamePath(options.url) : undefined),
+        `${JSON.stringify({ event: "error", status: response.status, message: `HTTP ${response.status}${body ? `: ${body}` : ""}`, ts: new Date().toISOString() })}\n`,
         stdout,
-        `${JSON.stringify({ event: "error", message: `HTTP ${response.status}${body ? `: ${body}` : ""}`, ts: new Date().toISOString() })}\n`,
       );
+    } else {
+      await writeResponseBody(response, options, stdout);
     }
-    throw networkError(`HTTP ${response.status}${body ? `: ${body}` : ""}`);
+    if (paidResponseFailures.has(response))
+      throw paymentOutcomeUnknownError(
+        `Paid response processing failed; payment may have completed.${paymentReferences.get(response) ?? ""} Check any saved response metadata and contact the provider before retrying.`,
+      );
+    if (response.status >= 400) throw httpError(response.status);
+  } catch (error) {
+    if (
+      paid &&
+      !(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error.code === "E_HTTP" || error.code === "E_PAYMENT_OUTCOME_UNKNOWN")
+      )
+    )
+      throw paymentOutcomeUnknownError(
+        `Paid response delivery failed; payment may have completed.${paymentReferences.get(response) ?? ""} Check any saved response metadata and contact the provider before retrying.`,
+      );
+    throw error;
   }
-
-  await writeResponseBody(response, options, stdout);
 }
 
 async function buildFetchRequest(options: RequestOptions) {
@@ -411,7 +561,7 @@ async function buildFetchRequest(options: RequestOptions) {
     redirect: "manual",
   };
   if (body !== undefined) init.body = body;
-  if (options.maxTime) init.signal = AbortSignal.timeout(options.maxTime * 1000);
+  if (options.maxTime) init.signal = AbortSignal.timeout(Math.ceil(options.maxTime * 1000));
   init.dispatcher = buildDispatcher(options);
 
   return { init, url: url.toString() };
@@ -428,39 +578,100 @@ async function fetchWithRetries(
 
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      const response = await fetchWithRedirects(request, options, fetchImpl);
+      const result = await fetchWithRedirects(request, options, fetchImpl);
+      const { response } = result;
       if (attempt + 1 < attempts && retryStatuses.has(response.status)) {
-        await waitBeforeRetry(response, options, attempt);
+        await response.body?.cancel();
+        await waitBeforeRetry(response, options, attempt, request.init.signal);
         continue;
       }
-      return response;
+      return result;
     } catch (error) {
       lastError = error;
-      if (attempt + 1 >= attempts) break;
-      await waitBeforeRetry(undefined, options, attempt);
+      if (request.init.signal?.aborted || attempt + 1 >= attempts) break;
+      try {
+        await waitBeforeRetry(undefined, options, attempt, request.init.signal);
+      } catch (error) {
+        lastError = error;
+        break;
+      }
     }
   }
 
   throw networkError(lastError instanceof Error ? lastError.message : String(lastError));
 }
 
+// Credentials may authorize payment even when the response never arrives. Never
+// include the credential itself (or transport error text that might echo it).
+export async function fetchPaidRequest(
+  request: FetchPlan,
+  options: RequestOptions,
+  credential: string,
+  fetchImpl: typeof fetch = undiciFetch as unknown as typeof fetch,
+) {
+  const reference = paymentRecoveryReference(credential);
+  try {
+    const { response } = await fetchWithRedirects(request, options, fetchImpl, true);
+    paymentReferences.set(response, reference);
+    return response;
+  } catch {
+    throw paymentOutcomeUnknownError(
+      `A payment credential was sent or attempted, but no final response was received; payment may have completed.${reference} Check with the provider before creating another payment.`,
+    );
+  }
+}
+
+const paymentReferences = new WeakMap<Response, string>();
+const paidResponseFailures = new WeakSet<Response>();
+
+function paymentRecoveryReference(credential: string) {
+  let reference = "";
+  try {
+    const parsed = Credential.deserialize<Record<string, unknown>>(credential);
+    reference = ` Challenge ID: ${recoveryReferenceValue(parsed.challenge.id)}. Intent: ${recoveryReferenceValue(parsed.challenge.intent)}.`;
+    const hash = parsed.payload.hash;
+    if (
+      parsed.payload.type === "hash" &&
+      typeof hash === "string" &&
+      /^0x[0-9a-fA-F]{64}$/.test(hash)
+    )
+      reference += ` Transaction hash: ${hash}.`;
+    const channelId = parsed.payload.channelId;
+    if (typeof channelId === "string" && /^0x[0-9a-fA-F]{64}$/.test(channelId))
+      reference += ` Channel ID: ${channelId}.`;
+  } catch {
+    // Recovery hints must never replace the original outcome classification.
+  }
+  return reference;
+}
+
+function recoveryReferenceValue(value: unknown) {
+  return JSON.stringify(String(value).slice(0, 200));
+}
+
 async function fetchWithRedirects(
   request: FetchPlan,
   options: RequestOptions,
   fetchImpl: typeof fetch,
+  sameOriginOnly = false,
 ) {
   let current = { init: cloneRequestInit(request.init), url: request.url };
   const limit = options.followRedirects ? (options.maxRedirs ?? 10) : 0;
 
   for (let redirects = 0; ; redirects++) {
     const response = await fetchImpl(current.url, cloneRequestInit(current.init));
-    if (!options.followRedirects || !isRedirectStatus(response.status)) return response;
+    if (!options.followRedirects || !isRedirectStatus(response.status))
+      return { request: current, response };
 
     const location = response.headers.get("location");
-    if (!location) return response;
+    if (!location) return { request: current, response };
     if (redirects >= limit) throw networkError(`Too many redirects: exceeded ${limit}`);
 
-    current = redirectRequest(current, response.status, location);
+    const nextUrl = new URL(location, current.url);
+    if (sameOriginOnly && nextUrl.origin !== new URL(current.url).origin)
+      throw networkError("Refusing to forward a payment credential to another origin");
+
+    current = redirectRequest(current, response.status, nextUrl.toString());
   }
 }
 
@@ -494,16 +705,42 @@ async function payAndRetryRequest(
   request: FetchPlan,
   options: RequestOptions,
 ) {
-  const header = paymentRequiredResponse.headers.get("www-authenticate");
-  const preflightError = paymentChallengeError(header);
-  if (preflightError) throw preflightError;
-  const challengeResponse = tempoPaymentChallengeResponse(paymentRequiredResponse);
+  const { response: selectedResponse } = preparePaymentChallenge(
+    paymentRequiredResponse,
+    options,
+    request.url,
+  );
+  const header = selectPaymentTokenResponse(
+    paymentRequiredResponse,
+    options.paymentToken,
+  ).headers.get("www-authenticate");
+  const challengeResponse = tempoPaymentChallengeResponse(selectedResponse);
 
   const sessionChallenge = sessionChallengeFromHeader(header);
-  if (sessionChallenge)
-    return withSessionLock(request.url, () =>
-      paySessionAndRetryRequest(paymentRequiredResponse, request, options, sessionChallenge),
-    );
+  if (options.paymentIntent !== "charge" && sessionChallenge) {
+    let response: Response;
+    try {
+      response = await withSessionLock(request.url, () =>
+        paySessionAndRetryRequest(selectedResponse, request, options, sessionChallenge),
+      );
+    } catch (error) {
+      if (
+        isAuthRefreshRequiredError(error) ||
+        (error &&
+          typeof error === "object" &&
+          "code" in error &&
+          error.code === "E_PAYMENT_OUTCOME_UNKNOWN")
+      )
+        throw error;
+      if (options.paymentIntent === "auto")
+        throw chargeFallbackError(header, sessionChallenge, options, error) ?? error;
+      throw error;
+    }
+    return response;
+  }
+
+  if (options.paymentIntent === "session")
+    throw paymentError("Server did not offer a compatible 'session' payment intent");
 
   try {
     const identity = await resolvePaymentIdentity(options);
@@ -512,16 +749,19 @@ async function payAndRetryRequest(
     const getClient = identity.getClient;
     const methodOptions = {
       ...identity.methodOptions,
+      expectedChainId: chainId(options.network),
       getClient,
       ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
     };
     const payment = Mppx.create({
-      methods: [tempo(methodOptions), tempo.subscription({ getClient })],
+      methods: [
+        tempo.charge(methodOptions),
+        ...(options.paymentIntent === "auto" ? [tempo.subscription({ getClient })] : []),
+      ],
       polyfill: false,
     });
 
     payment.onChallengeReceived(async ({ challenge, createCredential }) => {
-      enforceMaxSpend(challenge, options);
       if (provider && providerState!.store.getState().accounts.length === 0)
         await ensureProviderAccounts(provider);
       return await createCredential(paymentContext(challenge, options) as never);
@@ -529,17 +769,11 @@ async function payAndRetryRequest(
 
     const credential = await payment.createCredential(challengeResponse);
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
-    return await fetchWithRetries(
-      { init: paidInit, url: paymentRequiredResponse.url || request.url },
-      options,
-    );
+    return await fetchPaidRequest({ init: paidInit, url: request.url }, options, credential);
   } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      (error as Record<string, unknown>).code === "E_PAYMENT"
-    )
-      throw error;
+    if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
+    const diagnostic = spendingLimitDiagnostic(error, header, options);
+    if (diagnostic) throw diagnostic;
     throw paymentError(error instanceof Error ? error.message : String(error));
   }
 }
@@ -552,14 +786,15 @@ async function paySessionAndRetryRequest(
   skipChannelId?: string | undefined,
 ) {
   try {
-    const identity = await resolvePaymentIdentity(options);
     const details = sessionDetails(challenge, request.url, options);
+    const identity = await resolvePaymentIdentity(options);
     const reusable = await reusableSessionRecord(details, identity, skipChannelId);
     const challengeResponse = tempoPaymentChallengeResponse(paymentRequiredResponse);
     const payment = Mppx.create({
       methods: [
         tempoSession({
           ...identity.methodOptions,
+          getClient: identity.getClient,
           ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
         }),
       ],
@@ -603,9 +838,10 @@ async function paySessionAndRetryRequest(
     }
 
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
-    const response = await fetchWithRetries(
-      { init: paidInit, url: paymentRequiredResponse.url || request.url },
+    const response = await fetchPaidRequest(
+      { init: paidInit, url: request.url },
       options,
+      credential,
     );
     if (reusable && response.status === 402) {
       const recovered = await tryTopUpAndRetry({
@@ -623,7 +859,12 @@ async function paySessionAndRetryRequest(
       if (recovered) return recovered;
     }
     if (reusable && (await isSessionInvalidationResponse(response))) {
-      await deleteSessionRecord(reusable.channel_id);
+      try {
+        await deleteSessionRecord(reusable.channel_id);
+      } catch {
+        paidResponseFailures.add(response);
+        return response;
+      }
       return paySessionAndRetryRequest(
         paymentRequiredResponse,
         request,
@@ -632,15 +873,14 @@ async function paySessionAndRetryRequest(
         reusable.channel_id,
       );
     }
-    await persistSessionReceipt(response, record.channel_id, signedCumulative);
+    try {
+      await persistSessionReceipt(response, record.channel_id, signedCumulative);
+    } catch {
+      paidResponseFailures.add(response);
+    }
     return response;
   } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      (error as Record<string, unknown>).code === "E_PAYMENT"
-    )
-      throw error;
+    if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
     throw paymentError(error instanceof Error ? error.message : String(error));
   }
 }
@@ -649,11 +889,16 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
   const privateKey = options.privateKey ?? process.env.TEMPO_PRIVATE_KEY;
   if (privateKey) {
     const account = privateKeyToAccount(privateKey as `0x${string}`);
-    const getClient = ({ chainId }: { chainId?: number | undefined }) =>
+    const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) =>
       createWalletClient({
         account,
-        chain: chainId === 42431 ? Chain.tempoModerato : Chain.tempo,
-        transport: http(rpcUrl(chainId === 42431 ? "testnet" : "mainnet")),
+        chain:
+          (requestedChainId ?? chainId(options.network)) === 42431
+            ? Chain.tempoModerato
+            : Chain.tempo,
+        transport: http(
+          rpcUrl((requestedChainId ?? chainId(options.network)) === 42431 ? "testnet" : "mainnet"),
+        ),
       });
     return {
       address: account.address,
@@ -663,16 +908,31 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
     };
   }
 
-  const storedIdentity = await storedAccessKeyIdentity(await loadWalletState(), options);
+  const walletState = await loadWalletState();
+  const storedIdentity = await storedAccessKeyIdentity(walletState, options);
   if (storedIdentity) return storedIdentity;
+
+  const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
+  if (activeAccount) {
+    const staleKey = walletState.accessKeys.find((key) =>
+      accessKeyMatches(key, {
+        chainId: chainId(options.network),
+        walletAddress: activeAccount.address,
+      }),
+    );
+    const status = staleKey ? localAccessKeyStatus(staleKey) : "missing";
+    throw authRefreshRequiredError(
+      status === "pending" || status === "ready" ? "unusable" : status,
+    );
+  }
 
   const provider = createProvider({ network: options.network });
   const providerState = provider as unknown as {
     store: { getState(): { accounts: { address: string }[]; activeAccount: number } };
   };
   await ensureProviderAccounts(provider);
-  const getClient = ({ chainId }: { chainId?: number | undefined }) => {
-    const client = provider.getClient({ chainId });
+  const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) => {
+    const client = provider.getClient({ chainId: requestedChainId ?? chainId(options.network) });
     const state = providerState.store.getState();
     const account = state.accounts[state.activeAccount];
     if (!account) throw new Error("No active account.");
@@ -713,6 +973,8 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
   for (const key of walletState.accessKeys) {
     if (key.chainId !== expectedChain) continue;
     if (key.keyType && key.keyType !== "secp256k1" && key.keyType !== "p256") continue;
+    if (key.access.toLowerCase() !== activeAccount.address.toLowerCase()) continue;
+    if (!isPaymentCapableAccessKey(key)) continue;
 
     const keyAuthorizationManager = KeyAuthorizationManager.memory();
     if (key.keyAuthorization) {
@@ -752,11 +1014,16 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
     if (!account) continue;
     if (key.address.toLowerCase() !== account.accessKeyAddress.toLowerCase()) continue;
 
-    const getClient = ({ chainId }: { chainId?: number | undefined }) =>
+    const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) =>
       createWalletClient({
         account,
-        chain: chainId === 42431 ? Chain.tempoModerato : Chain.tempo,
-        transport: http(rpcUrl(chainId === 42431 ? "testnet" : "mainnet")),
+        chain:
+          (requestedChainId ?? chainId(options.network)) === 42431
+            ? Chain.tempoModerato
+            : Chain.tempo,
+        transport: http(
+          rpcUrl((requestedChainId ?? chainId(options.network)) === 42431 ? "testnet" : "mainnet"),
+        ),
       });
     return {
       account,
@@ -768,6 +1035,24 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
   }
 
   return undefined;
+}
+
+function isActionablePaymentError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as Record<string, unknown>).code;
+  return (
+    code === "E_PAYMENT_OUTCOME_UNKNOWN" ||
+    code === "E_PAYMENT" ||
+    code === "E_AUTH_REFRESH_REQUIRED"
+  );
+}
+
+function isAuthRefreshRequiredError(error: unknown) {
+  return (
+    Boolean(error) &&
+    typeof error === "object" &&
+    (error as Record<string, unknown>).code === "E_AUTH_REFRESH_REQUIRED"
+  );
 }
 
 type PaymentIdentity = Awaited<ReturnType<typeof resolvePaymentIdentity>>;
@@ -784,19 +1069,31 @@ function sessionDetails(
   const amount = bigintField(request.amount, "amount");
   const token = stringValue(request.currency).toLowerCase();
   const payee = stringValue(request.recipient).toLowerCase();
+  const sessionProtocol = stringValue(methodDetails.sessionProtocol) || "v1";
   if (!token) throw paymentError("Session challenge is missing currency");
   if (!payee) throw paymentError("Session challenge is missing recipient");
+  if (sessionProtocol !== "v1" && sessionProtocol !== "v2")
+    throw paymentError(`Unsupported Tempo session protocol: ${sessionProtocol}`);
+
+  const expectedEscrow =
+    sessionProtocol === "v2" ? TempoChannel.address : escrowContract(resolvedChainId);
+  for (const advertisedEscrow of [methodDetails.escrowContract, methodDetails.escrow]) {
+    const address = stringValue(advertisedEscrow);
+    if (address && address.toLowerCase() !== expectedEscrow.toLowerCase())
+      throw paymentError(
+        `Unsupported Tempo session escrow: expected ${expectedEscrow}, received ${address}`,
+      );
+  }
 
   return {
     amount,
     chainId: resolvedChainId,
-    escrowContract: stringValue(
-      methodDetails.escrowContract || escrowContract(resolvedChainId),
-    ).toLowerCase(),
+    escrowContract: expectedEscrow.toLowerCase(),
     feePayer: Boolean(methodDetails.feePayer),
     origin: originFromUrl(requestUrl),
     payee,
     requestUrl,
+    sessionProtocol,
     suggestedDeposit:
       typeof request.suggestedDeposit === "string" && /^\d+$/.test(request.suggestedDeposit)
         ? BigInt(request.suggestedDeposit)
@@ -885,7 +1182,10 @@ async function tryTopUpAndRetry(options: {
   response: Response;
   signedCumulative: bigint;
 }) {
-  const body = await options.response.text().catch(() => "");
+  const body = await options.response
+    .clone()
+    .text()
+    .catch(() => "");
   const additionalDeposit = topUpAmountFromProblem(body, options.record, options.signedCumulative);
   if (additionalDeposit <= 0n) return undefined;
   if (options.options.maxSpend) {
@@ -913,28 +1213,39 @@ async function tryTopUpAndRetry(options: {
   );
   const topUpInit = topUpRequestInit(options.request.init);
   const authorizedTopUp = options.payment.transport.setCredential(topUpInit, topUpCredential);
-  const topUpResponse = await fetchWithRetries(
-    { init: authorizedTopUp, url: options.paymentRequiredResponse.url || options.request.url },
+  const topUpResponse = await fetchPaidRequest(
+    { init: authorizedTopUp, url: options.request.url },
     options.options,
+    topUpCredential,
   );
   if (topUpResponse.status >= 400) return topUpResponse;
 
-  await upsertSessionRecord({
-    ...options.record,
-    deposit: options.record.deposit + additionalDeposit,
-    last_used_at: nowSeconds(),
-  });
-  await persistSessionReceipt(topUpResponse, options.record.channel_id, options.signedCumulative);
+  try {
+    await upsertSessionRecord({
+      ...options.record,
+      deposit: options.record.deposit + additionalDeposit,
+      last_used_at: nowSeconds(),
+    });
+    await persistSessionReceipt(topUpResponse, options.record.channel_id, options.signedCumulative);
+  } catch {
+    paidResponseFailures.add(topUpResponse);
+    return topUpResponse;
+  }
 
   const paidInit = options.payment.transport.setCredential(
     cloneRequestInit(options.request.init),
     options.credential,
   );
-  const retried = await fetchWithRetries(
-    { init: paidInit, url: options.paymentRequiredResponse.url || options.request.url },
+  const retried = await fetchPaidRequest(
+    { init: paidInit, url: options.request.url },
     options.options,
+    options.credential,
   );
-  await persistSessionReceipt(retried, options.record.channel_id, options.signedCumulative);
+  try {
+    await persistSessionReceipt(retried, options.record.channel_id, options.signedCumulative);
+  } catch {
+    paidResponseFailures.add(retried);
+  }
   return retried;
 }
 
@@ -964,10 +1275,21 @@ async function buildTopUpTransaction(options: {
 export function buildTopUpTransactionRequest(options: {
   additionalDeposit: bigint;
   details: Pick<SessionDetails, "feePayer" | "token">;
-  record: Pick<PersistedSessionRecord, "channel_id" | "descriptor_json" | "escrow_contract">;
+  record: Pick<
+    PersistedSessionRecord,
+    "chain_id" | "channel_id" | "descriptor_json" | "escrow_contract" | "session_protocol"
+  >;
 }) {
-  const isPrecompile =
-    options.record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase();
+  const isPrecompile = options.record.session_protocol === "v2";
+  if (!isPrecompile && options.record.session_protocol !== "v1")
+    throw paymentError(`Unsupported Tempo session protocol: ${options.record.session_protocol}`);
+  const expectedEscrow = isPrecompile
+    ? TempoChannel.address
+    : escrowContract(options.record.chain_id);
+  if (options.record.escrow_contract.toLowerCase() !== expectedEscrow.toLowerCase())
+    throw paymentError(
+      `Unsupported Tempo session escrow: expected ${expectedEscrow}, received ${options.record.escrow_contract}`,
+    );
   const topUpData = encodeFunctionData({
     abi: isPrecompile ? TempoAbis.tip20ChannelReserve : escrowAbi,
     functionName: "topUp",
@@ -1045,7 +1367,7 @@ const tip20Abi = [
 function sessionDepositRaw(details: SessionDetails, options: RequestOptions) {
   const maxSpend = options.maxSpend ? parseUnits(options.maxSpend, 6) : undefined;
   const preferred = details.suggestedDeposit ?? maxSpend ?? details.amount;
-  const deposit = maxSpend && preferred > maxSpend ? maxSpend : preferred;
+  const deposit = maxSpend !== undefined && preferred > maxSpend ? maxSpend : preferred;
   if (deposit < details.amount) throw paymentError("Session payment exceeds --max-spend");
   return deposit;
 }
@@ -1055,7 +1377,7 @@ async function assertSufficientSessionBalance(
   details: SessionDetails,
   depositRaw: bigint,
 ) {
-  const client = createTempoPublicClient(details.chainId === 42431 ? "testnet" : undefined);
+  const client = createTempoPublicClient(details.chainId === 42431 ? "testnet" : "mainnet");
   const balance = (
     await Actions.token.getBalance(client as never, {
       account: payer as `0x${string}`,
@@ -1185,16 +1507,86 @@ async function readOnChainChannel(record: PersistedSessionRecord) {
   };
 }
 
-function sessionChallengeFromHeader(header: string | null) {
+export function sessionChallengeFromHeader(header: string | null) {
   if (!header) return undefined;
   try {
-    const challenges = Challenge.deserializeList(header).filter(
-      (challenge) => challenge.method === "tempo" && challenge.intent === "session",
+    return Challenge.deserializeList(header).find(
+      (challenge) =>
+        challenge.method === "tempo" &&
+        challenge.intent === "session" &&
+        Constants.getMethodDetail(
+          challenge.request.methodDetails,
+          Constants.MethodDetailKeys.sessionProtocol,
+        ) === Constants.SessionProtocols.v2,
     );
-    return challenges[0];
   } catch {
     return undefined;
   }
+}
+
+function chargeChallengeFromHeader(
+  header: string | null,
+  sessionChallenge: Challenge.Challenge,
+  options: RequestOptions,
+) {
+  if (!header) return undefined;
+  try {
+    const sessionRequest = sessionChallenge.request as Record<string, unknown>;
+    const sessionMethodDetails = getRecord(sessionRequest.methodDetails);
+    const sessionChainId = normalizedChallengeChainId(sessionMethodDetails, options);
+    const sessionCurrency = stringValue(sessionRequest.currency).toLowerCase();
+    const sessionRecipient = stringValue(sessionRequest.recipient).toLowerCase();
+    return Challenge.deserializeList(header)
+      .filter((challenge) => {
+        if (challenge.method !== "tempo" || challenge.intent !== "charge") return false;
+        const request = challenge.request as Record<string, unknown>;
+        const methodDetails = getRecord(request.methodDetails);
+        return (
+          normalizedChallengeChainId(methodDetails, options) === sessionChainId &&
+          stringValue(request.currency).toLowerCase() === sessionCurrency &&
+          stringValue(request.recipient).toLowerCase() === sessionRecipient
+        );
+      })
+      .sort((left, right) => {
+        const leftAmount = challengeAmount(left);
+        const rightAmount = challengeAmount(right);
+        return leftAmount < rightAmount ? -1 : leftAmount > rightAmount ? 1 : 0;
+      })[0];
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizedChallengeChainId(
+  methodDetails: Record<string, unknown>,
+  options: RequestOptions,
+) {
+  return typeof methodDetails.chainId === "number"
+    ? methodDetails.chainId
+    : chainId(options.network);
+}
+
+export function chargeFallbackError(
+  header: string | null,
+  sessionChallenge: Challenge.Challenge,
+  options: RequestOptions,
+  reason: unknown,
+) {
+  const challenge = chargeChallengeFromHeader(header, sessionChallenge, options);
+  if (!challenge) return undefined;
+  const amount = challengeAmount(challenge);
+  if (options.maxSpend && amount > parseUnits(options.maxSpend, 6)) return undefined;
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const formattedAmount = formatTokenAmount(amount);
+  return paymentError(
+    `Session payment failed: ${message}\nA one-time charge of ${formattedAmount} is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --max-spend ${formattedAmount} --payment-intent charge.`,
+  );
+}
+
+function challengeAmount(challenge: Challenge.Challenge) {
+  const amount = (challenge.request as Record<string, unknown>).amount;
+  if (typeof amount === "string" && /^\d+$/.test(amount)) return BigInt(amount);
+  throw paymentError("Charge challenge is missing amount");
 }
 
 function challengeEchoJson(challenge: Challenge.Challenge) {
@@ -1228,6 +1620,72 @@ function maxBigInt(...values: bigint[]) {
   return values.reduce((max, value) => (value > max ? value : max), 0n);
 }
 
+function paymentIntentValue(value: string): PaymentIntent {
+  if (value === "auto" || value === "session" || value === "charge") return value;
+  throw usageError("--payment-intent must be one of: auto, session, charge");
+}
+
+function paymentTokenValue(value: string) {
+  if (!isAddress(value)) throw usageError("--payment-token must be a 0x token address");
+  return value.toLowerCase();
+}
+
+function spendingLimitDiagnostic(error: unknown, header: string | null, options: RequestOptions) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!/SpendingLimitExceeded|spending limit exceeded/i.test(message)) return undefined;
+  const currencies = offeredTempoCurrencies(header);
+  const token = options.paymentToken ?? (currencies.length === 1 ? currencies[0] : undefined);
+  if (!token)
+    return paymentError(
+      `${message}\nThe delegated key may not cover the payment token. Retry with --payment-token <token-address> to select one offer, then update that token limit with 'tempo wallet keys update --token <token-address> --limit <amount>'.`,
+    );
+  return paymentError(
+    `${message}\nThe delegated key may not cover payment token ${token}. Review the key with 'tempo wallet keys list', then authorize that token with 'tempo wallet keys update --token ${token} --limit <amount>'.`,
+  );
+}
+
+function offeredTempoCurrencies(header: string | null) {
+  if (!header) return [];
+  try {
+    return [
+      ...new Set(
+        Challenge.deserializeList(header).flatMap((challenge) => {
+          if (challenge.method !== "tempo") return [];
+          const request = challenge.request as Record<string, unknown>;
+          const currency = stringValue(request.currency).toLowerCase();
+          return currency ? [currency] : [];
+        }),
+      ),
+    ];
+  } catch {
+    return [];
+  }
+}
+
+function responseBodyNetworkError(error: unknown): never {
+  throw networkError(error instanceof Error ? error.message : String(error));
+}
+
+async function* readResponseBody(body: ReadableStream<Uint8Array>, signal?: AbortSignal) {
+  const reader = body.getReader();
+  const cancel = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  try {
+    while (true) {
+      const { done, value } = await reader.read().catch(responseBodyNetworkError);
+      if (done) return;
+      yield value;
+    }
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
 async function writeResponseBody(
   response: Response,
   options: RequestOptions,
@@ -1239,15 +1697,29 @@ async function writeResponseBody(
   const headerText = includeHeaders ? responseHeaderText(response) : "";
 
   if (options.head) {
-    write(stdout, headerText);
-    if (outputPath) await writeFile(outputPath, headerText);
+    await writeOutput(outputPath, headerText, stdout);
     return;
   }
 
   if (options.sseJson) {
-    const text = await response.text();
-    const body = sseToNdjson(text);
-    await writeOutput(outputPath, `${headerText}${body}`, stdout);
+    if (outputPath) {
+      try {
+        await mkdir(dirname(outputPath), { recursive: true });
+      } catch (error) {
+        await response.body?.cancel().catch(() => undefined);
+        throw error;
+      }
+      await pipeline(
+        (options) => sseToNdjson(response, headerText, options?.signal),
+        createWriteStream(outputPath),
+      );
+    } else if (stdout instanceof Writable) {
+      await pipeline((options) => sseToNdjson(response, headerText, options?.signal), stdout, {
+        end: false,
+      });
+    } else {
+      for await (const chunk of sseToNdjson(response, headerText)) write(stdout, chunk);
+    }
     return;
   }
 
@@ -1257,25 +1729,32 @@ async function writeResponseBody(
     if (outputPath) {
       await mkdir(dirname(outputPath), { recursive: true });
       if (headerText) await writeFile(outputPath, headerText);
-      await pipeline(body, createWriteStream(outputPath, { flags: headerText ? "a" : "w" }));
+      await pipeline(
+        ({ signal } = {}) => readResponseBody(body, signal),
+        createWriteStream(outputPath, { flags: headerText ? "a" : "w" }),
+      );
     } else {
-      write(stdout, headerText);
-      await pipeline(body, process.stdout);
+      await write(stdout, headerText);
+      await pipeline(({ signal } = {}) => readResponseBody(body, signal), process.stdout);
     }
     return;
   }
 
-  const body = await response.text();
-  await writeOutput(outputPath, `${headerText}${body}`, stdout);
+  const body = Buffer.from(await response.arrayBuffer().catch(responseBodyNetworkError));
+  await writeOutput(
+    outputPath,
+    headerText ? Buffer.concat([Buffer.from(headerText), body]) : body,
+    stdout,
+  );
 }
 
 async function writeOutput(
   path: string | undefined,
-  text: string,
+  text: string | Uint8Array,
   stdout: Pick<NodeJS.WriteStream, "write">,
 ) {
   if (!path) {
-    write(stdout, text);
+    await write(stdout, text);
     return;
   }
   await mkdir(dirname(path), { recursive: true });
@@ -1323,6 +1802,41 @@ export function tempoPaymentChallengeResponse(response: Response) {
   });
 }
 
+export function selectPaymentTokenResponse(response: Response, token: string | undefined) {
+  if (!token) return response;
+  const header = response.headers.get("www-authenticate");
+  if (!header) return response;
+
+  let challenges: Challenge.Challenge[];
+  try {
+    challenges = Challenge.deserializeList(header).filter((challenge) => {
+      if (challenge.method !== "tempo") return false;
+      const request = challenge.request as Record<string, unknown>;
+      return stringValue(request.currency).toLowerCase() === token.toLowerCase();
+    });
+  } catch {
+    return response;
+  }
+
+  if (challenges.length === 0) {
+    const available = offeredTempoCurrencies(header);
+    throw paymentError(
+      `Server did not offer payment token ${token}.${available.length > 0 ? ` Available tokens: ${available.join(", ")}.` : ""}`,
+    );
+  }
+
+  const headers = new Headers(response.headers);
+  headers.set(
+    "www-authenticate",
+    challenges.map((challenge) => Challenge.serialize(challenge)).join(", "),
+  );
+  return new Response(null, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+}
+
 function paymentChallengeError(header: string | null) {
   if (!header)
     return paymentError("Payment required but response is missing WWW-Authenticate header");
@@ -1339,15 +1853,25 @@ function paymentContext(challenge: { intent: string }, options: RequestOptions) 
 }
 
 function enforceMaxSpend(challenge: { request: Record<string, unknown> }, options: RequestOptions) {
-  if (!options.maxSpend) return;
   const amount = challenge.request.amount;
-  if (typeof amount !== "string") return;
+  if (typeof amount !== "string" || !/^\d+$/.test(amount))
+    throw paymentError("Payment challenge is missing a valid amount");
+  if (!options.maxSpend) return;
   const maxSpend = parseUnits(options.maxSpend, 6);
   const required = BigInt(amount);
   if (required <= maxSpend) return;
   throw paymentError(
     `Payment max spend exceeded: max=${options.maxSpend} required=${formatTokenAmount(required)}`,
   );
+}
+
+function validatePaymentAddresses(challenge: Challenge.Challenge) {
+  const request = challenge.request as Record<string, unknown>;
+  if (!isAddress(stringValue(request.currency)))
+    throw paymentError("Payment challenge is missing a valid currency address");
+  const isProof = challenge.intent === "charge" && BigInt(request.amount as string) === 0n;
+  if (!isProof && !isAddress(stringValue(request.recipient)))
+    throw paymentError("Payment challenge is missing a valid recipient address");
 }
 
 function formatTokenAmount(value: bigint) {
@@ -1427,12 +1951,6 @@ function parseNonNegativeInteger(value: string, flag: string) {
   return parsed;
 }
 
-function normalizeNetwork(value: string) {
-  if (value === "testnet" || value === "tempo-moderato" || value === "moderato") return "testnet";
-  if (value === "mainnet" || value === "tempo") return "mainnet";
-  throw usageError(`Unsupported network: ${value}`);
-}
-
 async function readDataValue(value: string) {
   if (value === "@-") return readStdin();
   if (value.startsWith("@")) return readFile(value.slice(1), "utf8");
@@ -1475,9 +1993,9 @@ async function appendFormField(form: UndiciFormData, field: string) {
     const file = new File([await readFile(rawPath)], basename(rawPath), {
       type: contentType ?? "application/octet-stream",
     });
-    form.set(name, file, basename(rawPath));
+    form.append(name, file, basename(rawPath));
   } else {
-    form.set(name, value);
+    form.append(name, value);
   }
 }
 
@@ -1497,6 +2015,7 @@ async function waitBeforeRetry(
   response: Response | undefined,
   options: RequestOptions,
   attempt: number,
+  signal: AbortSignal | null | undefined,
 ) {
   const retryAfter =
     response && (options.retryAfter || options.retries !== undefined)
@@ -1507,7 +2026,7 @@ async function waitBeforeRetry(
   const jitter = options.retryJitter
     ? Math.floor(exponential * ((Math.random() * options.retryJitter) / 100))
     : 0;
-  await sleep(retryAfter ?? exponential + jitter);
+  await sleep(retryAfter ?? exponential + jitter, undefined, { signal: signal ?? undefined });
 }
 
 function retryAfterMs(value: string | null) {
@@ -1519,26 +2038,61 @@ function retryAfterMs(value: string | null) {
   return undefined;
 }
 
-function sseToNdjson(text: string) {
-  const lines: string[] = [];
-  for (const event of text.split(/\n\n+/)) {
-    const eventName =
-      event
-        .split("\n")
-        .find((line) => line.startsWith("event:"))
-        ?.slice("event:".length)
-        .trim() || "data";
-    const data = event
-      .split("\n")
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice("data:".length).trimStart())
-      .join("\n");
-    if (data)
-      lines.push(
-        `${JSON.stringify({ event: eventName, data: parseSseData(data), ts: new Date().toISOString() })}\n`,
-      );
+async function* sseToNdjson(response: Response, headerText: string, signal?: AbortSignal) {
+  if (!response.body) {
+    if (headerText) yield headerText;
+    return;
   }
-  return lines.join("");
+  const reader = response.body.getReader();
+  const cancel = () => void reader.cancel(signal?.reason).catch(() => undefined);
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener("abort", cancel, { once: true });
+  const decoder = new TextDecoder();
+  let pending = "";
+  let skipLeadingLf = false;
+  let eventName = "data";
+  let data: string[] = [];
+  try {
+    if (headerText) yield headerText;
+    while (true) {
+      const { value, done } = await reader.read();
+      pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      while (true) {
+        if (skipLeadingLf) {
+          if (pending.length === 0) break;
+          if (pending[0] === "\n") pending = pending.slice(1);
+          skipLeadingLf = false;
+        }
+        const boundary = pending.search(/[\r\n]/);
+        if (boundary < 0) break;
+        const line = pending.slice(0, boundary);
+        skipLeadingLf = pending[boundary] === "\r";
+        pending = pending.slice(boundary + 1);
+        if (line === "") {
+          if (data.length > 0)
+            yield `${JSON.stringify({ event: eventName, data: parseSseData(data.join("\n")), ts: new Date().toISOString() })}\n`;
+          eventName = "data";
+          data = [];
+        } else {
+          const separator = line.indexOf(":");
+          const field = separator < 0 ? line : line.slice(0, separator);
+          const raw = separator < 0 ? "" : line.slice(separator + 1);
+          const value = raw.startsWith(" ") ? raw.slice(1) : raw;
+          if (field === "event") eventName = value || "data";
+          else if (field === "data") data.push(value);
+        }
+      }
+      // SSE dispatches only events terminated by a blank line.
+      if (done) break;
+    }
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    try {
+      await reader.cancel();
+    } finally {
+      reader.releaseLock();
+    }
+  }
 }
 
 function parseSseData(data: string) {
@@ -1570,6 +2124,25 @@ function parseSimpleToon(value: string) {
   return out;
 }
 
-function write(stdout: Pick<NodeJS.WriteStream, "write">, text: string) {
-  stdout.write(text);
+function write(stdout: Pick<NodeJS.WriteStream, "write">, text: string | Uint8Array) {
+  const stream = stdout as Pick<NodeJS.WriteStream, "write"> & {
+    off?: NodeJS.WriteStream["off"];
+    once?: NodeJS.WriteStream["once"];
+  };
+  if (!stream.once || !stream.off) {
+    stream.write(text);
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    stream.once?.("error", onError);
+    stream.write(text, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      stream.off?.("error", onError);
+      resolve();
+    });
+  });
 }

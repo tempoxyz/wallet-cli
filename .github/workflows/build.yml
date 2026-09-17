@@ -7,25 +7,39 @@ on:
       - "tempo-wallet@*"
       - "tempo-request@*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag whose source should be built and published
+        required: false
+        type: string
 
 jobs:
   parse-tag:
     name: Parse tag
     permissions:
       contents: read
+      id-token: write
     runs-on: ubuntu-latest
     outputs:
       packages: ${{ steps.parse.outputs.packages }}
       version: ${{ steps.parse.outputs.version }}
       release_tag: ${{ steps.parse.outputs.release_tag }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
       - name: Parse release version from tag
         id: parse
         shell: bash
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
 
-          TAG="${GITHUB_REF#refs/tags/}"
+          TAG="$INPUT_RELEASE_TAG"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
 
           if [[ "$TAG" == v* ]]; then
             VERSION="${TAG#v}"
@@ -91,8 +105,12 @@ jobs:
       TEMPO_WALLET_PACKAGE_DIR: artifacts
       TEMPO_WALLET_PACKAGE_OUTPUT: artifacts/${{ matrix.package }}-${{ matrix.build.suffix }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.parse-tag.outputs.release_tag }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -141,7 +159,7 @@ jobs:
           cat "$BIN.sha256"
 
       - name: Generate SBOM (SPDX-JSON)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@6f436eb3a168279692739e8c0c9fdb52b94bfae7
         with:
           file: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
           format: spdx-json
@@ -150,18 +168,18 @@ jobs:
           upload-release-assets: false
 
       - name: Attest SBOM
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
           sbom-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
 
       - name: Attest build provenance (SLSA v1)
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: tempoxyz/gh-actions/vendor/sigstore/cosign-installer@6f436eb3a168279692739e8c0c9fdb52b94bfae7
 
       - name: Sign binary with cosign (keyless)
         shell: bash
@@ -187,9 +205,10 @@ jobs:
     environment: release
     permissions:
       contents: write
+      id-token: write
     needs: [parse-tag, build]
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
     strategy:
       fail-fast: false
       matrix:
@@ -198,9 +217,16 @@ jobs:
       PACKAGE: ${{ matrix.package }}
       VERSION: ${{ needs.parse-tag.outputs.version }}
       RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
+      AWS_RETRY_MODE: standard
+      AWS_MAX_ATTEMPTS: "10"
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.parse-tag.outputs.release_tag }}
           persist-credentials: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -231,7 +257,7 @@ jobs:
         run: gh release upload "$RELEASE_TAG" artifacts/* --clobber
 
       - name: Checkout release signing tool
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: tempoxyz/wallet-rs
           path: wallet-release-tools
@@ -285,25 +311,108 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
         run: |
-          aws configure set default.s3.multipart_threshold 200MB
+          set -euo pipefail
+
+          aws configure set default.s3.multipart_threshold 8MB
+          aws configure set default.s3.multipart_chunksize 8MB
 
           PREFIX="extensions/${PACKAGE}"
           VTAG="v${VERSION}"
 
+          upload_to_r2() {
+            local source="$1"
+            local destination="$2"
+            local content_type="${3:-}"
+            local immutable="${4:-false}"
+            local attempt
+            local local_sha
+            local remote_sha
+            local -a args
+
+            if [ "$immutable" = "true" ]; then
+              local_sha=$(sha256sum "$source" | cut -d' ' -f1)
+              if remote_sha=$(aws s3 cp "$destination" - --endpoint-url "$AWS_ENDPOINT_URL" --only-show-errors 2>/dev/null | sha256sum | cut -d' ' -f1); then
+                if [ "$remote_sha" = "$local_sha" ]; then
+                  echo "Verified existing immutable R2 object: ${destination}"
+                  return 0
+                fi
+
+                echo "Immutable R2 object collision at ${destination}" >&2
+                echo "Expected sha256 ${local_sha}, found ${remote_sha}" >&2
+                return 1
+              fi
+            fi
+
+            for attempt in 1 2 3; do
+              args=(s3 cp "$source" "$destination" --endpoint-url "$AWS_ENDPOINT_URL" --only-show-errors)
+              if [ -n "$content_type" ]; then
+                args+=(--content-type "$content_type")
+              fi
+
+              if aws "${args[@]}"; then
+                return 0
+              fi
+
+              if [ "$immutable" = "true" ] && remote_sha=$(aws s3 cp "$destination" - --endpoint-url "$AWS_ENDPOINT_URL" --only-show-errors 2>/dev/null | sha256sum | cut -d' ' -f1); then
+                if [ "$remote_sha" = "$local_sha" ]; then
+                  echo "Verified immutable R2 object after an ambiguous upload response: ${destination}"
+                  return 0
+                fi
+
+                echo "Immutable R2 object collision at ${destination}" >&2
+                echo "Expected sha256 ${local_sha}, found ${remote_sha}" >&2
+                return 1
+              fi
+
+              if [ "$attempt" -lt 3 ]; then
+                echo "::warning::R2 upload failed for ${destination}; retrying outer attempt $((attempt + 1))/3"
+                sleep $((attempt * 10))
+              fi
+            done
+
+            echo "R2 upload failed after 3 outer attempts: ${destination}" >&2
+            return 1
+          }
+
           for f in "artifacts/${PACKAGE}"-linux-* "artifacts/${PACKAGE}"-darwin-*; do
             [ -f "$f" ] || continue
             BASENAME=$(basename "$f")
-            aws s3 cp "$f" "s3://tempo-cli/${PREFIX}/${BASENAME}" --endpoint-url "$AWS_ENDPOINT_URL"
-            aws s3 cp "$f" "s3://tempo-cli/${PREFIX}/${VTAG}/${BASENAME}" --endpoint-url "$AWS_ENDPOINT_URL"
+            upload_to_r2 "$f" "s3://tempo-cli/${PREFIX}/${VTAG}/${BASENAME}" "" "true"
           done
 
-          aws s3 cp "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/manifest.json" --endpoint-url "$AWS_ENDPOINT_URL"
-          aws s3 cp "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/${VTAG}/manifest.json" --endpoint-url "$AWS_ENDPOINT_URL"
+          upload_to_r2 "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/${VTAG}/manifest.json" "" "true"
 
           if [ "$PACKAGE" = "tempo-request" ] && [ -f "SKILL.md" ]; then
-            aws s3 cp "SKILL.md" "s3://tempo-cli/${PREFIX}/${VTAG}/SKILL.md" --endpoint-url "$AWS_ENDPOINT_URL" --content-type "text/markdown"
+            upload_to_r2 "SKILL.md" "s3://tempo-cli/${PREFIX}/${VTAG}/SKILL.md" "text/markdown" "true"
           fi
 
-          echo "${VERSION}" | aws s3 cp - "s3://tempo-cli/${PREFIX}/VERSION" --endpoint-url "$AWS_ENDPOINT_URL" --content-type "text/plain"
+          upload_to_r2 "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/manifest.json"
+          printf '%s\n' "$VERSION" > "artifacts/${PACKAGE}-VERSION"
+          upload_to_r2 "artifacts/${PACKAGE}-VERSION" "s3://tempo-cli/${PREFIX}/VERSION" "text/plain"
 
           echo "Released ${PACKAGE}@${VERSION}"
+
+  publish-release:
+    name: Publish GitHub Release
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    needs: [parse-tag, publish]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
+    env:
+      RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft --jq '.isDraft')" = true
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false

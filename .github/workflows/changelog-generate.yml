@@ -13,8 +13,12 @@ jobs:
     if: startsWith(github.event.label.name, 'changelog:') && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     environment: release
-    permissions: {}
+    permissions:
+      id-token: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
       - name: Determine PR source
         id: source
         env:
@@ -41,20 +45,14 @@ jobs:
           fi
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
 
-      - name: Mint scoped app token
+      - name: Fetch GitHub token via STS
         if: steps.source.outputs.same_repo == 'true'
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: tempoxyz/gh-actions/actions/github-sts@c0292122e255def866c64c55e5844d1e7d5fe7ad
         with:
-          client-id: ${{ vars.RELEASE_BOT_APP_ID || secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: tempoxyz
-          repositories: wallet-cli
-          permission-contents: write
-          permission-pull-requests: write
-          permission-metadata: read
+          policy: release
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.source.outputs.same_repo == 'true'
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
@@ -175,8 +173,12 @@ jobs:
     if: always() && startsWith(github.event.label.name, 'changelog:')
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       pull-requests: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
       - name: Comment for fork PRs
         if: github.event.pull_request.head.repo.full_name != github.repository
         env:

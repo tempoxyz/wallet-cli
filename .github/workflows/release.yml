@@ -15,11 +15,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.diff.outputs.changed }}
+    # The release branch is pushed and the PR opened with a short-lived
+    # GitHub App token minted via github-sts (authorized by
+    # .github/sts/release-pr.sts.yaml) rather than the built-in GITHUB_TOKEN,
+    # which is not allowed to create pull requests. id-token lets the job
+    # request the OIDC token the STS exchange verifies.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -49,16 +57,23 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Fetch GitHub token via STS
+        if: steps.diff.outputs.changed == 'true'
+        id: sts
+        uses: tempoxyz/gh-actions/actions/github-sts@c0292122e255def866c64c55e5844d1e7d5fe7ad # main
+        with:
+          policy: release-pr
+
       - name: Open or update release PR
         if: steps.diff.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.sts.outputs.token }}
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
           BRANCH="changelog-release/main"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "tempo-github-sts[bot]"
+          git config user.email "312736176+tempo-github-sts[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH"
           git add package.json CHANGELOG.md .changelog
           git commit -m "chore: release ${VERSION}"
@@ -79,8 +94,12 @@ jobs:
     permissions:
       actions: write
       contents: write
+      id-token: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -121,10 +140,24 @@ jobs:
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
           TAG="v${VERSION}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release ${TAG} already exists"
+
+          RELEASE_IS_DRAFT=$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)
+          if [ "$RELEASE_IS_DRAFT" = "false" ]; then
+            echo "Release ${TAG} is already published"
             exit 0
           fi
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${TAG}" \
+              -f sha="${GITHUB_SHA}"
+          fi
+
           pnpm changelog:notes > /tmp/release-notes.md
-          gh release create "$TAG" --target main --title "$TAG" --notes-file /tmp/release-notes.md
-          gh workflow run build.yml --ref "$TAG"
+          if [ "$RELEASE_IS_DRAFT" = "true" ]; then
+            echo "Resuming draft release ${TAG}"
+          else
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file /tmp/release-notes.md
+          fi
+
+          gh workflow run build.yml --ref main -f release_tag="$TAG"
