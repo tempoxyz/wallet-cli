@@ -654,6 +654,7 @@ function closeTarget(record: ChannelRecord) {
 }
 
 function sessionItem(record: ChannelRecord) {
+  const now = nowSeconds();
   const spent =
     record.accepted_cumulative > 0n ? record.accepted_cumulative : record.cumulative_amount;
   const remaining = record.deposit > spent ? record.deposit - spent : 0n;
@@ -669,8 +670,7 @@ function sessionItem(record: ChannelRecord) {
     status,
     ...(status === "closing" || status === "finalizable"
       ? {
-          remaining_secs:
-            record.grace_ready_at > nowSeconds() ? record.grace_ready_at - nowSeconds() : 0,
+          remaining_secs: record.grace_ready_at > now ? record.grace_ready_at - now : 0,
         }
       : {}),
     created_at: formatUnixTimestamp(record.created_at),
