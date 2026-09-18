@@ -654,6 +654,7 @@ function closeTarget(record: ChannelRecord) {
 }
 
 function sessionItem(record: ChannelRecord) {
+  // Single clock read: comparing and subtracting separate nowSeconds() calls can go negative.
   const now = nowSeconds();
   const spent =
     record.accepted_cumulative > 0n ? record.accepted_cumulative : record.cumulative_amount;
