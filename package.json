@@ -12,7 +12,9 @@
     "url": "git+https://github.com/tempoxyz/wallet-cli.git"
   },
   "bin": {
+    "tempo-api": "./dist/api-cli.js",
     "tempo-request": "./dist/request-cli.js",
+    "tempo-routes": "./dist/routes-cli.js",
     "tempo-wallet": "./dist/cli.js"
   },
   "type": "module",
