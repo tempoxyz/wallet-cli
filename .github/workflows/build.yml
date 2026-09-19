@@ -26,7 +26,7 @@ jobs:
       release_tag: ${{ steps.parse.outputs.release_tag }}
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+        uses: tempoxyz/gh-actions/actions/secure-runner@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
 
       - name: Parse release version from tag
         id: parse
@@ -106,7 +106,7 @@ jobs:
       TEMPO_WALLET_PACKAGE_OUTPUT: artifacts/${{ matrix.package }}-${{ matrix.build.suffix }}
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+        uses: tempoxyz/gh-actions/actions/secure-runner@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -159,7 +159,7 @@ jobs:
           cat "$BIN.sha256"
 
       - name: Generate SBOM (SPDX-JSON)
-        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@6f436eb3a168279692739e8c0c9fdb52b94bfae7
+        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
         with:
           file: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
           format: spdx-json
@@ -179,7 +179,7 @@ jobs:
           subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
 
       - name: Install cosign
-        uses: tempoxyz/gh-actions/vendor/sigstore/cosign-installer@6f436eb3a168279692739e8c0c9fdb52b94bfae7
+        uses: tempoxyz/gh-actions/vendor/sigstore/cosign-installer@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
 
       - name: Sign binary with cosign (keyless)
         shell: bash
@@ -222,7 +222,7 @@ jobs:
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+        uses: tempoxyz/gh-actions/actions/secure-runner@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -405,7 +405,7 @@ jobs:
       RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@05c669ce878b8719779a28fe7375ba85822403f8
+        uses: tempoxyz/gh-actions/actions/secure-runner@0a60d757d0f4725a34f22f7b9ebf7b91b4b00bcf
 
       - name: Publish draft release
         env:
