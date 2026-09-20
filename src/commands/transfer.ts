@@ -6,7 +6,7 @@ import { Actions } from "viem/tempo";
 import { version } from "../shared/constants.js";
 import { networkError, usageError } from "../shared/errors.js";
 import { appUrl, chainId, tokenAddress, tokenDecimals, tokenSymbol } from "../shared/network.js";
-import { decodeBase64UrlJson, getRecord, stringValue } from "../shared/utils.js";
+import { getRecord, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
 
@@ -293,9 +293,12 @@ function parseMppChallenge(input: string) {
     throw usageError("Invalid configuration: invalid MPP challenge: Expected 'Payment' scheme.");
 
   const params = parseAuthParams(header.slice(paymentIndex + "Payment".length));
-  const request = params.request ? decodeBase64UrlJson(params.request) : null;
-  if (!request)
+  if (!params.request)
     throw usageError("Invalid configuration: invalid MPP challenge: Missing request parameter.");
+
+  const request = mppChallengeRequest(params.request);
+  if (!request)
+    throw usageError("Invalid configuration: invalid MPP challenge: Malformed request parameter.");
 
   return {
     id: params.id ?? "",
@@ -305,6 +308,17 @@ function parseMppChallenge(input: string) {
     request,
     expires: params.expires,
   };
+}
+
+function mppChallengeRequest(value: string) {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return null;
+  return decoded as Record<string, unknown>;
 }
 
 function mppHeaderValue(input: string) {
