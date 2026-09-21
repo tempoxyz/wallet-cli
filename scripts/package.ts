@@ -7,7 +7,13 @@ type PackageJson = {
   version?: string;
 };
 
-type CliPackageName = "tempo-wallet" | "tempo-request";
+const entrypoints = {
+  "tempo-api": "src/api-cli.ts",
+  "tempo-request": "src/request-cli.ts",
+  "tempo-routes": "src/routes-cli.ts",
+  "tempo-wallet": "src/cli.ts",
+};
+type CliPackageName = keyof typeof entrypoints;
 
 const args = new Set(process.argv.slice(2));
 const root = resolve(import.meta.dirname, "..");
@@ -22,7 +28,7 @@ const output = resolve(
   root,
   process.env.TEMPO_WALLET_PACKAGE_OUTPUT ?? join(outDir, `${packageName}-${suffix}`),
 );
-const entrypoint = packageName === "tempo-request" ? "src/request-cli.ts" : "src/cli.ts";
+const entrypoint = entrypoints[packageName];
 
 mkdirSync(outDir, { recursive: true });
 
@@ -66,7 +72,7 @@ function run(command: string, commandArgs: readonly string[]) {
 function resolvePackageName(): CliPackageName {
   const value = process.env.TEMPO_WALLET_PACKAGE_NAME ?? process.env.PACKAGE ?? "tempo-wallet";
 
-  if (value === "tempo-wallet" || value === "tempo-request") return value;
+  if (Object.hasOwn(entrypoints, value)) return value as CliPackageName;
 
   throw new Error(`unsupported TypeScript CLI package: ${value}`);
 }

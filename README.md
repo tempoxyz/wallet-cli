@@ -122,6 +122,35 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 
 ## Commands
 
+### Tempo API
+
+`tempo api` exposes the hosted Tempo API using the same OpenAPI-generated command
+tree as Tapimo. `tempo routes` is a shortcut to the `/v1/routes` endpoints.
+The launcher installs the corresponding `tempo-api` and `tempo-routes` extensions
+on first use, once their release is published.
+
+```sh
+tempo api --help
+tempo api v1 --help
+tempo routes --help
+tempo routes chains --format json
+tempo routes quotes --help
+tempo api v1 tokens --help
+```
+
+Set `TEMPO_API_KEY` for authenticated API calls. API keys are separate from wallet
+login; generated command help also lists authentication options supported by the
+API schema. `TEMPO_API_URL` overrides the default `https://api.tempo.xyz` host.
+Help and command schemas require access to that host's `/openapi.json`.
+
+For agents, use `--schema --format json` on a command to inspect its inputs, or
+run `tempo api --mcp` / `tempo routes --mcp` to serve the generated tools over
+stdio. Commands call the API directly; they do not automatically pay MPP
+challenges. API errors, including authentication and payment requirements,
+return a nonzero exit status.
+
+### Wallet
+
 `tempo wallet` includes:
 
 - `login`, `logout`, `refresh`, `whoami`, `keys`
@@ -177,7 +206,7 @@ pnpm package
 
 ## Release Artifacts
 
-The release workflow builds standalone Linux and macOS binaries for both `tempo-wallet` and `tempo-request`. Each binary is published with a checksum, SBOM, Sigstore bundle, and GitHub attestations.
+The release workflow builds standalone Linux and macOS binaries for `tempo-wallet`, `tempo-request`, `tempo-api`, and `tempo-routes`. Each binary is published with a checksum, SBOM, Sigstore bundle, and GitHub attestations.
 
 ## Security
 
