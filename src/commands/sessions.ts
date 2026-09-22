@@ -658,6 +658,7 @@ function sessionItem(record: ChannelRecord) {
     record.accepted_cumulative > 0n ? record.accepted_cumulative : record.cumulative_amount;
   const remaining = record.deposit > spent ? record.deposit - spent : 0n;
   const status = sessionStatus(record);
+  const now = nowSeconds();
   return {
     channel_id: record.channel_id,
     network: record.network,
@@ -670,7 +671,7 @@ function sessionItem(record: ChannelRecord) {
     ...(status === "closing" || status === "finalizable"
       ? {
           remaining_secs:
-            record.grace_ready_at > nowSeconds() ? record.grace_ready_at - nowSeconds() : 0,
+            record.grace_ready_at > now ? record.grace_ready_at - now : 0,
         }
       : {}),
     created_at: formatUnixTimestamp(record.created_at),
