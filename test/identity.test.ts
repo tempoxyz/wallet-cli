@@ -434,6 +434,7 @@ describe("identity commands", () => {
         `/api/assets?address=${testWallet}&chainId=4217&fresh=true`,
         "https://wallet.tempo.xyz",
       ),
+      { signal: expect.any(AbortSignal) },
     );
     expect("balances" in result ? result.balances : null).toEqual([
       {
@@ -453,6 +454,29 @@ describe("identity commands", () => {
         access_key_limit: null,
       },
     ]);
+  });
+
+  it("starts asset discovery without waiting for the payment-token RPC", async () => {
+    await useTempHome();
+    const balance = Promise.withResolvers<bigint>();
+    mocks.readContract.mockReturnValueOnce(balance.promise);
+
+    const output = currentWhoamiOutput({
+      walletAddress: testWallet,
+      chain: 4217,
+      accessKeys: walletState().accessKeys,
+    });
+    try {
+      expect(mocks.readContract).toHaveBeenCalledOnce();
+      expect(mocks.fetch).toHaveBeenCalledOnce();
+    } finally {
+      balance.resolve(5_000_000n);
+    }
+    expect(await output).toMatchObject({
+      ready: true,
+      balance: { available: "5" },
+      balances: [{ token: usdc.toLowerCase(), balance: "5" }],
+    });
   });
 
   it("whoami preserves the payment-token balance when asset discovery fails", async () => {
