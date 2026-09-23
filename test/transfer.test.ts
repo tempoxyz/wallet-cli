@@ -21,7 +21,13 @@ function buildMppChallenge(amount: string, overrides: Record<string, unknown> = 
     ...overrides,
   };
   const encoded = Buffer.from(JSON.stringify(request), "utf8").toString("base64url");
-  return `Payment realm="example", method="tempo", intent="charge", id="abc123", request="${encoded}"`;
+  return buildMppChallengeWithRequest(`request="${encoded}"`);
+}
+
+function buildMppChallengeWithRequest(requestParam: string) {
+  return `Payment realm="example", method="tempo", intent="charge", id="abc123"${
+    requestParam ? `, ${requestParam}` : ""
+  }`;
 }
 
 describe("transferTokens", () => {
@@ -179,6 +185,72 @@ describe("transferCredits", () => {
     expectUsageError(
       error,
       "Invalid configuration: MPP challenge amount 15000 cannot be represented exactly in Coinflow credits cents for a 6-decimal token",
+    );
+  });
+
+  it("throws E_USAGE for an MPP challenge request parameter that is not valid JSON", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+
+    const encoded = Buffer.from("not-json", "utf8").toString("base64url");
+    const error = await transferCredits({
+      options: {
+        "dry-run": true,
+        "mpp-challenge": buildMppChallengeWithRequest(`request="${encoded}"`),
+      },
+    }).catch((err: unknown) => err);
+
+    expectUsageError(
+      error,
+      "Invalid configuration: invalid MPP challenge: Malformed request parameter.",
+    );
+  });
+
+  it("throws E_USAGE for an MPP challenge request parameter that is not base64url", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+
+    const error = await transferCredits({
+      options: { "dry-run": true, "mpp-challenge": buildMppChallengeWithRequest('request="!!!!"') },
+    }).catch((err: unknown) => err);
+
+    expectUsageError(
+      error,
+      "Invalid configuration: invalid MPP challenge: Malformed request parameter.",
+    );
+  });
+
+  it("throws E_USAGE for an MPP challenge request parameter that is not a JSON object", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+
+    for (const payload of ["null", "[]", "5", '"amount"']) {
+      const encoded = Buffer.from(payload, "utf8").toString("base64url");
+      const error = await transferCredits({
+        options: {
+          "dry-run": true,
+          "mpp-challenge": buildMppChallengeWithRequest(`request="${encoded}"`),
+        },
+      }).catch((err: unknown) => err);
+
+      expectUsageError(
+        error,
+        "Invalid configuration: invalid MPP challenge: Malformed request parameter.",
+      );
+    }
+  });
+
+  it("throws E_USAGE for an MPP challenge with no request parameter", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+
+    const error = await transferCredits({
+      options: { "dry-run": true, "mpp-challenge": buildMppChallengeWithRequest("") },
+    }).catch((err: unknown) => err);
+
+    expectUsageError(
+      error,
+      "Invalid configuration: invalid MPP challenge: Missing request parameter.",
     );
   });
 
