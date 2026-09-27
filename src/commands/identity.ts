@@ -38,6 +38,7 @@ import {
   selectPaymentCapableAccessKey,
 } from "../wallet/access-key.js";
 import { queryCreditBalance } from "./credits.js";
+import { listOpenChannelRecordsForSigner } from "./sessions.js";
 
 export async function loginHandler(options: {
   network?: string | undefined;
@@ -323,10 +324,25 @@ export async function revokeHandler(
   const localKeyRemoved = accessKeys.length !== state.accessKeys.length;
   if (localKeyRemoved) await saveWalletState({ ...state, accessKeys });
 
+  const openSessions = await listOpenChannelRecordsForSigner({
+    chainId: selectedChainId,
+    payer: walletAddress,
+    authorizedSigner: accessKeyAddress,
+  });
+
   return {
     ...output,
     status: "success" as const,
     local_key_removed: localKeyRemoved,
+    // Revocation does not close payment channels; surface local leftovers so
+    // operators know to run `tempo wallet sessions close` separately (#64).
+    open_sessions_for_key: openSessions.map((record) => record.channel_id),
+    ...(openSessions.length > 0
+      ? {
+          open_sessions_hint:
+            "Payment channels bound to this key remain open until closed. Run: tempo wallet sessions close <channel-id> (or --all).",
+        }
+      : {}),
   };
 }
 

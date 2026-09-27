@@ -92,6 +92,24 @@ type CloseSummaryOutput = {
   results: CloseResultRecord[];
 };
 
+/** Local-only: open channel records bound to a payer + authorized signer. */
+export async function listOpenChannelRecordsForSigner(options: {
+  chainId: number;
+  payer: string;
+  authorizedSigner: string;
+}): Promise<ChannelRecord[]> {
+  const payer = options.payer.toLowerCase();
+  const signer = options.authorizedSigner.toLowerCase();
+  const records = await readChannelRecords();
+  return records.filter(
+    (record) =>
+      record.chain_id === options.chainId &&
+      record.payer.toLowerCase() === payer &&
+      record.authorized_signer.toLowerCase() === signer &&
+      record.state !== "finalized",
+  );
+}
+
 export async function listSessions(
   options: {
     all?: boolean | undefined;
