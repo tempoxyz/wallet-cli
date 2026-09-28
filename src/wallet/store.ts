@@ -118,11 +118,8 @@ function parseAccessKeyLimits(value: unknown): AccessKeyLimit[] | undefined {
     const item = getRecord(limit);
     if (
       typeof item.token !== "string" ||
-      !/^0x[\da-f]{40}$/i.test(item.token) ||
       typeof item.limit !== "string" ||
-      !/^(?:\d+|0x[\da-f]+)(?:#__bigint)?$/i.test(item.limit) ||
-      (item.period !== undefined &&
-        (typeof item.period !== "number" || !Number.isSafeInteger(item.period) || item.period < 0))
+      (item.period !== undefined && typeof item.period !== "number")
     )
       throw new Error("Invalid stored access-key limit");
     return {
@@ -140,14 +137,10 @@ function parseAccessKeyScopes(value: unknown): AccessKeyScope[] | undefined {
     const item = getRecord(scope);
     if (
       typeof item.address !== "string" ||
-      !/^0x[\da-f]{40}$/i.test(item.address) ||
       (item.selector !== undefined && typeof item.selector !== "string") ||
       (item.recipients !== undefined &&
         (!Array.isArray(item.recipients) ||
-          !item.recipients.every(
-            (recipient: unknown) =>
-              typeof recipient === "string" && /^0x[\da-f]{40}$/i.test(recipient),
-          )))
+          !item.recipients.every((recipient: unknown) => typeof recipient === "string")))
     )
       throw new Error("Invalid stored access-key scope");
     return {

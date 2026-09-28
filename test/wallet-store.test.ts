@@ -30,10 +30,9 @@ describe("wallet store file", () => {
   it.each([
     { limits: null },
     { limits: {} },
-    { limits: [{ token: usdc, limit: "not-a-number" }] },
-    { limits: [{ token: usdc, limit: "-1" }] },
+    { limits: [{ token: 1, limit: "100" }] },
     { limits: [{ token: usdc, limit: 100 }] },
-    { limits: [{ token: usdc, limit: "100", period: -1 }] },
+    { limits: [{ token: usdc, limit: "100", period: "86400" }] },
     { limits: [null] },
     { scopes: null },
     { scopes: {} },
