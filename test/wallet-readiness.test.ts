@@ -8,7 +8,13 @@ const execFileAsync = promisify(execFile);
 
 it("reports unknown RPC balances separately from funded and verified zero balances through whoami", async () => {
   const home = await useTempHome();
-  await writeWalletState(walletState());
+  await writeWalletState(
+    walletState({
+      accessKeys: [
+        { ...walletState().accessKeys[0]!, permissionSemantics: 1, limits: undefined, scopes: [] },
+      ],
+    }),
+  );
   let mode: "funded" | "failed" | "zero" = "funded";
   let calls = 0;
   const server = createServer((request, response) => {
@@ -65,7 +71,11 @@ it("reports unknown RPC balances separately from funded and verified zero balanc
     expect(await whoami()).toMatchObject({
       ready: true,
       balance: { available: "5", total: "5.000000" },
-      key: { balance: "5" },
+      key: {
+        balance: "5",
+        spending_limit: { mode: "unrestricted", unlimited: true, limit: null },
+        call_permissions: "none",
+      },
     });
     mode = "failed";
     expect(await whoami()).toMatchObject({

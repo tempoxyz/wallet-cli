@@ -14,7 +14,7 @@ export type AccessKeyLimit = {
 export type AccessKeyScope = {
   address: string;
   selector?: string | undefined;
-  recipients: readonly string[];
+  recipients?: readonly string[] | undefined;
 };
 
 export type WalletState = {
@@ -30,7 +30,8 @@ export type WalletState = {
     keyType?: string | undefined;
     privateKey?: string | undefined;
     publicKey?: string | undefined;
-    limits: readonly AccessKeyLimit[];
+    limits?: readonly AccessKeyLimit[] | undefined;
+    permissionSemantics?: 1 | undefined;
     scopes?: readonly AccessKeyScope[] | undefined;
   }[];
   activeAccount?: number | undefined;
@@ -82,6 +83,7 @@ export async function loadWalletState(): Promise<WalletState> {
         keyType: typeof item.keyType === "string" ? item.keyType : undefined,
         privateKey: typeof item.privateKey === "string" ? item.privateKey : undefined,
         publicKey: typeof item.publicKey === "string" ? item.publicKey : undefined,
+        permissionSemantics: item.permissionSemantics === 1 ? (1 as const) : undefined,
         limits: parseAccessKeyLimits(item.limits),
         scopes: parseAccessKeyScopes(item.scopes),
       },
@@ -109,35 +111,50 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function parseAccessKeyLimits(value: unknown): AccessKeyLimit[] {
-  return getArray(value).flatMap((limit) => {
+function parseAccessKeyLimits(value: unknown): AccessKeyLimit[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error("Invalid stored access-key limits");
+  return value.map((limit) => {
     const item = getRecord(limit);
-    if (typeof item.token !== "string" || typeof item.limit !== "string") return [];
-    if (item.period !== undefined && typeof item.period !== "number") return [];
-    return [
-      {
-        token: item.token,
-        limit: item.limit,
-        period: typeof item.period === "number" ? item.period : undefined,
-      },
-    ];
+    if (
+      typeof item.token !== "string" ||
+      !/^0x[\da-f]{40}$/i.test(item.token) ||
+      typeof item.limit !== "string" ||
+      !/^(?:\d+|0x[\da-f]+)(?:#__bigint)?$/i.test(item.limit) ||
+      (item.period !== undefined &&
+        (typeof item.period !== "number" || !Number.isSafeInteger(item.period) || item.period < 0))
+    )
+      throw new Error("Invalid stored access-key limit");
+    return {
+      token: item.token,
+      limit: item.limit,
+      period: typeof item.period === "number" ? item.period : undefined,
+    };
   });
 }
 
 function parseAccessKeyScopes(value: unknown): AccessKeyScope[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const scopes = getArray(value).flatMap((scope) => {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error("Invalid stored access-key scopes");
+  const scopes = value.map((scope) => {
     const item = getRecord(scope);
-    if (typeof item.address !== "string") return [];
-    return [
-      {
-        address: item.address,
-        selector: typeof item.selector === "string" ? item.selector : undefined,
-        recipients: getArray(item.recipients).flatMap((recipient) =>
-          typeof recipient === "string" ? [recipient] : [],
-        ),
-      },
-    ];
+    if (
+      typeof item.address !== "string" ||
+      !/^0x[\da-f]{40}$/i.test(item.address) ||
+      (item.selector !== undefined && typeof item.selector !== "string") ||
+      (item.recipients !== undefined &&
+        (!Array.isArray(item.recipients) ||
+          !item.recipients.every(
+            (recipient: unknown) =>
+              typeof recipient === "string" && /^0x[\da-f]{40}$/i.test(recipient),
+          )))
+    )
+      throw new Error("Invalid stored access-key scope");
+    return {
+      address: item.address,
+      selector: typeof item.selector === "string" ? item.selector : undefined,
+      recipients: item.recipients as string[] | undefined,
+    };
   });
   return scopes;
 }

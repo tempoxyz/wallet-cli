@@ -27,6 +27,38 @@ import {
 } from "./helpers.js";
 
 describe("wallet store file", () => {
+  it.each([
+    { limits: null },
+    { limits: {} },
+    { limits: [{ token: usdc, limit: "not-a-number" }] },
+    { limits: [{ token: usdc, limit: "-1" }] },
+    { limits: [{ token: usdc, limit: 100 }] },
+    { limits: [{ token: usdc, limit: "100", period: -1 }] },
+    { limits: [null] },
+    { scopes: null },
+    { scopes: {} },
+    { scopes: [null] },
+    { scopes: [{ address: 42 }] },
+    { scopes: [{ address: usdc, selector: 42 }] },
+    { scopes: [{ address: usdc, recipients: [testWallet2, 42] }] },
+  ])("rejects malformed permissions rather than dropping them: %#", async (permissions) => {
+    await useTempHome();
+    await writeRawWalletStore(
+      JSON.stringify({
+        "tempo-cli.store": {
+          state: {
+            ...walletState(),
+            accessKeys: [
+              { ...walletState().accessKeys[0]!, permissionSemantics: 1, ...permissions },
+            ],
+          },
+          version: 0,
+        },
+      }),
+    );
+    await expect(loadWalletState()).rejects.toThrow(/Invalid stored access-key/);
+  });
+
   it("resolves under the active HOME", async () => {
     const home = await useTempHome();
 
@@ -99,7 +131,7 @@ describe("wallet store file", () => {
     }
   });
 
-  it("filters malformed accounts, keys, limits, and optional scalar fields", async () => {
+  it("filters malformed accounts, keys, and optional scalar fields", async () => {
     await useTempHome();
     await writeRawWalletStore(
       JSON.stringify({
@@ -120,21 +152,13 @@ describe("wallet store file", () => {
                 },
                 keyType: 1,
                 privateKey: false,
-                limits: [
-                  { token: usdc, limit: "100000000#__bigint", period: 86_400 },
-                  { token: usdc, limit: 100000000 },
-                  { token: 1, limit: "100000000#__bigint" },
-                  { token: usdc, limit: "250000000#__bigint", period: "86400" },
-                  null,
-                ],
+                limits: [{ token: usdc, limit: "100000000#__bigint", period: 86_400 }],
                 scopes: [
                   {
                     address: usdc,
                     selector: "transfer(address,uint256)",
-                    recipients: [testWallet2, 42],
+                    recipients: [testWallet2],
                   },
-                  { address: 42 },
-                  null,
                 ],
               },
               {
