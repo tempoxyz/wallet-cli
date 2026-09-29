@@ -8,3 +8,7 @@ allowBuilds:
 
 minimumReleaseAge: 10080
 trustPolicy: no-downgrade
+
+minimumReleaseAgeExclude:
+  - mppx@0.12.0
+  - viem@2.57.1
