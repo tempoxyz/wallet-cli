@@ -1,5 +1,7 @@
 name: Build
 
+permissions: {}
+
 on:
   push:
     tags:
@@ -260,6 +262,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: tempoxyz/wallet-rs
+          ref: e8e37d999324ac3619f26d9b8485803310af52a1
           path: wallet-release-tools
           persist-credentials: false
 
@@ -267,7 +270,7 @@ jobs:
         run: rustup default stable
 
       - name: Build release signer
-        run: cargo build --release -p tempo-sign
+        run: cargo build --locked --release -p tempo-sign
         working-directory: wallet-release-tools
 
       - name: Sign release binaries
