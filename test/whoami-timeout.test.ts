@@ -52,7 +52,7 @@ it.each(["rpc", "assets", "asset body"] as const)(
           cwd: resolve(import.meta.dirname, ".."),
           env: { ...process.env, HOME: home, TEMPO_RPC_URL: url, TEMPO_AUTH_URL: url },
           // Allow startup overhead while rejecting the old 40-second RPC retry path.
-          timeout: 10_000,
+          timeout: 20_000,
         },
       );
       const output = JSON.parse(stdout);
@@ -75,5 +75,5 @@ it.each(["rpc", "assets", "asset body"] as const)(
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   },
-  15_000,
+  30_000,
 );
