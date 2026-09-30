@@ -1,6 +1,7 @@
-import { Cli, Fetch, Openapi } from "incur";
+import { Cli, Errors, Fetch, Openapi } from "incur";
 
 import { version } from "./shared/constants.js";
+import { networkError } from "./shared/errors.js";
 
 type ApiOptions = {
   apiKey?: string | undefined;
@@ -10,9 +11,9 @@ type ApiOptions = {
 
 /** Creates commands from the same hosted OpenAPI schema used by Tapimo. */
 export async function createApiCli(options: ApiOptions = {}) {
-  const url = new URL(options.url ?? process.env.TEMPO_API_URL ?? "https://api.tempo.xyz");
+  const url = new URL(options.url || process.env.TEMPO_API_URL || "https://api.tempo.xyz");
   const apiKey = options.apiKey ?? process.env.TEMPO_API_KEY;
-  const spec = await Openapi.resolve(new URL("openapi.json", `${url.href.replace(/\/$/, "")}/`));
+  const spec = await loadSpec(new URL("openapi.json", `${url.href.replace(/\/$/, "")}/`));
   const prefix = options.routes ? "/v1/routes" : "";
 
   // Strip the routing namespace only for discovery; the request source restores it on the wire.
@@ -59,6 +60,18 @@ export async function serveApi(routes = false) {
     await cli.serve(argv);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
+    process.exitCode = error instanceof Errors.IncurError ? (error.exitCode ?? 1) : 1;
+  }
+}
+
+async function loadSpec(url: URL): Promise<Openapi.OpenAPISpec> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return (await response.json()) as Openapi.OpenAPISpec;
+  } catch (error) {
+    throw networkError(
+      `Failed to load the Tempo API schema from ${url.href}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }

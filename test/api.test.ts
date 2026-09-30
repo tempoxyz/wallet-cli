@@ -226,10 +226,15 @@ describe("Tempo API extensions", () => {
     },
   );
 
-  it("reports schema failures with a nonzero exit status", async () => {
+  it("reports schema failures as network errors", async () => {
     await expect(
       cli("routes", ["--help"], { TEMPO_API_URL: "http://127.0.0.1:1" }),
-    ).rejects.toMatchObject({ code: 1 });
+    ).rejects.toMatchObject({
+      code: 3,
+      stderr: expect.stringContaining(
+        "Failed to load the Tempo API schema from http://127.0.0.1:1/openapi.json",
+      ),
+    });
   });
 });
 
