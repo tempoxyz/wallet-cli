@@ -40,7 +40,7 @@ describe("wallet store file", () => {
     { scopes: [{ address: 42 }] },
     { scopes: [{ address: usdc, selector: 42 }] },
     { scopes: [{ address: usdc, recipients: [testWallet2, 42] }] },
-  ])("rejects malformed permissions rather than dropping them: %#", async (permissions) => {
+  ])("loads malformed permissions as unknown: %#", async (permissions) => {
     await useTempHome();
     await writeRawWalletStore(
       JSON.stringify({
@@ -55,7 +55,9 @@ describe("wallet store file", () => {
         },
       }),
     );
-    await expect(loadWalletState()).rejects.toThrow(/Invalid stored access-key/);
+    const [key] = (await loadWalletState()).accessKeys;
+    expect(key?.address).toBe(testAccessKey);
+    expect(key?.permissionSemantics).toBeUndefined();
   });
 
   it("resolves under the active HOME", async () => {

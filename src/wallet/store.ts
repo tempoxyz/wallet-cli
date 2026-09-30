@@ -70,6 +70,8 @@ export async function loadWalletState(): Promise<WalletState> {
       typeof item.chainId !== "number"
     )
       return [];
+    const limits = parseAccessKeyLimits(item.limits);
+    const scopes = parseAccessKeyScopes(item.scopes);
 
     return [
       {
@@ -83,9 +85,11 @@ export async function loadWalletState(): Promise<WalletState> {
         keyType: typeof item.keyType === "string" ? item.keyType : undefined,
         privateKey: typeof item.privateKey === "string" ? item.privateKey : undefined,
         publicKey: typeof item.publicKey === "string" ? item.publicKey : undefined,
-        permissionSemantics: item.permissionSemantics === 1 ? (1 as const) : undefined,
-        limits: parseAccessKeyLimits(item.limits),
-        scopes: parseAccessKeyScopes(item.scopes),
+        // Dropped entries would misreport the permission set, so report it as unknown instead.
+        permissionSemantics:
+          item.permissionSemantics === 1 && limits.valid && scopes.valid ? (1 as const) : undefined,
+        limits: limits.value,
+        scopes: scopes.value,
       },
     ];
   });
@@ -111,29 +115,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function parseAccessKeyLimits(value: unknown): AccessKeyLimit[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new Error("Invalid stored access-key limits");
-  return value.map((limit) => {
+function parseAccessKeyLimits(value: unknown) {
+  if (!Array.isArray(value)) return { value: undefined, valid: value === undefined };
+  const limits = value.flatMap((limit): AccessKeyLimit[] => {
     const item = getRecord(limit);
     if (
       typeof item.token !== "string" ||
       typeof item.limit !== "string" ||
       (item.period !== undefined && typeof item.period !== "number")
     )
-      throw new Error("Invalid stored access-key limit");
-    return {
-      token: item.token,
-      limit: item.limit,
-      period: typeof item.period === "number" ? item.period : undefined,
-    };
+      return [];
+    return [
+      {
+        token: item.token,
+        limit: item.limit,
+        period: typeof item.period === "number" ? item.period : undefined,
+      },
+    ];
   });
+  return { value: limits, valid: limits.length === value.length };
 }
 
-function parseAccessKeyScopes(value: unknown): AccessKeyScope[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new Error("Invalid stored access-key scopes");
-  const scopes = value.map((scope) => {
+function parseAccessKeyScopes(value: unknown) {
+  if (!Array.isArray(value)) return { value: undefined, valid: value === undefined };
+  const scopes = value.flatMap((scope): AccessKeyScope[] => {
     const item = getRecord(scope);
     if (
       typeof item.address !== "string" ||
@@ -142,14 +147,16 @@ function parseAccessKeyScopes(value: unknown): AccessKeyScope[] | undefined {
         (!Array.isArray(item.recipients) ||
           !item.recipients.every((recipient: unknown) => typeof recipient === "string")))
     )
-      throw new Error("Invalid stored access-key scope");
-    return {
-      address: item.address,
-      selector: typeof item.selector === "string" ? item.selector : undefined,
-      recipients: item.recipients as string[] | undefined,
-    };
+      return [];
+    return [
+      {
+        address: item.address,
+        selector: typeof item.selector === "string" ? item.selector : undefined,
+        recipients: item.recipients as string[] | undefined,
+      },
+    ];
   });
-  return scopes;
+  return { value: scopes, valid: scopes.length === value.length };
 }
 
 export async function saveWalletState(state: WalletState) {
