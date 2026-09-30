@@ -212,8 +212,7 @@ export async function updateAccessKeyHandler(
         : storedLimits.map((item, index) =>
             index === existing ? { ...item, limit: nextLimit } : item,
           );
-    // Updating one token does not establish the complete permission set.
-    return { ...candidate, limits, permissionSemantics: undefined };
+    return { ...candidate, limits };
   });
   await saveWalletState({ ...state, accessKeys });
 

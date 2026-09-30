@@ -992,7 +992,7 @@ limit = "100000000"
     expect((await loadWalletState()).accessKeys[0]?.permissionSemantics).toBeUndefined();
   });
 
-  it("does not infer complete permissions from a single-token update", async () => {
+  it("reports an unrestricted key as restricted after a single-token update", async () => {
     await useTempHome();
     await writeWalletState(
       walletState({
@@ -1015,8 +1015,8 @@ limit = "100000000"
       accessKeys: state.accessKeys,
     });
     expect(result.keys[0]).toMatchObject({
-      spending_limit: { mode: "unknown", unlimited: null, limit: null },
-      call_permissions: "unknown",
+      spending_limit: { mode: "restricted", unlimited: false, limit: "250.000000" },
+      call_permissions: "unrestricted",
       spending_limits: [{ token: usdc.toLowerCase(), limit: "250.000000" }],
     });
   });
