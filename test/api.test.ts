@@ -114,6 +114,15 @@ describe("Tempo API extensions", () => {
     expect(requests).toEqual([]);
   });
 
+  it.each(["api", "routes"] as const)(
+    "shows %s help instead of calling the API without a command",
+    async (extension) => {
+      const { stdout } = await cli(extension, []);
+      expect(stdout).toContain(`Usage: tempo ${extension} <command>`);
+      expect(requests).toEqual([]);
+    },
+  );
+
   it("keeps the full Tapimo API tree in the API extension", async () => {
     const { stdout } = await cli("api", ["v1", "--help"]);
     expect(stdout).toContain("tokens");

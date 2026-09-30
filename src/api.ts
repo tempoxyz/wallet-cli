@@ -49,6 +49,8 @@ export async function createApiCli(options: ApiOptions = {}) {
 export async function serveApi(routes = false) {
   try {
     const argv = process.argv.slice(2);
+    // Without a command, incur would forward a bare request to the API root instead of showing help.
+    if (argv.length === 0) argv.push("--help");
     if (argv.length === 1 && (argv[0] === "--version" || argv[0] === "-v")) {
       process.stdout.write(`${version}\n`);
       return;
