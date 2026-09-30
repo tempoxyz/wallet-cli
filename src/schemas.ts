@@ -87,7 +87,7 @@ export const whoamiOutput = z.union([
           z.object({
             address: z.string(),
             selector: z.string().nullable(),
-            recipients: z.array(z.string()).nullable(),
+            recipients: z.array(z.string()),
           }),
         ),
         status: z.string().nullable(),
@@ -133,7 +133,7 @@ export const keysOutput = z.object({
         z.object({
           address: z.string(),
           selector: z.string().nullable(),
-          recipients: z.array(z.string()).nullable(),
+          recipients: z.array(z.string()),
         }),
       ),
       status: z.string().nullable(),

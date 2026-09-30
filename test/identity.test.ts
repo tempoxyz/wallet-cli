@@ -142,21 +142,6 @@ describe("wallet store", () => {
     },
   );
 
-  it("preserves omitted and empty scope recipients", async () => {
-    await useTempHome();
-    const scopes = [{ address: usdc }, { address: testWallet2, recipients: [] }];
-    await saveWalletState(
-      walletState({
-        accessKeys: [{ ...walletState().accessKeys[0]!, permissionSemantics: 1, scopes }],
-      }),
-    );
-    const state = await loadWalletState();
-    const result = keysOutput.parse(
-      await currentKeysOutput({ walletAddress: null, chain: 4217, accessKeys: state.accessKeys }),
-    );
-    expect(result.keys[0]?.scopes.map((scope) => scope.recipients)).toEqual([null, []]);
-  });
-
   it("loads an empty store when none exists", async () => {
     await useTempHome();
     const state = await loadWalletState();

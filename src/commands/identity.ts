@@ -536,7 +536,8 @@ function accessKeyScopesOutput(key: WalletState["accessKeys"][number]) {
   return (key.scopes ?? []).map((scope) => ({
     address: scope.address.toLowerCase(),
     selector: scope.selector ?? null,
-    recipients: scope.recipients?.map((recipient) => recipient.toLowerCase()) ?? null,
+    // Omitted and empty recipient lists both allow any recipient.
+    recipients: scope.recipients?.map((recipient) => recipient.toLowerCase()) ?? [],
   }));
 }
 
