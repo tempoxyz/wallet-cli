@@ -194,6 +194,7 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
         options.includeHeaders = true;
         break;
       case "-I":
+      case "--head":
         options.head = true;
         options.includeHeaders = true;
         break;
@@ -334,11 +335,8 @@ function validateRequestOptions(options: RequestOptions) {
   options.network = normalizeNetwork(
     options.network ?? process.env.TEMPO_WALLET_NETWORK ?? "mainnet",
   );
-  options.maxSpend ??= process.env.TEMPO_MAX_SPEND?.trim() || undefined;
   if (options.maxSpend !== undefined && !/^\d+(?:\.\d{1,6})?$/.test(options.maxSpend))
-    throw usageError(
-      "--max-spend (or TEMPO_MAX_SPEND) must be a non-negative amount with at most 6 decimal places",
-    );
+    throw usageError("--max-spend must be a non-negative amount with at most 6 decimal places");
   if (options.paymentToken !== undefined)
     options.paymentToken = paymentTokenValue(options.paymentToken);
   if (options.paymentIntent !== undefined) paymentIntentValue(options.paymentIntent);
@@ -678,17 +676,30 @@ async function fetchWithRedirects(
   }
 }
 
+// A redirect target is chosen by the responding server, so never replay
+// credentials to a different origin. Same-origin redirects keep them, which
+// matches curl's behavior for -L.
+const credentialHeaders = [
+  "authorization",
+  "cookie",
+  "cookie2",
+  "payment-authorization",
+  "proxy-authorization",
+] as const;
+
 function redirectRequest(request: FetchPlan, status: number, location: string): FetchPlan {
+  const currentUrl = new URL(request.url);
   const nextUrl = new URL(location, request.url);
   const init = cloneRequestInit(request.init);
   const headers = new Headers(init.headers);
-  const method = init.method?.toUpperCase() ?? "GET";
 
-  if (new URL(request.url).origin !== nextUrl.origin) {
-    headers.delete("authorization");
-    headers.delete("cookie");
-    headers.delete("proxy-authorization");
+  // Strip sensitive authentication and session headers across differing origins
+  if (nextUrl.origin !== currentUrl.origin) {
+    for (const header of credentialHeaders) headers.delete(header);
+    init.headers = headers;
   }
+
+  const method = init.method?.toUpperCase() ?? "GET";
 
   if (
     (status === 301 || status === 302 || status === 303) &&
@@ -699,9 +710,9 @@ function redirectRequest(request: FetchPlan, status: number, location: string): 
     delete init.body;
     headers.delete("content-length");
     headers.delete("content-type");
+    init.headers = headers;
   }
 
-  init.headers = headers;
   return { init, url: nextUrl.toString() };
 }
 

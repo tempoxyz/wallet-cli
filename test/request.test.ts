@@ -655,33 +655,6 @@ describe("request command", () => {
     expect(stdout.text()).toBe("target");
   });
 
-  it("strips credentials on cross-origin redirects and keeps them on same-origin ones", async () => {
-    const seen: Record<string, string | undefined> = {};
-    const other = await testServer((request, response) => {
-      seen.cross = request.headers.authorization;
-      response.end("other");
-    });
-    const server = await testServer((request, response) => {
-      if (request.url === "/target") {
-        seen.same = request.headers.authorization;
-        response.end("target");
-        return;
-      }
-      response.statusCode = 302;
-      response.setHeader("location", request.url === "/cross" ? other.url("/target") : "/target");
-      response.end();
-    });
-
-    await runRequest(["-L", "--bearer", "secret-token", server.url("/cross")], {
-      stdout: captureStdout(),
-    });
-    await runRequest(["-L", "--bearer", "secret-token", server.url("/same")], {
-      stdout: captureStdout(),
-    });
-
-    expect(seen).toEqual({ cross: undefined, same: "Bearer secret-token" });
-  });
-
   it("fails when the redirect limit is exceeded", async () => {
     const server = await testServer((_request, response) => {
       response.statusCode = 302;
@@ -694,6 +667,39 @@ describe("request command", () => {
         stdout: captureStdout(),
       }),
     ).rejects.toMatchObject({ code: "E_NETWORK" });
+  });
+
+  it("does not forward credentials to a different origin", async () => {
+    const target = await testServer((request, response) => {
+      response.end(request.headers.authorization ? "credentials-replayed" : "credentials-stripped");
+    });
+    const server = await testServer((_request, response) => {
+      response.statusCode = 302;
+      response.setHeader("location", target.url("/target"));
+      response.end("redirect");
+    });
+    const stdout = captureStdout();
+
+    await runRequest(["-L", "--bearer", "secret-token", server.url("/redirect")], { stdout });
+
+    expect(stdout.text()).toBe("credentials-stripped");
+  });
+
+  it("keeps credentials on same-origin redirects", async () => {
+    const server = await testServer((request, response) => {
+      if (request.url === "/redirect") {
+        response.statusCode = 302;
+        response.setHeader("location", "/target");
+        response.end("redirect");
+        return;
+      }
+      response.end(request.headers.authorization ? "credentials-replayed" : "credentials-stripped");
+    });
+    const stdout = captureStdout();
+
+    await runRequest(["-L", "--bearer", "secret-token", server.url("/redirect")], { stdout });
+
+    expect(stdout.text()).toBe("credentials-replayed");
   });
 
   it("outputs SSE data as Rust-compatible NDJSON records", async () => {
@@ -1131,21 +1137,6 @@ describe("request command", () => {
     expect(() => parseRequestArgs(["--payment-token", "USDC", "https://example.com"])).toThrow(
       "--payment-token must be a 0x token address",
     );
-  });
-
-  it("falls back to TEMPO_MAX_SPEND when --max-spend is omitted", () => {
-    try {
-      vi.stubEnv("TEMPO_MAX_SPEND", " 2.50 ");
-      expect(parseRequestArgs(["https://example.com"]).maxSpend).toBe("2.50");
-      expect(parseRequestArgs(["--max-spend", "1.00", "https://example.com"]).maxSpend).toBe(
-        "1.00",
-      );
-
-      vi.stubEnv("TEMPO_MAX_SPEND", "banana");
-      expect(() => parseRequestArgs(["https://example.com"])).toThrow("TEMPO_MAX_SPEND");
-    } finally {
-      vi.unstubAllEnvs();
-    }
   });
 
   it("recovers stale session locks left behind by killed request processes", async () => {
