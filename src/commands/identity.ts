@@ -26,7 +26,6 @@ import {
 } from "../shared/utils.js";
 import { connect, createProvider } from "../provider.js";
 import {
-  type AccessKeyScope,
   emptyWalletState,
   loadWalletState,
   saveWalletState,
@@ -180,7 +179,7 @@ export async function updateAccessKeyHandler(
       "No access key configured for the current wallet and network. Run 'tempo wallet login'.",
     );
 
-  const token = options.token ?? key.limits[0]?.token ?? tokenAddress(selectedChainId);
+  const token = options.token ?? key.limits?.[0]?.token ?? tokenAddress(selectedChainId);
   if (!isAddress(token)) throw usageError("Invalid token address: expected a 0x address");
   const limit = parseLimit(options.limit);
   const walletAddress = activeAccount.address as Address;
@@ -202,14 +201,15 @@ export async function updateAccessKeyHandler(
 
   const accessKeys = state.accessKeys.map((candidate) => {
     if (candidate !== key) return candidate;
-    const existing = candidate.limits.findIndex(
+    const storedLimits = candidate.limits ?? [];
+    const existing = storedLimits.findIndex(
       (item) => item.token.toLowerCase() === tokenAddress_resolved.toLowerCase(),
     );
     const nextLimit = `${limit}#__bigint`;
     const limits =
       existing === -1
-        ? [...candidate.limits, { token: tokenAddress_resolved, limit: nextLimit }]
-        : candidate.limits.map((item, index) =>
+        ? [...storedLimits, { token: tokenAddress_resolved, limit: nextLimit }]
+        : storedLimits.map((item, index) =>
             index === existing ? { ...item, limit: nextLimit } : item,
           );
     return { ...candidate, limits };
@@ -407,7 +407,7 @@ export async function currentWhoamiOutput(options: {
           }),
         )
       : undefined);
-  const token = key?.limits[0]?.token ?? tokenAddress(selectedChain);
+  const token = key?.limits?.[0]?.token ?? tokenAddress(selectedChain);
   const [balance, assets, sessions] = await Promise.all([
     tokenBalance({
       token,
@@ -451,7 +451,7 @@ export async function currentKeysOutput(options: {
   const balances = new Map<string, TokenBalance | null>();
   const keys = [];
   for (const key of options.accessKeys) {
-    const token = key.limits[0]?.token ?? tokenAddress(key.chainId);
+    const token = key.limits?.[0]?.token ?? tokenAddress(key.chainId);
     const balance = balances.has(token.toLowerCase())
       ? (balances.get(token.toLowerCase()) ?? null)
       : await tokenBalance({
@@ -484,7 +484,9 @@ function currentKeyOutput(options: {
   status: string | null;
 }) {
   if (!options.key) return null;
-  const limit = options.key.limits[0];
+  const limit = options.key.limits?.[0];
+  const spendingMode = permissionMode(options.key.limits, options.key.permissionSemantics);
+  const callMode = permissionMode(options.key.scopes, options.key.permissionSemantics);
   const token = limit?.token ?? tokenAddress(options.chain ?? options.key.chainId);
   const spendingLimits = accessKeyLimitsOutput(options.key);
   return {
@@ -500,13 +502,20 @@ function currentKeyOutput(options: {
         : null,
     ...(options.walletAddress && !options.balance ? { balance_error: balanceQueryError } : {}),
     spending_limit: {
-      unlimited: false,
-      limit: limit ? formatMicroUnits(cleanStoredScalar(limit.limit)) : "0.000000",
+      mode: spendingMode,
+      unlimited: spendingMode === "unknown" ? null : spendingMode === "unrestricted",
+      limit:
+        spendingMode === "none"
+          ? "0.000000"
+          : spendingMode === "restricted" && limit
+            ? formatMicroUnits(cleanStoredScalar(limit.limit))
+            : null,
       period_seconds: limit?.period ?? null,
       remaining: null,
       spent: null,
     },
     spending_limits: spendingLimits,
+    call_permissions: callMode,
     scopes: accessKeyScopesOutput(options.key),
     status: options.status,
     expires_at: formatUnixTimestamp(options.key.expiry),
@@ -514,7 +523,7 @@ function currentKeyOutput(options: {
 }
 
 function accessKeyLimitsOutput(key: WalletState["accessKeys"][number]) {
-  return key.limits.map((limit) => ({
+  return (key.limits ?? []).map((limit) => ({
     unlimited: false,
     symbol: tokenSymbol(limit.token),
     token: limit.token.toLowerCase(),
@@ -526,33 +535,18 @@ function accessKeyLimitsOutput(key: WalletState["accessKeys"][number]) {
 }
 
 function accessKeyScopesOutput(key: WalletState["accessKeys"][number]) {
-  return accessKeyScopes(key).map((scope) => ({
+  return (key.scopes ?? []).map((scope) => ({
     address: scope.address.toLowerCase(),
     selector: scope.selector ?? null,
-    recipients: scope.recipients.map((recipient) => recipient.toLowerCase()),
+    // Omitted and empty recipient lists both allow any recipient.
+    recipients: scope.recipients?.map((recipient) => recipient.toLowerCase()) ?? [],
   }));
 }
 
-function accessKeyScopes(key: WalletState["accessKeys"][number]) {
-  if (key.scopes !== undefined) return key.scopes;
-  return parseKeyAuthorizationScopes(key.keyAuthorization);
-}
-
-function parseKeyAuthorizationScopes(value: unknown): readonly AccessKeyScope[] {
-  const scopes = getArray(getRecord(value).scopes).flatMap((scope) => {
-    const item = getRecord(scope);
-    if (typeof item.address !== "string") return [];
-    return [
-      {
-        address: item.address,
-        selector: typeof item.selector === "string" ? item.selector : undefined,
-        recipients: getArray(item.recipients).flatMap((recipient) =>
-          typeof recipient === "string" ? [recipient] : [],
-        ),
-      },
-    ];
-  });
-  return scopes;
+function permissionMode(values: readonly unknown[] | undefined, semantics: 1 | undefined) {
+  if (semantics !== 1) return "unknown" as const;
+  if (values === undefined) return "unrestricted" as const;
+  return values.length === 0 ? ("none" as const) : ("restricted" as const);
 }
 
 type TokenBalance = {
@@ -576,7 +570,7 @@ function walletBalances(options: {
   fallback: TokenBalance | null;
 }) {
   const balances = options.assets.map((asset) => {
-    const limit = options.accessKey?.limits.find(
+    const limit = options.accessKey?.limits?.find(
       (candidate) => candidate.token.toLowerCase() === asset.address.toLowerCase(),
     );
     return {
@@ -595,7 +589,7 @@ function walletBalances(options: {
       (balance) => balance.token.toLowerCase() === options.fallback?.token.toLowerCase(),
     )
   ) {
-    const limit = options.accessKey?.limits.find(
+    const limit = options.accessKey?.limits?.find(
       (candidate) => candidate.token.toLowerCase() === options.fallback?.token.toLowerCase(),
     );
     balances.push({

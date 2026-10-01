@@ -12,7 +12,13 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -50,17 +56,16 @@ jobs:
             exit 1
           fi
 
+      - name: Setup pnpm
+        if: steps.changes.outputs.has_changelog == 'true'
+        uses: tempoxyz/gh-actions/vendor/pnpm/action-setup@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+
       - name: Setup Node.js
         if: steps.changes.outputs.has_changelog == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
-
-      - name: Setup pnpm
-        if: steps.changes.outputs.has_changelog == 'true'
-        run: |
-          corepack enable
-          corepack prepare pnpm@11.0.8 --activate
+          cache: pnpm
 
       - name: Install dependencies
         if: steps.changes.outputs.has_changelog == 'true'

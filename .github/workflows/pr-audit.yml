@@ -12,6 +12,12 @@ permissions:
 
 jobs:
   pr-audit:
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+      # Required by the reusable workflow's optional commit-status gate.
+      statuses: write
     if: >-
       github.event_name == 'pull_request' ||
       (
@@ -19,7 +25,7 @@ jobs:
         github.event.issue.pull_request &&
         contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
       )
-    uses: tempoxyz/gh-actions/.github/workflows/pr-audit.yml@1a49d3e9f9983a55832d7163faa970b7ba3c1af9
+    uses: tempoxyz/gh-actions/.github/workflows/pr-audit.yml@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
     secrets:
       EVENTS_KEY: ${{ secrets.EVENTS_KEY }}
       EVENTS_CERT: ${{ secrets.EVENTS_CERT }}

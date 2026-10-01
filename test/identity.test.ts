@@ -44,6 +44,7 @@ import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
 import { moderatoToken } from "../src/shared/constants.js";
 import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
+import { keysOutput, whoamiOutput } from "../src/schemas.js";
 
 import {
   expectUsageError,
@@ -72,6 +73,75 @@ afterEach(() => {
 });
 
 describe("wallet store", () => {
+  it.each([
+    {
+      name: "omitted",
+      limits: undefined,
+      scopes: undefined,
+      mode: "unrestricted",
+      unlimited: true,
+      limit: null,
+    },
+    { name: "empty", limits: [], scopes: [], mode: "none", unlimited: false, limit: "0.000000" },
+    {
+      name: "bounded",
+      limits: [{ token: usdc, limit: "100000000#__bigint" }],
+      scopes: [{ address: usdc }],
+      mode: "restricted",
+      unlimited: false,
+      limit: "100.000000",
+    },
+  ])(
+    "preserves $name permissions through save, reload, and output",
+    async ({ limits, scopes, mode, unlimited, limit }) => {
+      await useTempHome();
+      await saveWalletState(
+        walletState({
+          accessKeys: [{ ...walletState().accessKeys[0]!, permissionSemantics: 1, limits, scopes }],
+        }),
+      );
+      const state = await loadWalletState();
+      const result = keysOutput.parse(
+        await currentKeysOutput({ walletAddress: null, chain: 4217, accessKeys: state.accessKeys }),
+      );
+      expect(result.keys[0]).toMatchObject({
+        spending_limit: { mode, unlimited, limit, remaining: null, spent: null },
+        call_permissions: mode,
+      });
+      expect(state.accessKeys[0]?.limits).toEqual(limits);
+      expect(state.accessKeys[0]?.scopes).toEqual(scopes);
+      const identity = await currentWhoamiOutput({
+        walletAddress: testWallet,
+        chain: 4217,
+        accessKeys: state.accessKeys,
+      });
+      expect(whoamiOutput.options[1].parse(identity)).toMatchObject({
+        key: { spending_limit: { mode, unlimited, limit }, call_permissions: mode },
+      });
+    },
+  );
+
+  it.each([undefined, [], [{ token: usdc, limit: "100000000#__bigint" }]])(
+    "keeps legacy permissions unknown through a round trip: %#",
+    async (limits) => {
+      await useTempHome();
+      await saveWalletState(
+        walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, limits, scopes: [] }] }),
+      );
+      const state = await loadWalletState();
+      expect(state.accessKeys[0]?.permissionSemantics).toBeUndefined();
+      const result = await currentKeysOutput({
+        walletAddress: null,
+        chain: 4217,
+        accessKeys: state.accessKeys,
+      });
+      expect(result.keys[0]).toMatchObject({
+        spending_limit: { mode: "unknown", unlimited: null, limit: null },
+        call_permissions: "unknown",
+      });
+    },
+  );
+
   it("loads an empty store when none exists", async () => {
     await useTempHome();
     const state = await loadWalletState();
@@ -668,6 +738,7 @@ limit = "100000000"
       accessKeys: [
         {
           ...walletState().accessKeys[0]!,
+          permissionSemantics: 1,
           expiry: 4_102_444_800,
           limits: [
             { token: usdc, limit: "100000000#__bigint", period: 86_400 },
@@ -927,6 +998,36 @@ limit = "100000000"
     expect((await loadWalletState()).accessKeys[0]?.limits).toEqual([
       { token: usdc, limit: "250000000#__bigint" },
     ]);
+    expect((await loadWalletState()).accessKeys[0]?.permissionSemantics).toBeUndefined();
+  });
+
+  it("reports an unrestricted key as restricted after a single-token update", async () => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            ...walletState().accessKeys[0]!,
+            permissionSemantics: 1,
+            limits: undefined,
+            scopes: undefined,
+          },
+        ],
+      }),
+    );
+    const request = vi.fn().mockResolvedValue(undefined);
+    await updateAccessKeyHandler({ limit: "250", token: usdc }, () => ({ request }));
+    const state = await loadWalletState();
+    const result = await currentKeysOutput({
+      walletAddress: null,
+      chain: 4217,
+      accessKeys: state.accessKeys,
+    });
+    expect(result.keys[0]).toMatchObject({
+      spending_limit: { mode: "restricted", unlimited: false, limit: "250.000000" },
+      call_permissions: "unrestricted",
+      spending_limits: [{ token: usdc.toLowerCase(), limit: "250.000000" }],
+    });
   });
 
   it("uses the stored testnet chain for wallet approval", async () => {
@@ -984,7 +1085,7 @@ limit = "100000000"
       ],
     });
     expect(result.access_key).toBe(testAccessKey2.toLowerCase());
-    expect((await loadWalletState()).accessKeys.map((key) => key.limits[0]?.limit)).toEqual([
+    expect((await loadWalletState()).accessKeys.map((key) => key.limits?.[0]?.limit)).toEqual([
       "100000000#__bigint",
       "250000000#__bigint",
     ]);

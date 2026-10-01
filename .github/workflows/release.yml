@@ -24,6 +24,9 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -57,7 +60,7 @@ jobs:
       - name: Fetch GitHub token via STS
         if: steps.diff.outputs.changed == 'true'
         id: sts
-        uses: tempoxyz/gh-actions/actions/github-sts@c0292122e255def866c64c55e5844d1e7d5fe7ad # main
+        uses: tempoxyz/gh-actions/actions/github-sts@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
         with:
           policy: release-pr
 
@@ -91,7 +94,11 @@ jobs:
     permissions:
       actions: write
       contents: write
+      id-token: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0

@@ -64,8 +64,9 @@ export const whoamiOutput = z.union([
         balance: z.string().nullable(),
         balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
         spending_limit: z.object({
-          unlimited: z.boolean(),
-          limit: z.string(),
+          mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
+          unlimited: z.boolean().nullable(),
+          limit: z.string().nullable(),
           period_seconds: z.number().nullable(),
           remaining: z.string().nullable(),
           spent: z.string().nullable(),
@@ -81,6 +82,7 @@ export const whoamiOutput = z.union([
             spent: z.string().nullable(),
           }),
         ),
+        call_permissions: z.enum(["unknown", "unrestricted", "none", "restricted"]),
         scopes: z.array(
           z.object({
             address: z.string(),
@@ -108,8 +110,9 @@ export const keysOutput = z.object({
       balance: z.string().nullable(),
       balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
       spending_limit: z.object({
-        unlimited: z.boolean(),
-        limit: z.string(),
+        mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
+        unlimited: z.boolean().nullable(),
+        limit: z.string().nullable(),
         period_seconds: z.number().nullable(),
         remaining: z.string().nullable(),
         spent: z.string().nullable(),
@@ -125,6 +128,7 @@ export const keysOutput = z.object({
           spent: z.string().nullable(),
         }),
       ),
+      call_permissions: z.enum(["unknown", "unrestricted", "none", "restricted"]),
       scopes: z.array(
         z.object({
           address: z.string(),

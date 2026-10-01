@@ -1,11 +1,15 @@
 name: Build
 
+permissions: {}
+
 on:
   push:
     tags:
       - "v*"
       - "tempo-wallet@*"
       - "tempo-request@*"
+      - "tempo-api@*"
+      - "tempo-routes@*"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -18,33 +22,39 @@ jobs:
     name: Parse tag
     permissions:
       contents: read
+      id-token: write
     runs-on: ubuntu-latest
     outputs:
       packages: ${{ steps.parse.outputs.packages }}
       version: ${{ steps.parse.outputs.version }}
       release_tag: ${{ steps.parse.outputs.release_tag }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+
       - name: Parse release version from tag
         id: parse
         shell: bash
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
 
-          TAG="${{ inputs.release_tag }}"
+          TAG="$INPUT_RELEASE_TAG"
           if [ -z "$TAG" ]; then
             TAG="${GITHUB_REF#refs/tags/}"
           fi
 
           if [[ "$TAG" == v* ]]; then
             VERSION="${TAG#v}"
-            PACKAGES='["tempo-wallet","tempo-request"]'
+            PACKAGES='["tempo-wallet","tempo-request","tempo-api","tempo-routes"]'
             RELEASE_TAG="$TAG"
           elif [[ "$TAG" == *"@"* ]]; then
             PACKAGE="${TAG%%@*}"
             VERSION="${TAG#*@}"
             RELEASE_TAG="$TAG"
 
-            if [[ "$PACKAGE" == "tempo-wallet" || "$PACKAGE" == "tempo-request" ]]; then
+            if [[ "$PACKAGE" == "tempo-wallet" || "$PACKAGE" == "tempo-request" || "$PACKAGE" == "tempo-api" || "$PACKAGE" == "tempo-routes" ]]; then
               PACKAGES="[\"${PACKAGE}\"]"
             else
               echo "Unsupported package in tag: ${PACKAGE}" >&2
@@ -52,7 +62,7 @@ jobs:
             fi
           elif [[ "$TAG" == refs/heads/* || "$TAG" == "$GITHUB_REF" ]]; then
             VERSION="0.0.0-dev.${GITHUB_RUN_NUMBER}"
-            PACKAGES='["tempo-wallet","tempo-request"]'
+            PACKAGES='["tempo-wallet","tempo-request","tempo-api","tempo-routes"]'
             RELEASE_TAG="$TAG"
           else
             echo "Unsupported tag format: ${TAG}" >&2
@@ -99,6 +109,9 @@ jobs:
       TEMPO_WALLET_PACKAGE_DIR: artifacts
       TEMPO_WALLET_PACKAGE_OUTPUT: artifacts/${{ matrix.package }}-${{ matrix.build.suffix }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.parse-tag.outputs.release_tag }}
@@ -135,7 +148,7 @@ jobs:
 
       - name: Smoke test host binary
         if: matrix.build.pkg_target == 'node22-linux-x64' || matrix.build.pkg_target == 'node22-linux-arm64' || matrix.build.pkg_target == 'node22-macos-arm64'
-        run: ./artifacts/${PACKAGE}-${{ matrix.build.suffix }} --version
+        run: ./artifacts/"${PACKAGE}"-${{ matrix.build.suffix }} --version
 
       - name: Generate sha256
         shell: bash
@@ -150,7 +163,7 @@ jobs:
           cat "$BIN.sha256"
 
       - name: Generate SBOM (SPDX-JSON)
-        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@6f436eb3a168279692739e8c0c9fdb52b94bfae7
+        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
         with:
           file: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
           format: spdx-json
@@ -170,7 +183,7 @@ jobs:
           subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
 
       - name: Install cosign
-        uses: tempoxyz/gh-actions/vendor/sigstore/cosign-installer@6f436eb3a168279692739e8c0c9fdb52b94bfae7
+        uses: tempoxyz/gh-actions/vendor/sigstore/cosign-installer@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
 
       - name: Sign binary with cosign (keyless)
         shell: bash
@@ -196,6 +209,7 @@ jobs:
     environment: release
     permissions:
       contents: write
+      id-token: write
     needs: [parse-tag, build]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
@@ -211,6 +225,9 @@ jobs:
       AWS_MAX_ATTEMPTS: "10"
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.parse-tag.outputs.release_tag }}
@@ -254,7 +271,7 @@ jobs:
         run: rustup default stable
 
       - name: Build release signer
-        run: cargo build --release -p tempo-sign
+        run: cargo build --locked --release -p tempo-sign
         working-directory: wallet-release-tools
 
       - name: Sign release binaries
@@ -268,6 +285,8 @@ jobs:
           declare -A PKG_DESC=(
             [tempo-wallet]="Manage your Tempo Wallet"
             [tempo-request]="Make an HTTP request"
+            [tempo-api]="Explore the Tempo API"
+            [tempo-routes]="Access the Tempo asset routing API"
           )
 
           SIGN_ARGS=(
@@ -384,12 +403,16 @@ jobs:
     environment: release
     permissions:
       contents: write
+      id-token: write
     needs: [parse-tag, publish]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
     env:
       RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+
       - name: Publish draft release
         env:
           GH_TOKEN: ${{ github.token }}

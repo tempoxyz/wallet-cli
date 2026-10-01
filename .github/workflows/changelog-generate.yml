@@ -16,6 +16,9 @@ jobs:
     permissions:
       id-token: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+
       - name: Determine PR source
         id: source
         env:
@@ -45,7 +48,7 @@ jobs:
       - name: Fetch GitHub token via STS
         if: steps.source.outputs.same_repo == 'true'
         id: app-token
-        uses: tempoxyz/gh-actions/actions/github-sts@c0292122e255def866c64c55e5844d1e7d5fe7ad
+        uses: tempoxyz/gh-actions/actions/github-sts@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
         with:
           policy: release
 
@@ -78,6 +81,7 @@ jobs:
 
       - name: Install changelog dependencies
         if: steps.source.outputs.same_repo == 'true' && steps.existing.outputs.found == 'false'
+        # zizmor: ignore[adhoc-packages] -- workflow-only CLI
         run: |
           corepack enable
           corepack prepare pnpm@11.0.8 --activate
@@ -169,8 +173,12 @@ jobs:
     if: always() && startsWith(github.event.label.name, 'changelog:')
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       pull-requests: write
     steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+
       - name: Comment for fork PRs
         if: github.event.pull_request.head.repo.full_name != github.repository
         env:
