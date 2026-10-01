@@ -107,7 +107,7 @@ export async function swapTokens(
     chainId: selectedChainId,
     walletAddress: activeAccount.address,
   });
-  const accessKeyLimit = key?.limits.find((limit) => limit.token.toLowerCase() === tokenIn);
+  const accessKeyLimit = key?.limits?.find((limit) => limit.token.toLowerCase() === tokenIn);
   const accessKeyLimitRaw = parseAccessKeyLimit(accessKeyLimit?.limit);
   const requiresAccessKeyUpdate = accessKeyLimitRaw === null || accessKeyLimitRaw < maxAmountIn;
   const feeToken = (input.options["fee-token"]?.toLowerCase() ?? tokenIn) as `0x${string}`;

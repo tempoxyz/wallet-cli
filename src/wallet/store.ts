@@ -14,7 +14,7 @@ export type AccessKeyLimit = {
 export type AccessKeyScope = {
   address: string;
   selector?: string | undefined;
-  recipients: readonly string[];
+  recipients?: readonly string[] | undefined;
 };
 
 export type WalletState = {
@@ -30,7 +30,8 @@ export type WalletState = {
     keyType?: string | undefined;
     privateKey?: string | undefined;
     publicKey?: string | undefined;
-    limits: readonly AccessKeyLimit[];
+    limits?: readonly AccessKeyLimit[] | undefined;
+    permissionSemantics?: 1 | undefined;
     scopes?: readonly AccessKeyScope[] | undefined;
   }[];
   activeAccount?: number | undefined;
@@ -69,6 +70,8 @@ export async function loadWalletState(): Promise<WalletState> {
       typeof item.chainId !== "number"
     )
       return [];
+    const limits = parseAccessKeyLimits(item.limits);
+    const scopes = parseAccessKeyScopes(item.scopes);
 
     return [
       {
@@ -82,8 +85,11 @@ export async function loadWalletState(): Promise<WalletState> {
         keyType: typeof item.keyType === "string" ? item.keyType : undefined,
         privateKey: typeof item.privateKey === "string" ? item.privateKey : undefined,
         publicKey: typeof item.publicKey === "string" ? item.publicKey : undefined,
-        limits: parseAccessKeyLimits(item.limits),
-        scopes: parseAccessKeyScopes(item.scopes),
+        // Dropped entries would misreport the permission set, so report it as unknown instead.
+        permissionSemantics:
+          item.permissionSemantics === 1 && limits.valid && scopes.valid ? (1 as const) : undefined,
+        limits: limits.value,
+        scopes: scopes.value,
       },
     ];
   });
@@ -109,11 +115,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function parseAccessKeyLimits(value: unknown): AccessKeyLimit[] {
-  return getArray(value).flatMap((limit) => {
+function parseAccessKeyLimits(value: unknown) {
+  if (!Array.isArray(value)) return { value: undefined, valid: value === undefined };
+  const limits = value.flatMap((limit): AccessKeyLimit[] => {
     const item = getRecord(limit);
-    if (typeof item.token !== "string" || typeof item.limit !== "string") return [];
-    if (item.period !== undefined && typeof item.period !== "number") return [];
+    if (
+      typeof item.token !== "string" ||
+      typeof item.limit !== "string" ||
+      (item.period !== undefined && typeof item.period !== "number")
+    )
+      return [];
     return [
       {
         token: item.token,
@@ -122,24 +133,30 @@ function parseAccessKeyLimits(value: unknown): AccessKeyLimit[] {
       },
     ];
   });
+  return { value: limits, valid: limits.length === value.length };
 }
 
-function parseAccessKeyScopes(value: unknown): AccessKeyScope[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const scopes = getArray(value).flatMap((scope) => {
+function parseAccessKeyScopes(value: unknown) {
+  if (!Array.isArray(value)) return { value: undefined, valid: value === undefined };
+  const scopes = value.flatMap((scope): AccessKeyScope[] => {
     const item = getRecord(scope);
-    if (typeof item.address !== "string") return [];
+    if (
+      typeof item.address !== "string" ||
+      (item.selector !== undefined && typeof item.selector !== "string") ||
+      (item.recipients !== undefined &&
+        (!Array.isArray(item.recipients) ||
+          !item.recipients.every((recipient: unknown) => typeof recipient === "string")))
+    )
+      return [];
     return [
       {
         address: item.address,
         selector: typeof item.selector === "string" ? item.selector : undefined,
-        recipients: getArray(item.recipients).flatMap((recipient) =>
-          typeof recipient === "string" ? [recipient] : [],
-        ),
+        recipients: item.recipients as string[] | undefined,
       },
     ];
   });
-  return scopes;
+  return { value: scopes, valid: scopes.length === value.length };
 }
 
 export async function saveWalletState(state: WalletState) {
