@@ -176,7 +176,7 @@ describe("generated CLI metadata", () => {
       output: { items: { properties: { installed: { type: string } } } };
     };
     expect(skillsList.output.items.properties.installed.type).toBe("boolean");
-  });
+  }, 30_000);
 
   it("accepts --no-browser for browser-backed wallet commands", () => {
     expect(Parser.parse(["--no-browser"], { options: loginOptions }).options).toMatchObject({

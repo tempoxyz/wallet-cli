@@ -2,4 +2,4 @@
 wallet-cli: none
 ---
 
-Update TypeScript, Node.js type definitions, and Vitest, including the Vitest mocker security fix.
+Update TypeScript to 7, Vitest to 5, and Node.js type definitions to 26.
