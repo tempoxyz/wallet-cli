@@ -115,6 +115,31 @@ describe("swapTokens", () => {
     );
   });
 
+  it("submits with an access key that has no stored limits", async () => {
+    await useTempHome();
+    const state = walletState();
+    await writeWalletState({
+      ...state,
+      accessKeys: state.accessKeys.map((key) => ({ ...key, limits: undefined })),
+    });
+    const runtime = dependencies();
+
+    const result = await swapTokens(
+      {
+        args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
+        options: { "slippage-bps": 50, yes: true },
+      },
+      runtime,
+    );
+
+    expect(result).toMatchObject({
+      status: "success",
+      access_key_limit: null,
+      requires_access_key_update: false,
+    });
+    expect(runtime.submit).toHaveBeenCalledOnce();
+  });
+
   it("submits the reviewed calls through the local wallet provider", async () => {
     await useTempHome();
     await writeWalletState(walletState());

@@ -109,7 +109,10 @@ export async function swapTokens(
   });
   const accessKeyLimit = key?.limits?.find((limit) => limit.token.toLowerCase() === tokenIn);
   const accessKeyLimitRaw = parseAccessKeyLimit(accessKeyLimit?.limit);
-  const requiresAccessKeyUpdate = accessKeyLimitRaw === null || accessKeyLimitRaw < maxAmountIn;
+  // A key stored without limits is unrestricted; only a limited key can fall short.
+  const unrestricted = key !== undefined && key.limits === undefined;
+  const requiresAccessKeyUpdate =
+    !unrestricted && (accessKeyLimitRaw === null || accessKeyLimitRaw < maxAmountIn);
   const feeToken = (input.options["fee-token"]?.toLowerCase() ?? tokenIn) as `0x${string}`;
   const output = {
     chain_id: selectedChainId,
