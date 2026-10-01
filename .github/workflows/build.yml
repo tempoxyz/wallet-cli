@@ -1,5 +1,7 @@
 name: Build
 
+permissions: {}
+
 on:
   push:
     tags:
@@ -26,7 +28,7 @@ jobs:
       release_tag: ${{ steps.parse.outputs.release_tag }}
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ee2960a6cc25d99bda45614135bfe1197d879bac # 2026-09-26T06-46-03Z-ee2960a6
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
 
       - name: Parse release version from tag
         id: parse
@@ -106,7 +108,7 @@ jobs:
       TEMPO_WALLET_PACKAGE_OUTPUT: artifacts/${{ matrix.package }}-${{ matrix.build.suffix }}
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ee2960a6cc25d99bda45614135bfe1197d879bac # 2026-09-26T06-46-03Z-ee2960a6
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -159,7 +161,7 @@ jobs:
           cat "$BIN.sha256"
 
       - name: Generate SBOM (SPDX-JSON)
-        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@ee2960a6cc25d99bda45614135bfe1197d879bac # 2026-09-26T06-46-03Z-ee2960a6
+        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
         with:
           file: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
           format: spdx-json
@@ -179,7 +181,7 @@ jobs:
           subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
 
       - name: Install cosign
-        uses: tempoxyz/gh-actions/vendor/sigstore/cosign-installer@ee2960a6cc25d99bda45614135bfe1197d879bac # 2026-09-26T06-46-03Z-ee2960a6
+        uses: tempoxyz/gh-actions/vendor/sigstore/cosign-installer@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
 
       - name: Sign binary with cosign (keyless)
         shell: bash
@@ -222,7 +224,7 @@ jobs:
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ee2960a6cc25d99bda45614135bfe1197d879bac # 2026-09-26T06-46-03Z-ee2960a6
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -267,7 +269,7 @@ jobs:
         run: rustup default stable
 
       - name: Build release signer
-        run: cargo build --release -p tempo-sign
+        run: cargo build --locked --release -p tempo-sign
         working-directory: wallet-release-tools
 
       - name: Sign release binaries
@@ -405,7 +407,7 @@ jobs:
       RELEASE_TAG: ${{ needs.parse-tag.outputs.release_tag }}
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ee2960a6cc25d99bda45614135bfe1197d879bac # 2026-09-26T06-46-03Z-ee2960a6
+        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
 
       - name: Publish draft release
         env:
