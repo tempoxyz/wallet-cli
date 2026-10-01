@@ -66,7 +66,7 @@ export async function serveApi(routes = false) {
 
 async function loadSpec(url: URL): Promise<Openapi.OpenAPISpec> {
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return (await response.json()) as Openapi.OpenAPISpec;
   } catch (error) {
