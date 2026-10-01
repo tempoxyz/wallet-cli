@@ -21,7 +21,13 @@ function buildMppChallenge(amount: string, overrides: Record<string, unknown> = 
     ...overrides,
   };
   const encoded = Buffer.from(JSON.stringify(request), "utf8").toString("base64url");
-  return `Payment realm="example", method="tempo", intent="charge", id="abc123", request="${encoded}"`;
+  return buildMppChallengeWithRequest(`request="${encoded}"`);
+}
+
+function buildMppChallengeWithRequest(requestParam: string) {
+  return `Payment realm="example", method="tempo", intent="charge", id="abc123"${
+    requestParam ? `, ${requestParam}` : ""
+  }`;
 }
 
 describe("transferTokens", () => {
@@ -179,6 +185,41 @@ describe("transferCredits", () => {
     expectUsageError(
       error,
       "Invalid configuration: MPP challenge amount 15000 cannot be represented exactly in Coinflow credits cents for a 6-decimal token",
+    );
+  });
+
+  it("throws E_USAGE for a malformed MPP challenge request parameter", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+
+    const encode = (payload: string) => Buffer.from(payload, "utf8").toString("base64url");
+    // Not base64url, not JSON, and JSON that is not an object.
+    for (const request of ["!!!!", encode("not-json"), encode("null"), encode("[]"), encode("5")]) {
+      const error = await transferCredits({
+        options: {
+          "dry-run": true,
+          "mpp-challenge": buildMppChallengeWithRequest(`request="${request}"`),
+        },
+      }).catch((err: unknown) => err);
+
+      expectUsageError(
+        error,
+        "Invalid configuration: invalid MPP challenge: Malformed request parameter.",
+      );
+    }
+  });
+
+  it("throws E_USAGE for an MPP challenge with no request parameter", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+
+    const error = await transferCredits({
+      options: { "dry-run": true, "mpp-challenge": buildMppChallengeWithRequest("") },
+    }).catch((err: unknown) => err);
+
+    expectUsageError(
+      error,
+      "Invalid configuration: invalid MPP challenge: Missing request parameter.",
     );
   });
 

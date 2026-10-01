@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { toHex } from "viem";
 import { Actions } from "viem/tempo";
 
 const mocks = vi.hoisted(() => ({
   readContract: vi.fn(async () => 0n),
+  fetch: vi.fn(async () => new Response("[]", { status: 200 })),
 }));
+
+vi.stubGlobal("fetch", mocks.fetch);
 
 vi.mock("viem", async (importOriginal) => {
   const actual = await importOriginal<typeof import("viem")>();
@@ -33,11 +37,14 @@ import {
   keysHandler,
   logoutHandler,
   revokeHandler,
+  updateAccessKeyHandler,
   whoamiHandler,
 } from "../src/commands/identity.js";
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
 import { moderatoToken } from "../src/shared/constants.js";
+import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
+import { keysOutput, whoamiOutput } from "../src/schemas.js";
 
 import {
   expectUsageError,
@@ -61,9 +68,80 @@ afterEach(() => {
   vi.useRealTimers();
   mocks.readContract.mockReset();
   mocks.readContract.mockResolvedValue(0n);
+  mocks.fetch.mockReset();
+  mocks.fetch.mockResolvedValue(new Response("[]", { status: 200 }));
 });
 
 describe("wallet store", () => {
+  it.each([
+    {
+      name: "omitted",
+      limits: undefined,
+      scopes: undefined,
+      mode: "unrestricted",
+      unlimited: true,
+      limit: null,
+    },
+    { name: "empty", limits: [], scopes: [], mode: "none", unlimited: false, limit: "0.000000" },
+    {
+      name: "bounded",
+      limits: [{ token: usdc, limit: "100000000#__bigint" }],
+      scopes: [{ address: usdc }],
+      mode: "restricted",
+      unlimited: false,
+      limit: "100.000000",
+    },
+  ])(
+    "preserves $name permissions through save, reload, and output",
+    async ({ limits, scopes, mode, unlimited, limit }) => {
+      await useTempHome();
+      await saveWalletState(
+        walletState({
+          accessKeys: [{ ...walletState().accessKeys[0]!, permissionSemantics: 1, limits, scopes }],
+        }),
+      );
+      const state = await loadWalletState();
+      const result = keysOutput.parse(
+        await currentKeysOutput({ walletAddress: null, chain: 4217, accessKeys: state.accessKeys }),
+      );
+      expect(result.keys[0]).toMatchObject({
+        spending_limit: { mode, unlimited, limit, remaining: null, spent: null },
+        call_permissions: mode,
+      });
+      expect(state.accessKeys[0]?.limits).toEqual(limits);
+      expect(state.accessKeys[0]?.scopes).toEqual(scopes);
+      const identity = await currentWhoamiOutput({
+        walletAddress: testWallet,
+        chain: 4217,
+        accessKeys: state.accessKeys,
+      });
+      expect(whoamiOutput.options[1].parse(identity)).toMatchObject({
+        key: { spending_limit: { mode, unlimited, limit }, call_permissions: mode },
+      });
+    },
+  );
+
+  it.each([undefined, [], [{ token: usdc, limit: "100000000#__bigint" }]])(
+    "keeps legacy permissions unknown through a round trip: %#",
+    async (limits) => {
+      await useTempHome();
+      await saveWalletState(
+        walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, limits, scopes: [] }] }),
+      );
+      const state = await loadWalletState();
+      expect(state.accessKeys[0]?.permissionSemantics).toBeUndefined();
+      const result = await currentKeysOutput({
+        walletAddress: null,
+        chain: 4217,
+        accessKeys: state.accessKeys,
+      });
+      expect(result.keys[0]).toMatchObject({
+        spending_limit: { mode: "unknown", unlimited: null, limit: null },
+        call_permissions: "unknown",
+      });
+    },
+  );
+
   it("loads an empty store when none exists", async () => {
     await useTempHome();
     const state = await loadWalletState();
@@ -105,6 +183,7 @@ limit = "100000000"
         accessKeys: [
           {
             ...walletState().accessKeys[0]!,
+            expiry: 1783809942,
             keyAuthorization: "0x1234",
           },
         ],
@@ -270,11 +349,80 @@ describe("identity commands", () => {
       args: [testWallet],
     });
     expect(result).toMatchObject({
-      ready: true,
+      ready: false,
       balance: {
         total: "1000004.996912",
         available: "1000004.996912",
         symbol: "PathUSD",
+      },
+    });
+  });
+
+  it("keeps closing reserves in pending_refund until they return to the wallet", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    mocks.readContract.mockResolvedValue(1_000_000n);
+    const channel = identitySession();
+    await upsertSessionRecord(channel);
+    expect(await whoamiHandler({})).toMatchObject({
+      balance: {
+        total: "1.008000",
+        available: "1",
+        locked: "0.008000",
+        pending_refund: "0.000000",
+        active_sessions: 1,
+      },
+    });
+
+    for (const state of ["closing", "finalizable"]) {
+      await upsertSessionRecord({ ...channel, state, close_requested_at: 1 });
+      expect(await whoamiHandler({})).toMatchObject({
+        balance: {
+          total: "1.008000",
+          available: "1",
+          locked: "0.000000",
+          pending_refund: "0.008000",
+          active_sessions: 0,
+        },
+      });
+    }
+
+    await upsertSessionRecord({ ...channel, state: "finalized", close_requested_at: 1 });
+    mocks.readContract.mockResolvedValue(1_008_000n);
+    expect(await whoamiHandler({})).toMatchObject({
+      balance: {
+        total: "1.008000",
+        available: "1.008",
+        locked: "0.000000",
+        pending_refund: "0.000000",
+        active_sessions: 0,
+      },
+    });
+  });
+
+  it("scopes pending refunds to the wallet and token and uses the highest spent amount", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const records = [
+      identitySession({ state: "closing", close_requested_at: 1, server_spent: 3_000n }),
+      identitySession({ state: "finalizable", close_requested_at: 1, accepted_cumulative: 4_000n }),
+      identitySession({ state: "closing", close_requested_at: 1, cumulative_amount: 11_000n }),
+      identitySession({ state: "closing", close_requested_at: 1, payer: testWallet2 }),
+      identitySession({ state: "closing", close_requested_at: 1, token: moderatoToken }),
+      identitySession({ state: "finalized", close_requested_at: 1 }),
+      identitySession(),
+    ];
+    for (const [index, record] of records.entries()) {
+      await upsertSessionRecord({ ...record, channel_id: `0x${String(index + 1).repeat(64)}` });
+    }
+
+    expect(await whoamiHandler({})).toMatchObject({
+      balance: {
+        total: "0.021000",
+        available: "0",
+        locked: "0.008000",
+        pending_refund: "0.013000",
+        active_sessions: 1,
       },
     });
   });
@@ -290,6 +438,23 @@ describe("identity commands", () => {
     expect(result.balance.symbol).toBe("PathUSD");
   });
 
+  it("does not report an RPC error or query a balance without a wallet", async () => {
+    const result = await currentWhoamiOutput({
+      walletAddress: null,
+      chain: 4217,
+      accessKeys: [],
+    });
+
+    expect(result).toMatchObject({
+      ready: false,
+      wallet: null,
+      balance: { available: null, total: null },
+      key: null,
+    });
+    expect(result.balance).not.toHaveProperty("error");
+    expect(mocks.readContract).not.toHaveBeenCalled();
+  });
+
   it("whoami reports ready with a wallet", async () => {
     await useTempHome();
     await writeWalletState(walletState());
@@ -298,6 +463,184 @@ describe("identity commands", () => {
     expect(result).toMatchObject({
       ready: true,
       wallet: testWallet.toLowerCase(),
+      key: { status: "ready" },
+    });
+  });
+
+  it("whoami reports every held token and its active access-key limit", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    mocks.readContract.mockResolvedValueOnce(5_000_000n);
+    mocks.fetch.mockResolvedValueOnce(
+      Response.json([
+        {
+          address: usdc,
+          balance: "5000000",
+          decimals: 6,
+          symbol: "USDC.e",
+          verified: true,
+        },
+        {
+          address: moderatoToken,
+          balance: "2500000",
+          decimals: 6,
+          symbol: "pathUSD",
+          verified: true,
+        },
+        {
+          address: "0x20c0000000000000000000000000000000000001",
+          balance: "0",
+          decimals: 6,
+          symbol: "ZERO",
+          verified: false,
+        },
+      ]),
+    );
+
+    const result = await whoamiHandler({});
+
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      new URL(
+        `/api/assets?address=${testWallet}&chainId=4217&fresh=true`,
+        "https://wallet.tempo.xyz",
+      ),
+    );
+    expect("balances" in result ? result.balances : null).toEqual([
+      {
+        token: usdc.toLowerCase(),
+        symbol: "USDC.e",
+        decimals: 6,
+        balance: "5",
+        verified: true,
+        access_key_limit: "100",
+      },
+      {
+        token: moderatoToken,
+        symbol: "pathUSD",
+        decimals: 6,
+        balance: "2.5",
+        verified: true,
+        access_key_limit: null,
+      },
+    ]);
+  });
+
+  it("whoami preserves the payment-token balance when asset discovery fails", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    mocks.readContract.mockResolvedValueOnce(5_000_000n);
+    mocks.fetch.mockRejectedValueOnce(new Error("offline"));
+
+    const result = await whoamiHandler({});
+
+    expect("balances" in result ? result.balances : null).toEqual([
+      {
+        token: usdc.toLowerCase(),
+        symbol: "USDC.e",
+        decimals: 6,
+        balance: "5",
+        verified: true,
+        access_key_limit: "100",
+      },
+    ]);
+  });
+
+  it("reports RPC failure as an unknown balance and recovers when the RPC returns", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    await upsertSessionRecord(identitySession());
+    await upsertSessionRecord({
+      ...identitySession(),
+      channel_id: `0x${"b".repeat(64)}`,
+      state: "closing",
+      close_requested_at: 1,
+    });
+    mocks.readContract.mockRejectedValue(new Error("RPC unavailable"));
+
+    expect(await whoamiHandler({})).toMatchObject({
+      ready: false,
+      wallet: testWallet.toLowerCase(),
+      balance: {
+        total: null,
+        available: null,
+        locked: "0.008000",
+        pending_refund: "0.008000",
+        active_sessions: 1,
+        error: { code: "E_RPC" },
+      },
+      key: { status: "ready", balance: null },
+    });
+    expect(await keysHandler()).toMatchObject({
+      keys: [{ balance: null, balance_error: { code: "E_RPC" } }],
+    });
+
+    mocks.readContract.mockResolvedValue(5_000_000n);
+    const recovered = await whoamiHandler({});
+    expect(recovered).toMatchObject({
+      ready: true,
+      balance: { total: "5.016000", available: "5" },
+      key: { balance: "5" },
+    });
+    expect(recovered).not.toHaveProperty("balance.error");
+    const recoveredKeys = await keysHandler();
+    expect(recoveredKeys).toMatchObject({ keys: [{ balance: "5" }] });
+    expect(recoveredKeys.keys[0]).not.toHaveProperty("balance_error");
+  });
+
+  it("distinguishes a successful zero balance from an unavailable balance", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    mocks.readContract.mockResolvedValue(0n);
+
+    const result = await whoamiHandler({});
+    expect(result).toMatchObject({
+      ready: true,
+      balance: { total: "0.000000", available: "0" },
+      key: { balance: "0" },
+    });
+    expect(result).not.toHaveProperty("balance.error");
+    if (!("key" in result) || !result.key) expect.unreachable("expected key details");
+    expect(result.key).not.toHaveProperty("balance_error");
+  });
+
+  it("whoami reports an expired access key as not ready", async () => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({
+        accessKeys: [{ ...walletState().accessKeys[0]!, expiry: 1 }],
+      }),
+    );
+
+    const result = await whoamiHandler({});
+
+    expect(result).toMatchObject({
+      ready: false,
+      wallet: testWallet.toLowerCase(),
+      key: { address: testAccessKey.toLowerCase(), status: "expired" },
+    });
+  });
+
+  it("whoami selects a later usable access key", async () => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          { ...walletState().accessKeys[0]!, expiry: 1 },
+          {
+            ...walletState().accessKeys[0]!,
+            address: testAccessKey2,
+            expiry: 2_000_000_000,
+            privateKey: testPrivateKey2,
+          },
+        ],
+      }),
+    );
+
+    const result = await whoamiHandler({});
+
+    expect(result).toMatchObject({
+      ready: true,
+      key: { address: testAccessKey2.toLowerCase(), status: "ready" },
     });
   });
 
@@ -371,6 +714,7 @@ limit = "100000000"
       accessKeys: [
         {
           ...walletState().accessKeys[0]!,
+          permissionSemantics: 1,
           expiry: 4_102_444_800,
           limits: [
             { token: usdc, limit: "100000000#__bigint", period: 86_400 },
@@ -451,7 +795,16 @@ limit = "100000000"
     },
     {
       name: "pending",
-      overrides: { expiry: 4_102_444_800, keyAuthorization: { signature: "0x1234" } },
+      overrides: {
+        expiry: 4_102_444_800,
+        keyAuthorization: {
+          address: testAccessKey,
+          chainId: 4217n,
+          expiry: 4_102_444_800,
+          signature: { type: "secp256k1", signature: "0x1234" },
+          type: "secp256k1",
+        },
+      },
       status: "pending",
     },
     {
@@ -459,7 +812,13 @@ limit = "100000000"
       overrides: {
         expiry: 4_102_444_800,
         handle: { jwk: { crv: "P-256", kty: "EC" }, kind: "webcrypto-p256" },
-        keyAuthorization: { signature: "0x1234" },
+        keyAuthorization: {
+          address: testAccessKey,
+          chainId: 4217n,
+          expiry: 4_102_444_800,
+          signature: { type: "p256", signature: "0x1234" },
+          type: "p256",
+        },
         keyType: "p256",
         privateKey: undefined,
         publicKey: "0x04abcd",
@@ -584,6 +943,192 @@ limit = "100000000"
     expect((await loadWalletState()).accessKeys).toEqual([otherWalletKey, otherChainKey]);
   });
 
+  it("updates the connected access key limit through wallet approval", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const request = vi.fn().mockResolvedValue(undefined);
+    const createProvider = vi.fn(() => ({ request }));
+
+    const result = await updateAccessKeyHandler({ limit: "250", browser: false }, createProvider);
+
+    expect(createProvider).toHaveBeenCalledWith({ network: undefined, noBrowser: true });
+    expect(request).toHaveBeenCalledWith({
+      method: "wallet_updateAccessKey",
+      params: [
+        {
+          address: testWallet,
+          accessKeyAddress: testAccessKey,
+          chainId: toHex(4217),
+          limits: [{ token: usdc, limit: toHex(250_000_000n) }],
+        },
+      ],
+    });
+    expect(result).toEqual({
+      status: "success",
+      wallet: testWallet.toLowerCase(),
+      access_key: testAccessKey.toLowerCase(),
+      chain_id: 4217,
+      token: usdc.toLowerCase(),
+      limit: "250",
+    });
+    expect((await loadWalletState()).accessKeys[0]?.limits).toEqual([
+      { token: usdc, limit: "250000000#__bigint" },
+    ]);
+    expect((await loadWalletState()).accessKeys[0]?.permissionSemantics).toBeUndefined();
+  });
+
+  it("reports an unrestricted key as restricted after a single-token update", async () => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            ...walletState().accessKeys[0]!,
+            permissionSemantics: 1,
+            limits: undefined,
+            scopes: undefined,
+          },
+        ],
+      }),
+    );
+    const request = vi.fn().mockResolvedValue(undefined);
+    await updateAccessKeyHandler({ limit: "250", token: usdc }, () => ({ request }));
+    const state = await loadWalletState();
+    const result = await currentKeysOutput({
+      walletAddress: null,
+      chain: 4217,
+      accessKeys: state.accessKeys,
+    });
+    expect(result.keys[0]).toMatchObject({
+      spending_limit: { mode: "restricted", unlimited: false, limit: "250.000000" },
+      call_permissions: "unrestricted",
+      spending_limits: [{ token: usdc.toLowerCase(), limit: "250.000000" }],
+    });
+  });
+
+  it("uses the stored testnet chain for wallet approval", async () => {
+    await useTempHome();
+    const key = {
+      ...walletState().accessKeys[0]!,
+      chainId: 42431,
+      limits: [{ token: moderatoToken, limit: "100000000#__bigint" }],
+    };
+    await writeWalletState(walletState({ accessKeys: [key], chainId: 42431 }));
+    const request = vi.fn().mockResolvedValue(undefined);
+    const createProvider = vi.fn(() => ({ request }));
+
+    await updateAccessKeyHandler({ limit: "250" }, createProvider);
+
+    expect(createProvider).toHaveBeenCalledWith({ network: "testnet", noBrowser: false });
+  });
+
+  it("preserves local limits when wallet approval fails", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const request = vi.fn().mockRejectedValue(new Error("rejected"));
+
+    await expect(updateAccessKeyHandler({ limit: "250" }, () => ({ request }))).rejects.toThrow(
+      "rejected",
+    );
+    expect((await loadWalletState()).accessKeys[0]?.limits).toEqual([
+      { token: usdc, limit: "100000000#__bigint" },
+    ]);
+  });
+
+  it("updates a selected access key", async () => {
+    await useTempHome();
+    const first = walletState().accessKeys[0]!;
+    const selected = {
+      ...first,
+      address: testAccessKey2,
+      privateKey: testPrivateKey2,
+    };
+    await writeWalletState(walletState({ accessKeys: [first, selected] }));
+    const request = vi.fn().mockResolvedValue(undefined);
+
+    const result = await updateAccessKeyHandler(
+      { accessKey: testAccessKey2, limit: "250" },
+      () => ({ request }),
+    );
+
+    expect(request).toHaveBeenCalledWith({
+      method: "wallet_updateAccessKey",
+      params: [
+        expect.objectContaining({
+          accessKeyAddress: testAccessKey2,
+          limits: [{ token: usdc, limit: toHex(250_000_000n) }],
+        }),
+      ],
+    });
+    expect(result.access_key).toBe(testAccessKey2.toLowerCase());
+    expect((await loadWalletState()).accessKeys.map((key) => key.limits?.[0]?.limit)).toEqual([
+      "100000000#__bigint",
+      "250000000#__bigint",
+    ]);
+  });
+
+  it.each(["-1", "not-an-amount", "0.0000001"])(
+    "rejects invalid access key limit %s",
+    async (limit) => {
+      await useTempHome();
+      await writeWalletState(walletState());
+      const createProvider = vi.fn();
+
+      try {
+        await updateAccessKeyHandler({ limit }, createProvider);
+        expect.unreachable("expected updateAccessKeyHandler to throw");
+      } catch (error) {
+        expectUsageError(error, "Invalid limit: expected a non-negative token amount");
+      }
+      expect(createProvider).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects an invalid access key limit token", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const createProvider = vi.fn();
+
+    try {
+      await updateAccessKeyHandler({ limit: "250", token: "not-an-address" }, createProvider);
+      expect.unreachable("expected updateAccessKeyHandler to throw");
+    } catch (error) {
+      expectUsageError(error, "Invalid token address: expected a 0x address");
+    }
+    expect(createProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid selected access key address", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const createProvider = vi.fn();
+
+    try {
+      await updateAccessKeyHandler({ accessKey: "not-an-address", limit: "250" }, createProvider);
+      expect.unreachable("expected updateAccessKeyHandler to throw");
+    } catch (error) {
+      expectUsageError(error, "Invalid access key address: expected a 0x address");
+    }
+    expect(createProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects a selected access key outside the active wallet and network", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const createProvider = vi.fn();
+
+    try {
+      await updateAccessKeyHandler({ accessKey: testAccessKey2, limit: "250" }, createProvider);
+      expect.unreachable("expected updateAccessKeyHandler to throw");
+    } catch (error) {
+      expectUsageError(
+        error,
+        "Selected access key is not configured for the current wallet and network.",
+      );
+    }
+    expect(createProvider).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed access key addresses", async () => {
     await useTempHome();
     await writeWalletState(walletState());
@@ -613,7 +1158,7 @@ limit = "100000000"
     });
   });
 
-  it("requests 30-day access keys when connecting", async () => {
+  it("requests 30-day access keys and the deposit screen when connecting", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
     const request = vi.fn().mockResolvedValue({ accounts: [] });
@@ -628,9 +1173,38 @@ limit = "100000000"
             authorizeAccessKey: {
               expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
             },
+            showDeposit: true,
           },
         },
       ],
     });
   });
 });
+
+function identitySession(overrides: Partial<PersistedSessionRecord> = {}): PersistedSessionRecord {
+  return {
+    accepted_cumulative: 2_000n,
+    authorized_signer: testAccessKey,
+    chain_id: 4217,
+    challenge_echo: "{}",
+    channel_id: `0x${"a".repeat(64)}`,
+    close_requested_at: 0,
+    created_at: 1,
+    cumulative_amount: 2_000n,
+    deposit: 10_000n,
+    escrow_contract: "0x0000000000000000000000000000000000000001",
+    grace_ready_at: 901,
+    last_used_at: 1,
+    network: "tempo",
+    origin: "https://example.com",
+    payee: testWallet2,
+    payer: testWallet,
+    request_url: "https://example.com/",
+    salt: `0x${"0".repeat(64)}`,
+    server_spent: 2_000n,
+    session_protocol: "v1",
+    state: "active",
+    token: usdc,
+    ...overrides,
+  };
+}

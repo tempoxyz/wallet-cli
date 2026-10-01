@@ -1,6 +1,6 @@
 {
   "name": "wallet-cli",
-  "version": "0.6.7",
+  "version": "0.11.0",
   "description": "Tempo wallet and request CLI extension package",
   "homepage": "https://github.com/tempoxyz/wallet-cli#readme",
   "bugs": {
@@ -12,7 +12,9 @@
     "url": "git+https://github.com/tempoxyz/wallet-cli.git"
   },
   "bin": {
+    "tempo-api": "./dist/api-cli.js",
     "tempo-request": "./dist/request-cli.js",
+    "tempo-routes": "./dist/routes-cli.js",
     "tempo-wallet": "./dist/cli.js"
   },
   "type": "module",
@@ -37,19 +39,20 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "accounts": "0.14.11",
-    "incur": "0.4.8",
-    "mppx": "0.8.9",
-    "undici": "8.5.0",
-    "viem": "2.54.0"
+    "accounts": "0.19.0",
+    "incur": "0.4.20",
+    "mppx": "0.12.0",
+    "undici": "8.10.2",
+    "viem": "2.57.1"
   },
   "devDependencies": {
-    "@types/node": "25.9.2",
-    "@yao-pkg/pkg": "6.20.0",
-    "esbuild": "0.28.1",
-    "tsx": "4.22.4",
-    "typescript": "6.0.3",
-    "vitest": "4.1.8",
+    "@types/node": "26.5.1",
+    "@yao-pkg/pkg": "6.22.0",
+    "esbuild": "0.28.2",
+    "frog": "1.1.0",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0",
     "vp": "npm:vite-plus@0.1.24"
   },
   "packageManager": "pnpm@11.0.8"

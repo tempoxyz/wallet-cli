@@ -14,6 +14,11 @@ const options = z.object({
     .string()
     .optional()
     .describe("Hard cap for cumulative payment spend (or TEMPO_MAX_SPEND)"),
+  "payment-intent": z
+    .enum(["auto", "session", "charge"])
+    .default("auto")
+    .describe("Payment intent: auto, session, or charge"),
+  "payment-token": z.string().optional().describe("Select an exact payment token address"),
   "private-key": z.string().optional().describe("Sign payments with an ephemeral private key"),
   network: z
     .string()
@@ -121,10 +126,31 @@ async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--describe")) {
     process.stdout.write(`${JSON.stringify(describeRequestCli())}\n`);
-    process.exit(0);
+    return;
   }
 
-  await cli.serve(normalizeIncurArgv(argv));
+  const output: string[] = [];
+  let exitCode: number | undefined;
+  await cli.serve(normalizeIncurArgv(argv), {
+    exit(code) {
+      exitCode = code;
+    },
+    stdout(text) {
+      output.push(text);
+    },
+  });
+  if (output.length > 0)
+    await writeProcessOutput(
+      exitCode === undefined ? process.stdout : process.stderr,
+      output.join(""),
+    );
+  if (exitCode !== undefined) process.exitCode = exitCode;
+}
+
+function writeProcessOutput(stream: NodeJS.WriteStream, text: string) {
+  return new Promise<void>((resolve, reject) => {
+    stream.write(text, (error) => (error ? reject(error) : resolve()));
+  });
 }
 
 type ParsedOptions = z.infer<typeof options>;
@@ -150,6 +176,8 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
     maxTime: options.timeout,
     method: options.request,
     maxSpend: options["max-spend"],
+    paymentIntent: options["payment-intent"],
+    paymentToken: options["payment-token"],
     network: options.network,
     noProxy: options.noProxy,
     output: options.output,
@@ -220,6 +248,18 @@ function describeRequestCli() {
         long: "--max-spend",
         value_name: "AMOUNT",
         help: "Hard cap for cumulative payment spend (or TEMPO_MAX_SPEND)",
+      },
+      {
+        name: "payment_intent",
+        long: "--payment-intent",
+        value_name: "INTENT",
+        help: "Payment intent: auto, session, or charge",
+      },
+      {
+        name: "payment_token",
+        long: "--payment-token",
+        value_name: "ADDRESS",
+        help: "Select an exact payment token address",
       },
       {
         name: "private_key",

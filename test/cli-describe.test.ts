@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { Parser } from "incur";
 import { describe, expect, it } from "vitest";
 
-import { fundOptions, loginOptions } from "../src/schemas.js";
+import { fundOptions, loginOptions, updateAccessKeyOptions } from "../src/schemas.js";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -27,6 +27,41 @@ describe("generated CLI metadata", () => {
     expect(output).not.toContain("Usage: tempo wallet services <command>");
   });
 
+  it("documents access key limit updates", async () => {
+    const output = await walletCli(["keys", "update", "--help"]);
+
+    expect(output).toContain("Usage: tempo wallet keys update [accessKey] [options]");
+    expect(output).toContain("--limit <string>");
+    expect(output).toContain("--token <string>");
+    expect(output).toContain("--no-browser");
+  });
+
+  it("documents dry-run-first wallet swaps", async () => {
+    const output = await walletCli(["swap", "--help"]);
+
+    expect(output).toContain("Usage: tempo wallet swap <amount> <tokenIn> <tokenOut> [options]");
+    expect(output).toContain("--exact-out");
+    expect(output).toContain("--slippage-bps <number>");
+    expect(output).toContain("--dry-run");
+    expect(output).toContain("--yes");
+  });
+
+  it("documents request payment intent selection", async () => {
+    const help = await requestCli(["--help"]);
+    expect(help).toContain("--payment-intent <auto|session|charge>");
+    expect(help).toContain("--payment-token <string>");
+
+    const description = JSON.parse(await requestCli(["--describe"])) as {
+      args: { long?: string | undefined; name: string }[];
+    };
+    expect(description.args).toContainEqual(
+      expect.objectContaining({ long: "--payment-intent", name: "payment_intent" }),
+    );
+    expect(description.args).toContainEqual(
+      expect.objectContaining({ long: "--payment-token", name: "payment_token" }),
+    );
+  });
+
   it("returns schema for the direct services command", async () => {
     const output = await walletCli(["services", "--schema", "--format", "json"]);
     const schema = JSON.parse(output) as {
@@ -36,6 +71,33 @@ describe("generated CLI metadata", () => {
 
     expect(schema.args.properties.serviceId.description).toContain("Service ID");
     expect(schema.options.properties.search.description).toContain("Search by name");
+  });
+
+  it("advertises nullable wallet balances and RPC diagnostics", async () => {
+    const whoami = JSON.parse(await walletCli(["whoami", "--schema", "--format", "json"])) as {
+      output: {
+        anyOf: {
+          properties?: {
+            balance?: { properties: { available: { anyOf: { type: string }[] } } };
+            key?: { anyOf: { properties?: Record<string, unknown> }[] };
+          };
+        }[];
+      };
+    };
+    const detailedWhoami = whoami.output.anyOf.find((item) => item.properties?.balance);
+    expect(detailedWhoami?.properties?.balance?.properties.available.anyOf).toContainEqual({
+      type: "null",
+    });
+    expect(detailedWhoami?.properties?.key?.anyOf[0]?.properties).toHaveProperty("balance_error");
+
+    const keys = JSON.parse(await walletCli(["keys", "list", "--schema", "--format", "json"])) as {
+      output: {
+        properties: {
+          keys: { items: { properties: Record<string, unknown> } };
+        };
+      };
+    };
+    expect(keys.output.properties.keys.items.properties).toHaveProperty("balance_error");
   });
 
   it.each([
@@ -78,6 +140,12 @@ describe("generated CLI metadata", () => {
     const services = manifest.subcommands.find((command) => command.name === "services");
     expect(services?.subcommands).toBeUndefined();
 
+    const keys = manifest.subcommands.find((command) => command.name === "keys");
+    expect(keys?.subcommands?.map((command) => command.name)).toEqual(["list", "update"]);
+    expect(manifest.subcommands.some((command) => command.name === "update-access-key")).toBe(
+      false,
+    );
+
     const mcp = manifest.subcommands.find((command) => command.name === "mcp");
     expect(mcp?.subcommands?.map((command) => command.name)).toEqual(["add"]);
 
@@ -108,7 +176,7 @@ describe("generated CLI metadata", () => {
       output: { items: { properties: { installed: { type: string } } } };
     };
     expect(skillsList.output.items.properties.installed.type).toBe("boolean");
-  });
+  }, 30_000);
 
   it("accepts --no-browser for browser-backed wallet commands", () => {
     expect(Parser.parse(["--no-browser"], { options: loginOptions }).options).toMatchObject({
@@ -117,6 +185,9 @@ describe("generated CLI metadata", () => {
     expect(Parser.parse(["--no-browser"], { options: fundOptions }).options).toMatchObject({
       browser: false,
     });
+    expect(
+      Parser.parse(["--limit", "250", "--no-browser"], { options: updateAccessKeyOptions }).options,
+    ).toMatchObject({ browser: false, limit: "250" });
   });
 
   it("returns strongly typed schema properties for sessions list output", async () => {

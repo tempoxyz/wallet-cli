@@ -36,12 +36,24 @@ export const whoamiOutput = z.union([
     ready: z.boolean(),
     wallet: z.string().nullable(),
     balance: z.object({
-      total: z.string(),
+      total: z.string().nullable(),
       locked: z.string(),
-      available: z.string(),
+      pending_refund: z.string(),
+      available: z.string().nullable(),
       active_sessions: z.number(),
       symbol: z.string(),
+      error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
     }),
+    balances: z.array(
+      z.object({
+        token: z.string(),
+        symbol: z.string(),
+        decimals: z.number(),
+        balance: z.string(),
+        verified: z.boolean(),
+        access_key_limit: z.string().nullable(),
+      }),
+    ),
     key: z
       .object({
         address: z.string(),
@@ -49,9 +61,12 @@ export const whoamiOutput = z.union([
         network: z.string(),
         symbol: z.string(),
         token: z.string(),
+        balance: z.string().nullable(),
+        balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
         spending_limit: z.object({
-          unlimited: z.boolean(),
-          limit: z.string(),
+          mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
+          unlimited: z.boolean().nullable(),
+          limit: z.string().nullable(),
           period_seconds: z.number().nullable(),
           remaining: z.string().nullable(),
           spent: z.string().nullable(),
@@ -67,6 +82,7 @@ export const whoamiOutput = z.union([
             spent: z.string().nullable(),
           }),
         ),
+        call_permissions: z.enum(["unknown", "unrestricted", "none", "restricted"]),
         scopes: z.array(
           z.object({
             address: z.string(),
@@ -91,10 +107,12 @@ export const keysOutput = z.object({
       wallet_address: z.string().nullable(),
       symbol: z.string(),
       token: z.string(),
-      balance: z.string(),
+      balance: z.string().nullable(),
+      balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
       spending_limit: z.object({
-        unlimited: z.boolean(),
-        limit: z.string(),
+        mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
+        unlimited: z.boolean().nullable(),
+        limit: z.string().nullable(),
         period_seconds: z.number().nullable(),
         remaining: z.string().nullable(),
         spent: z.string().nullable(),
@@ -110,6 +128,7 @@ export const keysOutput = z.object({
           spent: z.string().nullable(),
         }),
       ),
+      call_permissions: z.enum(["unknown", "unrestricted", "none", "restricted"]),
       scopes: z.array(
         z.object({
           address: z.string(),
@@ -138,6 +157,26 @@ export const revokeOutput = z.object({
   wallet: z.string(),
   access_key: z.string(),
   local_key_removed: z.boolean(),
+});
+
+export const updateAccessKeyOutput = z.object({
+  status: z.literal("success"),
+  wallet: z.string(),
+  access_key: z.string(),
+  chain_id: z.number(),
+  token: z.string(),
+  limit: z.string(),
+});
+
+export const updateAccessKeyOptions = z.object({
+  ...globalOptionShape,
+  limit: z.string().describe("New remaining limit in human token units"),
+  token: z.string().optional().describe("Token address; defaults to the current limit token"),
+  browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
+});
+
+export const updateAccessKeyArgs = z.object({
+  accessKey: z.string().optional().describe("Access key address; defaults to the connected key"),
 });
 
 export const transferDryRunOutput = z.object({
@@ -298,6 +337,48 @@ export const transferOutput = z.union([
   spendCreditsOutput,
 ]);
 
+export const swapArgs = z.object({
+  amount: z
+    .string()
+    .describe("Exact input amount by default; exact output amount with --exact-out"),
+  tokenIn: z.string().describe("Full input token address (0x...)"),
+  tokenOut: z.string().describe("Full output token address (0x...)"),
+});
+
+export const swapOptions = z.object({
+  ...globalOptionShape,
+  "exact-out": z.boolean().optional().describe("Treat amount as the exact output amount"),
+  "slippage-bps": z.coerce.number().default(50).describe("Maximum slippage in basis points"),
+  "fee-token": z.string().optional().describe("Token used to pay fees; defaults to tokenIn"),
+  "dry-run": z.boolean().optional().describe("Quote and show calls without submitting"),
+  yes: z.boolean().optional().describe("Confirm the reviewed swap for submission"),
+});
+
+const swapBaseOutputShape = {
+  chain_id: z.number(),
+  mode: z.union([z.literal("exact_in"), z.literal("exact_out")]),
+  from: z.string(),
+  dex: z.string(),
+  token_in: z.string(),
+  token_in_symbol: z.string(),
+  token_out: z.string(),
+  token_out_symbol: z.string(),
+  amount_in: z.string(),
+  max_amount_in: z.string(),
+  amount_out: z.string(),
+  min_amount_out: z.string(),
+  slippage_bps: z.number(),
+  fee_token: z.string(),
+  access_key_limit: z.string().nullable(),
+  requires_access_key_update: z.boolean(),
+  calls: z.array(z.object({ to: z.string(), data: z.string() })),
+};
+
+export const swapOutput = z.union([
+  z.object({ status: z.literal("dry_run"), ...swapBaseOutputShape }),
+  z.object({ status: z.literal("success"), tx_hash: z.string(), ...swapBaseOutputShape }),
+]);
+
 export const fundOptions = z.object({
   ...globalOptionShape,
   address: z.string().optional().describe("Wallet address to fund (defaults to current wallet)"),
@@ -347,10 +428,15 @@ export const servicesOutput = z.union([z.array(serviceOutput), serviceDetailOutp
 
 export const servicesListOutput = z.array(serviceOutput);
 
-export const servicesMcpOutput = z.union([
-  z.object({ services: z.array(serviceOutput) }),
-  serviceDetailOutput,
-]);
+export const servicesMcpOutput = z
+  .object({
+    ...serviceDetailOutput.partial().shape,
+    services: z.array(serviceOutput).optional(),
+  })
+  .refine(
+    (value) => value.services !== undefined || (value.id !== undefined && value.name !== undefined),
+    "Expected a services list or service details",
+  );
 
 export const completionsArgs = z.object({
   shell: z.enum(["bash", "elvish", "fish", "powershell", "zsh"]).optional(),
