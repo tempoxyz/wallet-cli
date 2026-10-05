@@ -8,11 +8,11 @@ type ServiceSummary = Awaited<ReturnType<typeof fetchServiceList>>[number];
 
 describe("fundAction", () => {
   it('returns "fund" by default', () => {
-    expect(fundAction({})).toBe("fund");
+    expect(fundAction({})).toBe("mach");
   });
 
   it('returns "credits" when credits is set', () => {
-    expect(fundAction({ credits: true })).toBe("credits");
+    expect(fundAction({ credits: true })).toBe("mach");
   });
 
   it('returns "crypto" when crypto is set', () => {
@@ -24,7 +24,9 @@ describe("fundAction", () => {
   });
 
   it("prioritizes credits over crypto and referral code", () => {
-    expect(fundAction({ credits: true, crypto: true, referralCode: "ABC" })).toBe("credits");
+    expect(() => fundAction({ credits: true, crypto: true, referralCode: "ABC" })).toThrow(
+      "cannot be combined",
+    );
   });
 
   it("prioritizes crypto over referral code", () => {
@@ -34,9 +36,9 @@ describe("fundAction", () => {
 
 describe("fundUrl", () => {
   it("routes every funding handoff to the /agent page", () => {
-    expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/agent?action=fund");
+    expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=mach");
     expect(fundUrl("crypto")).toBe("https://wallet.tempo.xyz/agent?action=crypto");
-    expect(fundUrl("credits")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=credits");
+    expect(fundUrl("credits")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=mach");
     expect(fundUrl("claim", { code: "ABC123" })).toBe(
       "https://wallet.tempo.xyz/agent?claim=ABC123",
     );
@@ -44,10 +46,8 @@ describe("fundUrl", () => {
 });
 
 describe("runFundingFlow", () => {
-  let consoleError: ReturnType<typeof vi.spyOn>;
-
   beforeEach(() => {
-    consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -75,24 +75,11 @@ describe("runFundingFlow", () => {
     );
   });
 
-  it("prints the claim URL without a wallet before timing out (no network wait)", async () => {
+  it("returns a claim handoff without waiting when no wallet is configured", async () => {
     await useTempHome();
-    // Fail fast: tiny poll interval and zero timeout so we never wait on the network.
-    process.env.TEMPO_WALLET_FUND_POLL_MS = "1";
-    process.env.TEMPO_WALLET_FUND_TIMEOUT_MS = "0";
-
-    const error = await runFundingFlow({
-      action: "claim",
-      code: "REF123",
-      noBrowser: true,
-    }).catch((e) => e);
-
-    // The claim URL is printed before the (timing-out) wait loop.
-    const printed = consoleError.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
-    expect(printed).toContain("https://wallet.tempo.xyz/agent?claim=REF123");
-
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe("Timed out waiting for funding");
+    const result = await runFundingFlow({ action: "claim", code: "REF123", noBrowser: true });
+    expect(result.status).toBe("pending");
+    expect(result.url).toContain("https://wallet.tempo.xyz/agent?claim=REF123");
   });
 });
 
@@ -153,7 +140,6 @@ describe("fetchServices", () => {
       name: "Weather API",
       url: "https://weather.example.com",
       service_url: "https://weather.mpp.tempo.xyz",
-      supportsCredits: true,
       description: "Forecasts and current conditions",
       categories: ["data", "climate"],
       tags: ["forecast", "meteorology"],
@@ -164,7 +150,6 @@ describe("fetchServices", () => {
       id: "translate",
       name: "Translate Service",
       service_url: "https://translate.example.com",
-      supportsCredits: false,
       categories: ["nlp"],
       tags: ["language"],
       endpoint_count: 4,

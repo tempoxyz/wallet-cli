@@ -1,3 +1,4 @@
+import { machineTokenDeployments } from "mppx/tempo";
 import { createPublicClient, http, type Address, type HttpTransportConfig } from "viem";
 import { Chain } from "viem/tempo";
 
@@ -50,6 +51,12 @@ export function tokenDecimals() {
 }
 
 export function tokenSymbol(token: string) {
+  if (
+    Object.values(machineTokenDeployments).some(
+      (deployment) => token.toLowerCase() === deployment.token.toLowerCase(),
+    )
+  )
+    return "MACH";
   if (token.toLowerCase() === usdcToken) return "USDC.e";
   if (token.toLowerCase() === moderatoToken) return "PathUSD";
   return token;

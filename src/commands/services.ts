@@ -7,7 +7,6 @@ type ServiceSummary = {
   name: string;
   url?: string | undefined;
   service_url?: string | undefined;
-  supportsCredits: boolean;
   description?: string | undefined;
   categories: string[];
   tags: string[];
@@ -62,7 +61,6 @@ async function fetchServiceEntries(): Promise<
       name: stringValue(item.name),
       ...(stringValue(item.url) ? { url: stringValue(item.url) } : {}),
       ...(serviceUrl ? { service_url: serviceUrl } : {}),
-      supportsCredits: supportsCredits(serviceUrl),
       ...(stringValue(item.description) ? { description: stringValue(item.description) } : {}),
       categories: getArray(item.categories).flatMap((value) =>
         typeof value === "string" ? [value] : [],
@@ -88,10 +86,6 @@ async function fetchServiceEntries(): Promise<
     };
   });
   return services;
-}
-
-function supportsCredits(serviceUrl: string) {
-  return new URL(serviceUrl).hostname.endsWith(".mpp.tempo.xyz");
 }
 
 function matchesSearch(service: ServiceSummary, query: string) {

@@ -18,7 +18,11 @@ const options = z.object({
     .enum(["auto", "session", "charge"])
     .default("auto")
     .describe("Payment intent: auto, session, or charge"),
-  "payment-token": z.string().optional().describe("Select an exact payment token address"),
+  mach: z.boolean().optional().describe("Require MACH settlement; alias for --payment-token MACH"),
+  "payment-token": z
+    .string()
+    .optional()
+    .describe("Select a payment token address or MACH settlement"),
   "private-key": z.string().optional().describe("Sign payments with an ephemeral private key"),
   network: z
     .string()
@@ -176,6 +180,7 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
     maxTime: options.timeout,
     method: options.request,
     maxSpend: options["max-spend"],
+    mach: options.mach,
     paymentIntent: options["payment-intent"],
     paymentToken: options["payment-token"],
     network: options.network,
@@ -256,10 +261,15 @@ function describeRequestCli() {
         help: "Payment intent: auto, session, or charge",
       },
       {
+        name: "mach",
+        long: "--mach",
+        help: "Require MACH settlement; alias for --payment-token MACH",
+      },
+      {
         name: "payment_token",
         long: "--payment-token",
         value_name: "ADDRESS",
-        help: "Select an exact payment token address",
+        help: "Select a payment token address or MACH settlement",
       },
       {
         name: "private_key",

@@ -20,14 +20,16 @@ export const completionsOutput = z.object({
   supported_shells: z.array(z.string()),
 });
 
-export const creditsOutput = z.object({
-  credits: z
-    .object({
-      wallet: z.string(),
-      balance: z.string(),
-      rawBalance: z.string(),
-    })
-    .nullable(),
+export const machOutput = z.object({
+  mach: z.object({
+    wallet: z.string(),
+    chain_id: z.number(),
+    token: z.string(),
+    symbol: z.literal("MACH"),
+    decimals: z.number(),
+    balance: z.string(),
+    raw_balance: z.string(),
+  }),
 });
 
 export const whoamiOutput = z.union([
@@ -95,7 +97,7 @@ export const whoamiOutput = z.union([
       })
       .nullable(),
   }),
-  creditsOutput,
+  machOutput,
 ]);
 
 export const keysOutput = z.object({
@@ -200,9 +202,15 @@ export const transferSuccessOutput = z.object({
   from: z.string(),
 });
 
-export const spendCreditsOutput = z.object({
-  wallet: z.string(),
-  amount_cents: z.number(),
+export const spendMachOutput = z.object({
+  wallet: z.string().optional(),
+  amount: z.string(),
+  amount_raw: z.string(),
+  token: z.literal("MACH"),
+  settlement_currency: z.string(),
+  chain_id: z.number(),
+  challenge_id: z.string(),
+  max_spend: z.string().nullable(),
   tx_hash: z.string().optional(),
   dry_run: z.boolean().optional(),
 });
@@ -242,7 +250,6 @@ export const serviceOutput = z.object({
   name: z.string(),
   url: z.string().optional(),
   service_url: z.string().optional(),
-  supportsCredits: z.boolean().optional(),
   description: z.string().optional(),
   categories: z.array(z.string()).optional(),
   tags: z.array(z.string()).optional(),
@@ -273,11 +280,16 @@ export const logoutOutput = z.object({
 });
 
 export const fundOutput = z.object({
-  status: z.literal("success"),
+  status: z.enum(["success", "pending"]),
   wallet: z.string().nullable(),
   action: z.string(),
-  balance: z.string(),
-  raw_balance: z.string(),
+  url: z.string(),
+  chain_id: z.number(),
+  token: z.string(),
+  symbol: z.string().optional(),
+  amount: z.string().nullable(),
+  balance: z.string().nullable(),
+  raw_balance: z.string().nullable(),
 });
 
 export const loginOptions = z.object({
@@ -307,7 +319,8 @@ export const logoutOptions = z.object({
 
 export const whoamiOptions = z.object({
   ...globalOptionShape,
-  credits: z.boolean().optional().describe("Show Coinflow credits balance"),
+  mach: z.boolean().optional().describe("Show on-chain MACH balance"),
+  credits: z.boolean().optional().describe("Alias for --mach"),
 });
 
 export const transferArgs = z.object({
@@ -320,11 +333,19 @@ export const transferOptions = z.object({
   ...globalOptionShape,
   "fee-token": z.string().optional().describe("Pay fees in a different token"),
   "dry-run": z.boolean().optional().describe("Show plan + fee estimate, don't send"),
-  credits: z.boolean().optional().describe("Pay with Coinflow credits instead of tokens"),
-  "amount-cents": z.coerce.number().optional().describe("Amount in USD cents when using --credits"),
-  to: z.string().optional().describe("Recipient address when using --credits (0x...)"),
-  data: z.string().default("0x").describe("Calldata hex when using --credits"),
-  value: z.string().default("0").describe("ETH value in wei when using --credits"),
+  mach: z.boolean().optional().describe("Pay with on-chain MACH"),
+  credits: z.boolean().optional().describe("Alias for --mach"),
+  "max-spend": z
+    .string()
+    .optional()
+    .describe("Maximum MACH spend in USD for the exact MPP challenge"),
+  "amount-cents": z.coerce
+    .number()
+    .optional()
+    .describe("Legacy alias for a MACH spending cap in USD cents"),
+  to: z.string().optional().describe("Legacy direct recipient option; unsupported with MACH"),
+  data: z.string().optional().describe("Legacy calldata option; unsupported with MACH"),
+  value: z.string().optional().describe("Legacy ETH value option; unsupported with MACH"),
   "mpp-challenge": z.string().optional().describe("MPP WWW-Authenticate challenge"),
   "mpp-challenge-file": z.string().optional().describe("File containing an MPP challenge"),
   "mpp-client-id": z.string().optional().describe("Optional client ID for MPP attribution memo"),
@@ -334,7 +355,7 @@ export const transferOptions = z.object({
 export const transferOutput = z.union([
   transferDryRunOutput,
   transferSuccessOutput,
-  spendCreditsOutput,
+  spendMachOutput,
 ]);
 
 export const swapArgs = z.object({
@@ -384,7 +405,11 @@ export const fundOptions = z.object({
   address: z.string().optional().describe("Wallet address to fund (defaults to current wallet)"),
   browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
   crypto: z.boolean().optional().describe("Open the direct crypto funding flow"),
-  credits: z.boolean().optional().describe("Open the credits purchase flow"),
+  mach: z.boolean().optional().describe("Open the MACH funding flow (default)"),
+  credits: z.boolean().optional().describe("Alias for --mach"),
+  amount: z.string().optional().describe("MACH checkout amount: 5–100 USD, up to 2 decimal places"),
+  wait: z.boolean().default(true).describe("Wait for funds; use --no-wait for a JSON handoff"),
+  timeout: z.coerce.number().optional().describe("Funding wait timeout in seconds (default: 600)"),
   "referral-code": z.string().optional().describe("Open referral-code redeem flow"),
   claim: z.string().optional().describe("Alias for --referral-code"),
 });

@@ -162,7 +162,22 @@ return a nonzero exit status.
 - `debug`
 - `completions`
 
-Credit-related flows use `whoami --credits`, `fund --credits`, and `transfer --credits`.
+MACH replaces MPP Credits. `tempo wallet fund` (or `fund --mach`) opens the wallet's MACH funding flow, and `whoami --mach` reads the on-chain balance. Legacy `--credits` flags are aliases for MACH; they never read or redeem a legacy off-chain credit balance.
+
+For funding from another device or an automated host:
+
+```bash
+tempo wallet fund --mach --amount 10 --no-browser --no-wait --format json
+tempo wallet whoami --mach
+```
+
+The JSON handoff includes `status: "pending"`, the destination wallet, chain, token, amount, and a URL under `https://wallet.tempo.xyz/agent?action=fund&intent=mach`. Open that URL on any device to complete the wallet's available funding flow. `--address` can specify a destination without a local login. Hosted checkout accepts $5–$100 USD with at most two decimal places. MACH funding currently supports mainnet (4217), with token `0x20c000000000000000000000f37de3740adec032` and six decimals.
+
+Omit `--no-wait` to poll the destination's MACH balance. A requested amount is complete only after the balance increases by that full amount. Without an amount, any positive increase completes the wait. The default timeout is 600 seconds; use `--timeout <seconds>` to change it, or Ctrl-C to cancel. A balance delta is observational evidence, not a checkout receipt. Concurrent spending can delay detection. No-wait returns the handoff without requiring RPC access.
+
+Use `tempo request --mach --max-spend 0.05 <url>` to require MACH for a one-time charge. The exact challenge must advertise `machineTokenEnabled: true`; the installed `mppx` SDK settles into the merchant's advertised currency. An explicit MACH selection never silently falls back to stablecoins. `--payment-token MACH` is equivalent. `--dry-run` inspects an offer without spending. MACH is not supported for sessions. Funding MACH does not convert old Coinflow credits.
+
+For a captured challenge, `tempo wallet transfer --mach --max-spend 0.05 --mpp-challenge-file <headers>` settles that exact charge and returns its transaction hash. It does not deliver the credential to the merchant; prefer `tempo request` for the complete request/payment flow. Legacy direct calldata redemption is unsupported.
 
 `tempo request` supports common curl-style flags for methods, headers, bodies, output files, redirects, retries, proxies, and streaming responses.
 

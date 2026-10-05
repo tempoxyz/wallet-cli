@@ -9,7 +9,7 @@ export async function handleCompatCommand(args: readonly string[]) {
     printCompatHelp();
     return true;
   }
-  if (args.includes("--help") || args.includes("-h")) return false;
+  if (args.includes("--help") || args.includes("-h") || args.includes("--schema")) return false;
 
   const command = args.find((arg) => !arg.startsWith("-"));
   if (command === "completions" && printCompletions(args)) return true;
@@ -57,6 +57,7 @@ async function runFundCompat(args: readonly string[]) {
   const result = await runFundingFlow({
     action: fundAction({
       credits: args.includes("--credits"),
+      mach: args.includes("--mach"),
       crypto: args.includes("--crypto"),
       referralCode: stringArg(args, "--referral-code") ?? stringArg(args, "--claim"),
     }),
@@ -64,12 +65,19 @@ async function runFundCompat(args: readonly string[]) {
     code: stringArg(args, "--referral-code") ?? stringArg(args, "--claim"),
     network: stringArg(args, "--network") ?? stringArg(args, "-n"),
     noBrowser: args.includes("--no-browser"),
+    noWait: args.includes("--no-wait"),
+    amount: stringArg(args, "--amount"),
+    timeout:
+      stringArg(args, "--timeout") === undefined ? undefined : Number(stringArg(args, "--timeout")),
   });
   printCompatOutput(result, args);
 }
 
 const fundCompatFlags = new Set([
   "--browser",
+  "--mach",
+  "--no-wait",
+  "--wait",
   "--credits",
   "--crypto",
   "--full-output",
@@ -89,6 +97,8 @@ const fundCompatFlags = new Set([
 
 const fundCompatValueOptions = new Set([
   "--address",
+  "--amount",
+  "--timeout",
   "--claim",
   "--filter-output",
   "--format",

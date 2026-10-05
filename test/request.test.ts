@@ -1129,7 +1129,7 @@ describe("request command", () => {
       token,
     );
     expect(() => parseRequestArgs(["--payment-token", "USDC", "https://example.com"])).toThrow(
-      "--payment-token must be a 0x token address",
+      "--payment-token must be MACH or a 0x token address",
     );
   });
 

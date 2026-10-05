@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { transferCredits, transferTokens } from "../src/commands/transfer.js";
+import { transferTokens } from "../src/commands/transfer.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import {
   expectUsageError,
@@ -11,24 +11,6 @@ import {
 } from "./helpers.js";
 
 const recipient = "0x1111111111111111111111111111111111111111";
-
-function buildMppChallenge(amount: string, overrides: Record<string, unknown> = {}) {
-  const request = {
-    amount,
-    currency: usdcToken,
-    recipient,
-    methodDetails: { chainId: 4217 },
-    ...overrides,
-  };
-  const encoded = Buffer.from(JSON.stringify(request), "utf8").toString("base64url");
-  return buildMppChallengeWithRequest(`request="${encoded}"`);
-}
-
-function buildMppChallengeWithRequest(requestParam: string) {
-  return `Payment realm="example", method="tempo", intent="charge", id="abc123"${
-    requestParam ? `, ${requestParam}` : ""
-  }`;
-}
 
 describe("transferTokens", () => {
   it("returns dry-run output for token transfers", async () => {
@@ -79,166 +61,6 @@ describe("transferTokens", () => {
     expectUsageError(
       error,
       "Configuration missing: No wallet configured. Run 'tempo wallet login'.",
-    );
-  });
-});
-
-describe("transferCredits", () => {
-  it("returns dry-run output for direct credits transfers", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-
-    const result = await transferCredits({
-      options: { "dry-run": true, "amount-cents": 250, to: recipient },
-    });
-
-    expect(result).toEqual({
-      wallet: testWallet.toLowerCase(),
-      amount_cents: 250,
-      dry_run: true,
-    });
-  });
-
-  it("returns dry-run output for direct credits transfers with data and zero value", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-
-    const result = await transferCredits({
-      options: {
-        "dry-run": true,
-        "amount-cents": 100,
-        to: recipient,
-        data: "0xabcdef",
-        value: "0",
-      },
-    });
-
-    expect(result).toEqual({
-      wallet: testWallet.toLowerCase(),
-      amount_cents: 100,
-      dry_run: true,
-    });
-  });
-
-  it("parses amount cents from an MPP challenge in dry-run", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-
-    const result = await transferCredits({
-      options: { "dry-run": true, "mpp-challenge": buildMppChallenge("1000000") },
-    });
-
-    expect(result).toEqual({
-      wallet: testWallet.toLowerCase(),
-      amount_cents: 100,
-      dry_run: true,
-    });
-  });
-
-  it("accepts a PathUSD MPP challenge on Moderato", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-
-    const result = await transferCredits({
-      options: {
-        "dry-run": true,
-        network: "testnet",
-        "mpp-challenge": buildMppChallenge("1000000", {
-          currency: moderatoToken,
-          methodDetails: { chainId: 42431 },
-        }),
-      },
-    });
-
-    expect(result).toEqual({
-      wallet: testWallet.toLowerCase(),
-      amount_cents: 100,
-      dry_run: true,
-    });
-  });
-
-  it("rejects an MPP challenge token that does not match the selected chain", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-
-    const error = await transferCredits({
-      options: {
-        "dry-run": true,
-        "mpp-challenge": buildMppChallenge("1000000", { currency: moderatoToken }),
-      },
-    }).catch((err: unknown) => err);
-
-    expectUsageError(
-      error,
-      `Invalid configuration: MPP challenge currency ${moderatoToken} does not match token ${usdcToken} for chain 4217`,
-    );
-  });
-
-  it("throws E_USAGE for a sub-cent MPP challenge amount", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-
-    const error = await transferCredits({
-      options: { "dry-run": true, "mpp-challenge": buildMppChallenge("15000") },
-    }).catch((err: unknown) => err);
-
-    expectUsageError(
-      error,
-      "Invalid configuration: MPP challenge amount 15000 cannot be represented exactly in Coinflow credits cents for a 6-decimal token",
-    );
-  });
-
-  it("throws E_USAGE for a malformed MPP challenge request parameter", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-
-    const encode = (payload: string) => Buffer.from(payload, "utf8").toString("base64url");
-    // Not base64url, not JSON, and JSON that is not an object.
-    for (const request of ["!!!!", encode("not-json"), encode("null"), encode("[]"), encode("5")]) {
-      const error = await transferCredits({
-        options: {
-          "dry-run": true,
-          "mpp-challenge": buildMppChallengeWithRequest(`request="${request}"`),
-        },
-      }).catch((err: unknown) => err);
-
-      expectUsageError(
-        error,
-        "Invalid configuration: invalid MPP challenge: Malformed request parameter.",
-      );
-    }
-  });
-
-  it("throws E_USAGE for an MPP challenge with no request parameter", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-
-    const error = await transferCredits({
-      options: { "dry-run": true, "mpp-challenge": buildMppChallengeWithRequest("") },
-    }).catch((err: unknown) => err);
-
-    expectUsageError(
-      error,
-      "Invalid configuration: invalid MPP challenge: Missing request parameter.",
-    );
-  });
-
-  it("throws E_USAGE for a non-zero ETH value", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-
-    const error = await transferCredits({
-      options: {
-        "dry-run": true,
-        "amount-cents": 100,
-        to: recipient,
-        value: "1",
-      },
-    }).catch((err: unknown) => err);
-
-    expectUsageError(
-      error,
-      "Invalid configuration: Coinflow credits redeem does not support non-zero ETH value",
     );
   });
 });

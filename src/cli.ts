@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { warnCreditsAlias } from "./shared/mach.js";
 import { Cli, Mcp } from "incur";
 
 import { version } from "./shared/constants.js";
@@ -168,12 +169,12 @@ cli.command("transfer", {
       args: { amount: "50", token: "0x20c0...b50", to: "0x70997...9C8" },
       options: { "dry-run": true },
     },
-    { options: { credits: true, "amount-cents": 500, to: "0x20c0...b50" } },
-    { options: { credits: true, "mpp-challenge": "<WWW_AUTHENTICATE>" } },
+    { options: { mach: true, "max-spend": "5", "mpp-challenge": "<WWW_AUTHENTICATE>" } },
   ],
   async run({ args, options }) {
-    if (!options.credits) return transferTokens({ args, options });
+    if (!options.credits && !options.mach) return transferTokens({ args, options });
 
+    if (options.credits) warnCreditsAlias();
     return transferCredits({ options });
   },
 });
@@ -208,12 +209,16 @@ cli.command("fund", {
     return runFundingFlow({
       action: fundAction({
         credits: options.credits,
+        mach: options.mach,
         crypto: options.crypto,
         referralCode: options["referral-code"] ?? options.claim,
       }),
       address: options.address,
       code: options["referral-code"] ?? options.claim,
       noBrowser: options.browser === false,
+      noWait: options.wait === false,
+      amount: options.amount,
+      timeout: options.timeout,
       network: options.network,
     });
   },
@@ -584,7 +589,10 @@ function describeCli() {
       {
         name: "whoami",
         about: "Show who you are: wallet, balances, keys",
-        args: [flag("credits", "--credits", "Show Coinflow credits balance")],
+        args: [
+          flag("mach", "--mach", "Show on-chain MACH balance"),
+          flag("credits", "--credits", "Alias for --mach"),
+        ],
       },
       {
         name: "keys",
@@ -632,32 +640,31 @@ function describeCli() {
             { valueName: "FEE_TOKEN" },
           ),
           flag("dry_run", "--dry-run", "Show plan + fee estimate, don't send"),
-          flag("credits", "--credits", "Pay with Coinflow credits instead of tokens"),
+          flag("mach", "--mach", "Pay with on-chain MACH"),
+          flag("credits", "--credits", "Alias for --mach"),
+          option("max_spend", "--max-spend", "Maximum MACH spend in USD", { valueName: "AMOUNT" }),
           option(
             "amount_cents",
             "--amount-cents",
-            "Amount in USD cents when using --credits (e.g. 500 = $5.00)",
+            "Legacy MACH spending cap in USD cents (e.g. 500 = $5.00)",
             { valueName: "AMOUNT_CENTS" },
           ),
-          option("credits_to", "--to", "Recipient address when using --credits (0x...)", {
+          option("credits_to", "--to", "Legacy direct recipient; unsupported with MACH", {
             valueName: "CREDITS_TO",
           }),
-          option("data", "--data", "Calldata hex when using --credits (0x...)", {
+          option("data", "--data", "Legacy calldata; unsupported with MACH", {
             valueName: "DATA",
           }),
-          option("value", "--value", "ETH value in wei when using --credits (default: 0)", {
+          option("value", "--value", "Legacy ETH value; unsupported with MACH", {
             valueName: "VALUE",
           }),
-          option(
-            "mpp_challenge",
-            "--mpp-challenge",
-            "MPP WWW-Authenticate challenge when using --credits",
-            { valueName: "MPP_CHALLENGE" },
-          ),
+          option("mpp_challenge", "--mpp-challenge", "MPP WWW-Authenticate challenge for MACH", {
+            valueName: "MPP_CHALLENGE",
+          }),
           option(
             "mpp_challenge_file",
             "--mpp-challenge-file",
-            "File containing an MPP WWW-Authenticate challenge when using --credits",
+            "File containing an MPP WWW-Authenticate challenge for MACH",
             { valueName: "MPP_CHALLENGE_FILE" },
           ),
           option(
@@ -702,7 +709,13 @@ function describeCli() {
             "--crypto",
             "Open the direct crypto funding flow (bridge on mainnet, faucet on testnet)",
           ),
-          flag("credits", "--credits", "Open the credits purchase flow"),
+          flag("mach", "--mach", "Open MACH funding (default)"),
+          flag("credits", "--credits", "Alias for --mach"),
+          option("amount", "--amount", "Requested USD amount", { valueName: "AMOUNT" }),
+          flag("no_wait", "--no-wait", "Return the funding handoff immediately"),
+          option("timeout", "--timeout", "Funding timeout in seconds (default: 600)", {
+            valueName: "SECONDS",
+          }),
           option("referral_code", "--referral-code", "Referral code to claim while funding", {
             valueName: "CODE",
           }),

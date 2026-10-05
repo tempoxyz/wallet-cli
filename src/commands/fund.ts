@@ -1,149 +1,191 @@
-import type { Provider as CoreProvider } from "accounts";
-import { Actions } from "viem/tempo";
+import { setTimeout as sleep } from "node:timers/promises";
+import { erc20Abi, formatUnits } from "viem";
 
 import { usageError } from "../shared/errors.js";
-import { chainId, tokenAddress } from "../shared/network.js";
+import { chainId, createTempoPublicClient, tokenAddress } from "../shared/network.js";
+import {
+  fundingAmount,
+  machFundingAmount,
+  machFundingToken,
+  requireWalletAddress,
+  warnCreditsAlias,
+} from "../shared/mach.js";
 import { openExternal } from "../shared/process.js";
-import { formatMicroUnits, sleep } from "../shared/utils.js";
-import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
-import { queryCreditBalance } from "./credits.js";
 
-export type FundAction = "fund" | "crypto" | "credits" | "claim";
+export type FundAction = "fund" | "mach" | "crypto" | "credits" | "claim";
 
 export async function runFundingFlow(options: {
   action: FundAction;
   address?: string | undefined;
+  amount?: string | undefined;
   code?: string | undefined;
   network?: string | undefined;
   noBrowser?: boolean | undefined;
+  noWait?: boolean | undefined;
+  timeout?: number | undefined;
+  signal?: AbortSignal | undefined;
 }) {
+  if (options.action === "credits") warnCreditsAlias();
+  const action =
+    options.action === "credits" || options.action === "fund" ? "mach" : options.action;
+  const chain = chainId(options.network);
+  const token = action === "mach" ? machFundingToken(chain) : tokenAddress(chain);
+  const requested =
+    action === "mach" ? machFundingAmount(options.amount) : fundingAmount(options.amount);
+  const timeoutMs = finiteDuration(
+    options.timeout === undefined
+      ? Number(process.env.TEMPO_WALLET_FUND_TIMEOUT_MS ?? 600_000)
+      : options.timeout * 1000,
+    "Funding timeout",
+  );
+  const pollMs = finiteDuration(
+    Number(process.env.TEMPO_WALLET_FUND_POLL_MS ?? 2_000),
+    "Funding poll interval",
+  );
   const state = await loadWalletState();
-  const activeAccount = state.accounts[state.activeAccount ?? 0];
-  const walletAddress = options.address ?? activeAccount?.address ?? null;
-  if (!activeAccount && options.action !== "claim")
+  const address = options.address ?? state.accounts[state.activeAccount ?? 0]?.address;
+  if (!address && action !== "claim")
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-  if (!walletAddress && options.action !== "claim")
-    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-
-  const initial = await fundingBalance({
-    action: options.action,
-    chainId: chainId(options.network),
-    walletAddress,
+  const wallet = address ? requireWalletAddress(address) : null;
+  const url = fundUrl(action, {
+    address: wallet ?? undefined,
+    amount: options.amount,
+    chainId: chain,
+    code: options.code,
   });
-  const url = fundUrl(options.action, { code: options.code });
-
-  console.error(`Fund URL: ${url}`);
-  console.error(`Open this link on your device: ${url}`);
-  if (!options.noBrowser) openExternal(url);
-
-  if (options.action === "credits") {
-    console.error("Complete the credits purchase in the wallet app.");
-    console.error("After purchasing credits, return here to continue.");
-    console.error("Waiting for credits...");
-  } else {
-    console.error("After funding is complete, return here to continue.");
-    console.error("Waiting for funding...");
-  }
-
-  const completed = await waitForFunding({
-    action: options.action,
-    chainId: chainId(options.network),
-    initialRawBalance: initial.rawBalance,
-    walletAddress,
-  });
-  console.error("Funding received!");
-
-  return {
-    status: "success" as const,
-    wallet: walletAddress?.toLowerCase() ?? null,
-    action: options.action,
-    balance: completed.balance,
-    raw_balance: completed.rawBalance.toString(),
+  const base = {
+    wallet,
+    action,
+    url,
+    chain_id: chain,
+    token,
+    symbol: action === "mach" ? "MACH" : undefined,
+    amount: options.amount ?? null,
   };
+  // A handoff works without RPC access or a locally installed browser.
+  if (options.noWait || !wallet) {
+    if (!options.noBrowser) openExternal(url);
+    return { status: "pending" as const, ...base, balance: null, raw_balance: null };
+  }
+  const controller = new AbortController();
+  const cancel = () => controller.abort(new Error("Funding wait cancelled"));
+  process.once("SIGINT", cancel);
+  process.once("SIGTERM", cancel);
+  const signal = AbortSignal.any([
+    controller.signal,
+    AbortSignal.timeout(timeoutMs),
+    ...(options.signal ? [options.signal] : []),
+  ]);
+  try {
+    const client = createTempoPublicClient(options.network, {
+      timeout: Math.min(10_000, Math.max(1, timeoutMs)),
+      retryCount: 0,
+    });
+    const balance = () =>
+      bounded(
+        client.readContract({
+          abi: erc20Abi,
+          address: token,
+          functionName: "balanceOf",
+          args: [wallet],
+        }),
+        signal,
+      );
+    const initial = await balance();
+    console.error(`Open this link on your device: ${url}`);
+    if (!options.noBrowser) openExternal(url);
+    console.error(`Waiting for ${action === "mach" ? "MACH" : "funding"}...`);
+    for (;;) {
+      await sleep(pollMs, undefined, { signal });
+      const current = await balance();
+      // Never treat a smaller, unrelated deposit as the full requested amount.
+      if (current >= initial + (requested ?? 1n)) {
+        return {
+          status: "success" as const,
+          ...base,
+          balance: formatUnits(current, 6),
+          raw_balance: current.toString(),
+        };
+      }
+    }
+  } catch (error) {
+    if (signal.aborted) {
+      if (signal.reason?.name === "TimeoutError")
+        throw new Error(`Timed out waiting for funding. Continue at ${url}`);
+      throw new Error(`Funding wait cancelled. Continue at ${url}`);
+    }
+    throw error;
+  } finally {
+    process.removeListener("SIGINT", cancel);
+    process.removeListener("SIGTERM", cancel);
+  }
+}
+
+function finiteDuration(value: number, name: string) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 2_147_483_647)
+    throw usageError(`${name} must be a finite non-negative duration`);
+  return value;
+}
+
+async function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  let abort: () => void = () => {};
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      }),
+    ]);
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
 }
 
 export function fundAction(options: {
+  mach?: boolean | undefined;
   credits?: boolean | undefined;
   crypto?: boolean | undefined;
   referralCode?: string | undefined;
 }): FundAction {
-  if (options.credits) return "credits";
+  if ((options.mach || options.credits) && (options.crypto || options.referralCode))
+    throw usageError("--mach/--credits cannot be combined with --crypto or --claim");
+  if (options.credits) warnCreditsAlias();
+  if (options.mach || options.credits) return "mach";
   if (options.crypto) return "crypto";
   if (options.referralCode) return "claim";
-  return "fund";
+  return "mach";
 }
 
-async function fundingBalance(options: {
-  action: FundAction;
-  chainId: number;
-  walletAddress: string | null;
-}) {
-  if (options.action === "credits") {
-    if (!options.walletAddress) throw new Error("No wallet is logged in");
-    const credits = await queryCreditBalance({
-      chainId: options.chainId,
-      walletAddress: options.walletAddress,
-    });
-    return {
-      balance: credits.balance,
-      rawBalance: BigInt(credits.rawBalance),
-    };
-  }
-
-  if (!options.walletAddress) {
-    return {
-      balance: "0.000000",
-      rawBalance: 0n,
-    };
-  }
-
-  const provider = createProvider({
-    network: options.chainId === 42431 ? "testnet" : undefined,
-  }) as CoreProvider.Provider & { getClient: () => unknown };
-  const rawBalance = (
-    await Actions.token.getBalance(provider.getClient() as never, {
-      account: options.walletAddress as `0x${string}`,
-      token: tokenAddress(options.chainId),
-    })
-  ).amount;
-
-  return {
-    balance: formatMicroUnits(rawBalance.toString()),
-    rawBalance,
-  };
-}
-
-async function waitForFunding(options: {
-  action: FundAction;
-  chainId: number;
-  initialRawBalance: bigint;
-  walletAddress: string | null;
-}) {
-  const pollMs = Number(process.env.TEMPO_WALLET_FUND_POLL_MS ?? 2_000);
-  const timeoutMs = process.env.TEMPO_WALLET_FUND_TIMEOUT_MS
-    ? Number(process.env.TEMPO_WALLET_FUND_TIMEOUT_MS)
-    : undefined;
-  const started = Date.now();
-
-  for (;;) {
-    await sleep(pollMs);
-    const current = await fundingBalance(options);
-    if (current.rawBalance > options.initialRawBalance) return current;
-    if (timeoutMs !== undefined && Date.now() - started >= timeoutMs)
-      throw new Error("Timed out waiting for funding");
-  }
-}
-
-export function fundUrl(action: FundAction, options: { code?: string | undefined } = {}) {
-  // The CLI is an agent/MPP surface, so all funding handoffs land on the dedicated
-  // /agent page rather than the consumer wallet home.
+export function fundUrl(
+  action: FundAction,
+  options: {
+    address?: string | undefined;
+    amount?: string | undefined;
+    chainId?: number | undefined;
+    code?: string | undefined;
+  } = {},
+) {
   const url = new URL("https://wallet.tempo.xyz/agent");
-  if (action === "claim" && options.code) {
-    url.searchParams.set("claim", options.code);
-    return url.toString();
+  if (action === "claim" && options.code) url.searchParams.set("claim", options.code);
+  else {
+    const mach = action === "mach" || action === "credits" || action === "fund";
+    url.searchParams.set("action", mach ? "fund" : action);
+    if (mach) {
+      machFundingToken(options.chainId ?? 4217);
+      url.searchParams.set("intent", "mach");
+    }
   }
-  url.searchParams.set("action", action === "credits" ? "fund" : action);
-  if (action === "credits") url.searchParams.set("intent", "credits");
+  if (options.address) url.searchParams.set("address", requireWalletAddress(options.address));
+  if (options.chainId !== undefined) url.searchParams.set("chainId", String(options.chainId));
+  if (options.amount !== undefined) {
+    if (action === "mach" || action === "credits" || action === "fund")
+      machFundingAmount(options.amount);
+    else fundingAmount(options.amount);
+    url.searchParams.set("amount", options.amount);
+  }
   return url.toString();
 }

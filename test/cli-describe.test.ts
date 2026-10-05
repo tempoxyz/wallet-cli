@@ -50,6 +50,7 @@ describe("generated CLI metadata", () => {
     const help = await requestCli(["--help"]);
     expect(help).toContain("--payment-intent <auto|session|charge>");
     expect(help).toContain("--payment-token <string>");
+    expect(help).toContain("--mach");
 
     const description = JSON.parse(await requestCli(["--describe"])) as {
       args: { long?: string | undefined; name: string }[];
@@ -60,6 +61,45 @@ describe("generated CLI metadata", () => {
     expect(description.args).toContainEqual(
       expect.objectContaining({ long: "--payment-token", name: "payment_token" }),
     );
+  });
+
+  it("returns a complete remote MACH handoff through the CLI", async () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const result = JSON.parse(
+      await walletCli([
+        "fund",
+        "--address",
+        wallet,
+        "--amount",
+        "5",
+        "--no-browser",
+        "--no-wait",
+        "--format",
+        "json",
+        "--network",
+        "mainnet",
+      ]),
+    );
+    expect(result).toMatchObject({
+      status: "pending",
+      action: "mach",
+      wallet,
+      amount: "5",
+      chain_id: 4217,
+      symbol: "MACH",
+      balance: null,
+    });
+    expect(result.url).toBe(
+      `https://wallet.tempo.xyz/agent?action=fund&intent=mach&address=${wallet}&chainId=4217&amount=5`,
+    );
+  });
+
+  it("exposes MACH funding controls and pending output in its schema", async () => {
+    const schema = JSON.parse(await walletCli(["fund", "--schema", "--format", "json"]));
+    expect(schema.options.properties).toHaveProperty("mach");
+    expect(schema.options.properties).toHaveProperty("amount");
+    expect(schema.options.properties).toHaveProperty("wait");
+    expect(schema.output.properties.status.enum).toEqual(["success", "pending"]);
   });
 
   it("returns schema for the direct services command", async () => {

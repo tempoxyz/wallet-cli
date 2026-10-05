@@ -9,7 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Challenge, Constants, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession, tempo } from "mppx/client";
 import { Keystore } from "accounts";
-import { Session as TempoSession } from "mppx/tempo";
+import { machineTokenDeployments, Session as TempoSession } from "mppx/tempo";
 import {
   Agent,
   EnvHttpProxyAgent,
@@ -87,6 +87,7 @@ export type RequestOptions = {
   maxTime?: number | undefined;
   method?: string | undefined;
   maxSpend?: string | undefined;
+  mach?: boolean | undefined;
   network?: string | undefined;
   noProxy?: boolean | undefined;
   output?: string | undefined;
@@ -176,6 +177,9 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
         break;
       case "--payment-intent":
         options.paymentIntent = paymentIntentValue(requireValue(argv, ++index, arg));
+        break;
+      case "--mach":
+        options.mach = true;
         break;
       case "--payment-token":
         options.paymentToken = paymentTokenValue(requireValue(argv, ++index, arg));
@@ -339,9 +343,16 @@ function validateRequestOptions(options: RequestOptions) {
     throw usageError(
       "--max-spend (or TEMPO_MAX_SPEND) must be a non-negative amount with at most 6 decimal places",
     );
+  if (options.mach) {
+    if (options.paymentToken !== undefined && !isMachPaymentToken(options.paymentToken))
+      throw usageError("--mach conflicts with --payment-token for another token");
+    options.paymentToken = "MACH";
+  }
   if (options.paymentToken !== undefined)
     options.paymentToken = paymentTokenValue(options.paymentToken);
   if (options.paymentIntent !== undefined) paymentIntentValue(options.paymentIntent);
+  if (isMachPaymentToken(options.paymentToken) && options.paymentIntent === "session")
+    throw usageError("MACH settlement supports charge payments, not sessions");
   for (const [value, flag] of [
     [options.maxTime, "--timeout"],
     [options.connectTimeout, "--connect-timeout"],
@@ -383,7 +394,11 @@ function validateRequestOptions(options: RequestOptions) {
 }
 
 // Pass exactly the validated offer to mppx. Observation hooks cannot reject payment.
-function preparePaymentChallenge(response: Response, options: RequestOptions, requestUrl: string) {
+export function preparePaymentChallenge(
+  response: Response,
+  options: RequestOptions,
+  requestUrl: string,
+) {
   const selected = selectPaymentTokenResponse(response, options.paymentToken);
   const header = selected.headers.get("www-authenticate");
   const error = paymentChallengeError(header);
@@ -417,8 +432,30 @@ function preparePaymentChallenge(response: Response, options: RequestOptions, re
     throw paymentError(
       "--max-spend cannot enforce cumulative spending for recurring subscriptions; choose a charge or session offer",
     );
+  if (
+    challenge.expires &&
+    (!Number.isFinite(Date.parse(challenge.expires)) || Date.parse(challenge.expires) <= Date.now())
+  )
+    throw paymentError("Payment challenge is expired or has an invalid expiry");
   enforceMaxSpend(challenge, options);
   validatePaymentAddresses(challenge);
+  const deployment =
+    machineTokenDeployments[chainId(options.network) as keyof typeof machineTokenDeployments];
+  if (
+    deployment &&
+    stringValue(challenge.request.currency).toLowerCase() === deployment.token.toLowerCase()
+  )
+    throw paymentError(
+      "MACH must be spent through a machine-enabled settlement-currency charge, not advertised as the payment currency",
+    );
+  if (isMachPaymentToken(options.paymentToken)) {
+    if (options.maxSpend === undefined && !options.dryRun)
+      throw usageError("MACH payments require --max-spend (or TEMPO_MAX_SPEND)");
+    if (challenge.intent !== "charge" || details.machineTokenEnabled !== true)
+      throw paymentError("Server did not offer a machine-enabled MACH charge");
+    if (Array.isArray(details.splits) && details.splits.length > 0)
+      throw paymentError("MACH settlement does not support split charge offers");
+  }
   if (challenge.intent === "session") sessionDetails(challenge, requestUrl, options);
   const headers = new Headers(selected.headers);
   headers.set("www-authenticate", Challenge.serialize(challenge));
@@ -449,6 +486,9 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
             amount: formatTokenAmount(challengeAmount(challenge)),
             amount_raw: challenge.request.amount,
             token: challenge.request.currency,
+            machine_token_enabled:
+              getRecord(challenge.request.methodDetails).machineTokenEnabled === true,
+            payment_token: options.paymentToken ?? null,
             chain_id: normalizedChallengeChainId(
               getRecord(challenge.request.methodDetails),
               options,
@@ -714,7 +754,7 @@ async function payAndRetryRequest(
   request: FetchPlan,
   options: RequestOptions,
 ) {
-  const { response: selectedResponse } = preparePaymentChallenge(
+  const { challenge: selectedChallenge, response: selectedResponse } = preparePaymentChallenge(
     paymentRequiredResponse,
     options,
     request.url,
@@ -725,7 +765,7 @@ async function payAndRetryRequest(
   ).headers.get("www-authenticate");
   const challengeResponse = tempoPaymentChallengeResponse(selectedResponse);
 
-  const sessionChallenge = sessionChallengeFromHeader(header);
+  const sessionChallenge = selectedChallenge.intent === "session" ? selectedChallenge : undefined;
   if (options.paymentIntent !== "charge" && sessionChallenge) {
     let response: Response;
     try {
@@ -764,7 +804,7 @@ async function payAndRetryRequest(
     };
     const payment = Mppx.create({
       methods: [
-        tempo.charge(methodOptions),
+        tempo.charge({ ...methodOptions, ...machChargeParameters(options) }),
         ...(options.paymentIntent === "auto" ? [tempo.subscription({ getClient })] : []),
       ],
       polyfill: false,
@@ -1634,8 +1674,45 @@ function paymentIntentValue(value: string): PaymentIntent {
   throw usageError("--payment-intent must be one of: auto, session, charge");
 }
 
+function isMachPaymentToken(token: string | undefined) {
+  return (
+    token !== undefined &&
+    (token.toLowerCase() === "mach" ||
+      Object.values(machineTokenDeployments).some(
+        (deployment) => deployment.token.toLowerCase() === token.toLowerCase(),
+      ))
+  );
+}
+
+/** Restrict explicit MACH selection to the canonical SDK route; never silently spend stablecoins. */
+export function machChargeParameters(
+  options: RequestOptions,
+): NonNullable<Parameters<typeof tempo.charge>[0]> {
+  if (!isMachPaymentToken(options.paymentToken)) return {};
+  const expectedChain = chainId(options.network);
+  const deployment = machineTokenDeployments[expectedChain as keyof typeof machineTokenDeployments];
+  return {
+    autoSwap: false,
+    resolveAccount({ account, chainId: requestedChain, operation }) {
+      const calls = operation.kind === "executeCalls" ? operation.calls : undefined;
+      if (
+        !deployment ||
+        requestedChain !== expectedChain ||
+        calls?.length !== 2 ||
+        calls[0]?.to.toLowerCase() !== deployment.token.toLowerCase() ||
+        calls[1]?.to.toLowerCase() !== deployment.swap.toLowerCase()
+      )
+        throw paymentError(
+          "MACH settlement is unavailable: check MACH balance, swapper liquidity, and access-key permissions; no stablecoin fallback was authorized",
+        );
+      return account;
+    },
+  };
+}
+
 function paymentTokenValue(value: string) {
-  if (!isAddress(value)) throw usageError("--payment-token must be a 0x token address");
+  if (value.toLowerCase() === "mach") return "MACH";
+  if (!isAddress(value)) throw usageError("--payment-token must be MACH or a 0x token address");
   return value.toLowerCase();
 }
 
@@ -1821,6 +1898,11 @@ export function selectPaymentTokenResponse(response: Response, token: string | u
     challenges = Challenge.deserializeList(header).filter((challenge) => {
       if (challenge.method !== "tempo") return false;
       const request = challenge.request as Record<string, unknown>;
+      if (isMachPaymentToken(token))
+        return (
+          challenge.intent === "charge" &&
+          getRecord(request.methodDetails).machineTokenEnabled === true
+        );
       return stringValue(request.currency).toLowerCase() === token.toLowerCase();
     });
   } catch {
