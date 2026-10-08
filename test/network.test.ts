@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { chainId, isTestnet } from "../src/shared/network.js";
+import { chainId, isTestnet, tokenSymbol } from "../src/shared/network.js";
+import { moderatoToken, ousdToken, usdcToken } from "../src/shared/constants.js";
 
 afterEach(() => {
   delete process.env.TEMPO_WALLET_NETWORK;
@@ -36,4 +37,14 @@ it.each(["testnet", "tempo-moderato", "moderato"])("resolves %s consistently", (
 });
 it("rejects unknown networks", () => {
   expect(() => chainId("typo")).toThrow("Unsupported network");
+});
+
+it.each([
+  [usdcToken, "USDC.e"],
+  [ousdToken, "OUSD"],
+  [ousdToken.toUpperCase().replace("0X", "0x"), "OUSD"],
+  [moderatoToken, "PathUSD"],
+  ["0x1111111111111111111111111111111111111111", "0x1111111111111111111111111111111111111111"],
+])("displays %s as %s", (token, symbol) => {
+  expect(tokenSymbol(token)).toBe(symbol);
 });

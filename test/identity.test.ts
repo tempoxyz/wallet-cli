@@ -41,7 +41,7 @@ import {
   whoamiHandler,
 } from "../src/commands/identity.js";
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
-import { moderatoToken } from "../src/shared/constants.js";
+import { moderatoToken, ousdToken } from "../src/shared/constants.js";
 import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
 import { keysOutput, whoamiOutput } from "../src/schemas.js";
@@ -330,6 +330,24 @@ key = "${testPrivateKey}"
 });
 
 describe("identity commands", () => {
+  it("shows OUSD for an access key's primary token and spending limit", async () => {
+    const key = {
+      ...walletState().accessKeys[0]!,
+      limits: [{ token: ousdToken, limit: "100000000#__bigint" }],
+    };
+    const result = await currentKeysOutput({
+      walletAddress: testWallet,
+      chain: 4217,
+      accessKeys: [key],
+    });
+
+    expect(result.keys[0]).toMatchObject({
+      symbol: "OUSD",
+      token: ousdToken,
+      spending_limits: [{ symbol: "OUSD", token: ousdToken, limit: "100.000000" }],
+    });
+  });
+
   it("whoami queries and formats the PathUSD balance on testnet", async () => {
     await useTempHome();
     await writeWalletState(

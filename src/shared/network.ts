@@ -4,7 +4,7 @@ import { Chain } from "viem/tempo";
 
 import { usageError } from "./errors.js";
 
-import { mainnetEscrow, moderatoEscrow, moderatoToken, usdcToken } from "./constants.js";
+import { mainnetEscrow, moderatoEscrow, moderatoToken, ousdToken, usdcToken } from "./constants.js";
 
 export function chainId(network: string | undefined) {
   return isTestnet(network) ? 42431 : 4217;
@@ -58,6 +58,7 @@ export function tokenSymbol(token: string) {
   )
     return "MACH";
   if (token.toLowerCase() === usdcToken) return "USDC.e";
+  if (token.toLowerCase() === ousdToken) return "OUSD";
   if (token.toLowerCase() === moderatoToken) return "PathUSD";
   return token;
 }
