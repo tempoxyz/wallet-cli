@@ -350,6 +350,40 @@ describe("identity commands", () => {
     });
   });
 
+  it("uses each access key's chain to display its token symbol", async () => {
+    const key = {
+      ...walletState().accessKeys[0]!,
+      chainId: 42431,
+      limits: [{ token: moderatoToken, limit: "100000000#__bigint" }],
+    };
+    const result = await currentKeysOutput({
+      walletAddress: null,
+      chain: 4217,
+      accessKeys: [key],
+    });
+
+    expect(result.keys[0]).toMatchObject({
+      network: "tempo-moderato",
+      symbol: "pathUSD",
+      spending_limits: [{ symbol: "pathUSD" }],
+    });
+  });
+
+  it("queries balances separately for the same token address on different chains", async () => {
+    const mainnetKey = walletState().accessKeys[0]!;
+    const testnetKey = { ...mainnetKey, address: testAccessKey2, chainId: 42431 };
+    mocks.readContract.mockResolvedValueOnce(1_000_000n).mockResolvedValueOnce(2_000_000n);
+
+    const result = await currentKeysOutput({
+      walletAddress: testWallet,
+      chain: 4217,
+      accessKeys: [mainnetKey, testnetKey],
+    });
+
+    expect(mocks.readContract).toHaveBeenCalledTimes(2);
+    expect(result.keys.map((key) => key.balance)).toEqual(["1", "2"]);
+  });
+
   it("whoami queries and formats the pathUSD balance on testnet", async () => {
     await useTempHome();
     await writeWalletState(

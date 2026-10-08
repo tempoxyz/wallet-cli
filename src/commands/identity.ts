@@ -436,7 +436,6 @@ export async function currentWhoamiOutput(options: {
     key: currentKeyOutput({
       key,
       walletAddress: options.walletAddress,
-      chain: options.chain,
       balance,
       status: key ? localAccessKeyStatus(key) : null,
     }),
@@ -452,18 +451,18 @@ export async function currentKeysOutput(options: {
   const keys = [];
   for (const key of options.accessKeys) {
     const token = key.limits?.[0]?.token ?? tokenAddress(key.chainId);
-    const balance = balances.has(token.toLowerCase())
-      ? (balances.get(token.toLowerCase()) ?? null)
+    const cacheKey = `${key.chainId}:${token.toLowerCase()}`;
+    const balance = balances.has(cacheKey)
+      ? (balances.get(cacheKey) ?? null)
       : await tokenBalance({
           token,
           walletAddress: options.walletAddress,
           chain: key.chainId,
         });
-    balances.set(token.toLowerCase(), balance);
+    balances.set(cacheKey, balance);
     const output = currentKeyOutput({
       key,
       walletAddress: options.walletAddress,
-      chain: options.chain,
       balance,
       status: localAccessKeyStatus(key),
     });
@@ -479,7 +478,6 @@ export async function currentKeysOutput(options: {
 function currentKeyOutput(options: {
   key: WalletState["accessKeys"][number] | undefined;
   walletAddress: string | null;
-  chain: number | null;
   balance: TokenBalance | null;
   status: string | null;
 }) {
@@ -487,14 +485,14 @@ function currentKeyOutput(options: {
   const limit = options.key.limits?.[0];
   const spendingMode = permissionMode(options.key.limits, options.key.permissionSemantics);
   const callMode = permissionMode(options.key.scopes, options.key.permissionSemantics);
-  const token = limit?.token ?? tokenAddress(options.chain ?? options.key.chainId);
+  const token = limit?.token ?? tokenAddress(options.key.chainId);
   const spendingLimits = accessKeyLimitsOutput(options.key);
   return {
     address: options.key.address.toLowerCase(),
     chain_id: options.key.chainId,
-    network: networkName(options.chain) ?? networkName(options.key.chainId) ?? "tempo",
+    network: networkName(options.key.chainId) ?? "tempo",
     wallet_address: options.walletAddress?.toLowerCase() ?? null,
-    symbol: tokenSymbol(token, options.chain ?? options.key.chainId),
+    symbol: tokenSymbol(token, options.key.chainId),
     token: token.toLowerCase(),
     balance:
       options.balance && options.balance.token.toLowerCase() === token.toLowerCase()
