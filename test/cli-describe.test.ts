@@ -68,6 +68,7 @@ describe("generated CLI metadata", () => {
     const result = JSON.parse(
       await walletCli([
         "fund",
+        "--mach",
         "--address",
         wallet,
         "--amount",

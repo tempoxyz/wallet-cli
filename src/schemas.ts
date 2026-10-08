@@ -405,9 +405,12 @@ export const fundOptions = z.object({
   address: z.string().optional().describe("Wallet address to fund (defaults to current wallet)"),
   browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
   crypto: z.boolean().optional().describe("Open the direct crypto funding flow"),
-  mach: z.boolean().optional().describe("Open the MACH funding flow (default)"),
+  mach: z.boolean().optional().describe("Open the MACH funding flow"),
   credits: z.boolean().optional().describe("Alias for --mach"),
-  amount: z.string().optional().describe("MACH checkout amount: 5–100 USD, up to 2 decimal places"),
+  amount: z
+    .string()
+    .optional()
+    .describe("Requested USD amount; MACH: 5–100, up to 2 decimal places"),
   wait: z.boolean().default(true).describe("Wait for funds; use --no-wait for a JSON handoff"),
   timeout: z.coerce.number().optional().describe("Funding wait timeout in seconds (default: 600)"),
   "referral-code": z.string().optional().describe("Open referral-code redeem flow"),

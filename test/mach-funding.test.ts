@@ -60,8 +60,8 @@ describe("MACH funding", () => {
   it("preserves exact six decimal amounts", () => {
     expect(fundingAmount("1.000001")).toBe(1000001n);
   });
-  it("makes MACH the default and credits a canonical alias", () => {
-    expect(fundAction({})).toBe("mach");
+  it("keeps MACH explicit and credits a canonical alias", () => {
+    expect(fundAction({})).toBe("fund");
     expect(fundAction({ credits: true })).toBe("mach");
     expect(fundAction({ mach: true })).toBe("mach");
   });
@@ -149,6 +149,32 @@ describe("MACH funding", () => {
       "finite",
     );
   });
+});
+
+describe("default funding", () => {
+  it.each([
+    ["mainnet", 4217, "0x20c000000000000000000000b9537d11c60e8b50"],
+    ["testnet", 42431, "0x20c0000000000000000000000000000000000000"],
+  ])(
+    "opens general funding and waits for stablecoins on %s",
+    async (network, chain, stablecoin) => {
+      mocks.readContract.mockResolvedValueOnce(0n).mockResolvedValueOnce(1n);
+      const result = await runFundingFlow({ action: fundAction({}), network, amount: "0.000001" });
+      const url = `https://wallet.tempo.xyz/agent?action=fund&address=${wallet}&chainId=${chain}&amount=0.000001`;
+      expect(result).toMatchObject({
+        action: "fund",
+        status: "success",
+        chain_id: chain,
+        token: stablecoin,
+        url,
+        raw_balance: "1",
+      });
+      expect(mocks.open).toHaveBeenCalledWith(url);
+      expect(mocks.readContract).toHaveBeenLastCalledWith(
+        expect.objectContaining({ address: stablecoin, args: [wallet] }),
+      );
+    },
+  );
 });
 
 describe("MACH whoami", () => {
