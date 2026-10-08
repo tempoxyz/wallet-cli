@@ -45,7 +45,7 @@ export async function transferTokens(options: {
   const outputBase = {
     chain_id: chain,
     amount: args.amount,
-    symbol: tokenSymbol(args.token),
+    symbol: tokenSymbol(args.token, chain),
     token,
     to,
     from: fromAddress,

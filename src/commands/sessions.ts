@@ -662,7 +662,7 @@ function sessionItem(record: ChannelRecord) {
     channel_id: record.channel_id,
     network: record.network,
     origin: record.origin,
-    symbol: tokenSymbol(record.token),
+    symbol: tokenSymbol(record.token, record.chain_id),
     deposit: formatTokenUnits(record.deposit, tokenDecimals()),
     spent: formatTokenUnits(spent, tokenDecimals()),
     remaining: formatTokenUnits(remaining, tokenDecimals()),

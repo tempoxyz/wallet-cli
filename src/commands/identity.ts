@@ -412,7 +412,7 @@ export async function currentWhoamiOutput(options: {
     tokenBalance({
       token,
       walletAddress: options.walletAddress,
-      network: options.network,
+      chain: selectedChain,
     }),
     fetchWalletAssets({
       chain: selectedChain,
@@ -429,7 +429,7 @@ export async function currentWhoamiOutput(options: {
     ready: Boolean(options.walletAddress && paymentKey && balance),
     wallet: options.walletAddress?.toLowerCase() ?? null,
     balance: {
-      ...balanceOutput(balance, sessions, tokenSymbol(token)),
+      ...balanceOutput(balance, sessions, tokenSymbol(token, selectedChain)),
       ...(options.walletAddress && !balance ? { error: balanceQueryError } : {}),
     },
     balances,
@@ -457,7 +457,7 @@ export async function currentKeysOutput(options: {
       : await tokenBalance({
           token,
           walletAddress: options.walletAddress,
-          network: networkName(options.chain) === "tempo-moderato" ? "testnet" : undefined,
+          chain: key.chainId,
         });
     balances.set(token.toLowerCase(), balance);
     const output = currentKeyOutput({
@@ -494,7 +494,7 @@ function currentKeyOutput(options: {
     chain_id: options.key.chainId,
     network: networkName(options.chain) ?? networkName(options.key.chainId) ?? "tempo",
     wallet_address: options.walletAddress?.toLowerCase() ?? null,
-    symbol: tokenSymbol(token),
+    symbol: tokenSymbol(token, options.chain ?? options.key.chainId),
     token: token.toLowerCase(),
     balance:
       options.balance && options.balance.token.toLowerCase() === token.toLowerCase()
@@ -525,7 +525,7 @@ function currentKeyOutput(options: {
 function accessKeyLimitsOutput(key: WalletState["accessKeys"][number]) {
   return (key.limits ?? []).map((limit) => ({
     unlimited: false,
-    symbol: tokenSymbol(limit.token),
+    symbol: tokenSymbol(limit.token, key.chainId),
     token: limit.token.toLowerCase(),
     limit: formatMicroUnits(cleanStoredScalar(limit.limit)),
     period_seconds: limit.period ?? null,
@@ -674,12 +674,12 @@ type SessionStats = {
 async function tokenBalance(options: {
   token: string | undefined;
   walletAddress: string | null;
-  network?: string | undefined;
+  chain: number;
 }): Promise<TokenBalance | null> {
   if (!options.walletAddress) return null;
-  const token = options.token ?? tokenAddress(chainId(options.network));
+  const token = options.token ?? tokenAddress(options.chain);
   try {
-    const client = createTempoPublicClient(options.network, {
+    const client = createTempoPublicClient(options.chain === 42431 ? "testnet" : undefined, {
       timeout: statusQueryTimeout,
       retryCount: 0,
     });
@@ -692,7 +692,7 @@ async function tokenBalance(options: {
     return {
       formatted: formatUnits(raw, 6),
       raw,
-      symbol: tokenSymbol(token),
+      symbol: tokenSymbol(token, options.chain),
       token,
     };
   } catch {

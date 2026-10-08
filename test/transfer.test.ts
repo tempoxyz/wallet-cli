@@ -33,7 +33,7 @@ describe("transferTokens", () => {
     });
   });
 
-  it("uses the PathUSD symbol for Moderato token transfers", async () => {
+  it("uses the pathUSD symbol for Moderato token transfers", async () => {
     await useTempHome();
     await writeWalletState(walletState());
 
@@ -44,7 +44,7 @@ describe("transferTokens", () => {
 
     expect(result).toMatchObject({
       chain_id: 42431,
-      symbol: "PathUSD",
+      symbol: "pathUSD",
       token: moderatoToken,
     });
   });
