@@ -1,6 +1,8 @@
 overrides:
   esbuild: 0.28.2
+  source-map-js: 1.2.2
   tar: 7.5.22
+  tinypool: 2.1.2
   ws: 8.21.0
 
 allowBuilds:
