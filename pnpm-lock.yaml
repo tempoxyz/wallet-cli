@@ -17,19 +17,19 @@ importers:
     dependencies:
       accounts:
         specifier: 0.19.0
-        version: 0.19.0(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
+        version: 0.19.0(typescript@7.0.2)(viem@2.57.2(typescript@7.0.2)(zod@4.4.3))
       incur:
-        specifier: 0.4.20
-        version: 0.4.20
+        specifier: 0.7.0
+        version: 0.7.0
       mppx:
         specifier: 0.12.0
-        version: 0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
+        version: 0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.2(typescript@7.0.2)(zod@4.4.3))
       undici:
-        specifier: 8.10.2
-        version: 8.10.2
+        specifier: 8.11.2
+        version: 8.11.2
       viem:
-        specifier: 2.57.1
-        version: 2.57.1(typescript@7.0.2)(zod@4.4.3)
+        specifier: 2.57.2
+        version: 2.57.2(typescript@7.0.2)(zod@4.4.3)
     devDependencies:
       '@types/node':
         specifier: 26.5.1
@@ -51,10 +51,10 @@ importers:
         version: 7.0.2
       vitest:
         specifier: 5.0.0
-        version: 5.0.0(@types/node@26.5.1)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        version: 5.0.0(@types/node@26.5.1)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))
       vp:
         specifier: npm:vite-plus@0.1.24
-        version: vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0)
+        version: vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))(yaml@2.9.1)
 
 packages:
 
@@ -324,8 +324,8 @@ packages:
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
 
-  '@noble/hashes@2.2.0':
-    resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
     engines: {node: '>= 20.19.0'}
 
   '@octokit/auth-token@6.0.0':
@@ -1397,13 +1397,13 @@ packages:
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
 
-  incur@0.4.20:
-    resolution: {integrity: sha512-TPiYXQkV4Tt2A8ubCOO1fkFMKpvrApCMJuy7Yvlg9onCc52W5per1d8nXf4MVEWLFCaFqlI2ziDSzYmK3peOTQ==}
+  incur@0.4.25:
+    resolution: {integrity: sha512-UHMc8OAafcalvhtfPs8rIPAUksRQ7gbR59zq8CWYFUaX1kVssfFQ6aYEb3mWglP4NMfh5HO+IfvzqhwPuCyMmg==}
     engines: {node: '>=22'}
     hasBin: true
 
-  incur@0.4.25:
-    resolution: {integrity: sha512-UHMc8OAafcalvhtfPs8rIPAUksRQ7gbR59zq8CWYFUaX1kVssfFQ6aYEb3mWglP4NMfh5HO+IfvzqhwPuCyMmg==}
+  incur@0.7.0:
+    resolution: {integrity: sha512-jCORKLwPEtmRchMpsDTHsmZtun1hR9v4aaIyfSBvonZdgebEbpWc0SH1WJKLD+T7Ngs7xHNEReqiQ7bA5EFlNQ==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -1922,12 +1922,12 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
-  undici@7.29.1:
-    resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
+  undici@7.30.0:
+    resolution: {integrity: sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==}
     engines: {node: '>=20.18.1'}
 
-  undici@8.10.2:
-    resolution: {integrity: sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==}
+  undici@8.11.2:
+    resolution: {integrity: sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==}
     engines: {node: '>=22.19.0'}
 
   universal-user-agent@7.0.3:
@@ -1943,8 +1943,8 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  viem@2.57.1:
-    resolution: {integrity: sha512-eOV3fHnaMzkIFRefZg1icWztAKvBHg7RMKEH89ywY7hnyq1VxI4s/osXnTBViOsEZ7/LbbxU3w+JaIrbeIXRPQ==}
+  viem@2.57.2:
+    resolution: {integrity: sha512-ZbPvu+5fvRsbFh+OymDz0GyEySsSco8GWrEAiHM4ckhEY1vJTPy0tcLVkn0cs70dPiUOjLxkQBnfVyt9YkJ7cA==}
     peerDependencies:
       typescript: '>=5.0.4'
     peerDependenciesMeta:
@@ -2091,6 +2091,11 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
+  yaml@2.9.1:
+    resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@20.2.9:
     resolution: {integrity: sha512-y11nGElTIV+CT3Zv9t7VKl+Q3hTQoT9a1Qzezhhl6Rp21gJ/IVTW7Z3y9EWXhuUBC2Shnf+DX0antecpAwSP8w==}
     engines: {node: '>=10'}
@@ -2101,6 +2106,9 @@ packages:
 
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
   zustand@5.0.14:
     resolution: {integrity: sha512-/8tAspM5LMPr28b3fwLYrtdj77ECpfZviaP75CMTnwO8ISyaE4GDIG/9rDDYq/cH9D2Xw2A2RXglLInmVBQB/g==}
@@ -2303,7 +2311,7 @@ snapshots:
 
   '@modelcontextprotocol/server@2.0.0-alpha.4':
     dependencies:
-      zod: 4.4.3
+      zod: 4.6.5
 
   '@napi-rs/wasm-runtime@1.2.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:
@@ -2322,7 +2330,7 @@ snapshots:
 
   '@noble/hashes@1.8.0': {}
 
-  '@noble/hashes@2.2.0': {}
+  '@noble/hashes@2.4.0': {}
 
   '@octokit/auth-token@6.0.0': {}
 
@@ -2679,18 +2687,18 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@vitest/mocker@5.0.0(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))':
+  '@vitest/mocker@5.0.0(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       '@vitest/spy': 5.0.0
       estree-walker: 3.0.3
       magic-string: 1.4.2
     optionalDependencies:
-      vite: 8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)
+      vite: 8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1)
 
   '@vitest/spy@5.0.0': {}
 
-  '@voidzero-dev/vite-plus-core@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(yaml@2.9.0)':
+  '@voidzero-dev/vite-plus-core@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(yaml@2.9.1)':
     dependencies:
       '@oxc-project/runtime': 0.133.0
       '@oxc-project/types': 0.133.0
@@ -2702,7 +2710,7 @@ snapshots:
       fsevents: 2.3.3
       tsx: 4.23.13
       typescript: 7.0.2
-      yaml: 2.9.0
+      yaml: 2.9.1
 
   '@voidzero-dev/vite-plus-darwin-arm64@0.1.24':
     optional: true
@@ -2722,11 +2730,11 @@ snapshots:
   '@voidzero-dev/vite-plus-linux-x64-musl@0.1.24':
     optional: true
 
-  '@voidzero-dev/vite-plus-test@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0)':
+  '@voidzero-dev/vite-plus-test@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))(yaml@2.9.1)':
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@types/chai': 5.2.3
-      '@voidzero-dev/vite-plus-core': 0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(yaml@2.9.0)
+      '@voidzero-dev/vite-plus-core': 0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(yaml@2.9.1)
       es-module-lexer: 1.7.0
       obug: 2.2.1
       pixelmatch: 7.2.0
@@ -2736,7 +2744,7 @@ snapshots:
       tinybench: 2.9.0
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
-      vite: 8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)
+      vite: 8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1)
       ws: 8.21.0
     optionalDependencies:
       '@types/node': 26.5.1
@@ -2774,7 +2782,7 @@ snapshots:
       progress: 2.0.3
       semver: 7.8.4
       tar-fs: 3.1.2
-      undici: 7.29.1
+      undici: 7.30.0
       yargs: 16.2.0
     transitivePeerDependencies:
       - bare-abort-controller
@@ -2818,20 +2826,20 @@ snapshots:
       typescript: 7.0.2
       zod: 4.4.3
 
-  accounts@0.19.0(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)):
+  accounts@0.19.0(typescript@7.0.2)(viem@2.57.2(typescript@7.0.2)(zod@4.4.3)):
     dependencies:
       hono: 4.13.12
       idb-keyval: 6.2.5
       jose: 6.2.3
       mipd: 0.0.7(typescript@7.0.2)
-      mppx: 0.11.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
+      mppx: 0.11.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.2(typescript@7.0.2)(zod@4.4.3))
       ox: 0.14.45(typescript@7.0.2)(zod@4.4.3)
       wata: 0.4.1(typescript@7.0.2)
       webauthx: 0.1.2(typescript@7.0.2)(zod@4.4.3)
       zod: 4.4.3
       zustand: 5.0.14
     optionalDependencies:
-      viem: 2.57.1(typescript@7.0.2)(zod@4.4.3)
+      viem: 2.57.2(typescript@7.0.2)(zod@4.4.3)
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - '@types/react'
@@ -3061,16 +3069,6 @@ snapshots:
 
   ieee754@1.2.1: {}
 
-  incur@0.4.20:
-    dependencies:
-      '@cfworker/json-schema': 4.1.1
-      '@modelcontextprotocol/server': 2.0.0-alpha.4
-      '@scalar/openapi-types': 0.8.0
-      '@toon-format/toon': 2.3.1
-      tokenx: 1.6.0
-      yaml: 2.9.0
-      zod: 4.4.3
-
   incur@0.4.25:
     dependencies:
       '@cfworker/json-schema': 4.1.1
@@ -3079,7 +3077,17 @@ snapshots:
       '@toon-format/toon': 2.3.1
       tokenx: 1.6.0
       yaml: 2.9.0
-      zod: 4.4.3
+      zod: 4.6.5
+
+  incur@0.7.0:
+    dependencies:
+      '@cfworker/json-schema': 4.1.1
+      '@modelcontextprotocol/server': 2.0.0-alpha.4
+      '@scalar/openapi-types': 0.8.0
+      '@toon-format/toon': 2.3.1
+      tokenx: 1.6.0
+      yaml: 2.9.1
+      zod: 4.6.5
 
   inherits@2.0.4: {}
 
@@ -3182,26 +3190,26 @@ snapshots:
 
   mkdirp-classic@0.5.3: {}
 
-  mppx@0.11.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)):
+  mppx@0.11.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.2(typescript@7.0.2)(zod@4.4.3)):
     dependencies:
       '@stripe/stripe-js': 9.13.0
       eventsource-parser: 3.1.1
       ox: 0.14.33(typescript@7.0.2)(zod@4.4.3)
       structured-headers: 2.0.3
-      viem: 2.57.1(typescript@7.0.2)(zod@4.4.3)
+      viem: 2.57.2(typescript@7.0.2)(zod@4.4.3)
       zod: 4.4.3
     optionalDependencies:
       hono: 4.13.12
     transitivePeerDependencies:
       - typescript
 
-  mppx@0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)):
+  mppx@0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.2(typescript@7.0.2)(zod@4.4.3)):
     dependencies:
       '@stripe/stripe-js': 9.13.0
       eventsource-parser: 3.1.1
       ox: 0.14.45(typescript@7.0.2)(zod@4.4.3)
       structured-headers: 2.0.3
-      viem: 2.57.1(typescript@7.0.2)(zod@4.4.3)
+      viem: 2.57.2(typescript@7.0.2)(zod@4.4.3)
       zod: 4.4.3
     optionalDependencies:
       hono: 4.13.12
@@ -3256,14 +3264,14 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.3.0(typescript@7.0.2)(zod@4.4.3)
+      abitype: 1.2.3(typescript@7.0.2)(zod@4.4.3)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 7.0.2
     transitivePeerDependencies:
       - zod
 
-  oxfmt@0.52.0(vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0)):
+  oxfmt@0.52.0(vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))(yaml@2.9.1)):
     dependencies:
       tinypool: 2.1.2
     optionalDependencies:
@@ -3286,7 +3294,7 @@ snapshots:
       '@oxfmt/binding-win32-arm64-msvc': 0.52.0
       '@oxfmt/binding-win32-ia32-msvc': 0.52.0
       '@oxfmt/binding-win32-x64-msvc': 0.52.0
-      vite-plus: 0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0)
+      vite-plus: 0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))(yaml@2.9.1)
 
   oxlint-tsgolint@0.23.0:
     optionalDependencies:
@@ -3297,7 +3305,7 @@ snapshots:
       '@oxlint-tsgolint/win32-arm64': 0.23.0
       '@oxlint-tsgolint/win32-x64': 0.23.0
 
-  oxlint@1.67.0(oxlint-tsgolint@0.23.0)(vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0)):
+  oxlint@1.67.0(oxlint-tsgolint@0.23.0)(vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))(yaml@2.9.1)):
     optionalDependencies:
       '@oxlint/binding-android-arm-eabi': 1.67.0
       '@oxlint/binding-android-arm64': 1.67.0
@@ -3319,7 +3327,7 @@ snapshots:
       '@oxlint/binding-win32-ia32-msvc': 1.67.0
       '@oxlint/binding-win32-x64-msvc': 1.67.0
       oxlint-tsgolint: 0.23.0
-      vite-plus: 0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0)
+      vite-plus: 0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))(yaml@2.9.1)
 
   path-parse@1.0.7: {}
 
@@ -3607,9 +3615,9 @@ snapshots:
 
   undici-types@8.9.0: {}
 
-  undici@7.29.1: {}
+  undici@7.30.0: {}
 
-  undici@8.10.2: {}
+  undici@8.11.2: {}
 
   universal-user-agent@7.0.3: {}
 
@@ -3625,7 +3633,7 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
-  viem@2.57.1(typescript@7.0.2)(zod@4.4.3):
+  viem@2.57.2(typescript@7.0.2)(zod@4.4.3):
     dependencies:
       '@noble/curves': 1.9.1
       '@noble/hashes': 1.8.0
@@ -3642,14 +3650,14 @@ snapshots:
       - utf-8-validate
       - zod
 
-  vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0):
+  vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))(yaml@2.9.1):
     dependencies:
       '@oxc-project/types': 0.133.0
       '@oxlint/plugins': 1.61.0
-      '@voidzero-dev/vite-plus-core': 0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(yaml@2.9.0)
-      '@voidzero-dev/vite-plus-test': 0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0)
-      oxfmt: 0.52.0(vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0))
-      oxlint: 1.67.0(oxlint-tsgolint@0.23.0)(vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0))
+      '@voidzero-dev/vite-plus-core': 0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(yaml@2.9.1)
+      '@voidzero-dev/vite-plus-test': 0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))(yaml@2.9.1)
+      oxfmt: 0.52.0(vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))(yaml@2.9.1))
+      oxlint: 1.67.0(oxlint-tsgolint@0.23.0)(vite-plus@0.1.24(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))(yaml@2.9.1))
       oxlint-tsgolint: 0.23.0
     optionalDependencies:
       '@voidzero-dev/vite-plus-darwin-arm64': 0.1.24
@@ -3692,7 +3700,7 @@ snapshots:
       - vite
       - yaml
 
-  vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0):
+  vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -3704,12 +3712,12 @@ snapshots:
       esbuild: 0.28.2
       fsevents: 2.3.3
       tsx: 4.23.13
-      yaml: 2.9.0
+      yaml: 2.9.1
 
-  vitest@5.0.0(@types/node@26.5.1)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)):
+  vitest@5.0.0(@types/node@26.5.1)(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1)):
     dependencies:
       '@types/chai': 5.2.3
-      '@vitest/mocker': 5.0.0(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      '@vitest/mocker': 5.0.0(vite@8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1))
       chai: 6.2.2
       es-module-lexer: 2.3.2
       expect-type: 1.4.0
@@ -3720,7 +3728,7 @@ snapshots:
       tinybench: 6.1.4
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
-      vite: 8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)
+      vite: 8.0.16(@types/node@26.5.1)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.5.1
@@ -3731,7 +3739,7 @@ snapshots:
     dependencies:
       '@hono/node-server': 1.19.17(hono@4.13.12)
       '@noble/ciphers': 2.2.0
-      '@noble/hashes': 2.2.0
+      '@noble/hashes': 2.4.0
       hono: 4.13.12
       ox: 0.14.45(typescript@7.0.2)(zod@4.4.3)
       zod: 4.4.3
@@ -3766,6 +3774,8 @@ snapshots:
 
   yaml@2.9.0: {}
 
+  yaml@2.9.1: {}
+
   yargs-parser@20.2.9: {}
 
   yargs@16.2.0:
@@ -3779,5 +3789,7 @@ snapshots:
       yargs-parser: 20.2.9
 
   zod@4.4.3: {}
+
+  zod@4.6.5: {}
 
   zustand@5.0.14: {}
