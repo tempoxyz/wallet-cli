@@ -21,7 +21,7 @@ importers:
         version: 0.4.20
       mppx:
         specifier: 0.12.0
-        version: 0.12.0(hono@4.13.5)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
+        version: 0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
       undici:
         specifier: 8.10.2
         version: 8.10.2
@@ -1385,8 +1385,8 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
-  hono@4.13.5:
-    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
+  hono@4.13.12:
+    resolution: {integrity: sha512-6E2QDAc9Ick9Sq77ZrGS/dk2WUYni91aufTw6LJKpV7w8kW5/GxVUc650FOADOmlwg3K+f7Pun6XlV+pYmW6gw==}
     engines: {node: '>=16.9.0'}
 
   idb-keyval@6.2.5:
@@ -2277,9 +2277,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@hono/node-server@1.19.17(hono@4.13.5)':
+  '@hono/node-server@1.19.17(hono@4.13.12)':
     dependencies:
-      hono: 4.13.5
+      hono: 4.13.12
 
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
@@ -2818,11 +2818,11 @@ snapshots:
 
   accounts@0.19.0(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)):
     dependencies:
-      hono: 4.13.5
+      hono: 4.13.12
       idb-keyval: 6.2.5
       jose: 6.2.3
       mipd: 0.0.7(typescript@7.0.2)
-      mppx: 0.11.0(hono@4.13.5)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
+      mppx: 0.11.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
       ox: 0.14.45(typescript@7.0.2)(zod@4.4.3)
       wata: 0.4.1(typescript@7.0.2)
       webauthx: 0.1.2(typescript@7.0.2)(zod@4.4.3)
@@ -3053,7 +3053,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.13.5: {}
+  hono@4.13.12: {}
 
   idb-keyval@6.2.5: {}
 
@@ -3180,7 +3180,7 @@ snapshots:
 
   mkdirp-classic@0.5.3: {}
 
-  mppx@0.11.0(hono@4.13.5)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)):
+  mppx@0.11.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)):
     dependencies:
       '@stripe/stripe-js': 9.13.0
       eventsource-parser: 3.1.1
@@ -3189,11 +3189,11 @@ snapshots:
       viem: 2.57.1(typescript@7.0.2)(zod@4.4.3)
       zod: 4.4.3
     optionalDependencies:
-      hono: 4.13.5
+      hono: 4.13.12
     transitivePeerDependencies:
       - typescript
 
-  mppx@0.12.0(hono@4.13.5)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)):
+  mppx@0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)):
     dependencies:
       '@stripe/stripe-js': 9.13.0
       eventsource-parser: 3.1.1
@@ -3202,7 +3202,7 @@ snapshots:
       viem: 2.57.1(typescript@7.0.2)(zod@4.4.3)
       zod: 4.4.3
     optionalDependencies:
-      hono: 4.13.5
+      hono: 4.13.12
     transitivePeerDependencies:
       - typescript
 
@@ -3727,10 +3727,10 @@ snapshots:
 
   wata@0.4.1(typescript@7.0.2):
     dependencies:
-      '@hono/node-server': 1.19.17(hono@4.13.5)
+      '@hono/node-server': 1.19.17(hono@4.13.12)
       '@noble/ciphers': 2.2.0
       '@noble/hashes': 2.2.0
-      hono: 4.13.5
+      hono: 4.13.12
       ox: 0.14.45(typescript@7.0.2)(zod@4.4.3)
       zod: 4.4.3
     transitivePeerDependencies:
