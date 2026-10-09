@@ -8,8 +8,6 @@ on:
       - "v*"
       - "tempo-wallet@*"
       - "tempo-request@*"
-      - "tempo-api@*"
-      - "tempo-routes@*"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -47,14 +45,14 @@ jobs:
 
           if [[ "$TAG" == v* ]]; then
             VERSION="${TAG#v}"
-            PACKAGES='["tempo-wallet","tempo-request","tempo-api","tempo-routes"]'
+            PACKAGES='["tempo-wallet","tempo-request"]'
             RELEASE_TAG="$TAG"
           elif [[ "$TAG" == *"@"* ]]; then
             PACKAGE="${TAG%%@*}"
             VERSION="${TAG#*@}"
             RELEASE_TAG="$TAG"
 
-            if [[ "$PACKAGE" == "tempo-wallet" || "$PACKAGE" == "tempo-request" || "$PACKAGE" == "tempo-api" || "$PACKAGE" == "tempo-routes" ]]; then
+            if [[ "$PACKAGE" == "tempo-wallet" || "$PACKAGE" == "tempo-request" ]]; then
               PACKAGES="[\"${PACKAGE}\"]"
             else
               echo "Unsupported package in tag: ${PACKAGE}" >&2
@@ -62,7 +60,7 @@ jobs:
             fi
           elif [[ "$TAG" == refs/heads/* || "$TAG" == "$GITHUB_REF" ]]; then
             VERSION="0.0.0-dev.${GITHUB_RUN_NUMBER}"
-            PACKAGES='["tempo-wallet","tempo-request","tempo-api","tempo-routes"]'
+            PACKAGES='["tempo-wallet","tempo-request"]'
             RELEASE_TAG="$TAG"
           else
             echo "Unsupported tag format: ${TAG}" >&2
@@ -285,8 +283,6 @@ jobs:
           declare -A PKG_DESC=(
             [tempo-wallet]="Manage your Tempo Wallet"
             [tempo-request]="Make an HTTP request"
-            [tempo-api]="Explore the Tempo API"
-            [tempo-routes]="Access the Tempo asset routing API"
           )
 
           SIGN_ARGS=(

@@ -8,9 +8,7 @@ type PackageJson = {
 };
 
 const entrypoints = {
-  "tempo-api": "src/api-cli.ts",
   "tempo-request": "src/request-cli.ts",
-  "tempo-routes": "src/routes-cli.ts",
   "tempo-wallet": "src/cli.ts",
 };
 type CliPackageName = keyof typeof entrypoints;
