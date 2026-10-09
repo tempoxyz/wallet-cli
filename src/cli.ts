@@ -709,7 +709,7 @@ function describeCli() {
             "--crypto",
             "Open the direct crypto funding flow (bridge on mainnet, faucet on testnet)",
           ),
-          flag("mach", "--mach", "Open MACH funding (default)"),
+          flag("mach", "--mach", "Open MACH funding"),
           flag("credits", "--credits", "Alias for --mach"),
           option("amount", "--amount", "Requested USD amount", { valueName: "AMOUNT" }),
           flag("no_wait", "--no-wait", "Return the funding handoff immediately"),

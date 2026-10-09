@@ -162,7 +162,7 @@ return a nonzero exit status.
 - `debug`
 - `completions`
 
-MACH replaces MPP Credits. `tempo wallet fund` (or `fund --mach`) opens the wallet's MACH funding flow, and `whoami --mach` reads the on-chain balance. Legacy `--credits` flags are aliases for MACH; they never read or redeem a legacy off-chain credit balance.
+`tempo wallet fund` opens the wallet's general funding UI, which also offers Buy MACH. By default, the CLI waits for USDC.e on mainnet or pathUSD on testnet. Use `fund --mach` to open MACH checkout and wait for MACH instead; `whoami --mach` reads its on-chain balance. MACH replaces MPP Credits. Legacy `--credits` flags are aliases for MACH; they never read or redeem a legacy off-chain credit balance.
 
 For funding from another device or an automated host:
 

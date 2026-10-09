@@ -8,7 +8,7 @@ type ServiceSummary = Awaited<ReturnType<typeof fetchServiceList>>[number];
 
 describe("fundAction", () => {
   it('returns "fund" by default', () => {
-    expect(fundAction({})).toBe("mach");
+    expect(fundAction({})).toBe("fund");
   });
 
   it('returns "credits" when credits is set', () => {
@@ -36,7 +36,7 @@ describe("fundAction", () => {
 
 describe("fundUrl", () => {
   it("routes every funding handoff to the /agent page", () => {
-    expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=mach");
+    expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/agent?action=fund");
     expect(fundUrl("crypto")).toBe("https://wallet.tempo.xyz/agent?action=crypto");
     expect(fundUrl("credits")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=mach");
     expect(fundUrl("claim", { code: "ABC123" })).toBe(

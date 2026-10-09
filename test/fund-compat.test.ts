@@ -24,7 +24,7 @@ describe("fund compatibility", () => {
       true,
     );
     expect(mocks.runFundingFlow).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "mach", network: "testnet" }),
+      expect.objectContaining({ action: "fund", network: "testnet" }),
     );
   });
 
@@ -35,7 +35,7 @@ describe("fund compatibility", () => {
       true,
     );
     expect(mocks.runFundingFlow).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "mach", network: "testnet" }),
+      expect.objectContaining({ action: "fund", network: "testnet" }),
     );
   });
 

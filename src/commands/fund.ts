@@ -27,8 +27,7 @@ export async function runFundingFlow(options: {
   signal?: AbortSignal | undefined;
 }) {
   if (options.action === "credits") warnCreditsAlias();
-  const action =
-    options.action === "credits" || options.action === "fund" ? "mach" : options.action;
+  const action = options.action === "credits" ? "mach" : options.action;
   const chain = chainId(options.network);
   const token = action === "mach" ? machFundingToken(chain) : tokenAddress(chain);
   const requested =
@@ -157,7 +156,7 @@ export function fundAction(options: {
   if (options.mach || options.credits) return "mach";
   if (options.crypto) return "crypto";
   if (options.referralCode) return "claim";
-  return "mach";
+  return "fund";
 }
 
 export function fundUrl(
@@ -172,7 +171,7 @@ export function fundUrl(
   const url = new URL("https://wallet.tempo.xyz/agent");
   if (action === "claim" && options.code) url.searchParams.set("claim", options.code);
   else {
-    const mach = action === "mach" || action === "credits" || action === "fund";
+    const mach = action === "mach" || action === "credits";
     url.searchParams.set("action", mach ? "fund" : action);
     if (mach) {
       machFundingToken(options.chainId ?? 4217);
@@ -182,8 +181,7 @@ export function fundUrl(
   if (options.address) url.searchParams.set("address", requireWalletAddress(options.address));
   if (options.chainId !== undefined) url.searchParams.set("chainId", String(options.chainId));
   if (options.amount !== undefined) {
-    if (action === "mach" || action === "credits" || action === "fund")
-      machFundingAmount(options.amount);
+    if (action === "mach" || action === "credits") machFundingAmount(options.amount);
     else fundingAmount(options.amount);
     url.searchParams.set("amount", options.amount);
   }
