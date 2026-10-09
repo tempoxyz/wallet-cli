@@ -1,6 +1,7 @@
 import { machineTokenDeployments } from "mppx/tempo";
 import { createPublicClient, http, type Address, type HttpTransportConfig } from "viem";
 import { Chain } from "viem/tempo";
+import { tokens } from "viem/tokens";
 
 import { usageError } from "./errors.js";
 
@@ -50,16 +51,20 @@ export function tokenDecimals() {
   return 6;
 }
 
-export function tokenSymbol(token: string) {
+export function tokenSymbol(token: string, chain: number) {
   if (
     Object.values(machineTokenDeployments).some(
       (deployment) => token.toLowerCase() === deployment.token.toLowerCase(),
     )
   )
     return "MACH";
-  if (token.toLowerCase() === usdcToken) return "USDC.e";
-  if (token.toLowerCase() === moderatoToken) return "PathUSD";
-  return token;
+  return (
+    tokens.tempo.find(
+      (currency) =>
+        (currency.addresses as Record<number, string>)[chain]?.toLowerCase() ===
+        token.toLowerCase(),
+    )?.symbol ?? token
+  );
 }
 
 export const appUrl = process.env.TEMPO_AUTH_URL ?? "https://wallet.tempo.xyz";

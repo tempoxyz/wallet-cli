@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { toHex } from "viem";
 import { Actions } from "viem/tempo";
+import { ousd } from "viem/tokens";
 
 const mocks = vi.hoisted(() => ({
   readContract: vi.fn(async () => 0n),
@@ -330,7 +331,60 @@ key = "${testPrivateKey}"
 });
 
 describe("identity commands", () => {
-  it("whoami queries and formats the PathUSD balance on testnet", async () => {
+  it("shows OUSD for an access key's primary token and spending limit", async () => {
+    const ousdToken = ousd(4217).address;
+    const key = {
+      ...walletState().accessKeys[0]!,
+      limits: [{ token: ousdToken, limit: "100000000#__bigint" }],
+    };
+    const result = await currentKeysOutput({
+      walletAddress: testWallet,
+      chain: 4217,
+      accessKeys: [key],
+    });
+
+    expect(result.keys[0]).toMatchObject({
+      symbol: "OUSD",
+      token: ousdToken.toLowerCase(),
+      spending_limits: [{ symbol: "OUSD", token: ousdToken.toLowerCase(), limit: "100.000000" }],
+    });
+  });
+
+  it("uses each access key's chain to display its token symbol", async () => {
+    const key = {
+      ...walletState().accessKeys[0]!,
+      chainId: 42431,
+      limits: [{ token: moderatoToken, limit: "100000000#__bigint" }],
+    };
+    const result = await currentKeysOutput({
+      walletAddress: null,
+      chain: 4217,
+      accessKeys: [key],
+    });
+
+    expect(result.keys[0]).toMatchObject({
+      network: "tempo-moderato",
+      symbol: "pathUSD",
+      spending_limits: [{ symbol: "pathUSD" }],
+    });
+  });
+
+  it("queries balances separately for the same token address on different chains", async () => {
+    const mainnetKey = walletState().accessKeys[0]!;
+    const testnetKey = { ...mainnetKey, address: testAccessKey2, chainId: 42431 };
+    mocks.readContract.mockResolvedValueOnce(1_000_000n).mockResolvedValueOnce(2_000_000n);
+
+    const result = await currentKeysOutput({
+      walletAddress: testWallet,
+      chain: 4217,
+      accessKeys: [mainnetKey, testnetKey],
+    });
+
+    expect(mocks.readContract).toHaveBeenCalledTimes(2);
+    expect(result.keys.map((key) => key.balance)).toEqual(["1", "2"]);
+  });
+
+  it("whoami queries and formats the pathUSD balance on testnet", async () => {
     await useTempHome();
     await writeWalletState(
       walletState({
@@ -353,7 +407,7 @@ describe("identity commands", () => {
       balance: {
         total: "1000004.996912",
         available: "1000004.996912",
-        symbol: "PathUSD",
+        symbol: "pathUSD",
       },
     });
   });
@@ -427,7 +481,7 @@ describe("identity commands", () => {
     });
   });
 
-  it("uses the PathUSD symbol for an unavailable testnet balance", async () => {
+  it("uses the pathUSD symbol for an unavailable testnet balance", async () => {
     const result = await currentWhoamiOutput({
       walletAddress: null,
       chain: 42431,
@@ -435,7 +489,7 @@ describe("identity commands", () => {
       network: "testnet",
     });
 
-    expect(result.balance.symbol).toBe("PathUSD");
+    expect(result.balance.symbol).toBe("pathUSD");
   });
 
   it("does not report an RPC error or query a balance without a wallet", async () => {

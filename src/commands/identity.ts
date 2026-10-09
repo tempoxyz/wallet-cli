@@ -412,7 +412,7 @@ export async function currentWhoamiOutput(options: {
     tokenBalance({
       token,
       walletAddress: options.walletAddress,
-      network: options.network,
+      chain: selectedChain,
     }),
     fetchWalletAssets({
       chain: selectedChain,
@@ -429,14 +429,13 @@ export async function currentWhoamiOutput(options: {
     ready: Boolean(options.walletAddress && paymentKey && balance),
     wallet: options.walletAddress?.toLowerCase() ?? null,
     balance: {
-      ...balanceOutput(balance, sessions, tokenSymbol(token)),
+      ...balanceOutput(balance, sessions, tokenSymbol(token, selectedChain)),
       ...(options.walletAddress && !balance ? { error: balanceQueryError } : {}),
     },
     balances,
     key: currentKeyOutput({
       key,
       walletAddress: options.walletAddress,
-      chain: options.chain,
       balance,
       status: key ? localAccessKeyStatus(key) : null,
     }),
@@ -452,18 +451,18 @@ export async function currentKeysOutput(options: {
   const keys = [];
   for (const key of options.accessKeys) {
     const token = key.limits?.[0]?.token ?? tokenAddress(key.chainId);
-    const balance = balances.has(token.toLowerCase())
-      ? (balances.get(token.toLowerCase()) ?? null)
+    const cacheKey = `${key.chainId}:${token.toLowerCase()}`;
+    const balance = balances.has(cacheKey)
+      ? (balances.get(cacheKey) ?? null)
       : await tokenBalance({
           token,
           walletAddress: options.walletAddress,
-          network: networkName(options.chain) === "tempo-moderato" ? "testnet" : undefined,
+          chain: key.chainId,
         });
-    balances.set(token.toLowerCase(), balance);
+    balances.set(cacheKey, balance);
     const output = currentKeyOutput({
       key,
       walletAddress: options.walletAddress,
-      chain: options.chain,
       balance,
       status: localAccessKeyStatus(key),
     });
@@ -479,7 +478,6 @@ export async function currentKeysOutput(options: {
 function currentKeyOutput(options: {
   key: WalletState["accessKeys"][number] | undefined;
   walletAddress: string | null;
-  chain: number | null;
   balance: TokenBalance | null;
   status: string | null;
 }) {
@@ -487,14 +485,14 @@ function currentKeyOutput(options: {
   const limit = options.key.limits?.[0];
   const spendingMode = permissionMode(options.key.limits, options.key.permissionSemantics);
   const callMode = permissionMode(options.key.scopes, options.key.permissionSemantics);
-  const token = limit?.token ?? tokenAddress(options.chain ?? options.key.chainId);
+  const token = limit?.token ?? tokenAddress(options.key.chainId);
   const spendingLimits = accessKeyLimitsOutput(options.key);
   return {
     address: options.key.address.toLowerCase(),
     chain_id: options.key.chainId,
-    network: networkName(options.chain) ?? networkName(options.key.chainId) ?? "tempo",
+    network: networkName(options.key.chainId) ?? "tempo",
     wallet_address: options.walletAddress?.toLowerCase() ?? null,
-    symbol: tokenSymbol(token),
+    symbol: tokenSymbol(token, options.key.chainId),
     token: token.toLowerCase(),
     balance:
       options.balance && options.balance.token.toLowerCase() === token.toLowerCase()
@@ -525,7 +523,7 @@ function currentKeyOutput(options: {
 function accessKeyLimitsOutput(key: WalletState["accessKeys"][number]) {
   return (key.limits ?? []).map((limit) => ({
     unlimited: false,
-    symbol: tokenSymbol(limit.token),
+    symbol: tokenSymbol(limit.token, key.chainId),
     token: limit.token.toLowerCase(),
     limit: formatMicroUnits(cleanStoredScalar(limit.limit)),
     period_seconds: limit.period ?? null,
@@ -674,12 +672,12 @@ type SessionStats = {
 async function tokenBalance(options: {
   token: string | undefined;
   walletAddress: string | null;
-  network?: string | undefined;
+  chain: number;
 }): Promise<TokenBalance | null> {
   if (!options.walletAddress) return null;
-  const token = options.token ?? tokenAddress(chainId(options.network));
+  const token = options.token ?? tokenAddress(options.chain);
   try {
-    const client = createTempoPublicClient(options.network, {
+    const client = createTempoPublicClient(options.chain === 42431 ? "testnet" : undefined, {
       timeout: statusQueryTimeout,
       retryCount: 0,
     });
@@ -692,7 +690,7 @@ async function tokenBalance(options: {
     return {
       formatted: formatUnits(raw, 6),
       raw,
-      symbol: tokenSymbol(token),
+      symbol: tokenSymbol(token, options.chain),
       token,
     };
   } catch {
