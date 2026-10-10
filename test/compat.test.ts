@@ -19,4 +19,16 @@ describe("handleCompatCommand", () => {
     expect(printed).toHaveProperty("balance");
     expect(printed).toHaveProperty("key");
   });
+
+  it.each([["--network", "testnet"], ["-n", "testnet"], ["--network=testnet"]])(
+    "lets login select a different network with %j",
+    async (...networkArgs) => {
+      await useTempHome();
+      await writeWalletState(walletState());
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      expect(await handleCompatCommand(["login", "--no-browser", ...networkArgs])).toBe(false);
+      expect(log).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -1050,7 +1050,8 @@ describe("request command", () => {
     ).rejects.toMatchObject({
       code: "E_AUTH_REFRESH_REQUIRED",
       exitCode: 4,
-      message: "The configured access key is expired. Run 'tempo wallet refresh' before retrying.",
+      message:
+        "The configured access key is expired. Run 'tempo wallet refresh --network mainnet' before retrying.",
     });
     expect(requests).toBe(1);
   });

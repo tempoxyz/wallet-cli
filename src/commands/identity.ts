@@ -44,7 +44,15 @@ export async function loginHandler(options: {
 }) {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
-  if (activeAccount && walletStateMatchesNetwork(state, options.network))
+  const selectedChainId = chainId(options.network);
+  if (
+    activeAccount &&
+    state.chainId === selectedChainId &&
+    selectPaymentCapableAccessKey(state.accessKeys, {
+      chainId: selectedChainId,
+      walletAddress: activeAccount.address,
+    })
+  )
     return await currentWhoamiOutput({
       walletAddress: activeAccount.address,
       chain: state.chainId ?? null,
@@ -56,17 +64,17 @@ export async function loginHandler(options: {
     network: options.network,
     noBrowser: options.browser === false,
   });
-  const result = await connect(provider);
+  const result = await connect(provider, options);
 
   return {
     accounts: result.accounts.map((account) => account.address),
-    chainId: chainId(options.network),
+    chainId: selectedChainId,
   };
 }
 
 export async function refreshHandler(options: { network?: string | undefined }) {
   const provider = createProvider({ network: options.network });
-  const result = await connect(provider);
+  const result = await connect(provider, options);
 
   return {
     accounts: result.accounts.map((account) => account.address),
@@ -94,19 +102,15 @@ export async function whoamiHandler(options: {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   const walletAddress = activeAccount?.address ?? null;
-  const chain = state.chainId ?? null;
+  const chain = chainId(options.network);
 
   if (options.credits) warnCreditsAlias();
   const mach = options.mach || options.credits;
   if (mach) {
     if (!walletAddress)
       throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-    const selectedChain = chainId(options.network);
-    if (chain !== null && chain !== selectedChain)
-      throw usageError("Wallet network does not match the selected network");
-    return { mach: await queryMachBalance({ chainId: selectedChain, walletAddress }) };
+    return { mach: await queryMachBalance({ chainId: chain, walletAddress }) };
   }
-  if (!walletStateMatchesNetwork(state, options.network)) return { ready: false };
 
   return await currentWhoamiOutput({
     walletAddress,

@@ -409,8 +409,16 @@ export function preparePaymentChallenge(
   } catch {
     throw paymentError("Malformed payment challenge");
   }
+  const networkChallenges = challenges.filter(
+    (offer) => paymentChallengeChainId(offer, options) === chainId(options.network),
+  );
+  // Prefer offers on the selected network before applying intent preference.
+  // Keep mismatched offers when none match so the network diagnostic remains explicit.
+  if (networkChallenges.length > 0) challenges = networkChallenges;
   const session =
-    options.paymentIntent !== "charge" ? sessionChallengeFromHeader(header) : undefined;
+    options.paymentIntent !== "charge"
+      ? sessionChallengeFromHeader(challenges.map(Challenge.serialize).join(", "))
+      : undefined;
   const challenge =
     session ??
     challenges.find(
@@ -422,8 +430,7 @@ export function preparePaymentChallenge(
   if (!challenge || (options.paymentIntent === "session" && !session))
     throw paymentError("Server did not offer a compatible payment intent");
   const details = getRecord(challenge.request.methodDetails);
-  const offeredChain =
-    details.chainId ?? (challenge.intent === "subscription" ? 42431 : chainId(options.network));
+  const offeredChain = paymentChallengeChainId(challenge, options);
   if (offeredChain !== chainId(options.network))
     throw paymentError(
       `Payment network mismatch: expected chain ${chainId(options.network)}, received ${String(offeredChain)}`,
@@ -812,7 +819,7 @@ async function payAndRetryRequest(
 
     payment.onChallengeReceived(async ({ challenge, createCredential }) => {
       if (provider && providerState!.store.getState().accounts.length === 0)
-        await ensureProviderAccounts(provider);
+        await ensureProviderAccounts(provider, options.network);
       return await createCredential(paymentContext(challenge, options) as never);
     });
 
@@ -972,6 +979,7 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
     const status = staleKey ? localAccessKeyStatus(staleKey) : "missing";
     throw authRefreshRequiredError(
       status === "pending" || status === "ready" ? "unusable" : status,
+      chainId(options.network) === 42431 ? "testnet" : "mainnet",
     );
   }
 
@@ -979,7 +987,7 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
   const providerState = provider as unknown as {
     store: { getState(): { accounts: { address: string }[]; activeAccount: number } };
   };
-  await ensureProviderAccounts(provider);
+  await ensureProviderAccounts(provider, options.network);
   const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) => {
     const client = provider.getClient({ chainId: requestedChainId ?? chainId(options.network) });
     const state = providerState.store.getState();
@@ -1008,10 +1016,13 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
   };
 }
 
-async function ensureProviderAccounts(provider: Parameters<typeof connect>[0]) {
+async function ensureProviderAccounts(
+  provider: Parameters<typeof connect>[0],
+  network: string | undefined,
+) {
   const accounts = (await provider.request({ method: "eth_accounts" })) as unknown[];
   if (accounts.length > 0) return;
-  await connect(provider);
+  await connect(provider, { network });
 }
 
 export async function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptions) {
@@ -1613,6 +1624,13 @@ function normalizedChallengeChainId(
   return typeof methodDetails.chainId === "number"
     ? methodDetails.chainId
     : chainId(options.network);
+}
+
+function paymentChallengeChainId(challenge: Challenge.Challenge, options: RequestOptions) {
+  return (
+    getRecord(challenge.request.methodDetails).chainId ??
+    (challenge.intent === "subscription" ? 42431 : chainId(options.network))
+  );
 }
 
 export function chargeFallbackError(

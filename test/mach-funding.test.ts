@@ -207,7 +207,10 @@ describe("MACH whoami", () => {
       mach: { chain_id: 42431, token: machToken(42431), raw_balance: "123" },
     });
   });
-  it("rejects mismatched wallet network", async () => {
-    await expect(whoamiHandler({ mach: true, network: "testnet" })).rejects.toThrow("network");
+  it("queries the requested MACH network independently of the stored selection", async () => {
+    mocks.readContract.mockResolvedValue(123n);
+    expect(await whoamiHandler({ mach: true, network: "testnet" })).toMatchObject({
+      mach: { chain_id: 42431, token: machToken(42431), raw_balance: "123" },
+    });
   });
 });

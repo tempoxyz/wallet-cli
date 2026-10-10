@@ -13,7 +13,7 @@ import { Abis } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseRequestArgs, preparePaymentChallenge, runRequest } from "../src/commands/request.js";
 import { transferCredits, transferMach } from "../src/commands/transfer.js";
-import { usdcToken } from "../src/shared/constants.js";
+import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 
 vi.mock("viem/actions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("viem/actions")>();
@@ -290,6 +290,30 @@ it("uses MACH automatically for an ordinary machine-enabled charge", async () =>
     sdkCalls(vi.mocked(prepareTransactionRequest).mock.calls[0]![1]).map((item) => item.to),
   ).toEqual([deployment.token, deployment.swap]);
 });
+
+it.each([{ flags: [] }, { flags: ["--mach"] }])(
+  "routes testnet MACH settlement through Moderato $flags",
+  async ({ flags }) => {
+    const testnetDeployment = machineTokenDeployments[42431];
+    const selected = offer({
+      currency: moderatoToken,
+      methodDetails: { chainId: 42431, machineTokenEnabled: true },
+    });
+    const service = await server([offer(), selected]);
+    await runRequest(["-n", "testnet", ...flags, "--max-spend", "0.015", service.url], {
+      stdout: { write: () => true },
+    });
+    const [client, parameters] = vi.mocked(prepareTransactionRequest).mock.calls[0]!;
+    expect(client.chain?.id).toBe(42431);
+    expect(client.transport.url).toBe("https://rpc.moderato.tempo.xyz");
+    expect(sdkCalls(parameters).map((item) => item.to)).toEqual([
+      testnetDeployment.token,
+      testnetDeployment.swap,
+    ]);
+    expect(service.paid).toHaveLength(1);
+    expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(selected);
+  },
+);
 
 describe("transferMach", () => {
   it("keeps credits as a compatibility alias", () => expect(transferCredits).toBe(transferMach));

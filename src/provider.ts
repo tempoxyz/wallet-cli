@@ -1,8 +1,9 @@
 import type { Provider as CoreProvider } from "accounts";
 import { Provider, Storage } from "accounts/cli";
+import { toHex } from "viem";
 
 import { openExternal } from "./shared/process.js";
-import { appUrl, isTestnet } from "./shared/network.js";
+import { appUrl, chainId, isTestnet } from "./shared/network.js";
 
 export const accessKeyAuthorizationSeconds = 30 * 86_400;
 
@@ -27,11 +28,16 @@ export function createProvider(
   });
 }
 
-export async function connect(provider: CoreProvider.Provider) {
+export async function connect(
+  provider: CoreProvider.Provider,
+  options: { network?: string | undefined } = {},
+) {
   return provider.request({
     method: "wallet_connect",
     params: [
       {
+        // Persisted SDK state can override the provider's testnet default.
+        chainId: toHex(chainId(options.network)),
         capabilities: {
           authorizeAccessKey: {
             expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,

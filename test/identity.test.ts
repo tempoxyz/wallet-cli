@@ -695,12 +695,15 @@ limit = "100000000"
     });
   });
 
-  it("whoami --network testnet returns ready false for a mainnet store", async () => {
+  it("whoami reports the requested testnet without a configured testnet key", async () => {
     await useTempHome();
     await writeWalletState(walletState());
 
     const result = await whoamiHandler({ network: "testnet" });
-    expect(result).toEqual({ ready: false });
+    expect(result).toMatchObject({ ready: false, wallet: testWallet.toLowerCase(), key: null });
+    expect(mocks.readContract).toHaveBeenCalledWith(
+      expect.objectContaining({ address: moderatoToken }),
+    );
   });
 
   it("whoami --credits without a wallet throws E_USAGE", async () => {
@@ -1193,6 +1196,7 @@ limit = "100000000"
       method: "wallet_connect",
       params: [
         {
+          chainId: "0x1079",
           capabilities: {
             authorizeAccessKey: {
               expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
