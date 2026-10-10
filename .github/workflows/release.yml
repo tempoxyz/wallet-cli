@@ -38,9 +38,7 @@ jobs:
           node-version: "22"
 
       - name: Setup pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@11.0.8 --activate
+        uses: tempoxyz/gh-actions/vendor/pnpm/action-setup@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -110,9 +108,7 @@ jobs:
           node-version: "22"
 
       - name: Setup pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@11.0.8 --activate
+        uses: tempoxyz/gh-actions/vendor/pnpm/action-setup@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
