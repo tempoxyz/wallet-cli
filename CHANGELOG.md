@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.12.0 (2026-10-10)
+
+### Minor Changes
+
+- Replace legacy MPP Credits entry points with onchain MACH funding, balance queries, and capped MPP payments. Add remote checkout handoffs, bounded funding waits, explicit MACH selection with no stablecoin fallback, and recovery for uncertain payment outcomes. Deprecated `--credits` aliases now select MACH with a warning; existing offchain credits are not converted or redeemed.
+
+### Patch Changes
+
+- Preserve omitted and empty access-key permissions through storage. Report permission modes explicitly and show unknown for legacy metadata, with nullable limit fields where appropriate.
+- Update `accounts` to 0.19.0.
+- Update `mppx` to 0.12.0 and `viem` to 2.57.1.
+- Restore general wallet funding as the default for `tempo wallet fund`. Keep MACH checkout explicit with `--mach` or the deprecated `--credits` alias.
+- Release session locks left without a usable pid by a holder that died before recording it, instead of timing out every later request to that origin.
+- Report a malformed `request` parameter in `tempo wallet transfer --credits --mpp-challenge` as a usage error instead of an uncaught JSON parse failure.
+- Update dependency security fixes and strengthen dependency installation policy.
+- Strip credential-bearing headers when `tempo request` follows a cross-origin redirect.
+- Allow `tempo wallet swap` to submit with an access key that has no spending limits instead of asking for a `keys update` that would restrict it.
+- Honor `TEMPO_MAX_SPEND` when `tempo request --max-spend` is not set.
+- Update the bundling and packaging tools used to build the wallet and request CLI binaries, and refresh development dependencies.
+- Query `whoami` balances, asset discovery, and session reserves concurrently, and bound status RPC and asset lookups to three seconds so a stalled upstream no longer blocks for ~40 seconds.
+
 ## 0.11.0 (2026-09-09)
 
 ### Minor Changes
