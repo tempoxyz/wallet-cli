@@ -2,6 +2,7 @@ import { formatUnits, isAddress, parseUnits } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
 import { usageError } from "../shared/errors.js";
+import { machToken } from "../shared/mach.js";
 import { chainId, createTempoPublicClient } from "../shared/network.js";
 import { cleanStoredScalar, getRecord, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
@@ -65,6 +66,11 @@ export async function swapTokens(
   const tokenIn = input.args.tokenIn.toLowerCase() as `0x${string}`;
   const tokenOut = input.args.tokenOut.toLowerCase() as `0x${string}`;
   const selectedChainId = chainId(input.options.network);
+  const mach = machToken(selectedChainId).toLowerCase();
+  if (tokenIn === mach || tokenOut === mach)
+    throw usageError(
+      "MACH cannot be swapped. Use 'tempo request --mach' to pay for supported services.",
+    );
   const runtime = { ...defaultDependencies(input.options.network), ...dependencies };
   const [metadataIn, metadataOut] = await Promise.all([
     runtime.getMetadata(tokenIn),
