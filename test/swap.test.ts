@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { swapTokens } from "../src/commands/swap.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
+import { machToken } from "../src/shared/mach.js";
 import {
   expectUsageError,
   testWallet,
@@ -25,6 +26,38 @@ function dependencies(overrides: Record<string, unknown> = {}) {
 }
 
 describe("swapTokens", () => {
+  it.each([
+    ["mainnet", 4217, "tokenIn"],
+    ["mainnet", 4217, "tokenOut"],
+    ["testnet", 42431, "tokenIn"],
+    ["testnet", 42431, "tokenOut"],
+  ] as const)("rejects MACH on %s (chain %i, %s)", async (network, chain, side) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const runtime = dependencies();
+    const error = await swapTokens(
+      {
+        args: {
+          amount: "10",
+          tokenIn: usdcToken,
+          tokenOut: moderatoToken,
+          [side]: machToken(chain),
+        },
+        options: { network, "dry-run": true, "slippage-bps": 50 },
+      },
+      runtime,
+    ).catch((value: unknown) => value);
+
+    expectUsageError(
+      error,
+      "MACH cannot be swapped. Use 'tempo request --mach' to pay for supported services.",
+    );
+    expect(runtime.getMetadata).not.toHaveBeenCalled();
+    expect(runtime.getBuyQuote).not.toHaveBeenCalled();
+    expect(runtime.getSellQuote).not.toHaveBeenCalled();
+    expect(runtime.submit).not.toHaveBeenCalled();
+  });
+
   it("returns an exact-input quote with bounded output and review calldata", async () => {
     await useTempHome();
     await writeWalletState(walletState());
