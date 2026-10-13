@@ -10,6 +10,7 @@ import {
   explicitNetwork,
   networkFields,
   resolveNetwork,
+  storedChainId,
   tokenAddress,
   tokenDecimals,
   tokenSymbol,
@@ -63,7 +64,7 @@ export async function cachedLoginOutput(network: Network) {
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   if (
     !activeAccount ||
-    state.chainId !== network.chainId ||
+    storedChainId(state) !== network.chainId ||
     !selectPaymentCapableAccessKey(state.accessKeys, {
       chainId: network.chainId,
       walletAddress: activeAccount.address,
@@ -729,7 +730,7 @@ function debugArch() {
 /** Key management signs through the wallet session, so it must target the logged-in chain. */
 async function walletNetwork(state: WalletState, flag: string | undefined) {
   const network = await resolveNetwork(flag);
-  if (state.chainId !== network.chainId)
+  if (storedChainId(state) !== network.chainId)
     throw usageError(
       "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
     );

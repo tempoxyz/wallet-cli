@@ -2,7 +2,7 @@ import { machineTokenDeployments } from "mppx/tempo";
 import { createPublicClient, http, type Address, type HttpTransportConfig } from "viem";
 import { Chain } from "viem/tempo";
 
-import { loadWalletState } from "../wallet/store.js";
+import { loadWalletState, type WalletState } from "../wallet/store.js";
 import { usageError } from "./errors.js";
 
 import { mainnetEscrow, moderatoEscrow, moderatoToken, usdcToken } from "./constants.js";
@@ -21,7 +21,12 @@ export async function resolveNetwork(flag: string | undefined): Promise<Network>
   if (explicit) return explicit;
   const state = await loadWalletState();
   const loggedIn = state.accounts[state.activeAccount ?? 0] !== undefined;
-  return loggedIn && state.chainId === testnet.chainId ? testnet : mainnet;
+  return loggedIn && storedChainId(state) === testnet.chainId ? testnet : mainnet;
+}
+
+/** The wallet store's chain; a store without one is on mainnet, the default it is saved with. */
+export function storedChainId(state: WalletState) {
+  return state.chainId ?? mainnet.chainId;
 }
 
 /** The network named by the `--network` flag or `TEMPO_WALLET_NETWORK`, if either is set. */

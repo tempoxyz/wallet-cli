@@ -39,7 +39,7 @@ import {
 import { listSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";
 import { transferTokens } from "../src/commands/transfer.js";
-import { loadWalletState, saveWalletState } from "../src/wallet/store.js";
+import { loadWalletState, saveWalletState, type WalletState } from "../src/wallet/store.js";
 import { moderatoToken } from "../src/shared/constants.js";
 import {
   testAccessKey,
@@ -50,6 +50,7 @@ import {
   useTempHome,
   usdc,
   walletState,
+  writeRawWalletStore,
 } from "./helpers.js";
 
 const mainnet = { chain_id: 4217, network: "tempo" };
@@ -191,9 +192,12 @@ it.each([
   expect(mocks.request).toHaveBeenCalledTimes(1);
 });
 
-it("login reuses a usable cached key without starting authorization", async () => {
+it.each([
+  { store: "a mainnet chain", write: () => saveWalletState(walletState()) },
+  { store: "no chain", write: () => writeStoreWithoutChain([walletState().accessKeys[0]!]) },
+])("login reuses a usable cached key on a store with $store", async ({ write }) => {
   await useTempHome();
-  await saveWalletState(walletState());
+  await write();
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response("[]", { status: 200 })),
@@ -356,6 +360,39 @@ it.each(
   });
 });
 
+const chainlessSelections = [
+  { selection: "no selection", env: undefined, flag: undefined, accepted: true },
+  { selection: "--network mainnet", env: undefined, flag: "mainnet", accepted: true },
+  { selection: "TEMPO_WALLET_NETWORK=mainnet", env: "mainnet", flag: undefined, accepted: true },
+  { selection: "--network testnet", env: undefined, flag: "testnet", accepted: false },
+  { selection: "TEMPO_WALLET_NETWORK=testnet", env: "testnet", flag: undefined, accepted: false },
+].flatMap((scenario) => keyManagementCommands.map((command) => ({ ...scenario, ...command })));
+
+it.each(chainlessSelections.filter(({ accepted }) => accepted))(
+  "$command treats a store without a chain as mainnet with $selection",
+  async ({ env, flag, run }) => {
+    await useTempHome();
+    vi.stubEnv("TEMPO_WALLET_NETWORK", env);
+    await writeStoreWithoutChain([walletState().accessKeys[0]!]);
+
+    expect(await run(flag)).toMatchObject(mainnet);
+  },
+);
+
+it.each(chainlessSelections.filter(({ accepted }) => !accepted))(
+  "$command rejects $selection on a store without a chain",
+  async ({ env, flag, run }) => {
+    await useTempHome();
+    vi.stubEnv("TEMPO_WALLET_NETWORK", env);
+    await writeStoreWithoutChain([walletState().accessKeys[0]!]);
+
+    await expect(run(flag)).rejects.toMatchObject({
+      code: "E_USAGE",
+      message: "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
+    });
+  },
+);
+
 it("keys list labels and prices each key from its own chain and wallet", async () => {
   await useTempHome();
   await saveWalletState(
@@ -450,3 +487,15 @@ it.each([
   expect(result.keys.map((key) => key.chain_id)).toEqual(chains);
   expect(result.total).toBe(chains.length);
 });
+
+/** A store with an active account but without the optional `chainId`. */
+function writeStoreWithoutChain(accessKeys: WalletState["accessKeys"]) {
+  return writeRawWalletStore(
+    JSON.stringify({
+      "tempo-cli.store": {
+        state: { accounts: [{ address: testWallet }], accessKeys, activeAccount: 0 },
+        version: 0,
+      },
+    }),
+  );
+}

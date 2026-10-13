@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { explicitNetwork, parseNetwork, resolveNetwork } from "../src/shared/network.js";
+import {
+  explicitNetwork,
+  parseNetwork,
+  resolveNetwork,
+  storedChainId,
+} from "../src/shared/network.js";
 import { saveWalletState, type WalletState } from "../src/wallet/store.js";
 import { useTempHome, walletState } from "./helpers.js";
 
@@ -82,4 +87,12 @@ it.each([
   vi.stubEnv("TEMPO_WALLET_NETWORK", env);
 
   expect(explicitNetwork(flag)).toEqual(expected);
+});
+
+it.each([
+  { chainId: undefined, expected: 4217 },
+  { chainId: 4217, expected: 4217 },
+  { chainId: 42431, expected: 42431 },
+])("storedChainId reads $chainId as $expected", ({ chainId, expected }) => {
+  expect(storedChainId(walletState({ chainId }))).toBe(expected);
 });
