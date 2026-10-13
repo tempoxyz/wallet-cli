@@ -216,6 +216,14 @@ export const transferSuccessOutput = z.object({
 export const spendCreditsOutput = z.object({
   wallet: z.string(),
   amount_cents: z.number(),
+  to: z.string(),
+  token: z.string().optional(),
+  chain_id: z.number().optional(),
+  challenge_id: z.string().optional(),
+  transaction_data: z.union([
+    z.object({ type: z.literal("token"), destination: z.string() }),
+    z.object({ transaction: z.object({ to: z.string(), data: z.string() }) }),
+  ]),
   tx_hash: z.string().optional(),
   dry_run: z.boolean().optional(),
 });

@@ -1,7 +1,14 @@
 import { readFile } from "node:fs/promises";
 
-import { encodeFunctionData, formatUnits, isAddress, keccak256, parseUnits, serializeTypedData, zeroAddress } from "viem";
-import { Credential } from "mppx";
+import {
+  encodeFunctionData,
+  formatUnits,
+  isAddress,
+  keccak256,
+  parseUnits,
+  zeroAddress,
+} from "viem";
+import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 import { Actions } from "viem/tempo";
 
@@ -9,7 +16,7 @@ import { networkError, paymentOutcomeUnknownError, usageError } from "../shared/
 import { appUrl, chainId, tokenAddress, tokenDecimals, tokenSymbol } from "../shared/network.js";
 import { escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
 import { version } from "../shared/constants.js";
-import { warnCreditsDeprecated } from "./credits.js";
+import { validateCreditPermit, warnCreditsDeprecated } from "./credits.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
 import {
@@ -280,6 +287,11 @@ export async function transferCredits(options: {
     : buildDirectCreditsTransfer(options.options);
 
   const { amountCents, transactionData } = creditsTransfer;
+  const output = {
+    wallet,
+    amount_cents: amountCents,
+    ...creditsTransfer.preview,
+  };
   if (challenge && cents !== undefined && amountCents > cents)
     throw usageError("MPP challenge exceeds --amount-cents spending cap");
   if (maxSpend !== undefined && BigInt(amountCents) * 10_000n > parseUnits(maxSpend, 6))
@@ -287,8 +299,7 @@ export async function transferCredits(options: {
 
   if (options.options["dry-run"]) {
     return {
-      wallet,
-      amount_cents: amountCents,
+      ...output,
       dry_run: true,
     };
   }
@@ -301,10 +312,16 @@ export async function transferCredits(options: {
     amountCents,
     transactionData,
   });
-  const typedData = JSON.parse(auth.message) as Parameters<typeof serializeTypedData>[0];
+  const typedData = validateCreditPermit(auth, {
+    wallet,
+    network: options.options.network,
+    amountCents,
+    maxSpend,
+    capCents: challenge ? cents : undefined,
+  });
   const signature = await provider.request({
     method: "eth_signTypedData_v4",
-    params: [wallet as `0x${string}`, serializeTypedData(typedData)],
+    params: [wallet as `0x${string}`, typedData],
   });
   let redeem: unknown;
   try {
@@ -329,8 +346,7 @@ export async function transferCredits(options: {
     );
 
   return {
-    wallet,
-    amount_cents: amountCents,
+    ...output,
     tx_hash: txHash,
   };
 }
@@ -365,7 +381,11 @@ function buildDirectCreditsTransfer(options: {
     value: options.value ?? "0",
   });
 
-  return { amountCents, transactionData };
+  return {
+    amountCents,
+    transactionData,
+    preview: { to: to.toLowerCase(), transaction_data: transactionData },
+  };
 }
 
 function buildMppCreditsTransfer(options: {
@@ -382,14 +402,22 @@ function buildMppCreditsTransfer(options: {
     throw usageError(
       `Invalid configuration: unsupported MPP intent for Coinflow credits: ${challenge.intent}`,
     );
-  if (challenge.expires && Date.parse(challenge.expires) <= Date.now())
-    throw usageError("Invalid configuration: MPP challenge is expired");
+  if (challenge.expires) {
+    const expiry = Date.parse(challenge.expires);
+    if (!Number.isFinite(expiry)) throw usageError("MPP challenge has an invalid expiry");
+    if (expiry <= Date.now()) throw usageError("Invalid configuration: MPP challenge is expired");
+  }
 
   const request = challenge.request;
   const amount = stringValue(request.amount);
   const token = stringValue(request.currency).toLowerCase();
   const recipient = stringValue(request.recipient).toLowerCase();
   const methodDetails = getRecord(request.methodDetails);
+  if (
+    methodDetails.splits !== undefined &&
+    (!Array.isArray(methodDetails.splits) || methodDetails.splits.length > 0)
+  )
+    throw usageError("MPP split payments are not supported with --credits");
   const requestChainId = typeof methodDetails.chainId === "number" ? methodDetails.chainId : null;
   const selectedChainId = chainId(options.network);
 
@@ -402,7 +430,7 @@ function buildMppCreditsTransfer(options: {
     throw usageError(
       `Invalid configuration: MPP challenge currency ${token} does not match token ${selectedToken} for chain ${selectedChainId}`,
     );
-  if (!/^0x[0-9a-f]{40}$/.test(recipient))
+  if (!/^0x[0-9a-f]{40}$/.test(recipient) || recipient === zeroAddress)
     throw usageError("Invalid configuration: MPP challenge is missing a recipient address");
   if (!/^\d+$/.test(amount))
     throw usageError(`Invalid configuration: invalid MPP amount: ${amount}`);
@@ -431,17 +459,29 @@ function buildMppCreditsTransfer(options: {
     ],
   });
 
+  const transactionData = buildCreditsTransactionData({
+    to: token,
+    data,
+    value: "0",
+  });
   return {
     amountCents,
-    transactionData: buildCreditsTransactionData({
-      to: token,
-      data,
-      value: "0",
-    }),
+    transactionData,
+    preview: {
+      to: recipient,
+      token,
+      chain_id: selectedChainId,
+      challenge_id: challenge.id,
+      transaction_data: transactionData,
+    },
   };
 }
 
 function buildCreditsTransactionData(options: { to: string; data: string; value: string }) {
+  if (!isAddress(options.to) || options.to.toLowerCase() === zeroAddress)
+    throw usageError("Invalid credits destination: expected a non-zero address");
+  if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(options.data))
+    throw usageError("Invalid credits calldata: expected hex-encoded bytes");
   if (!isZeroValue(options.value))
     throw usageError(
       "Invalid configuration: Coinflow credits redeem does not support non-zero ETH value",
@@ -449,7 +489,7 @@ function buildCreditsTransactionData(options: { to: string; data: string; value:
 
   if (options.data === "0x") {
     return {
-      type: "token",
+      type: "token" as const,
       destination: options.to,
     };
   }
@@ -472,38 +512,11 @@ function isZeroValue(value: string) {
 }
 
 function parseMppChallenge(input: string) {
-  const header = mppHeaderValue(input);
-  const paymentIndex = header.indexOf("Payment");
-  if (paymentIndex < 0)
-    throw usageError("Invalid configuration: invalid MPP challenge: Expected 'Payment' scheme.");
-
-  const params = parseAuthParams(header.slice(paymentIndex + "Payment".length));
-  if (!params.request)
-    throw usageError("Invalid configuration: invalid MPP challenge: Missing request parameter.");
-
-  const request = mppChallengeRequest(params.request);
-  if (!request)
-    throw usageError("Invalid configuration: invalid MPP challenge: Malformed request parameter.");
-
-  return {
-    id: params.id ?? "",
-    realm: params.realm ?? "",
-    method: params.method ?? "",
-    intent: params.intent ?? "",
-    request,
-    expires: params.expires,
-  };
-}
-
-function mppChallengeRequest(value: string) {
-  let decoded: unknown;
   try {
-    decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    return Challenge.deserialize(mppHeaderValue(input));
   } catch {
-    return null;
+    throw usageError("Invalid configuration: invalid MPP challenge");
   }
-  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return null;
-  return decoded as Record<string, unknown>;
 }
 
 function mppHeaderValue(input: string) {
@@ -513,59 +526,6 @@ function mppHeaderValue(input: string) {
     if (name?.trim().toLowerCase() === "www-authenticate") return rest.join(":").trim();
   }
   return trimmed;
-}
-
-function parseAuthParams(input: string) {
-  const result: Record<string, string> = {};
-  let index = 0;
-
-  while (index < input.length) {
-    while (index < input.length && /[\s,]/.test(input[index] ?? "")) index++;
-    if (index >= input.length) break;
-
-    const keyStart = index;
-    while (index < input.length && /[A-Za-z0-9_-]/.test(input[index] ?? "")) index++;
-    const key = input.slice(keyStart, index);
-    while (index < input.length && /\s/.test(input[index] ?? "")) index++;
-    if (input[index] !== "=") break;
-    index++;
-    while (index < input.length && /\s/.test(input[index] ?? "")) index++;
-
-    const [value, nextIndex] = readAuthParamValue(input, index);
-    index = nextIndex;
-    if (key in result)
-      throw usageError(
-        `Invalid configuration: invalid MPP challenge: Duplicate parameter: ${key}.`,
-      );
-    result[key] = value;
-  }
-
-  return result;
-}
-
-function readAuthParamValue(input: string, start: number): readonly [string, number] {
-  if (input[start] !== '"') {
-    let index = start;
-    while (index < input.length && !/[\s,]/.test(input[index] ?? "")) index++;
-    return [input.slice(start, index), index];
-  }
-
-  let index = start + 1;
-  let value = "";
-  while (index < input.length) {
-    const char = input[index];
-    if (char === "\\") {
-      const next = input[index + 1];
-      if (next !== undefined) value += next;
-      index += 2;
-      continue;
-    }
-    if (char === '"') return [value, index + 1];
-    value += char;
-    index++;
-  }
-
-  throw usageError("Invalid configuration: invalid MPP challenge: Unterminated quoted string.");
 }
 
 function amountToUsdCents(amountAtomic: bigint) {

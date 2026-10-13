@@ -96,7 +96,7 @@ MACH uses the canonical MPP SDK settlement route. Do not construct swap calldata
 
 Use `tempo wallet whoami --credits` to inspect existing off-chain MPP Credits and `tempo wallet transfer --credits` to spend them. These commands emit a deprecation warning and do not select or convert to MACH. `tempo request` does not automatically use legacy credits. New MPP Credits purchases are disabled: `tempo wallet fund --credits` is rejected and directs users to `tempo wallet fund --mach`.
 
-For credit payments, use `--amount-cents` as the direct payment amount or the maximum amount of an MPP challenge; `TEMPO_MAX_SPEND` also caps the payment in USD. Do not combine `--to`, `--data`, or `--value` with `--mpp-challenge` or `--mpp-challenge-file`.
+For credit payments, use `--amount-cents` as the direct payment amount or the maximum credit debit for an MPP challenge, including quoted gas fees; `TEMPO_MAX_SPEND` also caps the total debit in USD. Do not combine `--to`, `--data`, or `--value` with `--mpp-challenge` or `--mpp-challenge-file`. Review the destination and calldata in `--dry-run` output before spending. Split-payment challenges are unsupported. Coinflow remains trusted to execute the submitted transaction; its legacy permit authorizes a credit debit rather than a specific recipient.
 
 ### Response Handling
 

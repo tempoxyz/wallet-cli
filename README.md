@@ -144,7 +144,9 @@ tempo wallet transfer --credits --mpp-challenge-file challenge.txt
 tempo wallet transfer --credits --amount-cents 100 --to 0x...
 ```
 
-Legacy credit payments retain whole-cent precision. With a challenge, `--amount-cents` optionally caps its amount. `TEMPO_MAX_SPEND` also caps credit payments, including direct transfers; `--max-spend` is for MACH. Direct `--to`, `--data`, and `--value` options cannot be combined with a challenge. `--credits` and `--mach` cannot be combined.
+Legacy credit payments retain whole-cent precision. With a challenge, `--amount-cents` optionally caps the total credit debit, including Coinflow's quoted gas fees. `TEMPO_MAX_SPEND` also caps that total, including for direct transfers; `--max-spend` is for MACH. Direct `--to`, `--data`, and `--value` options cannot be combined with a challenge. `--credits` and `--mach` cannot be combined.
+
+Credit dry runs show the destination and calldata, plus the token, chain, and challenge ID for MPP payments. Malformed, expired, or split-payment challenges are rejected before authorization. The CLI validates the legacy permit's schema, wallet, chain, credit seed, nonce, expiry, and amount before signing. Coinflow's permit authorizes a credit debit rather than binding the recipient or calldata; Coinflow remains trusted to quote gas fees and execute the submitted transaction.
 
 For funding from another device or an automated host:
 

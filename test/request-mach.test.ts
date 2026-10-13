@@ -331,6 +331,16 @@ it("uses MACH automatically for an ordinary machine-enabled charge", async () =>
     sdkCalls(vi.mocked(prepareTransactionRequest).mock.calls[0]![1]).map((item) => item.to),
   ).toEqual([deployment.token, deployment.swap]);
 });
+it("uses the advertised currency by default when the server does not enable MACH", async () => {
+  const selected = offer({ methodDetails: { chainId: 4217 } });
+  const service = await server([selected]);
+  await runRequest(["--max-spend", "0.015", service.url], { stdout: { write: () => true } });
+  const calls = sdkCalls(vi.mocked(prepareTransactionRequest).mock.calls[0]![1]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.to.toLowerCase()).toBe(usdcToken);
+  expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(selected);
+  expect(signTransaction).toHaveBeenCalledOnce();
+});
 
 it.each([{ flags: [] }, { flags: ["--mach"] }])(
   "routes testnet MACH settlement through Moderato $flags",

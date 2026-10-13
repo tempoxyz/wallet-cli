@@ -55,7 +55,7 @@ describe("credits CLI compatibility", () => {
       "--dry-run",
     ]);
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
+    expect(JSON.parse(result.stdout)).toMatchObject({
       wallet: testWallet.toLowerCase(),
       amount_cents: 100,
       dry_run: true,
