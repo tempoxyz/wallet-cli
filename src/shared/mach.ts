@@ -68,9 +68,3 @@ export async function queryMachBalance(options: { chainId: number; walletAddress
     raw_balance: rawBalance.toString(),
   };
 }
-
-export function warnCreditsAlias() {
-  console.error(
-    "--credits is deprecated and now selects on-chain MACH. Legacy Coinflow credits are not read, redeemed, or converted.",
-  );
-}

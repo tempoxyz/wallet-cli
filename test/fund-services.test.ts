@@ -11,8 +11,8 @@ describe("fundAction", () => {
     expect(fundAction({})).toBe("fund");
   });
 
-  it('returns "credits" when credits is set', () => {
-    expect(fundAction({ credits: true })).toBe("mach");
+  it("rejects credit funding and points to MACH", () => {
+    expect(() => fundAction({ credits: true })).toThrow("tempo wallet fund --mach");
   });
 
   it('returns "crypto" when crypto is set', () => {
@@ -23,9 +23,9 @@ describe("fundAction", () => {
     expect(fundAction({ referralCode: "ABC" })).toBe("claim");
   });
 
-  it("prioritizes credits over crypto and referral code", () => {
+  it("rejects credits even when another funding flag is provided", () => {
     expect(() => fundAction({ credits: true, crypto: true, referralCode: "ABC" })).toThrow(
-      "cannot be combined",
+      "can no longer be purchased",
     );
   });
 
@@ -38,7 +38,7 @@ describe("fundUrl", () => {
   it("routes every funding handoff to the /agent page", () => {
     expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/agent?action=fund");
     expect(fundUrl("crypto")).toBe("https://wallet.tempo.xyz/agent?action=crypto");
-    expect(fundUrl("credits")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=mach");
+    expect(fundUrl("mach")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=mach");
     expect(fundUrl("claim", { code: "ABC123" })).toBe(
       "https://wallet.tempo.xyz/agent?claim=ABC123",
     );

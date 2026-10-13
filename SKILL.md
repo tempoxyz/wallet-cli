@@ -63,7 +63,7 @@ tempo request -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
 
 - Select `SERVICE_ID` from search results that best matches user intent. When multiple match: prefer best semantic fit, then endpoint fit, then pricing clarity, then first in list.
 - **Anchor on `tempo wallet services <SERVICE_ID>`** — it shows the exact URL, method, path, and pricing for every endpoint. Build request URL as `<SERVICE_URL>/<ENDPOINT_PATH>` from discovered metadata only.
-- Use the endpoint's exact MPP challenge and an explicit `--max-spend` budget for payment. MACH funding is available through `tempo wallet fund --mach`; legacy `--credits` flags are aliases for MACH.
+- Use the endpoint's exact MPP challenge and an explicit `--max-spend` budget for payment. Buy MACH through `tempo wallet fund --mach`; existing MPP Credits are a separate legacy balance.
 - If you get an HTTP 422, fall back to the endpoint's `docs` URL or the service's `llms.txt` for exact field names.
 - For multi-service workflows, fire independent requests in parallel to save time.
 
@@ -88,9 +88,15 @@ tempo wallet fund --mach --amount 10 --no-browser --no-wait --format json
 
 Hosted MACH checkout accepts $5–$100 USD with at most two decimal places. The funding handoff identifies the exact destination wallet, chain, and requested USD amount. Pending means the checkout has not been verified. Recheck the MACH balance after checkout. To wait locally, omit `--no-wait`; the default timeout is ten minutes and `--timeout` accepts seconds. Never interpret a small unrelated deposit as fulfillment of the requested funding amount.
 
-Use `tempo request --mach --max-spend <USD> <URL>` (or `--payment-token MACH`) to require MACH settlement for a one-time charge. The challenge must explicitly enable machine tokens. Missing MACH funds, liquidity, or permissions fail without stablecoin fallback. Sessions are unsupported; use `--dry-run` to inspect an offer without spending. Legacy `--credits` aliases select MACH and do not convert or redeem old Coinflow credits.
+Use `tempo request --mach --max-spend <USD> <URL>` (or `--payment-token MACH`) to require MACH settlement for a one-time charge. The challenge must explicitly enable machine tokens. Missing MACH funds, liquidity, or permissions fail without stablecoin fallback. Sessions are unsupported; use `--dry-run` to inspect an offer without spending.
 
 MACH uses the canonical MPP SDK settlement route. Do not construct swap calldata or call legacy Coinflow redemption APIs. Do not infer MACH support from a service's hostname; inspect the actual MPP challenge and use the standard request flow.
+
+### Legacy MPP Credits
+
+Use `tempo wallet whoami --credits` to inspect existing off-chain MPP Credits and `tempo wallet transfer --credits` to spend them. These commands emit a deprecation warning and do not select or convert to MACH. `tempo request` does not automatically use legacy credits. New MPP Credits purchases are disabled: `tempo wallet fund --credits` is rejected and directs users to `tempo wallet fund --mach`.
+
+For credit payments, use `--amount-cents` as the direct payment amount or the maximum credit debit for an MPP challenge, including quoted gas fees; `TEMPO_MAX_SPEND` also caps the total debit in USD. Challenge spending requires one of those caps; `--dry-run` does not. Do not use positional transfer arguments with `--credits`, or combine `--to`, `--data`, or `--value` with `--mpp-challenge` or `--mpp-challenge-file`. Review the destination and calldata in `--dry-run` output before spending. Split-payment challenges are unsupported. Coinflow remains trusted to execute the submitted transaction; its legacy permit authorizes a credit debit rather than a specific recipient.
 
 ### Response Handling
 

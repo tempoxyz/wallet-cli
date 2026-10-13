@@ -38,6 +38,19 @@ afterEach(() => {
 });
 
 describe("MACH funding", () => {
+  it("rejects legacy credit funding before wallet, RPC, or browser access", async () => {
+    mocks.state.mockClear();
+    const fetch = vi.spyOn(globalThis, "fetch");
+    await expect(runFundingFlow({ action: "credits" })).rejects.toMatchObject({
+      code: "E_USAGE",
+      message: expect.stringContaining("tempo wallet fund --mach"),
+    });
+    expect(() => fundUrl("credits")).toThrow("tempo wallet fund --mach");
+    expect(mocks.state).not.toHaveBeenCalled();
+    expect(mocks.readContract).not.toHaveBeenCalled();
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it.each(["4.99", "100.01", "5.001"])(
     "rejects unsupported MACH checkout amount %s",
     async (amount) => {
@@ -60,13 +73,12 @@ describe("MACH funding", () => {
   it("preserves exact six decimal amounts", () => {
     expect(fundingAmount("1.000001")).toBe(1000001n);
   });
-  it("keeps MACH explicit and credits a canonical alias", () => {
+  it("keeps MACH explicit", () => {
     expect(fundAction({})).toBe("fund");
-    expect(fundAction({ credits: true })).toBe("mach");
     expect(fundAction({ mach: true })).toBe("mach");
   });
   it("builds the shared funding protocol", () => {
-    expect(fundUrl("credits", { address: wallet, chainId: 4217, amount: "12.34" })).toBe(
+    expect(fundUrl("mach", { address: wallet, chainId: 4217, amount: "12.34" })).toBe(
       `https://wallet.tempo.xyz/agent?action=fund&intent=mach&address=${wallet}&chainId=4217&amount=12.34`,
     );
   });
@@ -74,7 +86,7 @@ describe("MACH funding", () => {
     mocks.state.mockResolvedValue({ accounts: [] });
     expect(
       await runFundingFlow({
-        action: "credits",
+        action: "mach",
         address: wallet,
         amount: "5",
         noBrowser: true,
@@ -187,7 +199,7 @@ describe("default funding", () => {
 });
 
 describe("MACH whoami", () => {
-  it.each([{ mach: true }, { credits: true }])(
+  it.each([{ mach: true }])(
     "queries an on-chain balance and returns canonical MACH output %j",
     async (options) => {
       mocks.readContract.mockResolvedValue(1_234_567n);

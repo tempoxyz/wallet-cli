@@ -38,7 +38,7 @@ import {
 } from "../src/commands/identity.js";
 import { listSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";
-import { transferTokens } from "../src/commands/transfer.js";
+import { transferCredits, transferTokens } from "../src/commands/transfer.js";
 import { loadWalletState, saveWalletState, type WalletState } from "../src/wallet/store.js";
 import { moderatoToken } from "../src/shared/constants.js";
 import {
@@ -66,6 +66,8 @@ const testnetKey = {
 beforeEach(() => {
   vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
   vi.stubEnv("TEMPO_RPC_URL", undefined);
+  // Keep deprecation warnings out of the test output.
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 
 afterEach(() => {
@@ -243,6 +245,13 @@ const networkCommands = [
       transferTokens({
         args: { amount: "1", token: usdc, to: testWallet2 },
         options: { network, "dry-run": true },
+      }),
+  },
+  {
+    command: "transfer --credits --dry-run",
+    run: (network?: string) =>
+      transferCredits({
+        options: { network, "amount-cents": 100, to: testWallet2, "dry-run": true },
       }),
   },
   {

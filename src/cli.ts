@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { warnCreditsAlias } from "./shared/mach.js";
 import { Cli, Mcp, type z } from "incur";
 
 import { version } from "./shared/constants.js";
+import { usageError } from "./shared/errors.js";
 import {
   completionsHandler,
   debugHandler,
@@ -15,7 +15,7 @@ import {
   whoamiHandler,
 } from "./commands/identity.js";
 import { swapTokens } from "./commands/swap.js";
-import { transferCredits, transferTokens } from "./commands/transfer.js";
+import { transferCredits, transferMach, transferTokens } from "./commands/transfer.js";
 import { fundAction, runFundingFlow } from "./commands/fund.js";
 import {
   closeSessions,
@@ -185,10 +185,16 @@ cli.command("transfer", {
   ],
   async run({ args, globals, options }) {
     const flags = { ...options, network: globals.network };
-    if (!options.credits && !options.mach) return transferTokens({ args, options: flags });
-
-    if (options.credits) warnCreditsAlias();
-    return transferCredits({ options: flags });
+    if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
+    if (options.credits) {
+      if (Object.values(args).some((value) => value !== undefined))
+        throw usageError(
+          "Positional amount, token, and recipient arguments cannot be used with --credits; use --amount-cents and --to, or an MPP challenge",
+        );
+      return transferCredits({ options: flags });
+    }
+    if (options.mach) return transferMach({ options: flags });
+    return transferTokens({ args, options: flags });
   },
 });
 
@@ -644,7 +650,7 @@ function describeCli() {
         about: "Show who you are: wallet, balances, keys",
         args: [
           flag("mach", "--mach", "Show on-chain MACH balance"),
-          flag("credits", "--credits", "Alias for --mach"),
+          flag("credits", "--credits", "Show existing MPP Credits balance (deprecated)"),
         ],
       },
       {
@@ -694,30 +700,30 @@ function describeCli() {
           ),
           flag("dry_run", "--dry-run", "Show plan + fee estimate, don't send"),
           flag("mach", "--mach", "Pay with on-chain MACH"),
-          flag("credits", "--credits", "Alias for --mach"),
+          flag("credits", "--credits", "Spend existing MPP Credits (deprecated)"),
           option("max_spend", "--max-spend", "Maximum MACH spend in USD", { valueName: "AMOUNT" }),
           option(
             "amount_cents",
             "--amount-cents",
-            "Legacy MACH spending cap in USD cents (e.g. 500 = $5.00)",
+            "Credits amount or MPP challenge spending cap in USD cents",
             { valueName: "AMOUNT_CENTS" },
           ),
-          option("credits_to", "--to", "Legacy direct recipient; unsupported with MACH", {
+          option("credits_to", "--to", "Credits recipient; unsupported with MACH", {
             valueName: "CREDITS_TO",
           }),
-          option("data", "--data", "Legacy calldata; unsupported with MACH", {
+          option("data", "--data", "Credits calldata; unsupported with MACH", {
             valueName: "DATA",
           }),
-          option("value", "--value", "Legacy ETH value; unsupported with MACH", {
+          option("value", "--value", "Credits ETH value (must be zero); unsupported with MACH", {
             valueName: "VALUE",
           }),
-          option("mpp_challenge", "--mpp-challenge", "MPP WWW-Authenticate challenge for MACH", {
+          option("mpp_challenge", "--mpp-challenge", "MPP WWW-Authenticate challenge", {
             valueName: "MPP_CHALLENGE",
           }),
           option(
             "mpp_challenge_file",
             "--mpp-challenge-file",
-            "File containing an MPP WWW-Authenticate challenge for MACH",
+            "File containing an MPP WWW-Authenticate challenge",
             { valueName: "MPP_CHALLENGE_FILE" },
           ),
           option(
@@ -763,7 +769,7 @@ function describeCli() {
             "Open the direct crypto funding flow (bridge on mainnet, faucet on testnet)",
           ),
           flag("mach", "--mach", "Open MACH funding"),
-          flag("credits", "--credits", "Alias for --mach"),
+          flag("credits", "--credits", "Unavailable; use --mach to buy MACH"),
           option("amount", "--amount", "Requested USD amount", { valueName: "AMOUNT" }),
           flag("no_wait", "--no-wait", "Return the funding handoff immediately"),
           option("timeout", "--timeout", "Funding timeout in seconds (default: 600)", {

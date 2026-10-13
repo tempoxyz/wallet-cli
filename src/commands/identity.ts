@@ -39,7 +39,8 @@ import {
   localAccessKeyStatus,
   selectPaymentCapableAccessKey,
 } from "../wallet/access-key.js";
-import { queryMachBalance, warnCreditsAlias } from "../shared/mach.js";
+import { queryMachBalance } from "../shared/mach.js";
+import { queryCreditBalance, warnCreditsDeprecated } from "./credits.js";
 
 export async function loginHandler(options: {
   network?: string | undefined;
@@ -110,11 +111,12 @@ export async function whoamiHandler(options: {
   const walletAddress = activeAccount?.address ?? null;
   const network = await resolveNetwork(options.network);
 
-  if (options.credits) warnCreditsAlias();
-  const mach = options.mach || options.credits;
-  if (mach) {
+  if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
+  if (options.credits) warnCreditsDeprecated();
+  if (options.credits || options.mach) {
     if (!walletAddress)
       throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
+    if (options.credits) return { credits: await queryCreditBalance({ walletAddress }) };
     return { mach: await queryMachBalance({ chainId: network.chainId, walletAddress }) };
   }
 
