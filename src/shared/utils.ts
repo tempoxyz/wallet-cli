@@ -1,3 +1,7 @@
+import { parseUnits } from "viem";
+
+import { usageError } from "./errors.js";
+
 export function getRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -105,6 +109,18 @@ export function parseOnChainBigInt(value: unknown) {
   if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
   if (typeof value === "string" && /^\d+$/.test(value)) return BigInt(value);
   return 0n;
+}
+
+/** Parses a positive token amount, rejecting fractional digits that `parseUnits` would round. */
+export function parseTokenAmount(value: string, decimals: number) {
+  const fraction = value.split(".")[1] ?? "";
+  const amount =
+    /^\d+(?:\.\d+)?$/.test(value) && fraction.length <= decimals ? parseUnits(value, decimals) : 0n;
+  if (amount <= 0n)
+    throw usageError(
+      `Invalid amount: expected a positive decimal with at most ${decimals} decimals`,
+    );
+  return amount;
 }
 
 export function parseAmount(value: unknown) {

@@ -27,7 +27,107 @@ function dependencies(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// tokenIn (USDC.e) and tokenOut (pathUSD) report different decimals.
+function decimalDependencies(decimalsIn: number, decimalsOut: number) {
+  return dependencies({
+    getBalance: vi.fn(async () => 10n ** 30n),
+    getMetadata: vi.fn(async (token: string) =>
+      token === usdcToken
+        ? { decimals: decimalsIn, symbol: "USDC.e" }
+        : { decimals: decimalsOut, symbol: "pathUSD" },
+    ),
+  });
+}
+
 describe("swapTokens", () => {
+  it.each([
+    ["", 6, 6, false],
+    ["0", 6, 6, false],
+    ["0.000000", 6, 6, true],
+    ["-1", 6, 6, false],
+    ["abc", 6, 6, false],
+    ["1e3", 6, 6, false],
+    ["0x10", 6, 6, false],
+    [" 1", 6, 6, false],
+    ["1.", 6, 6, false],
+    [".5", 6, 6, false],
+    ["1.1234567", 6, 6, false],
+    ["1.1234567", 6, 6, true],
+    ["1.1234567", 6, 18, false],
+    ["1.1234567", 18, 6, true],
+    ["1.0000000000000000001", 18, 18, false],
+    ["1.0000000000000000001", 6, 18, true],
+    ["1.5", 0, 6, false],
+  ] as const)(
+    "rejects amount %j (decimals in %i, out %i, exact-out %s) before quoting",
+    async (amount, decimalsIn, decimalsOut, exactOut) => {
+      await useTempHome();
+      await writeWalletState(walletState());
+      const decimals = exactOut ? decimalsOut : decimalsIn;
+
+      for (const dryRun of [true, false]) {
+        const runtime = decimalDependencies(decimalsIn, decimalsOut);
+        const error = await swapTokens(
+          {
+            args: { amount, tokenIn: usdcToken, tokenOut: moderatoToken },
+            options: { "dry-run": dryRun, "exact-out": exactOut, "slippage-bps": 50, yes: true },
+          },
+          runtime,
+        ).catch((value: unknown) => value);
+
+        expectUsageError(
+          error,
+          `Invalid amount: expected a positive decimal with at most ${decimals} decimals`,
+        );
+        expect(runtime.getBuyQuote).not.toHaveBeenCalled();
+        expect(runtime.getSellQuote).not.toHaveBeenCalled();
+        expect(runtime.getBalance).not.toHaveBeenCalled();
+        expect(runtime.submit).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each([
+    ["1.123456", 6, 18, false, 1_123_456n],
+    ["1.1234567", 18, 6, false, 1_123_456_700_000_000_000n],
+    ["0.000000000000000001", 18, 6, false, 1n],
+    ["1.123456", 18, 6, true, 1_123_456n],
+    ["1.1234567", 6, 18, true, 1_123_456_700_000_000_000n],
+    ["0.000000000000000001", 6, 18, true, 1n],
+    ["7", 0, 6, false, 7n],
+  ] as const)(
+    "quotes amount %j (decimals in %i, out %i, exact-out %s) without rounding",
+    async (amount, decimalsIn, decimalsOut, exactOut, raw) => {
+      await useTempHome();
+      await writeWalletState(walletState());
+      const runtime = decimalDependencies(decimalsIn, decimalsOut);
+
+      const result = await swapTokens(
+        {
+          args: { amount, tokenIn: usdcToken, tokenOut: moderatoToken },
+          options: { "dry-run": true, "exact-out": exactOut, "slippage-bps": 50 },
+        },
+        runtime,
+      );
+
+      if (exactOut) {
+        expect(runtime.getBuyQuote).toHaveBeenCalledWith({
+          amountOut: raw,
+          tokenIn: usdcToken,
+          tokenOut: moderatoToken,
+        });
+        expect(result).toMatchObject({ amount_out: amount, min_amount_out: amount });
+      } else {
+        expect(runtime.getSellQuote).toHaveBeenCalledWith({
+          amountIn: raw,
+          tokenIn: usdcToken,
+          tokenOut: moderatoToken,
+        });
+        expect(result).toMatchObject({ amount_in: amount, max_amount_in: amount });
+      }
+    },
+  );
+
   it.each([
     ["mainnet", 4217, "tokenIn"],
     ["mainnet", 4217, "tokenOut"],

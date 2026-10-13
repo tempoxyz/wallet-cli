@@ -1,11 +1,11 @@
-import { formatUnits, isAddress, parseUnits } from "viem";
+import { formatUnits, isAddress } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
 import { paymentOutcomeUnknownError, usageError, walletError } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
 import { chainId, createTempoPublicClient, tokenDecimals } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
-import { cleanStoredScalar, getRecord, stringValue } from "../shared/utils.js";
+import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { selectPaymentCapableAccessKey } from "../wallet/access-key.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -86,7 +86,7 @@ export async function swapTokens(
     runtime.getMetadata(tokenIn),
     runtime.getMetadata(tokenOut),
   ]);
-  const amount = parseSwapAmount(
+  const amount = parseTokenAmount(
     input.args.amount,
     exactOut ? metadataOut.decimals : metadataIn.decimals,
   );
@@ -240,26 +240,15 @@ export async function swapTokens(
   return { status: "success" as const, tx_hash: txHash, ...output };
 }
 
-function parseSwapAmount(value: string, decimals: number) {
-  if (!/^\d+(?:\.\d+)?$/.test(value))
-    throw usageError("Invalid amount: expected a positive token amount");
-  const amount = parseUnits(value, decimals);
-  if (amount <= 0n)
-    throw usageError(
-      `Invalid amount: expected a positive amount with at most ${decimals} decimals`,
-    );
-  return amount;
-}
-
 function parseSwapBound(value: string | undefined, decimals: number, flag: string) {
   if (value === undefined) return undefined;
-  const fraction = decimals > 0 ? `(?:\\.\\d{1,${decimals}})?` : "";
-  const amount = new RegExp(`^\\d+${fraction}$`).test(value) ? parseUnits(value, decimals) : 0n;
-  if (amount <= 0n)
+  try {
+    return parseTokenAmount(value, decimals);
+  } catch {
     throw usageError(
       `Invalid ${flag}: expected a positive amount with at most ${decimals} decimals`,
     );
-  return amount;
+  }
 }
 
 function quoteMovedError(detail: string, flag: string) {
