@@ -43,8 +43,18 @@ describe("generated CLI metadata", () => {
     expect(output).toContain("Usage: tempo wallet swap <amount> <tokenIn> <tokenOut> [options]");
     expect(output).toContain("--exact-out");
     expect(output).toContain("--slippage-bps <number>");
+    expect(output).toContain("--min-amount-out <string>");
+    expect(output).toContain("--max-amount-in <string>");
     expect(output).toContain("--dry-run");
     expect(output).toContain("--yes");
+
+    const description = JSON.parse(await walletCli(["--describe"])) as {
+      subcommands: { name: string; args?: { long?: string | undefined }[] | undefined }[];
+    };
+    const swap = description.subcommands.find((command) => command.name === "swap");
+    expect(swap?.args?.map((arg) => arg.long)).toEqual(
+      expect.arrayContaining(["--min-amount-out", "--max-amount-in"]),
+    );
   });
 
   it("documents request payment intent selection", async () => {

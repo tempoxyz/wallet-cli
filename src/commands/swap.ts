@@ -1,7 +1,7 @@
 import { formatUnits, isAddress, parseUnits } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
-import { paymentOutcomeUnknownError, usageError } from "../shared/errors.js";
+import { paymentOutcomeUnknownError, usageError, walletError } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
 import { chainId, createTempoPublicClient } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
@@ -40,6 +40,8 @@ export async function swapTokens(
       "dry-run"?: boolean | undefined;
       "exact-out"?: boolean | undefined;
       "fee-token"?: string | undefined;
+      "max-amount-in"?: string | undefined;
+      "min-amount-out"?: string | undefined;
       "slippage-bps": number;
       yes?: boolean | undefined;
     };
@@ -63,6 +65,13 @@ export async function swapTokens(
     throw usageError("Invalid slippage: --slippage-bps must be between 0 and 10000");
   if (input.options["fee-token"] && !isAddress(input.options["fee-token"]))
     throw usageError("Invalid fee token address: expected a full 0x address");
+  const exactOut = input.options["exact-out"] === true;
+  if (exactOut && input.options["min-amount-out"] !== undefined)
+    throw usageError(
+      "--min-amount-out applies to exact-input swaps; use --max-amount-in with --exact-out",
+    );
+  if (!exactOut && input.options["max-amount-in"] !== undefined)
+    throw usageError("--max-amount-in applies to --exact-out swaps; use --min-amount-out instead");
 
   const tokenIn = input.args.tokenIn.toLowerCase() as `0x${string}`;
   const tokenOut = input.args.tokenOut.toLowerCase() as `0x${string}`;
@@ -77,21 +86,49 @@ export async function swapTokens(
     runtime.getMetadata(tokenIn),
     runtime.getMetadata(tokenOut),
   ]);
-  const exactOut = input.options["exact-out"] === true;
   const amount = parseSwapAmount(
     input.args.amount,
     exactOut ? metadataOut.decimals : metadataIn.decimals,
   );
+  const reviewedMinOut = parseSwapBound(
+    input.options["min-amount-out"],
+    metadataOut.decimals,
+    "--min-amount-out",
+  );
+  const reviewedMaxIn = parseSwapBound(
+    input.options["max-amount-in"],
+    metadataIn.decimals,
+    "--max-amount-in",
+  );
   const quote = exactOut
     ? await runtime.getBuyQuote({ amountOut: amount, tokenIn, tokenOut })
     : await runtime.getSellQuote({ amountIn: amount, tokenIn, tokenOut });
+  // A reviewed bound only tightens the slippage bound; a quote that cannot meet it is refused.
+  if (reviewedMinOut !== undefined && quote < reviewedMinOut)
+    throw quoteMovedError(
+      `${input.args.amount} ${metadataIn.symbol} now returns ${formatUnits(quote, metadataOut.decimals)} ${metadataOut.symbol}, below --min-amount-out ${formatUnits(reviewedMinOut, metadataOut.decimals)}`,
+      "--min-amount-out",
+    );
+  if (reviewedMaxIn !== undefined && quote > reviewedMaxIn)
+    throw quoteMovedError(
+      `${input.args.amount} ${metadataOut.symbol} now costs ${formatUnits(quote, metadataIn.decimals)} ${metadataIn.symbol}, above --max-amount-in ${formatUnits(reviewedMaxIn, metadataIn.decimals)}`,
+      "--max-amount-in",
+    );
   const slippageBps = BigInt(input.options["slippage-bps"]);
   const amountIn = exactOut ? quote : amount;
   const amountOut = exactOut ? amount : quote;
-  const maxAmountIn = exactOut
-    ? divideRoundUp(quote * (slippageScale + slippageBps), slippageScale)
-    : amount;
-  const minAmountOut = exactOut ? amount : (quote * (slippageScale - slippageBps)) / slippageScale;
+  const slippageMaxIn = divideRoundUp(quote * (slippageScale + slippageBps), slippageScale);
+  const slippageMinOut = (quote * (slippageScale - slippageBps)) / slippageScale;
+  const maxAmountIn = !exactOut
+    ? amount
+    : reviewedMaxIn !== undefined && reviewedMaxIn < slippageMaxIn
+      ? reviewedMaxIn
+      : slippageMaxIn;
+  const minAmountOut = exactOut
+    ? amount
+    : reviewedMinOut !== undefined && reviewedMinOut > slippageMinOut
+      ? reviewedMinOut
+      : slippageMinOut;
   const balance = await runtime.getBalance({
     account: activeAccount.address as `0x${string}`,
     token: tokenIn,
@@ -146,14 +183,18 @@ export async function swapTokens(
     const network = { network: input.options.network };
     const next = !requiresAccessKeyUpdate
       ? nextStep(
-          "Review the quote, then run the next command to submit it. Submission re-quotes within the same slippage limit.",
+          exactOut
+            ? `Review the quote, then run the next command to submit it. Submission re-quotes and refuses to spend more than ${output.max_amount_in} ${metadataIn.symbol}.`
+            : `Review the quote, then run the next command to submit it. Submission re-quotes and refuses to receive less than ${output.min_amount_out} ${metadataOut.symbol}.`,
           [
             "wallet",
             "swap",
             input.args.amount,
             tokenIn,
             tokenOut,
-            ...(exactOut ? ["--exact-out"] : []),
+            ...(exactOut
+              ? ["--exact-out", "--max-amount-in", output.max_amount_in]
+              : ["--min-amount-out", output.min_amount_out]),
             "--slippage-bps",
             String(input.options["slippage-bps"]),
             ...(input.options["fee-token"] ? ["--fee-token", feeToken] : []),
@@ -163,7 +204,7 @@ export async function swapTokens(
         )
       : key
         ? nextStep(
-            `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to run the next command, then rerun this swap with --yes.`,
+            `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to run the next command, then rerun this dry run to review the swap.`,
             [
               "wallet",
               "keys",
@@ -177,7 +218,7 @@ export async function swapTokens(
             network,
           )
         : nextStep(
-            "No usable access key for this wallet and network. Run the next command to log in, then rerun this swap with --yes.",
+            "No usable access key for this wallet and network. Run the next command to log in, then rerun this dry run to review the swap.",
             ["wallet", "login"],
             network,
           );
@@ -203,6 +244,24 @@ function parseSwapAmount(value: string, decimals: number) {
       `Invalid amount: expected a positive amount with at most ${decimals} decimals`,
     );
   return amount;
+}
+
+function parseSwapBound(value: string | undefined, decimals: number, flag: string) {
+  if (value === undefined) return undefined;
+  const fraction = decimals > 0 ? `(?:\\.\\d{1,${decimals}})?` : "";
+  const amount = new RegExp(`^\\d+${fraction}$`).test(value) ? parseUnits(value, decimals) : 0n;
+  if (amount <= 0n)
+    throw usageError(
+      `Invalid ${flag}: expected a positive amount with at most ${decimals} decimals`,
+    );
+  return amount;
+}
+
+function quoteMovedError(detail: string, flag: string) {
+  return walletError({
+    code: "E_LIMIT_EXCEEDED",
+    message: `Quote moved: ${detail}. Rerun --dry-run without ${flag} to review a new quote.`,
+  });
 }
 
 function divideRoundUp(value: bigint, divisor: bigint) {

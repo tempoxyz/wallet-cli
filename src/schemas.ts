@@ -395,6 +395,14 @@ export const swapOptions = z.object({
   ...globalOptionShape,
   "exact-out": z.boolean().optional().describe("Treat amount as the exact output amount"),
   "slippage-bps": z.coerce.number().default(50).describe("Maximum slippage in basis points"),
+  "min-amount-out": z
+    .string()
+    .optional()
+    .describe("Exact input: refuse to receive less than this reviewed tokenOut amount"),
+  "max-amount-in": z
+    .string()
+    .optional()
+    .describe("Exact output: refuse to spend more than this reviewed tokenIn amount"),
   "fee-token": z.string().optional().describe("Token used to pay fees; defaults to tokenIn"),
   "dry-run": z.boolean().optional().describe("Quote and show calls without submitting"),
   yes: z.boolean().optional().describe("Confirm the reviewed swap for submission"),

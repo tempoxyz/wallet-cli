@@ -119,11 +119,12 @@ Use the first-party wallet CLI for Tempo token swaps. Do not discover or sign in
 tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --dry-run
 
 # Submit only after the user approves the quote, token addresses, and bounds.
-tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --yes
+tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --min-amount-out <MIN_AMOUNT_OUT> --yes
 ```
 
 - The amount is exact input by default. Add `--exact-out` to request an exact output amount.
 - Default maximum slippage is 50 basis points; override it with `--slippage-bps <BPS>`.
+- Submission re-quotes. Pass the reviewed `min_amount_out` as `--min-amount-out` (or `max_amount_in` as `--max-amount-in` with `--exact-out`) so a worse quote is refused; the dry run's `_next` already includes it.
 - If `requires_access_key_update` is true, ask the wallet owner to approve the printed `tempo wallet keys update` command before retrying.
 - Always run `--dry-run` first and preserve full token addresses in the approval request.
 

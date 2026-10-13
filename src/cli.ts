@@ -691,6 +691,18 @@ function describeCli() {
           option("slippage_bps", "--slippage-bps", "Maximum slippage in basis points", {
             valueName: "BPS",
           }),
+          option(
+            "min_amount_out",
+            "--min-amount-out",
+            "Exact input: refuse to receive less than this reviewed amount",
+            { valueName: "AMOUNT" },
+          ),
+          option(
+            "max_amount_in",
+            "--max-amount-in",
+            "Exact output: refuse to spend more than this reviewed amount",
+            { valueName: "AMOUNT" },
+          ),
           option("fee_token", "--fee-token", "Token used to pay fees", {
             valueName: "FEE_TOKEN",
           }),

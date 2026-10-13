@@ -90,7 +90,7 @@ const continuations: {
   storedChain?: boolean;
 }[] = [
   {
-    name: "swap --dry-run reruns the swap with --yes",
+    name: "swap --dry-run reruns the swap with the reviewed minimum output and --yes",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return swapTokens(
@@ -101,10 +101,21 @@ const continuations: {
         swapDependencies(),
       );
     },
-    argv: ["wallet", "swap", "10", usdcToken, moderatoToken, "--slippage-bps", "50", "--yes"],
+    argv: [
+      "wallet",
+      "swap",
+      "10",
+      usdcToken,
+      moderatoToken,
+      "--min-amount-out",
+      "9.751",
+      "--slippage-bps",
+      "50",
+      "--yes",
+    ],
   },
   {
-    name: "swap --dry-run keeps exact-out, slippage, and fee token",
+    name: "swap --dry-run keeps exact-out with the reviewed maximum input, slippage, and fee token",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return swapTokens(
@@ -128,6 +139,8 @@ const continuations: {
       usdcToken,
       moderatoToken,
       "--exact-out",
+      "--max-amount-in",
+      "10.12525",
       "--slippage-bps",
       "25",
       "--fee-token",
