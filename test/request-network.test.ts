@@ -22,6 +22,7 @@ import {
   walletState,
   writeWalletState,
 } from "./helpers.js";
+import { cliBundle } from "./cli-bundle.js";
 
 vi.mock("viem/actions", async (original) => ({
   ...(await original<typeof import("viem/actions")>()),
@@ -192,16 +193,7 @@ it.each(["-n", "--network", "--network=testnet"])(
     const output = await new Promise<string>((resolve, reject) => {
       execFile(
         process.execPath,
-        [
-          "--import",
-          "tsx",
-          "src/request-cli.ts",
-          ...flags,
-          "--dry-run",
-          "--payment-intent",
-          "charge",
-          endpoint.url,
-        ],
+        [cliBundle("request"), ...flags, "--dry-run", "--payment-intent", "charge", endpoint.url],
         { env: process.env, timeout: 30_000 },
         (error, stdout, stderr) => {
           if (error) reject(new Error(`${error.message}: ${stderr}`));

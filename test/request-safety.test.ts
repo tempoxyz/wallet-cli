@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 import { Challenge, Credential } from "mppx";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { cliBundle } from "./cli-bundle.js";
+
 const exec = promisify(execFile);
 const servers: ReturnType<typeof createServer>[] = [];
 afterEach(async () => {
@@ -63,7 +65,7 @@ async function fixture(
   const run = async (...args: string[]) => {
     try {
       return {
-        ...(await exec(process.execPath, ["--import", "tsx", "src/request-cli.ts", url, ...args], {
+        ...(await exec(process.execPath, [cliBundle("request"), url, ...args], {
           env: {
             ...process.env,
             TEMPO_RPC_URL: `${url}/rpc`,

@@ -7,6 +7,7 @@ import { Parser } from "incur";
 import { describe, expect, it } from "vitest";
 
 import { fundOptions, loginOptions, updateAccessKeyOptions } from "../src/schemas.js";
+import { cliBundle } from "./cli-bundle.js";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -272,23 +273,19 @@ describe("generated CLI metadata", () => {
 });
 
 async function walletCli(args: string[]) {
-  return tsxCli("src/cli.ts", args);
+  return bundledCli(cliBundle("wallet"), args);
 }
 
 async function requestCli(args: string[]) {
-  return tsxCli("src/request-cli.ts", args);
+  return bundledCli(cliBundle("request"), args);
 }
 
-async function tsxCli(entrypoint: string, args: string[]) {
-  const { stdout } = await execFileAsync(
-    process.execPath,
-    ["--import", "tsx", entrypoint, ...args],
-    {
-      cwd: root,
-      env: { ...process.env, NO_COLOR: "1" },
-      maxBuffer: 1024 * 1024,
-    },
-  );
+async function bundledCli(entrypoint: string, args: string[]) {
+  const { stdout } = await execFileAsync(process.execPath, [entrypoint, ...args], {
+    cwd: root,
+    env: { ...process.env, NO_COLOR: "1" },
+    maxBuffer: 1024 * 1024,
+  });
   return stdout;
 }
 

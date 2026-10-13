@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { useTempHome, walletState, writeWalletState } from "./helpers.js";
+import { cliBundle } from "./cli-bundle.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -49,7 +50,7 @@ it("reports unknown RPC balances separately from funded and verified zero balanc
     const whoami = async () => {
       const result = await execFileAsync(
         process.execPath,
-        ["--import", "tsx", "src/cli.ts", "whoami", "--format", "json"],
+        [cliBundle("wallet"), "whoami", "--format", "json"],
         {
           env: {
             ...process.env,

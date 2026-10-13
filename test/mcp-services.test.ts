@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { cliBundle } from "./cli-bundle.js";
+
 const root = resolve(import.meta.dirname, "..");
 const mockFetchModule = resolve(root, "test", "fixtures", "mock-services-fetch.mjs");
 
@@ -60,7 +62,7 @@ describe("MCP tools", () => {
 });
 
 async function walletCli(args: string[]) {
-  const { stdout } = await runNode(["src/cli.ts", ...args]);
+  const { stdout } = await runNode([cliBundle("wallet"), ...args]);
   return stdout;
 }
 
@@ -72,6 +74,7 @@ async function mcpCall(params: Record<string, unknown>) {
 }
 
 async function mcpRequest<result>(method: string, params: Record<string, unknown>) {
+  // Runs from source: the bundled CLI cannot load incur's MCP stdio transport yet.
   const child = spawn(
     process.execPath,
     ["--import", "tsx", "--import", mockFetchModule, "src/cli.ts", "--mcp"],
@@ -154,15 +157,11 @@ function firstToolText(response: { result: { content: { text: string }[] } }) {
 
 function runNode(args: string[]) {
   return new Promise<{ stdout: string; stderr: string }>((resolvePromise, reject) => {
-    const child = spawn(
-      process.execPath,
-      ["--import", "tsx", "--import", mockFetchModule, ...args],
-      {
-        cwd: root,
-        env: { ...process.env, NO_COLOR: "1" },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+    const child = spawn(process.execPath, ["--import", mockFetchModule, ...args], {
+      cwd: root,
+      env: { ...process.env, NO_COLOR: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {

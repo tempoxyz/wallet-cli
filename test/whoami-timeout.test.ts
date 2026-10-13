@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
 import { useTempHome, walletState, writeWalletState } from "./helpers.js";
+import { cliBundle } from "./cli-bundle.js";
 
 it.each(["rpc", "assets", "asset body"] as const)(
   "whoami returns when the %s response stalls",
@@ -47,7 +48,7 @@ it.each(["rpc", "assets", "asset body"] as const)(
       const url = `http://127.0.0.1:${address.port}`;
       const { stdout } = await promisify(execFile)(
         process.execPath,
-        ["--import", "tsx", "src/cli.ts", "whoami", "--json"],
+        [cliBundle("wallet"), "whoami", "--json"],
         {
           cwd: resolve(import.meta.dirname, ".."),
           env: { ...process.env, HOME: home, TEMPO_RPC_URL: url, TEMPO_AUTH_URL: url },

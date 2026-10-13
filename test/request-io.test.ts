@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { executeRequest, parseRequestArgs, runRequest } from "../src/commands/request.js";
 import { useTempHome } from "./helpers.js";
+import { cliBundle } from "./cli-bundle.js";
 
 const execFileAsync = promisify(execFile);
 const cleanup: (() => Promise<void>)[] = [];
@@ -267,9 +268,7 @@ it("routes HEAD headers exclusively to -o and creates parent directories", async
   });
   const stdout = capture();
   const result = await execFileAsync(process.execPath, [
-    "--import",
-    "tsx",
-    "src/request-cli.ts",
+    cliBundle("request"),
     "-I",
     "-o",
     path,
@@ -312,16 +311,7 @@ it("honors fractional CLI timeout while waiting to retry", async () => {
     res.end("busy");
   });
   await expect(
-    execFileAsync(process.execPath, [
-      "--import",
-      "tsx",
-      "src/request-cli.ts",
-      "-m",
-      "0.1",
-      "--retries",
-      "2",
-      url,
-    ]),
+    execFileAsync(process.execPath, [cliBundle("request"), "-m", "0.1", "--retries", "2", url]),
   ).rejects.toMatchObject({ code: 3 });
   expect(requests).toBe(1);
   expect(performance.now() - requestStarted).toBeLessThan(2500);
