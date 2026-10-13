@@ -63,6 +63,25 @@ describe("generated CLI metadata", () => {
     );
   });
 
+  it("documents insecure TLS and the insecure payment opt-in", async () => {
+    const help = await requestCli(["--help"]);
+    expect(help).toMatch(/--insecure, -k\s+Allow insecure TLS connections/);
+    expect(help).toContain("--allow-insecure-payment");
+
+    const description = JSON.parse(await requestCli(["--describe"])) as {
+      args: { help: string; long?: string | undefined; name: string }[];
+    };
+    expect(description.args).toContainEqual(
+      expect.objectContaining({
+        long: "--insecure",
+        help: expect.stringContaining("skips certificate verification"),
+      }),
+    );
+    expect(description.args).toContainEqual(
+      expect.objectContaining({ long: "--allow-insecure-payment", name: "allow_insecure_payment" }),
+    );
+  });
+
   it("returns a complete remote MACH handoff through the CLI", async () => {
     const wallet = "0x1111111111111111111111111111111111111111";
     const result = JSON.parse(

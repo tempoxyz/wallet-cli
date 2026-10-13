@@ -77,6 +77,7 @@ import {
 import { loadWalletState, type WalletState } from "../wallet/store.js";
 
 export type RequestOptions = {
+  allowInsecurePayment?: boolean | undefined;
   bearer?: string | undefined;
   compressed?: boolean | undefined;
   data: string[];
@@ -221,6 +222,9 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
       case "-k":
       case "--insecure":
         options.insecure = true;
+        break;
+      case "--allow-insecure-payment":
+        options.allowInsecurePayment = true;
         break;
       case "--stream":
         options.stream = true;
@@ -527,6 +531,10 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
       return;
     }
 
+    if (options.insecure && !options.allowInsecurePayment)
+      throw paymentError(
+        "Refusing to pay over a connection with TLS certificate verification disabled (--insecure); pass --allow-insecure-payment to override",
+      );
     response = await payAndRetryRequest(response, request, options, io.stderr ?? process.stderr);
     paid = true;
   }

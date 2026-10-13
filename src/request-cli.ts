@@ -55,7 +55,14 @@ const options = z.object({
   "retry-jitter": z.coerce.number().optional().describe("Retry jitter percentage"),
   "retry-http": z.string().optional().describe("Retry on comma-separated HTTP status codes"),
   "retry-after": z.boolean().optional().describe("Respect Retry-After headers"),
-  insecure: z.boolean().optional().describe("Accept flag for curl compatibility"),
+  insecure: z
+    .boolean()
+    .optional()
+    .describe("Allow insecure TLS connections (skips certificate verification)"),
+  "allow-insecure-payment": z
+    .boolean()
+    .optional()
+    .describe("Allow payments when --insecure disables TLS certificate verification"),
   "user-agent": z.string().optional().describe("Override User-Agent"),
   "dump-header": z.string().optional().describe("Write response headers to file"),
   user: z.string().optional().describe("HTTP Basic auth credentials (user:pass)"),
@@ -172,6 +179,7 @@ type ParsedOptions = z.infer<typeof options>;
 
 function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
   return {
+    allowInsecurePayment: options["allow-insecure-payment"],
     bearer: options.bearer,
     compressed: options.compressed,
     data: options.data,
@@ -376,7 +384,17 @@ function describeRequestCli() {
         help: "Retry on comma-separated HTTP status codes",
       },
       { name: "retry_after", long: "--retry-after", help: "Respect Retry-After headers" },
-      { name: "insecure", short: "-k", long: "--insecure", help: "Allow insecure TLS" },
+      {
+        name: "insecure",
+        short: "-k",
+        long: "--insecure",
+        help: "Allow insecure TLS connections (skips certificate verification)",
+      },
+      {
+        name: "allow_insecure_payment",
+        long: "--allow-insecure-payment",
+        help: "Allow payments when --insecure disables TLS certificate verification",
+      },
       {
         name: "user_agent",
         short: "-A",
