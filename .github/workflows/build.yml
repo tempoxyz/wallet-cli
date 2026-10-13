@@ -292,7 +292,7 @@ jobs:
             --output "artifacts/${PACKAGE}-manifest.json"
           )
 
-          if [ "$PACKAGE" = "tempo-request" ] && [ -f "SKILL.md" ]; then
+          if [ -f "SKILL.md" ]; then
             SKILL_SHA256=$(sha256sum "SKILL.md" | cut -d' ' -f1)
             SIGN_ARGS+=(
               --skill "${URL_PREFIX}/v${VERSION}/SKILL.md"
@@ -382,7 +382,7 @@ jobs:
 
           upload_to_r2 "artifacts/${PACKAGE}-manifest.json" "s3://tempo-cli/${PREFIX}/${VTAG}/manifest.json" "" "true"
 
-          if [ "$PACKAGE" = "tempo-request" ] && [ -f "SKILL.md" ]; then
+          if [ -f "SKILL.md" ]; then
             upload_to_r2 "SKILL.md" "s3://tempo-cli/${PREFIX}/${VTAG}/SKILL.md" "text/markdown" "true"
           fi
 
