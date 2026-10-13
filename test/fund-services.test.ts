@@ -604,6 +604,12 @@ describe("fetchServices", () => {
       "Failed to fetch service directory: Unexpected end of JSON input",
       async () => new Response(""),
     ],
+    [
+      "a body without a services list",
+      "E_NETWORK",
+      "Failed to fetch service directory: response has no services list",
+      async () => new Response("{}"),
+    ],
   ])("maps %s to %s", async (_name, code, message, fetch) => {
     vi.spyOn(globalThis, "fetch").mockImplementation(fetch);
     await expect(fetchServiceList()).rejects.toMatchObject({
@@ -612,5 +618,27 @@ describe("fetchServices", () => {
       message,
       retryable: code === "E_NETWORK",
     });
+  });
+
+  it("never caches a directory response without a services list", async () => {
+    await useTempHome();
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ services: [{ id: "stableenrich" }] })));
+    await expect(fetchServiceList()).rejects.toMatchObject({ code: "E_NETWORK" });
+    await expect(readFile(serviceDirectoryCachePath(), "utf8")).rejects.toThrow();
+    expect((await fetchServiceList()).map((service) => service.id)).toEqual(["stableenrich"]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a cached file without a services list", async () => {
+    await useTempHome();
+    await mkdir(dirname(serviceDirectoryCachePath()), { recursive: true });
+    await writeFile(serviceDirectoryCachePath(), "{}");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ services: [{ id: "stableenrich" }] })),
+    );
+    expect((await fetchServiceList()).map((service) => service.id)).toEqual(["stableenrich"]);
   });
 });

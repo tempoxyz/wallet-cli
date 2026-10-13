@@ -151,12 +151,17 @@ async function fetchServiceDirectoryText() {
   return await response.text().catch(serviceDirectoryNetworkError);
 }
 
+/** Parses a directory response, rejecting anything without a `services` list so it is never cached. */
 function parseServiceDirectory(text: string) {
+  let body: unknown;
   try {
-    return JSON.parse(text) as unknown;
+    body = JSON.parse(text);
   } catch (error) {
     return serviceDirectoryNetworkError(error);
   }
+  if (!Array.isArray(getRecord(body).services))
+    return serviceDirectoryNetworkError(new Error("response has no services list"));
+  return body;
 }
 
 function serviceDirectoryNetworkError(error: unknown): never {
@@ -178,9 +183,9 @@ async function readServiceDirectoryCache() {
   const path = serviceDirectoryCachePath();
   try {
     const [text, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
-    return { body: JSON.parse(text) as unknown, fetchedAt: info.mtimeMs };
+    return { body: parseServiceDirectory(text), fetchedAt: info.mtimeMs };
   } catch {
-    // A missing or corrupt cache is treated as empty.
+    // A missing, corrupt, or malformed cache is treated as empty.
     return undefined;
   }
 }

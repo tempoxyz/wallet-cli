@@ -768,9 +768,17 @@ function describeCli() {
         about: "Browse the MPP service directory",
         args: [
           positional("service_id", "Service ID to show details for"),
-          option("search", "--search", "Search by name, description, tags, or category", {
-            valueName: "QUERY",
-          }),
+          option(
+            "search",
+            "--search",
+            "Search by name, id, description, tags, or category; every word must match",
+            { valueName: "QUERY" },
+          ),
+          flag(
+            "refresh",
+            "--refresh",
+            "Fetch the service directory instead of using the cached copy",
+          ),
         ],
       },
       {

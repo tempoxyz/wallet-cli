@@ -194,6 +194,7 @@ describe("generated CLI metadata", () => {
     const manifest = JSON.parse(output) as {
       subcommands: {
         aliases?: string[] | undefined;
+        args?: { long?: string | undefined }[] | undefined;
         name: string;
         subcommands?: { aliases?: string[] | undefined; name: string }[] | undefined;
       }[];
@@ -201,6 +202,7 @@ describe("generated CLI metadata", () => {
 
     const services = manifest.subcommands.find((command) => command.name === "services");
     expect(services?.subcommands).toBeUndefined();
+    expect(services?.args?.map((arg) => arg.long)).toEqual([undefined, "--search", "--refresh"]);
 
     const keys = manifest.subcommands.find((command) => command.name === "keys");
     expect(keys?.subcommands?.map((command) => command.name)).toEqual(["list", "update"]);
