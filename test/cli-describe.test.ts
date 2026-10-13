@@ -142,7 +142,6 @@ describe("generated CLI metadata", () => {
         "--amount",
         "5",
         "--no-browser",
-        "--no-wait",
         "--format",
         "json",
         "--network",
@@ -167,7 +166,7 @@ describe("generated CLI metadata", () => {
     const schema = JSON.parse(await walletCli(["fund", "--schema", "--format", "json"]));
     expect(schema.options.properties).toHaveProperty("mach");
     expect(schema.options.properties).toHaveProperty("amount");
-    expect(schema.options.properties).toHaveProperty("wait");
+    expect(schema.options.properties.wait.default).toBe(false);
     expect(schema.output.properties.status.enum).toEqual(["success", "pending"]);
   });
 
@@ -313,6 +312,17 @@ describe("generated CLI metadata", () => {
     expect(
       Parser.parse(["--limit", "250", "--no-browser"], { options: updateAccessKeyOptions }).options,
     ).toMatchObject({ browser: false, limit: "250" });
+  });
+
+  it.each([
+    [[], false],
+    [["--amount", "17.43", "--timeout", "30"], false],
+    [["--wait"], true],
+    [["--no-wait"], false],
+    [["--wait", "--no-wait"], false],
+    [["--no-wait", "--wait"], true],
+  ] as const)("parses funding waiting preference for %j", (args, wait) => {
+    expect(Parser.parse([...args], { options: fundOptions }).options).toMatchObject({ wait });
   });
 
   it("returns strongly typed schema properties for sessions list output", async () => {

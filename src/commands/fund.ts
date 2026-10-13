@@ -37,16 +37,6 @@ export async function runFundingFlow(options: {
   const token = action === "mach" ? machFundingToken(chain) : tokenAddress(chain);
   if (action === "mach") machFundingAmount(options.amount);
   else fundingAmount(options.amount);
-  const timeoutMs = finiteDuration(
-    options.timeout === undefined
-      ? Number(process.env.TEMPO_WALLET_FUND_TIMEOUT_MS ?? 600_000)
-      : options.timeout * 1000,
-    "Funding timeout",
-  );
-  const pollMs = finiteDuration(
-    Number(process.env.TEMPO_WALLET_FUND_POLL_MS ?? 2_000),
-    "Funding poll interval",
-  );
   const address = options.address ?? state.accounts[state.activeAccount ?? 0]?.address;
   if (!address && action !== "claim")
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
@@ -67,10 +57,20 @@ export async function runFundingFlow(options: {
     amount: options.amount ?? null,
   };
   // A handoff works without RPC access or a locally installed browser.
-  if (options.noWait || !wallet) {
+  if (options.noWait !== false || !wallet) {
     if (!options.noBrowser) openExternal(url);
     return { status: "pending" as const, ...base, balance: null, raw_balance: null };
   }
+  const timeoutMs = finiteDuration(
+    options.timeout === undefined
+      ? Number(process.env.TEMPO_WALLET_FUND_TIMEOUT_MS ?? 600_000)
+      : options.timeout * 1000,
+    "Funding timeout",
+  );
+  const pollMs = finiteDuration(
+    Number(process.env.TEMPO_WALLET_FUND_POLL_MS ?? 2_000),
+    "Funding poll interval",
+  );
   const controller = new AbortController();
   const cancel = () => controller.abort(new Error("Funding wait cancelled"));
   process.once("SIGINT", cancel);

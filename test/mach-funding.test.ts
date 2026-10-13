@@ -128,6 +128,7 @@ describe("MACH funding", () => {
       address: wallet,
       amount: "10",
       noBrowser: true,
+      noWait: false,
     });
     expect(result).toMatchObject({ status: "success", balance: "15", raw_balance: "15000000" });
     expect(result.url).toContain("amount=10");
@@ -142,12 +143,14 @@ describe("MACH funding", () => {
   });
   it("does not convert an RPC failure to a zero or success balance", async () => {
     mocks.readContract.mockRejectedValue(new Error("RPC down"));
-    await expect(runFundingFlow({ action: "mach", noBrowser: true })).rejects.toThrow("RPC down");
+    await expect(
+      runFundingFlow({ action: "mach", noBrowser: true, noWait: false }),
+    ).rejects.toThrow("RPC down");
   });
   it("bounds a stalled balance RPC", async () => {
     mocks.readContract.mockImplementation(() => new Promise(() => {}));
     await expect(
-      runFundingFlow({ action: "mach", noBrowser: true, timeout: 0.01 }),
+      runFundingFlow({ action: "mach", noBrowser: true, noWait: false, timeout: 0.01 }),
     ).rejects.toMatchObject({
       code: "E_POLL_TIMEOUT",
       exitCode: 3,
@@ -159,7 +162,7 @@ describe("MACH funding", () => {
     const controller = new AbortController();
     controller.abort();
     await expect(
-      runFundingFlow({ action: "mach", noBrowser: true, signal: controller.signal }),
+      runFundingFlow({ action: "mach", noBrowser: true, noWait: false, signal: controller.signal }),
     ).rejects.toMatchObject({
       code: "E_POLL_TIMEOUT",
       retryable: false,
@@ -167,13 +170,52 @@ describe("MACH funding", () => {
     });
   });
   it.each([NaN, Infinity, -1])("rejects unbounded timeout %s", async (timeout) => {
-    await expect(runFundingFlow({ action: "mach", noBrowser: true, timeout })).rejects.toThrow(
-      "finite",
-    );
+    await expect(
+      runFundingFlow({ action: "mach", noBrowser: true, noWait: false, timeout }),
+    ).rejects.toThrow("finite");
   });
 });
 
 describe("default funding", () => {
+  it.each(["fund", "mach", "crypto", "claim"] as const)(
+    "opens %s and returns a pending handoff without reading balances by default",
+    async (action) => {
+      const result = await runFundingFlow({ action, amount: "17.43", code: "REF123" });
+      expect(result).toMatchObject({
+        status: "pending",
+        wallet,
+        amount: "17.43",
+        balance: null,
+        raw_balance: null,
+      });
+      expect(mocks.open).toHaveBeenCalledExactlyOnceWith(result.url);
+      expect(mocks.readContract).not.toHaveBeenCalled();
+    },
+  );
+  it("returns a handoff without opening a browser and ignores unused wait settings", async () => {
+    process.env.TEMPO_WALLET_FUND_TIMEOUT_MS = "invalid";
+    process.env.TEMPO_WALLET_FUND_POLL_MS = "invalid";
+    const result = await runFundingFlow({ action: "fund", noBrowser: true, timeout: 1 });
+    expect(result).toMatchObject({
+      status: "pending",
+      amount: null,
+      balance: null,
+      raw_balance: null,
+    });
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(mocks.readContract).not.toHaveBeenCalled();
+  });
+  it("returns a testnet handoff without polling", async () => {
+    const result = await runFundingFlow({ action: "fund", network: "testnet", amount: "0.000001" });
+    expect(result).toMatchObject({
+      status: "pending",
+      chain_id: 42431,
+      amount: "0.000001",
+      token: "0x20c0000000000000000000000000000000000000",
+    });
+    expect(result.url).toContain("chainId=42431&amount=0.000001");
+    expect(mocks.readContract).not.toHaveBeenCalled();
+  });
   it.each([
     ["mainnet", 4217, "0x20c000000000000000000000b9537d11c60e8b50"],
     ["testnet", 42431, "0x20c0000000000000000000000000000000000000"],
@@ -184,7 +226,12 @@ describe("default funding", () => {
         .mockResolvedValueOnce(3_000_000n)
         .mockResolvedValueOnce(3_000_000n)
         .mockResolvedValueOnce(8_000_000n);
-      const result = await runFundingFlow({ action: fundAction({}), network, amount: "10" });
+      const result = await runFundingFlow({
+        action: fundAction({}),
+        network,
+        amount: "10",
+        noWait: false,
+      });
       const url = `https://wallet.tempo.xyz/agent?action=fund&address=${wallet}&chainId=${chain}&amount=10`;
       expect(result).toMatchObject({
         action: "fund",

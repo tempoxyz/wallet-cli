@@ -2,4 +2,4 @@
 wallet-cli: patch
 ---
 
-Treat the funding amount as a checkout prefill and complete the funding wait on any positive balance increase.
+Return the funding handoff immediately by default. Use `--wait` to watch for a positive balance increase; `--amount` supplies the checkout amount without requiring an equivalent deposit. Scripts that depended on the old blocking behavior must add `--wait`.

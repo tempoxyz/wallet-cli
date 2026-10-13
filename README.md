@@ -155,7 +155,7 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 
 Completion scripts hook the `tempo` launcher and complete after `tempo wallet`, for example `eval "$(tempo wallet completions zsh)"` in `~/.zshrc`. The bash, zsh, and Elvish scripts pass other `tempo` subcommands to a completer registered before them. The PowerShell script replaces any existing `tempo` completer, because PowerShell cannot read or chain one.
 
-`tempo wallet fund` opens the wallet's general funding UI, which also offers Buy MACH. By default, the CLI waits for USDC.e on mainnet or pathUSD on testnet. Use `fund --mach` to open MACH checkout and wait for MACH instead; `whoami --mach` reads its on-chain balance. MACH replaces MPP Credits. Existing MPP Credits remain spendable through `transfer --credits`, and `whoami --credits` shows the legacy balance. Both emit a deprecation warning. `fund --credits` fails: new MPP Credits cannot be purchased; use `fund --mach` to buy MACH instead.
+`tempo wallet fund` opens the wallet's general funding UI, which also offers Buy MACH. The CLI opens the browser and returns immediately by default. Use `fund --mach` to open MACH checkout; `whoami --mach` reads its on-chain balance. MACH replaces MPP Credits. Existing MPP Credits remain spendable through `transfer --credits`, and `whoami --credits` shows the legacy balance. Both emit a deprecation warning. `fund --credits` fails: new MPP Credits cannot be purchased; use `fund --mach` to buy MACH instead.
 
 ```sh
 tempo wallet whoami --credits
@@ -171,13 +171,17 @@ Use `--dry-run` to inspect the destination and calldata. Credit challenges must 
 For funding from another device or an automated host:
 
 ```bash
-tempo wallet fund --mach --amount 10 --no-browser --no-wait --format json
+tempo wallet fund --mach --amount 10 --no-browser --format json
 tempo wallet whoami --mach
 ```
 
 The JSON handoff includes `status: "pending"`, the destination wallet, chain, token, amount, and a URL under `https://wallet.tempo.xyz/agent?action=fund&intent=mach`. Open that URL on any device to complete the wallet's available funding flow. `--address` can specify a destination without a local login. Hosted checkout accepts $5–$100 USD with at most two decimal places. MACH funding currently supports mainnet (4217), with token `0x20c000000000000000000000f37de3740adec032` and six decimals.
 
-`--amount` prefills the funding UI; it is not a minimum deposit requirement. Omit `--no-wait` to poll the destination's selected token balance. Any positive increase completes the wait, including a deposit smaller than the prefilled amount. The default timeout is 600 seconds; use `--timeout <seconds>` to change it, or Ctrl-C to cancel. A balance delta is observational evidence, not a checkout receipt or proof that a particular amount was purchased. Concurrent spending can delay detection. No-wait returns the handoff without requiring RPC access.
+`--amount` supplies the USD amount to the funding UI; it does not impose a CLI deposit threshold or enable waiting. General funding treats it as a prefill; direct MACH checkout currently fixes the supplied amount. Without `--amount`, the wallet UI chooses its default. General funding accepts positive amounts with up to six decimal places; direct MACH checkout uses the range and precision above.
+
+Add `--wait` to poll for any positive increase in the destination's selected token: USDC.e on mainnet, pathUSD on testnet, or MACH with `--mach`. The wait can complete below `--amount`. `--timeout <seconds>` applies only with `--wait` (default: 600); Ctrl-C cancels the watch, not the browser checkout. Without `--wait`, the command makes no balance RPC calls and returns `status: "pending"` with null balances. Exit code zero means the handoff was created, not that funding completed. `--no-wait` remains accepted for compatibility.
+
+A balance delta is observational evidence, not a checkout receipt or proof that a particular amount was purchased. Concurrent spending can delay detection, and buying a different token in the general UI will not satisfy the selected token's watch. Scripts that need to wait before spending must explicitly use `--wait` or check the intended token's balance.
 
 Use `tempo request --mach --max-spend 0.05 <url>` to require MACH for a one-time charge. The exact challenge must advertise `machineTokenEnabled: true`; the installed `mppx` SDK settles into the merchant's advertised currency. An explicit MACH selection never silently falls back to stablecoins. `--payment-token MACH` is equivalent. `--dry-run` inspects an offer without spending. MACH is not supported for sessions. Funding MACH does not convert old Coinflow credits.
 
