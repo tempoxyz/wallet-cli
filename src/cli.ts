@@ -77,6 +77,8 @@ const cli = Cli.create("tempo wallet", {
       "transfer tokens with the Tempo wallet CLI",
     ],
   },
+  // The Tempo launcher manages updates, so skip incur npm update checks.
+  update: false,
 });
 
 cli.command("login", {

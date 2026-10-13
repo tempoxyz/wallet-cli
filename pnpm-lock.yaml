@@ -19,8 +19,8 @@ importers:
         specifier: 0.19.0
         version: 0.19.0(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
       incur:
-        specifier: 0.4.20
-        version: 0.4.20
+        specifier: 0.7.0
+        version: 0.7.0
       mppx:
         specifier: 0.12.0
         version: 0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
@@ -1397,13 +1397,13 @@ packages:
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
 
-  incur@0.4.20:
-    resolution: {integrity: sha512-TPiYXQkV4Tt2A8ubCOO1fkFMKpvrApCMJuy7Yvlg9onCc52W5per1d8nXf4MVEWLFCaFqlI2ziDSzYmK3peOTQ==}
+  incur@0.4.25:
+    resolution: {integrity: sha512-UHMc8OAafcalvhtfPs8rIPAUksRQ7gbR59zq8CWYFUaX1kVssfFQ6aYEb3mWglP4NMfh5HO+IfvzqhwPuCyMmg==}
     engines: {node: '>=22'}
     hasBin: true
 
-  incur@0.4.25:
-    resolution: {integrity: sha512-UHMc8OAafcalvhtfPs8rIPAUksRQ7gbR59zq8CWYFUaX1kVssfFQ6aYEb3mWglP4NMfh5HO+IfvzqhwPuCyMmg==}
+  incur@0.7.0:
+    resolution: {integrity: sha512-jCORKLwPEtmRchMpsDTHsmZtun1hR9v4aaIyfSBvonZdgebEbpWc0SH1WJKLD+T7Ngs7xHNEReqiQ7bA5EFlNQ==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -3061,7 +3061,7 @@ snapshots:
 
   ieee754@1.2.1: {}
 
-  incur@0.4.20:
+  incur@0.4.25:
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/server': 2.0.0-alpha.4
@@ -3071,7 +3071,7 @@ snapshots:
       yaml: 2.9.0
       zod: 4.4.3
 
-  incur@0.4.25:
+  incur@0.7.0:
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/server': 2.0.0-alpha.4

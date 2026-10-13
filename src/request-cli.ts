@@ -102,6 +102,8 @@ const cli = Cli.create("tempo request", {
     "remote-name": "O",
     form: "F",
   },
+  // The Tempo launcher manages updates, so skip incur npm update checks.
+  update: false,
   usage: [{ args: { url: true } }],
   examples: [
     { args: { url: "https://api.example.com/data" }, description: "Make a GET request" },
