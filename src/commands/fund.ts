@@ -35,8 +35,8 @@ export async function runFundingFlow(options: {
   const state = await loadWalletState();
   const chain = (await resolveNetwork(options.network, state)).chainId;
   const token = action === "mach" ? machFundingToken(chain) : tokenAddress(chain);
-  const requested =
-    action === "mach" ? machFundingAmount(options.amount) : fundingAmount(options.amount);
+  if (action === "mach") machFundingAmount(options.amount);
+  else fundingAmount(options.amount);
   const timeoutMs = finiteDuration(
     options.timeout === undefined
       ? Number(process.env.TEMPO_WALLET_FUND_TIMEOUT_MS ?? 600_000)
@@ -102,8 +102,8 @@ export async function runFundingFlow(options: {
     for (;;) {
       await sleep(pollMs, undefined, { signal });
       const current = await balance();
-      // Never treat a smaller, unrelated deposit as the full requested amount.
-      if (current >= initial + (requested ?? 1n)) {
+      // The amount prefills checkout; users can choose a different amount there.
+      if (current > initial) {
         return {
           status: "success" as const,
           ...base,

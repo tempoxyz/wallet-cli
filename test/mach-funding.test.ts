@@ -117,19 +117,20 @@ describe("MACH funding", () => {
     ).rejects.toThrow("not supported");
     expect(mocks.readContract).not.toHaveBeenCalled();
   });
-  it("polls the explicit wallet and MACH token until the entire requested delta arrives", async () => {
+  it("uses the MACH amount as a prefill, not a minimum funding delta", async () => {
     mocks.readContract
       .mockResolvedValueOnce(10_000_000n)
-      .mockResolvedValueOnce(10_000_001n)
-      .mockResolvedValueOnce(14_999_999n)
+      .mockResolvedValueOnce(10_000_000n)
+      .mockResolvedValueOnce(9_000_000n)
       .mockResolvedValueOnce(15_000_000n);
     const result = await runFundingFlow({
       action: "mach",
       address: wallet,
-      amount: "5",
+      amount: "10",
       noBrowser: true,
     });
     expect(result).toMatchObject({ status: "success", balance: "15", raw_balance: "15000000" });
+    expect(result.url).toContain("amount=10");
     expect(mocks.readContract).toHaveBeenCalledTimes(4);
     expect(mocks.readContract).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -179,17 +180,22 @@ describe("default funding", () => {
   ])(
     "opens general funding and waits for stablecoins on %s",
     async (network, chain, stablecoin) => {
-      mocks.readContract.mockResolvedValueOnce(0n).mockResolvedValueOnce(1n);
-      const result = await runFundingFlow({ action: fundAction({}), network, amount: "0.000001" });
-      const url = `https://wallet.tempo.xyz/agent?action=fund&address=${wallet}&chainId=${chain}&amount=0.000001`;
+      mocks.readContract
+        .mockResolvedValueOnce(3_000_000n)
+        .mockResolvedValueOnce(3_000_000n)
+        .mockResolvedValueOnce(8_000_000n);
+      const result = await runFundingFlow({ action: fundAction({}), network, amount: "10" });
+      const url = `https://wallet.tempo.xyz/agent?action=fund&address=${wallet}&chainId=${chain}&amount=10`;
       expect(result).toMatchObject({
         action: "fund",
         status: "success",
         chain_id: chain,
         token: stablecoin,
         url,
-        raw_balance: "1",
+        amount: "10",
+        raw_balance: "8000000",
       });
+      expect(mocks.readContract).toHaveBeenCalledTimes(3);
       expect(mocks.open).toHaveBeenCalledWith(url);
       expect(mocks.readContract).toHaveBeenLastCalledWith(
         expect.objectContaining({ address: stablecoin, args: [wallet] }),
