@@ -114,7 +114,9 @@ const cli = Cli.create("tempo request", {
     "remote-name": "O",
     form: "F",
   },
-  // The Tempo launcher manages updates, so skip incur npm update checks.
+  // The Tempo launcher manages updates and installs SKILL.md with each release,
+  // so skip incur npm update checks and skill syncing.
+  sync: false,
   update: false,
   usage: [{ args: { url: true } }],
   examples: [

@@ -70,14 +70,9 @@ let closeCommandFailed = false;
 const cli = Cli.create("tempo wallet", {
   version,
   description: "Wallet identity and custody operations",
-  sync: {
-    suggestions: [
-      "log in to a Tempo wallet",
-      "show the current Tempo wallet account",
-      "transfer tokens with the Tempo wallet CLI",
-    ],
-  },
-  // The Tempo launcher manages updates, so skip incur npm update checks.
+  // The Tempo launcher manages updates and installs SKILL.md with each release,
+  // so skip incur npm update checks and skill syncing.
+  sync: false,
   update: false,
 });
 
@@ -458,34 +453,6 @@ function handleBuiltinSchema(args: readonly string[]) {
     return true;
   }
 
-  if (command === "skills" || command === "skill") {
-    if (subcommand === "add") {
-      printSchema({
-        options: objectSchema({
-          depth: numberSchema("Grouping depth for skill files"),
-          "no-global": booleanSchema("Install to project instead of globally"),
-        }),
-        output: objectSchema({
-          skills: arraySchema(stringSchema()),
-        }),
-      });
-      return true;
-    }
-
-    if (subcommand === "list" || subcommand === "ls") {
-      printSchema({
-        output: arraySchema(
-          objectSchema({
-            description: stringSchema(),
-            installed: booleanSchema(),
-            name: stringSchema(),
-          }),
-        ),
-      });
-      return true;
-    }
-  }
-
   return false;
 }
 
@@ -522,13 +489,6 @@ function stringSchema(description?: string | undefined) {
   return {
     ...(description ? { description } : {}),
     type: "string",
-  };
-}
-
-function numberSchema(description?: string | undefined) {
-  return {
-    ...(description ? { description } : {}),
-    type: "number",
   };
 }
 
@@ -787,24 +747,6 @@ function describeCli() {
               flag("no_global", "--no-global", "Install to project instead of globally"),
             ],
           },
-        ],
-      },
-      {
-        name: "skills",
-        about: "Sync skill files to agents",
-        aliases: ["skill"],
-        subcommands: [
-          {
-            name: "add",
-            about: "Sync skill files to agents",
-            args: [
-              option("depth", "--depth", "Grouping depth for skill files", {
-                valueName: "DEPTH",
-              }),
-              flag("no_global", "--no-global", "Install to project instead of globally"),
-            ],
-          },
-          { name: "list", about: "List skills", aliases: ["ls"] },
         ],
       },
       { name: "debug", about: "Collect debug info for support" },

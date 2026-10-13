@@ -187,7 +187,7 @@ describe("generated CLI metadata", () => {
     expect(toon).toContain("serviceId:");
   });
 
-  it("includes built-in mcp and skills commands in --describe", async () => {
+  it("includes built-in mcp but not skills commands in --describe", async () => {
     const output = await walletCli(["--describe"]);
     const manifest = JSON.parse(output) as {
       subcommands: {
@@ -209,12 +209,14 @@ describe("generated CLI metadata", () => {
     const mcp = manifest.subcommands.find((command) => command.name === "mcp");
     expect(mcp?.subcommands?.map((command) => command.name)).toEqual(["add"]);
 
-    const skills = manifest.subcommands.find((command) => command.name === "skills");
-    expect(skills?.aliases).toEqual(["skill"]);
-    expect(skills?.subcommands?.map((command) => command.name)).toEqual(["add", "list"]);
-    expect(skills?.subcommands?.find((command) => command.name === "list")?.aliases).toEqual([
-      "ls",
-    ]);
+    expect(manifest.subcommands.some((command) => command.name === "skills")).toBe(false);
+  });
+
+  it.each([
+    ["tempo wallet", walletCli],
+    ["tempo request", requestCli],
+  ])("%s does not offer skill syncing", async (_name, run) => {
+    expect(await run(["--help"])).not.toContain("skills");
   });
 
   it("returns side-effect-free schema for built-in integration commands", async () => {
@@ -222,21 +224,7 @@ describe("generated CLI metadata", () => {
       options: { properties: { agent: { description: string } } };
     };
     expect(mcpAdd.options.properties.agent.description).toContain("Target");
-
-    const skillsAdd = JSON.parse(
-      await walletCli(["skills", "add", "--schema", "--format", "json"]),
-    ) as {
-      options: { properties: { depth: { description: string } } };
-    };
-    expect(skillsAdd.options.properties.depth.description).toContain("Grouping depth");
-
-    const skillsList = JSON.parse(
-      await walletCli(["skills", "list", "--schema", "--format", "json"]),
-    ) as {
-      output: { items: { properties: { installed: { type: string } } } };
-    };
-    expect(skillsList.output.items.properties.installed.type).toBe("boolean");
-  }, 30_000);
+  });
 
   it("accepts --no-browser for browser-backed wallet commands", () => {
     expect(Parser.parse(["--no-browser"], { options: loginOptions }).options).toMatchObject({
