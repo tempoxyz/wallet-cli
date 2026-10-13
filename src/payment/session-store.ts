@@ -227,7 +227,7 @@ function decodeRecord(row: unknown): PersistedSessionRecord[] {
       escrow_contract: stringValue(item.escrow_contract).toLowerCase(),
       grace_ready_at: safeNumber(item.grace_ready_at),
       last_used_at: safeNumber(item.last_used_at),
-      network: networkName(chain) ?? `chain-${chain}`,
+      network: networkName(chain),
       origin: stringValue(item.origin),
       payee: stringValue(item.payee).toLowerCase(),
       payer: stringValue(item.payer).toLowerCase(),

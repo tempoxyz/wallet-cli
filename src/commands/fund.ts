@@ -2,7 +2,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { erc20Abi, formatUnits } from "viem";
 
 import { usageError, walletError } from "../shared/errors.js";
-import { chainId, createTempoPublicClient, tokenAddress } from "../shared/network.js";
+import {
+  createTempoPublicClient,
+  networkFields,
+  resolveNetwork,
+  tokenAddress,
+} from "../shared/network.js";
 import {
   fundingAmount,
   machFundingAmount,
@@ -28,7 +33,7 @@ export async function runFundingFlow(options: {
 }) {
   if (options.action === "credits") warnCreditsAlias();
   const action = options.action === "credits" ? "mach" : options.action;
-  const chain = chainId(options.network);
+  const chain = (await resolveNetwork(options.network)).chainId;
   const token = action === "mach" ? machFundingToken(chain) : tokenAddress(chain);
   const requested =
     action === "mach" ? machFundingAmount(options.amount) : fundingAmount(options.amount);
@@ -57,7 +62,7 @@ export async function runFundingFlow(options: {
     wallet,
     action,
     url,
-    chain_id: chain,
+    ...networkFields(chain),
     token,
     symbol: action === "mach" ? "MACH" : undefined,
     amount: options.amount ?? null,
@@ -77,7 +82,7 @@ export async function runFundingFlow(options: {
     ...(options.signal ? [options.signal] : []),
   ]);
   try {
-    const client = createTempoPublicClient(options.network, {
+    const client = createTempoPublicClient(chain, {
       timeout: Math.min(10_000, Math.max(1, timeoutMs)),
       retryCount: 0,
     });

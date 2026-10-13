@@ -54,12 +54,14 @@ import {
   walletError,
 } from "../shared/errors.js";
 import {
-  chainId,
   createTempoPublicClient,
   escrowContract,
+  explicitNetwork,
   networkName,
-  normalizeNetwork,
+  parseNetwork,
+  resolveNetwork,
   rpcUrl,
+  type Network,
 } from "../shared/network.js";
 import {
   escapeInvisible,
@@ -199,7 +201,7 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
         break;
       case "-n":
       case "--network":
-        options.network = normalizeNetwork(requireValue(argv, ++index, arg));
+        options.network = requireValue(argv, ++index, arg);
         break;
       case "--offline":
         throw networkError("--offline mode enabled; refusing to make network requests");
@@ -348,9 +350,7 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
 
 function validateRequestOptions(options: RequestOptions) {
   validateUrl(options.url);
-  options.network = normalizeNetwork(
-    options.network ?? process.env.TEMPO_WALLET_NETWORK ?? "mainnet",
-  );
+  options.network = explicitNetwork(options.network)?.name;
   options.maxSpend ??= process.env.TEMPO_MAX_SPEND?.trim() || undefined;
   if (options.maxSpend !== undefined && !/^\d+(?:\.\d{1,6})?$/.test(options.maxSpend))
     throw usageError(
@@ -423,8 +423,9 @@ export function preparePaymentChallenge(
   } catch {
     throw paymentError("Malformed payment challenge");
   }
+  const expectedChain = requestNetwork(options).chainId;
   const networkChallenges = challenges.filter(
-    (offer) => paymentChallengeChainId(offer, options) === chainId(options.network),
+    (offer) => paymentChallengeChainId(offer, options) === expectedChain,
   );
   // Prefer offers on the selected network before applying intent preference.
   // Keep mismatched offers when none match so the network diagnostic remains explicit.
@@ -445,9 +446,9 @@ export function preparePaymentChallenge(
     throw paymentError("Server did not offer a compatible payment intent");
   const details = getRecord(challenge.request.methodDetails);
   const offeredChain = paymentChallengeChainId(challenge, options);
-  if (offeredChain !== chainId(options.network))
+  if (offeredChain !== expectedChain)
     throw paymentError(
-      `Payment network mismatch: expected chain ${chainId(options.network)}, received ${escapeInvisible(String(offeredChain))}`,
+      `Payment network mismatch: expected chain ${expectedChain}, received ${escapeInvisible(String(offeredChain))}`,
     );
   if (challenge.intent === "subscription" && options.maxSpend !== undefined)
     throw paymentError(
@@ -460,8 +461,7 @@ export function preparePaymentChallenge(
     throw paymentError("Payment challenge is expired or has an invalid expiry");
   enforceMaxSpend(challenge, options);
   validatePaymentAddresses(challenge);
-  const deployment =
-    machineTokenDeployments[chainId(options.network) as keyof typeof machineTokenDeployments];
+  const deployment = machineTokenDeployments[expectedChain as keyof typeof machineTokenDeployments];
   if (
     deployment &&
     stringValue(challenge.request.currency).toLowerCase() === deployment.token.toLowerCase()
@@ -494,6 +494,8 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
   let paid = false;
 
   if (response.status === 402) {
+    // Only payment depends on the network, so free requests never read the wallet store.
+    options.network = (await resolveNetwork(options.network)).name;
     if (options.dryRun) {
       const { challenge } = preparePaymentChallenge(response, options, request.url);
       const signer = privateKeySigner(options);
@@ -841,7 +843,7 @@ async function payAndRetryRequest(
     const getClient = identity.getClient;
     const methodOptions = {
       ...identity.methodOptions,
-      expectedChainId: chainId(options.network),
+      expectedChainId: requestNetwork(options).chainId,
       getClient,
       ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
     };
@@ -855,7 +857,7 @@ async function payAndRetryRequest(
 
     payment.onChallengeReceived(async ({ challenge, createCredential }) => {
       if (provider && providerState!.store.getState().accounts.length === 0)
-        await ensureProviderAccounts(provider, options.network);
+        await ensureProviderAccounts(provider, requestNetwork(options));
       return await createCredential(paymentContext(challenge, options) as never);
     });
 
@@ -1017,12 +1019,10 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
       createWalletClient({
         account,
         chain:
-          (requestedChainId ?? chainId(options.network)) === 42431
+          (requestedChainId ?? requestNetwork(options).chainId) === 42431
             ? Chain.tempoModerato
             : Chain.tempo,
-        transport: http(
-          rpcUrl((requestedChainId ?? chainId(options.network)) === 42431 ? "testnet" : "mainnet"),
-        ),
+        transport: http(rpcUrl(requestedChainId ?? requestNetwork(options).chainId)),
       });
     return {
       address: account.address,
@@ -1036,28 +1036,29 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
   const storedIdentity = await storedAccessKeyIdentity(walletState, options);
   if (storedIdentity) return storedIdentity;
 
+  const network = requestNetwork(options);
   const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
   if (activeAccount) {
     const staleKey = walletState.accessKeys.find((key) =>
       accessKeyMatches(key, {
-        chainId: chainId(options.network),
+        chainId: network.chainId,
         walletAddress: activeAccount.address,
       }),
     );
     const status = staleKey ? localAccessKeyStatus(staleKey) : "missing";
     throw authRefreshRequiredError(
       status === "pending" || status === "ready" ? "unusable" : status,
-      chainId(options.network) === 42431 ? "testnet" : "mainnet",
+      network.name,
     );
   }
 
-  const provider = createProvider({ network: options.network });
+  const provider = createProvider({ network });
   const providerState = provider as unknown as {
     store: { getState(): { accounts: { address: string }[]; activeAccount: number } };
   };
-  await ensureProviderAccounts(provider, options.network);
+  await ensureProviderAccounts(provider, network);
   const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) => {
-    const client = provider.getClient({ chainId: requestedChainId ?? chainId(options.network) });
+    const client = provider.getClient({ chainId: requestedChainId ?? network.chainId });
     const state = providerState.store.getState();
     const account = state.accounts[state.activeAccount];
     if (!account)
@@ -1092,20 +1093,22 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
   };
 }
 
-async function ensureProviderAccounts(
-  provider: Parameters<typeof connect>[0],
-  network: string | undefined,
-) {
+async function ensureProviderAccounts(provider: Parameters<typeof connect>[0], network: Network) {
   const accounts = (await provider.request({ method: "eth_accounts" })) as unknown[];
   if (accounts.length > 0) return;
-  await connect(provider, { network });
+  await connect(provider, network);
+}
+
+/** executeRequest resolves this before payment; mainnet only backs direct callers. */
+function requestNetwork(options: RequestOptions) {
+  return parseNetwork(options.network ?? "mainnet");
 }
 
 export async function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptions) {
   const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
   if (!activeAccount) return undefined;
 
-  const expectedChain = chainId(options.network);
+  const expectedChain = requestNetwork(options).chainId;
   for (const key of walletState.accessKeys) {
     if (key.chainId !== expectedChain) continue;
     if (key.keyType && key.keyType !== "secp256k1" && key.keyType !== "p256") continue;
@@ -1154,12 +1157,10 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
       createWalletClient({
         account,
         chain:
-          (requestedChainId ?? chainId(options.network)) === 42431
+          (requestedChainId ?? requestNetwork(options).chainId) === 42431
             ? Chain.tempoModerato
             : Chain.tempo,
-        transport: http(
-          rpcUrl((requestedChainId ?? chainId(options.network)) === 42431 ? "testnet" : "mainnet"),
-        ),
+        transport: http(rpcUrl(requestedChainId ?? requestNetwork(options).chainId)),
       });
     return {
       account,
@@ -1183,7 +1184,9 @@ function sessionDetails(
   const request = challenge.request as Record<string, unknown>;
   const methodDetails = getRecord(request.methodDetails);
   const resolvedChainId =
-    typeof methodDetails.chainId === "number" ? methodDetails.chainId : chainId(options.network);
+    typeof methodDetails.chainId === "number"
+      ? methodDetails.chainId
+      : requestNetwork(options).chainId;
   const amount = bigintField(request.amount, "amount");
   const token = stringValue(request.currency).toLowerCase();
   const payee = stringValue(request.recipient).toLowerCase();
@@ -1495,7 +1498,7 @@ async function assertSufficientSessionBalance(
   details: SessionDetails,
   depositRaw: bigint,
 ) {
-  const client = createTempoPublicClient(details.chainId === 42431 ? "testnet" : "mainnet");
+  const client = createTempoPublicClient(details.chainId);
   const balance = (
     await Actions.token.getBalance(client as never, {
       account: payer as `0x${string}`,
@@ -1537,7 +1540,7 @@ function sessionRecordFromOpenCredential(options: {
     escrow_contract: options.details.escrowContract,
     grace_ready_at: 0,
     last_used_at: now,
-    network: networkName(options.details.chainId) ?? `chain-${options.details.chainId}`,
+    network: networkName(options.details.chainId),
     origin: options.details.origin,
     payee: options.details.payee,
     payer: options.identity.address.toLowerCase(),
@@ -1580,9 +1583,8 @@ async function persistSessionReceipt(
 }
 
 async function readOnChainChannel(record: PersistedSessionRecord) {
-  const network = record.chain_id === 42431 ? "testnet" : "mainnet";
   if (record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase()) {
-    const state = (await createTempoPublicClient(network).readContract({
+    const state = (await createTempoPublicClient(record.chain_id).readContract({
       address: TempoChannel.address,
       abi: TempoAbis.tip20ChannelReserve,
       functionName: "getChannelState",
@@ -1605,7 +1607,7 @@ async function readOnChainChannel(record: PersistedSessionRecord) {
     };
   }
 
-  const value = (await createTempoPublicClient(network).readContract({
+  const value = (await createTempoPublicClient(record.chain_id).readContract({
     address: record.escrow_contract as `0x${string}`,
     abi: escrowAbi,
     functionName: "getChannel",
@@ -1681,13 +1683,13 @@ function normalizedChallengeChainId(
 ) {
   return typeof methodDetails.chainId === "number"
     ? methodDetails.chainId
-    : chainId(options.network);
+    : requestNetwork(options).chainId;
 }
 
 function paymentChallengeChainId(challenge: Challenge.Challenge, options: RequestOptions) {
   return (
     getRecord(challenge.request.methodDetails).chainId ??
-    (challenge.intent === "subscription" ? 42431 : chainId(options.network))
+    (challenge.intent === "subscription" ? 42431 : requestNetwork(options).chainId)
   );
 }
 
@@ -1765,7 +1767,7 @@ export function machChargeParameters(
   options: RequestOptions,
 ): NonNullable<Parameters<typeof tempo.charge>[0]> {
   if (!isMachPaymentToken(options.paymentToken)) return {};
-  const expectedChain = chainId(options.network);
+  const expectedChain = requestNetwork(options).chainId;
   const deployment = machineTokenDeployments[expectedChain as keyof typeof machineTokenDeployments];
   return {
     autoSwap: false,

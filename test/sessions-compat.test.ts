@@ -32,7 +32,12 @@ describe("sessions utilities", () => {
   it("lists no sessions when the local channel store is empty", async () => {
     await useTempHome();
 
-    expect(await listSessions()).toEqual({ sessions: [], total: 0 });
+    expect(await listSessions()).toEqual({
+      chain_id: 4217,
+      network: "tempo",
+      sessions: [],
+      total: 0,
+    });
   });
 
   it("rejects a dry-run close with no target via E_USAGE", async () => {

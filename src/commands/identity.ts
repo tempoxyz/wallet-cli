@@ -6,12 +6,14 @@ import { Actions } from "viem/tempo";
 import { version } from "../shared/constants.js";
 import {
   appUrl,
-  chainId,
   createTempoPublicClient,
-  networkName,
+  explicitNetwork,
+  networkFields,
+  resolveNetwork,
   tokenAddress,
   tokenDecimals,
   tokenSymbol,
+  type Network,
 } from "../shared/network.js";
 import { usageError } from "../shared/errors.js";
 import { channelsDbPath, runProcess } from "../shared/process.js";
@@ -42,43 +44,46 @@ export async function loginHandler(options: {
   network?: string | undefined;
   browser?: boolean | undefined;
 }) {
-  const state = await loadWalletState();
-  const activeAccount = state.accounts[state.activeAccount ?? 0];
-  const selectedChainId = chainId(options.network);
-  if (
-    activeAccount &&
-    state.chainId === selectedChainId &&
-    selectPaymentCapableAccessKey(state.accessKeys, {
-      chainId: selectedChainId,
-      walletAddress: activeAccount.address,
-    })
-  )
-    return await currentWhoamiOutput({
-      walletAddress: activeAccount.address,
-      chain: state.chainId ?? null,
-      accessKeys: state.accessKeys,
-      network: options.network,
-    });
+  const network = await resolveNetwork(options.network);
+  const cached = await cachedLoginOutput(network);
+  if (cached) return cached;
 
-  const provider = createProvider({
-    network: options.network,
-    noBrowser: options.browser === false,
-  });
-  const result = await connect(provider, options);
+  const provider = createProvider({ network, noBrowser: options.browser === false });
+  const result = await connect(provider, network);
 
   return {
     accounts: result.accounts.map((account) => account.address),
-    chainId: selectedChainId,
+    chainId: network.chainId,
   };
 }
 
+/** Whoami output when the active wallet already has a usable access key on `network`. */
+export async function cachedLoginOutput(network: Network) {
+  const state = await loadWalletState();
+  const activeAccount = state.accounts[state.activeAccount ?? 0];
+  if (
+    !activeAccount ||
+    state.chainId !== network.chainId ||
+    !selectPaymentCapableAccessKey(state.accessKeys, {
+      chainId: network.chainId,
+      walletAddress: activeAccount.address,
+    })
+  )
+    return undefined;
+  return await currentWhoamiOutput({
+    walletAddress: activeAccount.address,
+    chain: network.chainId,
+    accessKeys: state.accessKeys,
+  });
+}
+
 export async function refreshHandler(options: { network?: string | undefined }) {
-  const provider = createProvider({ network: options.network });
-  const result = await connect(provider, options);
+  const network = await resolveNetwork(options.network);
+  const result = await connect(createProvider({ network }), network);
 
   return {
     accounts: result.accounts.map((account) => account.address),
-    chainId: chainId(options.network),
+    chainId: network.chainId,
   };
 }
 
@@ -102,33 +107,32 @@ export async function whoamiHandler(options: {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   const walletAddress = activeAccount?.address ?? null;
-  const chain = chainId(options.network);
+  const network = await resolveNetwork(options.network);
 
   if (options.credits) warnCreditsAlias();
   const mach = options.mach || options.credits;
   if (mach) {
     if (!walletAddress)
       throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-    return { mach: await queryMachBalance({ chainId: chain, walletAddress }) };
+    return { mach: await queryMachBalance({ chainId: network.chainId, walletAddress }) };
   }
 
   return await currentWhoamiOutput({
     walletAddress,
-    chain,
+    chain: network.chainId,
     accessKeys: state.accessKeys,
-    network: options.network,
   });
 }
 
-export async function keysHandler() {
+/** Lists keys on every network unless `--network` or `TEMPO_WALLET_NETWORK` selects one. */
+export async function keysHandler(options: { network?: string | undefined } = {}) {
   const state = await loadWalletState();
-  const activeAccount = state.accounts[state.activeAccount ?? 0];
-  const chain = state.chainId ?? null;
+  const network = explicitNetwork(options.network);
 
   return await currentKeysOutput({
-    walletAddress: activeAccount?.address ?? null,
-    chain,
-    accessKeys: state.accessKeys,
+    accessKeys: network
+      ? state.accessKeys.filter((key) => key.chainId === network.chainId)
+      : state.accessKeys,
   });
 }
 
@@ -152,7 +156,7 @@ export async function updateAccessKeyHandler(
     browser?: boolean | undefined;
   },
   createUpdateProvider: (options: {
-    network?: string | undefined;
+    network: Network;
     noBrowser?: boolean | undefined;
   }) => UpdateAccessKeyProvider = createProvider,
   updateAccessKey: AccessKeyUpdater = updateAccessKeyThroughWallet,
@@ -161,12 +165,9 @@ export async function updateAccessKeyHandler(
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   if (!activeAccount)
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-  if (!walletStateMatchesNetwork(state, options.network))
-    throw usageError(
-      "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
-    );
+  const network = await walletNetwork(state, options.network);
 
-  const selectedChainId = state.chainId ?? chainId(options.network);
+  const selectedChainId = network.chainId;
   if (options.accessKey !== undefined && !isAddress(options.accessKey))
     throw usageError("Invalid access key address: expected a 0x address");
   const key = state.accessKeys.find(
@@ -189,10 +190,7 @@ export async function updateAccessKeyHandler(
   const walletAddress = activeAccount.address as Address;
   const accessKeyAddress = key.address as Address;
   const tokenAddress_resolved = token as Address;
-  const provider = createUpdateProvider({
-    network: selectedChainId === 42431 ? "testnet" : undefined,
-    noBrowser: options.browser === false,
-  });
+  const provider = createUpdateProvider({ network, noBrowser: options.browser === false });
 
   await updateAccessKey({
     provider,
@@ -224,7 +222,7 @@ export async function updateAccessKeyHandler(
     status: "success" as const,
     wallet: walletAddress.toLowerCase(),
     access_key: accessKeyAddress.toLowerCase(),
-    chain_id: selectedChainId,
+    ...networkFields(selectedChainId),
     token: tokenAddress_resolved.toLowerCase(),
     limit: formatUnits(limit, tokenDecimals()),
   };
@@ -269,9 +267,7 @@ type AccessKeyRevoker = (options: {
 export async function revokeHandler(
   args: { accessKey: string },
   options: { network?: string | undefined; "dry-run"?: boolean | undefined },
-  createRevokeProvider: (options: {
-    network?: string | undefined;
-  }) => RevokeProvider = createProvider,
+  createRevokeProvider: (options: { network: Network }) => RevokeProvider = createProvider,
   revokeAccessKey: AccessKeyRevoker = revokeAccessKeyOnChain,
 ) {
   if (!isAddress(args.accessKey))
@@ -281,17 +277,15 @@ export async function revokeHandler(
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   if (!activeAccount)
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-  if (!walletStateMatchesNetwork(state, options.network))
-    throw usageError(
-      "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
-    );
+  const network = await walletNetwork(state, options.network);
 
   const accessKeyAddress = args.accessKey as Address;
   const walletAddress = activeAccount.address as Address;
-  const selectedChainId = state.chainId ?? chainId(options.network);
+  const selectedChainId = network.chainId;
   const output = {
     access_key: accessKeyAddress.toLowerCase(),
     wallet: walletAddress.toLowerCase(),
+    ...networkFields(selectedChainId),
   };
 
   if (options["dry-run"])
@@ -301,7 +295,7 @@ export async function revokeHandler(
       local_key_removed: false,
     };
 
-  const provider = createRevokeProvider({ network: options.network });
+  const provider = createRevokeProvider({ network });
   await revokeAccessKey({
     provider,
     walletAddress,
@@ -362,14 +356,14 @@ function localKeyMatchesRevoke(options: {
 export async function debugHandler(options: { network?: string | undefined }) {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
-  const chain = chainId(options.network);
+  const network = await resolveNetwork(options.network);
 
   return {
     wallet_version: `${version} (local)`,
     request_version: `${version} (local)`,
     os: debugOs(),
     arch: debugArch(),
-    network: networkName(chain) ?? "tempo",
+    ...networkFields(network.chainId),
     wallet: activeAccount?.address.toLowerCase() ?? null,
     wallet_type: activeAccount ? "passkey" : "unknown",
     logged_in: Boolean(activeAccount),
@@ -384,14 +378,12 @@ export function completionsHandler() {
 
 export async function currentWhoamiOutput(options: {
   walletAddress: string | null;
-  chain: number | null;
+  chain: number;
   accessKeys: WalletState["accessKeys"];
-  network?: string | undefined;
 }) {
-  const selectedChain = options.chain ?? chainId(options.network);
   const paymentKey = options.walletAddress
     ? selectPaymentCapableAccessKey(options.accessKeys, {
-        chainId: selectedChain,
+        chainId: options.chain,
         walletAddress: options.walletAddress,
       })
     : undefined;
@@ -400,20 +392,16 @@ export async function currentWhoamiOutput(options: {
     (options.walletAddress
       ? options.accessKeys.find((candidate) =>
           accessKeyMatches(candidate, {
-            chainId: selectedChain,
+            chainId: options.chain,
             walletAddress: options.walletAddress!,
           }),
         )
       : undefined);
-  const token = key?.limits?.[0]?.token ?? tokenAddress(selectedChain);
+  const token = key?.limits?.[0]?.token ?? tokenAddress(options.chain);
   const [balance, assets, sessions] = await Promise.all([
-    tokenBalance({
-      token,
-      walletAddress: options.walletAddress,
-      network: options.network,
-    }),
+    tokenBalance({ chain: options.chain, token, walletAddress: options.walletAddress }),
     fetchWalletAssets({
-      chain: selectedChain,
+      chain: options.chain,
       walletAddress: options.walletAddress,
     }),
     sessionStats({ token, walletAddress: options.walletAddress }),
@@ -426,46 +414,28 @@ export async function currentWhoamiOutput(options: {
   return {
     ready: Boolean(options.walletAddress && paymentKey && balance),
     wallet: options.walletAddress?.toLowerCase() ?? null,
+    ...networkFields(options.chain),
     balance: {
       ...balanceOutput(balance, sessions, tokenSymbol(token)),
       ...(options.walletAddress && !balance ? { error: balanceQueryError } : {}),
     },
     balances,
-    key: currentKeyOutput({
-      key,
-      walletAddress: options.walletAddress,
-      chain: options.chain,
-      balance,
-      status: key ? localAccessKeyStatus(key) : null,
-    }),
+    key: key ? currentKeyOutput(key, balance) : null,
   };
 }
 
-export async function currentKeysOutput(options: {
-  walletAddress: string | null;
-  chain: number | null;
-  accessKeys: WalletState["accessKeys"];
-}) {
+/** Labels each key, and queries its balance, from the key's own chain and wallet. */
+export async function currentKeysOutput(options: { accessKeys: WalletState["accessKeys"] }) {
   const balances = new Map<string, TokenBalance | null>();
   const keys = [];
   for (const key of options.accessKeys) {
     const token = key.limits?.[0]?.token ?? tokenAddress(key.chainId);
-    const balance = balances.has(token.toLowerCase())
-      ? (balances.get(token.toLowerCase()) ?? null)
-      : await tokenBalance({
-          token,
-          walletAddress: options.walletAddress,
-          network: networkName(options.chain) === "tempo-moderato" ? "testnet" : undefined,
-        });
-    balances.set(token.toLowerCase(), balance);
-    const output = currentKeyOutput({
-      key,
-      walletAddress: options.walletAddress,
-      chain: options.chain,
-      balance,
-      status: localAccessKeyStatus(key),
-    });
-    if (output) keys.push(output);
+    const balanceKey = `${key.chainId}:${key.access}:${token}`.toLowerCase();
+    const balance = balances.has(balanceKey)
+      ? (balances.get(balanceKey) ?? null)
+      : await tokenBalance({ chain: key.chainId, token, walletAddress: key.access });
+    balances.set(balanceKey, balance);
+    keys.push(currentKeyOutput(key, balance));
   }
 
   return {
@@ -474,31 +444,21 @@ export async function currentKeysOutput(options: {
   };
 }
 
-function currentKeyOutput(options: {
-  key: WalletState["accessKeys"][number] | undefined;
-  walletAddress: string | null;
-  chain: number | null;
-  balance: TokenBalance | null;
-  status: string | null;
-}) {
-  if (!options.key) return null;
-  const limit = options.key.limits?.[0];
-  const spendingMode = permissionMode(options.key.limits, options.key.permissionSemantics);
-  const callMode = permissionMode(options.key.scopes, options.key.permissionSemantics);
-  const token = limit?.token ?? tokenAddress(options.chain ?? options.key.chainId);
-  const spendingLimits = accessKeyLimitsOutput(options.key);
+function currentKeyOutput(key: WalletState["accessKeys"][number], balance: TokenBalance | null) {
+  const limit = key.limits?.[0];
+  const spendingMode = permissionMode(key.limits, key.permissionSemantics);
+  const callMode = permissionMode(key.scopes, key.permissionSemantics);
+  const token = limit?.token ?? tokenAddress(key.chainId);
+  const spendingLimits = accessKeyLimitsOutput(key);
   return {
-    address: options.key.address.toLowerCase(),
-    chain_id: options.key.chainId,
-    network: networkName(options.chain) ?? networkName(options.key.chainId) ?? "tempo",
-    wallet_address: options.walletAddress?.toLowerCase() ?? null,
+    address: key.address.toLowerCase(),
+    ...networkFields(key.chainId),
+    wallet_address: key.access.toLowerCase(),
     symbol: tokenSymbol(token),
     token: token.toLowerCase(),
     balance:
-      options.balance && options.balance.token.toLowerCase() === token.toLowerCase()
-        ? options.balance.formatted
-        : null,
-    ...(options.walletAddress && !options.balance ? { balance_error: balanceQueryError } : {}),
+      balance && balance.token.toLowerCase() === token.toLowerCase() ? balance.formatted : null,
+    ...(!balance ? { balance_error: balanceQueryError } : {}),
     spending_limit: {
       mode: spendingMode,
       unlimited: spendingMode === "unknown" ? null : spendingMode === "unrestricted",
@@ -514,9 +474,9 @@ function currentKeyOutput(options: {
     },
     spending_limits: spendingLimits,
     call_permissions: callMode,
-    scopes: accessKeyScopesOutput(options.key),
-    status: options.status,
-    expires_at: formatUnixTimestamp(options.key.expiry),
+    scopes: accessKeyScopesOutput(key),
+    status: localAccessKeyStatus(key),
+    expires_at: formatUnixTimestamp(key.expiry),
   };
 }
 
@@ -670,19 +630,18 @@ type SessionStats = {
 };
 
 async function tokenBalance(options: {
-  token: string | undefined;
+  chain: number;
+  token: string;
   walletAddress: string | null;
-  network?: string | undefined;
 }): Promise<TokenBalance | null> {
   if (!options.walletAddress) return null;
-  const token = options.token ?? tokenAddress(chainId(options.network));
   try {
-    const client = createTempoPublicClient(options.network, {
+    const client = createTempoPublicClient(options.chain, {
       timeout: statusQueryTimeout,
       retryCount: 0,
     });
     const raw = await client.readContract({
-      address: token as Address,
+      address: options.token as Address,
       abi: erc20Abi,
       functionName: "balanceOf",
       args: [options.walletAddress as Address],
@@ -690,8 +649,8 @@ async function tokenBalance(options: {
     return {
       formatted: formatUnits(raw, 6),
       raw,
-      symbol: tokenSymbol(token),
-      token,
+      symbol: tokenSymbol(options.token),
+      token: options.token,
     };
   } catch {
     return null;
@@ -767,8 +726,12 @@ function debugArch() {
   return arch;
 }
 
-function walletStateMatchesNetwork(state: WalletState, network: string | undefined) {
-  if (!network) return true;
-  const selectedChainId = chainId(network);
-  return state.chainId === selectedChainId;
+/** Key management signs through the wallet session, so it must target the logged-in chain. */
+async function walletNetwork(state: WalletState, flag: string | undefined) {
+  const network = await resolveNetwork(flag);
+  if (state.chainId !== network.chainId)
+    throw usageError(
+      "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
+    );
+  return network;
 }

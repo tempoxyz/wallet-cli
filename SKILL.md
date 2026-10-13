@@ -32,7 +32,7 @@ If the human is interacting from another device or chat surface while the CLI ru
 Provide:
 
 - Installation location and version (`$HOME/.tempo/bin/tempo --version`).
-- Wallet status from `tempo wallet whoami` (address and balance; include key/network fields when present).
+- Wallet status from `tempo wallet whoami` (address, network, and balance; include key fields when present).
 - Check MACH with `tempo wallet whoami --mach`. Fund with `tempo wallet fund --mach --amount <USD>`; MACH is an on-chain six-decimal token, not a legacy credit balance.
 - If the user is on another device than the CLI host, use `tempo wallet fund --mach --no-browser --no-wait --format json` and hand the fund URL back directly instead of trying to open a browser locally.
 - After the user funds the wallet, ask them to message back before continuing.

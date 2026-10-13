@@ -101,9 +101,7 @@ describe("wallet store", () => {
         }),
       );
       const state = await loadWalletState();
-      const result = keysOutput.parse(
-        await currentKeysOutput({ walletAddress: null, chain: 4217, accessKeys: state.accessKeys }),
-      );
+      const result = keysOutput.parse(await currentKeysOutput({ accessKeys: state.accessKeys }));
       expect(result.keys[0]).toMatchObject({
         spending_limit: { mode, unlimited, limit, remaining: null, spent: null },
         call_permissions: mode,
@@ -131,8 +129,6 @@ describe("wallet store", () => {
       const state = await loadWalletState();
       expect(state.accessKeys[0]?.permissionSemantics).toBeUndefined();
       const result = await currentKeysOutput({
-        walletAddress: null,
-        chain: 4217,
         accessKeys: state.accessKeys,
       });
       expect(result.keys[0]).toMatchObject({
@@ -432,7 +428,6 @@ describe("identity commands", () => {
       walletAddress: null,
       chain: 42431,
       accessKeys: [],
-      network: "testnet",
     });
 
     expect(result.balance.symbol).toBe("PathUSD");
@@ -736,8 +731,6 @@ limit = "100000000"
 
   it("keys output includes all spending limits, periods, scopes, and local status", async () => {
     const result = await currentKeysOutput({
-      walletAddress: null,
-      chain: 4217,
       accessKeys: [
         {
           ...walletState().accessKeys[0]!,
@@ -791,8 +784,6 @@ limit = "100000000"
 
   it("keys output preserves explicit empty scopes", async () => {
     const result = await currentKeysOutput({
-      walletAddress: null,
-      chain: 4217,
       accessKeys: [
         {
           ...walletState().accessKeys[0]!,
@@ -865,8 +856,6 @@ limit = "100000000"
     },
   ])("keys output reports $name local key status", async ({ overrides, status }) => {
     const result = await currentKeysOutput({
-      walletAddress: null,
-      chain: 4217,
       accessKeys: [{ ...walletState().accessKeys[0]!, ...overrides }],
     });
 
@@ -888,6 +877,8 @@ limit = "100000000"
       status: "dry_run",
       wallet: testWallet.toLowerCase(),
       access_key: testAccessKey.toLowerCase(),
+      chain_id: 4217,
+      network: "tempo",
       local_key_removed: false,
     });
     expect(createProvider).not.toHaveBeenCalled();
@@ -924,6 +915,8 @@ limit = "100000000"
       status: "success",
       wallet: testWallet.toLowerCase(),
       access_key: testAccessKey.toLowerCase(),
+      chain_id: 4217,
+      network: "tempo",
       local_key_removed: true,
     });
     expect((await loadWalletState()).accessKeys).toEqual([]);
@@ -978,7 +971,10 @@ limit = "100000000"
 
     const result = await updateAccessKeyHandler({ limit: "250", browser: false }, createProvider);
 
-    expect(createProvider).toHaveBeenCalledWith({ network: undefined, noBrowser: true });
+    expect(createProvider).toHaveBeenCalledWith({
+      network: { name: "mainnet", chainId: 4217 },
+      noBrowser: true,
+    });
     expect(request).toHaveBeenCalledWith({
       method: "wallet_updateAccessKey",
       params: [
@@ -995,6 +991,7 @@ limit = "100000000"
       wallet: testWallet.toLowerCase(),
       access_key: testAccessKey.toLowerCase(),
       chain_id: 4217,
+      network: "tempo",
       token: usdc.toLowerCase(),
       limit: "250",
     });
@@ -1022,8 +1019,6 @@ limit = "100000000"
     await updateAccessKeyHandler({ limit: "250", token: usdc }, () => ({ request }));
     const state = await loadWalletState();
     const result = await currentKeysOutput({
-      walletAddress: null,
-      chain: 4217,
       accessKeys: state.accessKeys,
     });
     expect(result.keys[0]).toMatchObject({
@@ -1046,7 +1041,10 @@ limit = "100000000"
 
     await updateAccessKeyHandler({ limit: "250" }, createProvider);
 
-    expect(createProvider).toHaveBeenCalledWith({ network: "testnet", noBrowser: false });
+    expect(createProvider).toHaveBeenCalledWith({
+      network: { name: "testnet", chainId: 42431 },
+      noBrowser: false,
+    });
   });
 
   it("preserves local limits when wallet approval fails", async () => {
@@ -1190,7 +1188,7 @@ limit = "100000000"
     vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
     const request = vi.fn().mockResolvedValue({ accounts: [] });
 
-    await connect({ request } as never);
+    await connect({ request } as never, { name: "mainnet", chainId: 4217 });
 
     expect(request).toHaveBeenCalledWith({
       method: "wallet_connect",

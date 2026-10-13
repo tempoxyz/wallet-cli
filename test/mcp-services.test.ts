@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { cliBundle } from "./cli-bundle.js";
+import { useTempHome, walletState, writeWalletState } from "./helpers.js";
 
 const root = resolve(import.meta.dirname, "..");
 const mockFetchModule = resolve(root, "test", "fixtures", "mock-services-fetch.mjs");
@@ -14,6 +15,10 @@ const initParams = {
   clientInfo: { name: "test-client", version: "1.0.0" },
 };
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("MCP tools", () => {
   it("exposes access key commands as nested tools", async () => {
     const response = await mcpRequest<{ tools: { name: string }[] }>("tools/list", {});
@@ -22,6 +27,33 @@ describe("MCP tools", () => {
     const names = response.result.tools.map((tool) => tool.name);
     expect(names).toEqual(expect.arrayContaining(["keys_list", "keys_update"]));
     expect(names).not.toContain("keys");
+  });
+
+  it("accepts the network global as a tool option on every command", async () => {
+    const response = await mcpRequest<{
+      tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[];
+    }>("tools/list", {});
+
+    expect(response.error).toBeUndefined();
+    for (const tool of response.result.tools)
+      expect(tool.inputSchema.properties, tool.name).toHaveProperty("network");
+  });
+
+  it.each([
+    { source: "a tool option", stored: 4217, arguments: { network: "testnet" } },
+    { source: "the logged-in chain", stored: 42431, arguments: {} },
+  ])("resolves the tool network from $source", async ({ stored, arguments: args }) => {
+    await useTempHome();
+    vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+    await writeWalletState(walletState({ chainId: stored }));
+
+    const response = await mcpCall({ name: "debug", arguments: args });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result.structuredContent).toMatchObject({
+      chain_id: 42431,
+      network: "tempo-moderato",
+    });
   });
 
   it("keeps normal CLI list JSON as a top-level array", async () => {

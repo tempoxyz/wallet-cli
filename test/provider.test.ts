@@ -35,7 +35,7 @@ afterEach(() => {
 
 describe("provider", () => {
   it("targets the configured wallet device auth endpoint", () => {
-    createProvider({ network: "testnet", noBrowser: true });
+    createProvider({ network: { name: "testnet", chainId: 42431 }, noBrowser: true });
 
     expect(mocks.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -47,7 +47,7 @@ describe("provider", () => {
 
   it("prints the device confirmation code", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    createProvider({ noBrowser: true });
+    createProvider({ network: { name: "mainnet", chainId: 4217 }, noBrowser: true });
     const options = mocks.create.mock.calls[0]![0];
 
     await options.open("https://wallet.tempo.xyz/api/auth/device/verify?user_code=ABCDEFGH", {

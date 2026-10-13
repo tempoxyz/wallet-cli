@@ -3,7 +3,12 @@ import { Actions, Addresses } from "viem/tempo";
 
 import { paymentOutcomeUnknownError, usageError } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
-import { chainId, createTempoPublicClient } from "../shared/network.js";
+import {
+  createTempoPublicClient,
+  networkFields,
+  resolveNetwork,
+  type Network,
+} from "../shared/network.js";
 import { cleanStoredScalar, getRecord, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { selectPaymentCapableAccessKey } from "../wallet/access-key.js";
@@ -27,7 +32,7 @@ type SwapDependencies = {
   submit: (options: {
     calls: readonly { data: `0x${string}`; to: `0x${string}` }[];
     feeToken: `0x${string}`;
-    network?: string | undefined;
+    network: Network;
   }) => Promise<string>;
 };
 
@@ -65,13 +70,14 @@ export async function swapTokens(
 
   const tokenIn = input.args.tokenIn.toLowerCase() as `0x${string}`;
   const tokenOut = input.args.tokenOut.toLowerCase() as `0x${string}`;
-  const selectedChainId = chainId(input.options.network);
+  const network = await resolveNetwork(input.options.network);
+  const selectedChainId = network.chainId;
   const mach = machToken(selectedChainId).toLowerCase();
   if (tokenIn === mach || tokenOut === mach)
     throw usageError(
       "MACH cannot be swapped. Use 'tempo request --mach' to pay for supported services.",
     );
-  const runtime = { ...defaultDependencies(input.options.network), ...dependencies };
+  const runtime = { ...defaultDependencies(network), ...dependencies };
   const [metadataIn, metadataOut] = await Promise.all([
     runtime.getMetadata(tokenIn),
     runtime.getMetadata(tokenOut),
@@ -121,7 +127,7 @@ export async function swapTokens(
     !unrestricted && (accessKeyLimitRaw === null || accessKeyLimitRaw < maxAmountIn);
   const feeToken = (input.options["fee-token"]?.toLowerCase() ?? tokenIn) as `0x${string}`;
   const output = {
-    chain_id: selectedChainId,
+    ...networkFields(selectedChainId),
     mode: exactOut ? ("exact_out" as const) : ("exact_in" as const),
     from: activeAccount.address.toLowerCase(),
     dex: Addresses.stablecoinDex.toLowerCase(),
@@ -149,7 +155,7 @@ export async function swapTokens(
       `Active access key cannot spend ${formatUnits(maxAmountIn, metadataIn.decimals)} ${metadataIn.symbol}. Ask the wallet owner to run 'tempo wallet keys update --token ${tokenIn} --limit ${formatUnits(maxAmountIn, metadataIn.decimals)}' and retry.`,
     );
 
-  const txHash = await runtime.submit({ calls, feeToken, network: input.options.network });
+  const txHash = await runtime.submit({ calls, feeToken, network });
   return { status: "success" as const, tx_hash: txHash, ...output };
 }
 
@@ -177,8 +183,8 @@ function parseAccessKeyLimit(value: string | undefined) {
   }
 }
 
-function defaultDependencies(network: string | undefined): SwapDependencies {
-  const client = createTempoPublicClient(network);
+function defaultDependencies(network: Network): SwapDependencies {
+  const client = createTempoPublicClient(network.chainId);
   return {
     async getBalance(options) {
       return (await Actions.token.getBalance(client, options)).amount;

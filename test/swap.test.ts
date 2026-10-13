@@ -190,7 +190,7 @@ describe("swapTokens", () => {
     expect(runtime.submit).toHaveBeenCalledWith({
       calls: expect.any(Array),
       feeToken: usdcToken,
-      network: undefined,
+      network: { name: "mainnet", chainId: 4217 },
     });
   });
 

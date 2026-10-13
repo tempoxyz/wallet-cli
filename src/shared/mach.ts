@@ -2,7 +2,7 @@ import { machineTokenDeployments } from "mppx/tempo";
 import { erc20Abi, formatUnits, isAddress, parseUnits } from "viem";
 
 import { usageError } from "./errors.js";
-import { createTempoPublicClient } from "./network.js";
+import { createTempoPublicClient, networkFields } from "./network.js";
 
 export const machDecimals = 6;
 
@@ -49,13 +49,10 @@ export function requireWalletAddress(value: string) {
 export async function queryMachBalance(options: { chainId: number; walletAddress: string }) {
   const token = machToken(options.chainId);
   const wallet = requireWalletAddress(options.walletAddress);
-  const rawBalance = await createTempoPublicClient(
-    options.chainId === 42431 ? "testnet" : "mainnet",
-    {
-      timeout: 10_000,
-      retryCount: 0,
-    },
-  ).readContract({
+  const rawBalance = await createTempoPublicClient(options.chainId, {
+    timeout: 10_000,
+    retryCount: 0,
+  }).readContract({
     abi: erc20Abi,
     address: token,
     functionName: "balanceOf",
@@ -63,7 +60,7 @@ export async function queryMachBalance(options: { chainId: number; walletAddress
   });
   return {
     wallet,
-    chain_id: options.chainId,
+    ...networkFields(options.chainId),
     token,
     symbol: "MACH" as const,
     decimals: machDecimals,

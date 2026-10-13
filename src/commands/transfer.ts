@@ -6,7 +6,7 @@ import { Mppx, tempo } from "mppx/client";
 import { Actions } from "viem/tempo";
 
 import { paymentOutcomeUnknownError, usageError } from "../shared/errors.js";
-import { chainId, tokenDecimals, tokenSymbol } from "../shared/network.js";
+import { networkFields, resolveNetwork, tokenDecimals, tokenSymbol } from "../shared/network.js";
 import { escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -48,12 +48,12 @@ export async function transferTokens(options: {
   if (!from)
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
 
-  const chain = chainId(options.options.network);
+  const network = await resolveNetwork(options.options.network);
   const token = args.token.toLowerCase() as `0x${string}`;
   const to = args.to.toLowerCase() as `0x${string}`;
   const fromAddress = from.toLowerCase();
   const outputBase = {
-    chain_id: chain,
+    ...networkFields(network.chainId),
     amount: args.amount,
     symbol: tokenSymbol(args.token),
     token,
@@ -68,7 +68,7 @@ export async function transferTokens(options: {
     };
   }
 
-  const provider = createProvider({ network: options.options.network });
+  const provider = createProvider({ network });
   const call = Actions.token.transfer.call(provider.getClient() as never, {
     amount,
     token,
@@ -145,12 +145,14 @@ export async function transferMach(options: {
   const maxSpend =
     flags["max-spend"] ??
     (cents !== undefined ? formatUnits(BigInt(cents) * 10_000n, 6) : undefined);
+  const network = await resolveNetwork(flags.network);
   const requestOptions = parseRequestArgs([
     "--payment-token",
     "MACH",
     "--payment-intent",
     "charge",
-    ...(flags.network ? ["--network", flags.network] : []),
+    "--network",
+    network.name,
     ...(maxSpend !== undefined ? ["--max-spend", maxSpend] : []),
     ...(flags["dry-run"] ? ["--dry-run"] : []),
     "https://mpp.invalid",
@@ -175,7 +177,7 @@ export async function transferMach(options: {
     amount_raw: String(challenge.request.amount),
     token: "MACH" as const,
     settlement_currency: String(challenge.request.currency),
-    chain_id: chainId(requestOptions.network),
+    ...networkFields(network.chainId),
     challenge_id: challenge.id,
     max_spend: requestOptions.maxSpend ?? null,
   };
@@ -188,7 +190,7 @@ export async function transferMach(options: {
       tempo.charge({
         ...identity.methodOptions,
         getClient: identity.getClient,
-        expectedChainId: chainId(requestOptions.network),
+        expectedChainId: network.chainId,
         ...machChargeParameters(requestOptions),
         clientId: flags["mpp-client-id"],
         mode: "push",

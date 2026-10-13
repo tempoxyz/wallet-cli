@@ -85,9 +85,14 @@ For reusable sessions, execution also checks cumulative spending against the cap
 Capped recurring subscriptions are rejected because a per-period authorization cannot enforce
 a cumulative cap.
 
-`--network` overrides `TEMPO_WALLET_NETWORK`; the default is mainnet. `tempo`/`mainnet`
-and `tempo-moderato`/`moderato`/`testnet` are aliases. Unknown networks and payment
-challenges for a different chain are rejected before payment.
+Every `tempo wallet` and `tempo request` command selects its network the same way:
+`--network`/`-n` (anywhere on the command line), then `TEMPO_WALLET_NETWORK`, then the
+network of the logged-in wallet, then mainnet. After `tempo wallet login -n testnet`, later
+commands stay on testnet without repeating the flag. `tempo`/`mainnet` and
+`tempo-moderato`/`moderato`/`testnet` are aliases. Unknown networks and payment challenges for
+a different chain are rejected before payment. Network-scoped JSON output reports `chain_id`
+and `network`. `tempo wallet keys list` shows keys on every network, each labeled with its own
+chain and wallet, unless `--network` or `TEMPO_WALLET_NETWORK` selects one.
 
 When a server offers both reusable sessions and one-time charges, choose an intent explicitly:
 

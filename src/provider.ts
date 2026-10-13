@@ -3,16 +3,14 @@ import { Provider, Storage } from "accounts/cli";
 import { toHex } from "viem";
 
 import { openExternal } from "./shared/process.js";
-import { appUrl, chainId, isTestnet } from "./shared/network.js";
+import { appUrl, type Network } from "./shared/network.js";
 
 export const accessKeyAuthorizationSeconds = 30 * 86_400;
 
-export function createProvider(
-  options: {
-    network?: string | undefined;
-    noBrowser?: boolean | undefined;
-  } = {},
-): CoreProvider.Provider {
+export function createProvider(options: {
+  network: Network;
+  noBrowser?: boolean | undefined;
+}): CoreProvider.Provider {
   return Provider.create({
     ...(process.env.TEMPO_AUTH_URL ? { host: new URL("/api/auth/device", appUrl).toString() } : {}),
     open(url, prompt) {
@@ -24,20 +22,17 @@ export function createProvider(
     // Pull mode is the local-account-friendly MPP path for a CLI.
     mpp: { mode: "pull" },
     storage: Storage.filesystem(),
-    testnet: isTestnet(options.network),
+    testnet: options.network.name === "testnet",
   });
 }
 
-export async function connect(
-  provider: CoreProvider.Provider,
-  options: { network?: string | undefined } = {},
-) {
+export async function connect(provider: CoreProvider.Provider, network: Network) {
   return provider.request({
     method: "wallet_connect",
     params: [
       {
         // Persisted SDK state can override the provider's testnet default.
-        chainId: toHex(chainId(options.network)),
+        chainId: toHex(network.chainId),
         capabilities: {
           authorizeAccessKey: {
             expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,

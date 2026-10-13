@@ -196,6 +196,7 @@ describe("MACH whoami", () => {
         mach: {
           wallet,
           chain_id: 4217,
+          network: "tempo",
           token: machToken(4217),
           symbol: "MACH",
           decimals: 6,
