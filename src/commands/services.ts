@@ -32,7 +32,7 @@ export async function fetchServices(
   if (options.serviceId) {
     const matches = services.filter((item) => item.summary.id === options.serviceId);
     if (matches.length > 1)
-      throw new Error(`Service directory lists '${options.serviceId}' more than once`);
+      throw usageError(`Service directory lists '${options.serviceId}' more than once`);
     const service = matches[0];
     if (!service)
       throw usageError(`Configuration missing: service '${options.serviceId}' not found`);

@@ -279,9 +279,10 @@ describe("fetchServices", () => {
       ],
     });
 
-    await expect(fetchServices({ serviceId: "stableenrich" })).rejects.toThrow(
-      "Service directory lists 'stableenrich' more than once",
-    );
+    await expect(fetchServices({ serviceId: "stableenrich" })).rejects.toMatchObject({
+      code: "E_USAGE",
+      message: "Service directory lists 'stableenrich' more than once",
+    });
   });
 
   it("reads canonical fields when lookalike keys are present", async () => {
