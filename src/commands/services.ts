@@ -1,6 +1,6 @@
 import { version } from "../shared/constants.js";
 import { usageError } from "../shared/errors.js";
-import { getArray, getRecord, sanitizeJson, stringValue } from "../shared/utils.js";
+import { getArray, getRecord, sanitizeText, stringValue } from "../shared/utils.js";
 
 type ServiceSummary = {
   id: string;
@@ -18,6 +18,9 @@ type ServiceDetail = ServiceSummary & {
   endpoints?: unknown[] | undefined;
 };
 
+// Ids select a service, so they are matched raw and must be plain slugs.
+const serviceIdPattern = /^[a-z0-9][a-z0-9._-]*$/i;
+
 export async function fetchServices(
   options: {
     search?: string | undefined;
@@ -27,7 +30,10 @@ export async function fetchServices(
   const services = await fetchServiceEntries();
 
   if (options.serviceId) {
-    const service = services.find((item) => item.summary.id === options.serviceId);
+    const matches = services.filter((item) => item.summary.id === options.serviceId);
+    if (matches.length > 1)
+      throw new Error(`Service directory lists '${options.serviceId}' more than once`);
+    const service = matches[0];
     if (!service)
       throw usageError(`Configuration missing: service '${options.serviceId}' not found`);
     return service.detail;
@@ -54,18 +60,20 @@ async function fetchServiceEntries(): Promise<
 
   const body = getRecord((await response.json()) as unknown);
   const services = getArray(body.services).map((service) => {
-    const item = getRecord(sanitizeJson(service));
-    const serviceUrl = stringValue(item.serviceUrl ?? item.service_url ?? item.url);
+    const item = getRecord(service);
+    const serviceUrl = displayText(item.serviceUrl ?? item.service_url ?? item.url);
     const summary = {
       id: stringValue(item.id),
-      name: stringValue(item.name),
-      ...(stringValue(item.url) ? { url: stringValue(item.url) } : {}),
+      name: displayText(item.name),
+      ...(displayText(item.url) ? { url: displayText(item.url) } : {}),
       ...(serviceUrl ? { service_url: serviceUrl } : {}),
-      ...(stringValue(item.description) ? { description: stringValue(item.description) } : {}),
+      ...(displayText(item.description) ? { description: displayText(item.description) } : {}),
       categories: getArray(item.categories).flatMap((value) =>
-        typeof value === "string" ? [value] : [],
+        typeof value === "string" ? [sanitizeText(value)] : [],
       ),
-      tags: getArray(item.tags).flatMap((value) => (typeof value === "string" ? [value] : [])),
+      tags: getArray(item.tags).flatMap((value) =>
+        typeof value === "string" ? [sanitizeText(value)] : [],
+      ),
       ...(typeof item.endpointCount === "number"
         ? { endpoint_count: item.endpointCount }
         : typeof item.endpoint_count === "number"
@@ -85,7 +93,7 @@ async function fetchServiceEntries(): Promise<
       },
     };
   });
-  return services;
+  return services.filter((service) => serviceIdPattern.test(service.summary.id));
 }
 
 function matchesSearch(service: ServiceSummary, query: string) {
@@ -107,10 +115,10 @@ function serviceSearchFields(service: ServiceSummary) {
 function serviceDocs(value: unknown) {
   const docs = getRecord(value);
   return {
-    homepage: stringValue(docs.homepage) || null,
-    llmsTxt: stringValue(docs.llmsTxt ?? docs.llms_txt) || null,
-    openapi: stringValue(docs.openapi) || null,
-    apiReference: stringValue(docs.apiReference ?? docs.api_reference) || null,
+    homepage: displayText(docs.homepage) || null,
+    llmsTxt: displayText(docs.llmsTxt ?? docs.llms_txt) || null,
+    openapi: displayText(docs.openapi) || null,
+    apiReference: displayText(docs.apiReference ?? docs.api_reference) || null,
   };
 }
 
@@ -118,17 +126,21 @@ function serviceEndpoint(value: unknown) {
   const endpoint = getRecord(value);
   const payment = getRecord(endpoint.payment);
   return {
-    method: stringValue(endpoint.method),
-    path: stringValue(endpoint.path),
-    description: stringValue(endpoint.description),
+    method: displayText(endpoint.method),
+    path: displayText(endpoint.path),
+    description: displayText(endpoint.description),
     payment: {
-      intent: stringValue(payment.intent),
-      amount: stringValue(payment.amount),
+      intent: displayText(payment.intent),
+      amount: displayText(payment.amount),
       decimals: typeof payment.decimals === "number" ? payment.decimals : null,
-      unitType: payment.unitType ?? payment.unit_type ?? null,
-      description: stringValue(payment.description),
-      dynamic: payment.dynamic ?? null,
+      unitType: displayText(payment.unitType ?? payment.unit_type) || null,
+      description: displayText(payment.description),
+      dynamic: typeof payment.dynamic === "boolean" ? payment.dynamic : null,
     },
-    docs: stringValue(endpoint.docs) || null,
+    docs: displayText(endpoint.docs) || null,
   };
+}
+
+function displayText(value: unknown) {
+  return sanitizeText(stringValue(value));
 }

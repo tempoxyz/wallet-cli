@@ -209,11 +209,11 @@ describe("fetchServices", () => {
     });
   });
 
-  it("strips terminal escapes and invisible characters from directory entries", async () => {
+  it("strips terminal escapes and invisible characters from directory text", async () => {
     mockFetchOk({
       services: [
         {
-          id: "evil\u200b",
+          id: "weather",
           name: "\u001b[2J\u001b[HTrusted API",
           description: "Safe\u001b]8;;https://evil.example\u0007 link\u001b]8;;\u0007\u202e",
           categories: ["data\u0007"],
@@ -223,7 +223,7 @@ describe("fetchServices", () => {
               method: "GET",
               path: "/now\u001b[8m",
               description: "Current\u009b31m weather",
-              payment: { amount: "100", unitType: { label: "us\u200bdc" } },
+              payment: { amount: "100", unitType: "us\u200bdc" },
             },
           ],
         },
@@ -232,7 +232,7 @@ describe("fetchServices", () => {
 
     expect(await fetchServiceList()).toEqual([
       {
-        id: "evil",
+        id: "weather",
         name: "Trusted API",
         description: "Safe link",
         categories: ["data"],
@@ -240,15 +240,80 @@ describe("fetchServices", () => {
         endpoint_count: 1,
       },
     ]);
-    expect(await fetchServices({ serviceId: "evil" })).toMatchObject({
+    expect(await fetchServices({ serviceId: "weather" })).toMatchObject({
       endpoints: [
         {
           path: "/now",
           description: "Current weather",
-          payment: { amount: "100", unitType: { label: "usdc" } },
+          payment: { amount: "100", unitType: "usdc" },
         },
       ],
     });
+  });
+
+  it.each([
+    "stable\u0001enrich",
+    "stable\u200benrich",
+    "stable\u001b[0menrich",
+    "",
+    " stableenrich",
+  ])("skips a directory entry with the non-slug id %j instead of matching it", async (id) => {
+    mockFetchOk({
+      services: [
+        { id, name: "Impostor", serviceUrl: "https://attacker.example" },
+        { id: "stableenrich", name: "StableEnrich", serviceUrl: "https://stableenrich.dev" },
+      ],
+    });
+
+    expect((await fetchServiceList()).map((service) => service.id)).toEqual(["stableenrich"]);
+    expect(await fetchServices({ serviceId: "stableenrich" })).toMatchObject({
+      service_url: "https://stableenrich.dev",
+    });
+  });
+
+  it("refuses to choose between directory entries that share an id", async () => {
+    mockFetchOk({
+      services: [
+        { id: "stableenrich", name: "Impostor", serviceUrl: "https://attacker.example" },
+        { id: "stableenrich", name: "StableEnrich", serviceUrl: "https://stableenrich.dev" },
+      ],
+    });
+
+    await expect(fetchServices({ serviceId: "stableenrich" })).rejects.toThrow(
+      "Service directory lists 'stableenrich' more than once",
+    );
+  });
+
+  it("reads canonical fields when lookalike keys are present", async () => {
+    mockFetchOk({
+      services: [
+        {
+          id: "official",
+          "i\u200bd": "other",
+          name: "Official",
+          "na\u200bme": "Impostor",
+          serviceUrl: "https://official.example",
+        },
+      ],
+    });
+
+    expect(await fetchServiceList()).toEqual([
+      expect.objectContaining({
+        id: "official",
+        name: "Official",
+        service_url: "https://official.example",
+      }),
+    ]);
+  });
+
+  it("ignores deeply nested fields it does not read", async () => {
+    let nested: unknown = [];
+    for (let depth = 0; depth < 20_000; depth++) nested = [nested];
+    mockFetchOk({ services: [{ id: "weather", name: "Weather API", extra: nested }] });
+
+    expect(await fetchServiceList()).toEqual([
+      expect.objectContaining({ id: "weather", name: "Weather API" }),
+    ]);
   });
 
   it("throws E_USAGE for an unknown service id", async () => {
