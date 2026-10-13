@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { formatUnits, parseUnits } from "viem";
+import { formatUnits, isAddress, parseUnits, zeroAddress } from "viem";
 import { Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 import { Actions } from "viem/tempo";
@@ -27,8 +27,18 @@ export async function transferTokens(options: {
   };
 }) {
   const { args } = options;
-  if (!args.amount || !args.token || !args.to)
-    throw new Error("amount, token, and to are required");
+  if (args.amount === undefined || args.token === undefined || args.to === undefined) {
+    const missing = (["amount", "token", "to"] as const).filter((name) => args[name] === undefined);
+    throw usageError(
+      `missing ${missing.map((name) => `<${name}>`).join(", ")}; usage: tempo wallet transfer <amount> <token> <to>`,
+    );
+  }
+  const amount = parseTransferAmount(args.amount);
+  if (!isAddress(args.token)) throw usageError("Invalid token address: expected a full 0x address");
+  if (!isAddress(args.to))
+    throw usageError("Invalid recipient address: expected a full 0x address");
+  if (args.to.toLowerCase() === zeroAddress)
+    throw usageError("Invalid recipient address: cannot transfer to the zero address");
 
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
@@ -60,7 +70,7 @@ export async function transferTokens(options: {
 
   const provider = createProvider({ network: options.options.network });
   const call = Actions.token.transfer.call(provider.getClient() as never, {
-    amount: parseUnits(args.amount, tokenDecimals()),
+    amount,
     token,
     to,
   });
@@ -84,6 +94,18 @@ export async function transferTokens(options: {
     tx_hash: txHash,
     ...outputBase,
   };
+}
+
+function parseTransferAmount(value: string) {
+  const decimals = tokenDecimals();
+  const amount = new RegExp(`^\\d+(?:\\.\\d{1,${decimals}})?$`).test(value)
+    ? parseUnits(value, decimals)
+    : 0n;
+  if (amount <= 0n)
+    throw usageError(
+      `Invalid amount: expected a positive decimal with at most ${decimals} decimals`,
+    );
+  return amount;
 }
 
 export async function transferMach(options: {
