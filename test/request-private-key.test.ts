@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { Challenge, Credential } from "mppx";
@@ -34,8 +36,10 @@ afterEach(async () => {
 const flagAddress = privateKeyToAccount(testPrivateKey2).address;
 const envAddress = privateKeyToAccount(testPrivateKey).address;
 const flagNotice = `Paying with key from --private-key (${flagAddress}), not the logged-in wallet\n`;
-const flagWarning =
-  "Warning: --private-key can leak through shell history and process listings; set TEMPO_PRIVATE_KEY instead\n";
+const warning =
+  "--private-key can leak through shell history and process listings; set TEMPO_PRIVATE_KEY instead";
+const flagWarning = `Warning: ${warning}\n`;
+const flagMeta = { address: flagAddress, source: "flag", warning };
 
 it.each([
   {
@@ -44,6 +48,7 @@ it.each([
     env: undefined,
     signer: { address: flagAddress, source: "flag" },
     stderr: `${flagNotice}${flagWarning}`,
+    meta: flagMeta,
   },
   {
     name: "env",
@@ -51,6 +56,7 @@ it.each([
     env: testPrivateKey,
     signer: { address: envAddress, source: "env" },
     stderr: `Paying with key from TEMPO_PRIVATE_KEY (${envAddress}), not the logged-in wallet\n`,
+    meta: { address: envAddress, source: "env" },
   },
   {
     name: "flag over env",
@@ -58,6 +64,7 @@ it.each([
     env: testPrivateKey,
     signer: { address: flagAddress, source: "flag" },
     stderr: `${flagNotice}${flagWarning}`,
+    meta: flagMeta,
   },
   {
     name: "no key",
@@ -65,6 +72,7 @@ it.each([
     env: undefined,
     signer: { address: null, source: "wallet" },
     stderr: "",
+    meta: undefined,
   },
   {
     name: "empty env",
@@ -72,9 +80,10 @@ it.each([
     env: "",
     signer: { address: null, source: "wallet" },
     stderr: "",
+    meta: undefined,
   },
 ])("reports the payment signer for $name without echoing keys", async (row) => {
-  await useTempHome();
+  const home = await useTempHome();
   await writeWalletState(walletState());
   vi.stubEnv("TEMPO_PRIVATE_KEY", row.env);
   const server = await fixture();
@@ -86,16 +95,21 @@ it.each([
   expect(quote.stderr.text()).toBe("");
 
   const paid = { stdout: capture(), stderr: capture() };
-  await runRequest([...args, server.url], paid);
+  const metaPath = join(home, "meta.json");
+  await runRequest([...args, "--write-meta", metaPath, server.url], paid);
   if (row.signer.address)
     expect(JSON.parse(paid.stdout.text()).source).toMatch(
       new RegExp(`${row.signer.address}$`, "i"),
     );
   expect(paid.stderr.text()).toBe(row.stderr);
+  const meta = await readFile(metaPath, "utf8");
+  expect(JSON.parse(meta).signer).toEqual(row.meta);
 
   for (const output of [quote.stdout, quote.stderr, paid.stdout, paid.stderr])
-    for (const key of [testPrivateKey, testPrivateKey2])
+    for (const key of [testPrivateKey, testPrivateKey2]) {
       expect(output.text()).not.toContain(key.slice(2));
+      expect(meta).not.toContain(key.slice(2));
+    }
 });
 
 it.each([
@@ -165,7 +179,7 @@ it.each([
 });
 
 it("keeps keys out of the actual CLI output", async () => {
-  await useTempHome();
+  const home = await useTempHome();
   const server = await fixture();
   const cli = (...args: string[]) =>
     exec(process.execPath, ["--import", "tsx", "src/request-cli.ts", ...args, server.url], {
@@ -176,10 +190,12 @@ it("keeps keys out of the actual CLI output", async () => {
   expect(paid.stderr).toBe(`${flagNotice}${flagWarning}`);
   expect(`${paid.stdout}${paid.stderr}`).not.toContain(testPrivateKey2.slice(2));
 
-  // Structured output keeps stderr free of plain-text notices.
-  const structured = await cli("-j", "--private-key", testPrivateKey2);
+  // Structured output keeps stderr free of plain-text notices and attributes the payer in metadata.
+  const metaPath = join(home, "meta.json");
+  const structured = await cli("-j", "--private-key", testPrivateKey2, "--write-meta", metaPath);
   expect(JSON.parse(structured.stdout).source).toMatch(new RegExp(`${flagAddress}$`, "i"));
   expect(structured.stderr).toBe("");
+  expect(JSON.parse(await readFile(metaPath, "utf8")).signer).toEqual(flagMeta);
 
   const invalid = `0x${"f".repeat(64)}`;
   const rejected = await cli("--private-key", invalid);

@@ -26,7 +26,9 @@ const options = z.object({
   "private-key": z
     .string()
     .optional()
-    .describe("Sign payments with an ephemeral private key (or TEMPO_PRIVATE_KEY)"),
+    .describe(
+      "Sign payments with an ephemeral private key (or TEMPO_PRIVATE_KEY); structured output reports the signer via --dry-run and --write-meta",
+    ),
   network: z
     .string()
     .optional()
@@ -282,7 +284,7 @@ function describeRequestCli() {
         name: "private_key",
         long: "--private-key",
         value_name: "HEX",
-        help: "Sign payments with an ephemeral private key (or TEMPO_PRIVATE_KEY)",
+        help: "Sign payments with an ephemeral private key (or TEMPO_PRIVATE_KEY); structured output reports the signer via --dry-run and --write-meta",
       },
       {
         name: "network",

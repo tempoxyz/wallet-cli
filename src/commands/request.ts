@@ -522,7 +522,13 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
 
   try {
     if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
-    if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
+    if (options.writeMeta)
+      await writeMetaFile(
+        options.writeMeta,
+        response,
+        started,
+        paid ? privateKeySigner(options) : undefined,
+      );
     if (response.status >= 400 && options.sseJson) {
       const body = await response.text().catch(responseBodyNetworkError);
       await writeOutput(
@@ -968,16 +974,16 @@ function privateKeySourceName(source: "flag" | "env") {
   return source === "flag" ? "--private-key" : "TEMPO_PRIVATE_KEY";
 }
 
+const privateKeyFlagWarning =
+  "--private-key can leak through shell history and process listings; set TEMPO_PRIVATE_KEY instead";
+
 function writePrivateKeyNotice(stderr: Pick<NodeJS.WriteStream, "write">, options: RequestOptions) {
   const signer = privateKeySigner(options);
   if (!signer) return;
   stderr.write(
     `Paying with key from ${privateKeySourceName(signer.source)} (${signer.account.address}), not the logged-in wallet\n`,
   );
-  if (signer.source === "flag")
-    stderr.write(
-      "Warning: --private-key can leak through shell history and process listings; set TEMPO_PRIVATE_KEY instead\n",
-    );
+  if (signer.source === "flag") stderr.write(`Warning: ${privateKeyFlagWarning}\n`);
 }
 
 export async function resolvePaymentIdentity(options: RequestOptions) {
@@ -1909,7 +1915,12 @@ async function writeHeadersFile(path: string, response: Response) {
   await writeFile(path, responseHeaderText(response));
 }
 
-async function writeMetaFile(path: string, response: Response, started: number) {
+async function writeMetaFile(
+  path: string,
+  response: Response,
+  started: number,
+  signer?: ReturnType<typeof privateKeySigner>,
+) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(
     path,
@@ -1919,6 +1930,15 @@ async function writeMetaFile(path: string, response: Response, started: number) 
         url: response.url,
         elapsed_ms: Date.now() - started,
         headers: Object.fromEntries(response.headers.entries()),
+        ...(signer
+          ? {
+              signer: {
+                address: signer.account.address,
+                source: signer.source,
+                ...(signer.source === "flag" ? { warning: privateKeyFlagWarning } : {}),
+              },
+            }
+          : {}),
       },
       null,
       2,
