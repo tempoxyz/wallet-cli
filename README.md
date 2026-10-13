@@ -135,7 +135,16 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 - `debug`
 - `completions`
 
-`tempo wallet fund` opens the wallet's general funding UI, which also offers Buy MACH. By default, the CLI waits for USDC.e on mainnet or pathUSD on testnet. Use `fund --mach` to open MACH checkout and wait for MACH instead; `whoami --mach` reads its on-chain balance. MACH replaces MPP Credits. Legacy `--credits` flags are aliases for MACH; they never read or redeem a legacy off-chain credit balance.
+`tempo wallet fund` opens the wallet's general funding UI, which also offers Buy MACH. By default, the CLI waits for USDC.e on mainnet or pathUSD on testnet. Use `fund --mach` to open MACH checkout and wait for MACH instead; `whoami --mach` reads its on-chain balance. MACH replaces MPP Credits. Existing MPP Credits remain spendable through `transfer --credits`, and `whoami --credits` shows the legacy balance. Both emit a deprecation warning. `fund --credits` fails: new MPP Credits cannot be purchased; use `fund --mach` to buy MACH instead.
+
+```sh
+tempo wallet whoami --credits
+tempo wallet transfer --credits --mpp-challenge-file challenge.txt
+# Or a direct legacy credit payment (USD cents):
+tempo wallet transfer --credits --amount-cents 100 --to 0x...
+```
+
+Legacy credit payments retain whole-cent precision. With a challenge, `--amount-cents` optionally caps its amount; `--max-spend` is for MACH. `--credits` and `--mach` cannot be combined.
 
 For funding from another device or an automated host:
 
