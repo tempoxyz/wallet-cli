@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 
 import {
   encodeFunctionData,
@@ -20,6 +21,7 @@ import { validateCreditPermit, warnCreditsDeprecated } from "./credits.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
 import {
+  machChargeParameters,
   parseRequestArgs,
   preparePaymentChallenge,
   resolvePaymentIdentity,
@@ -192,23 +194,13 @@ export async function transferMach(options: {
   const identity = await resolvePaymentIdentity(requestOptions);
   if (flags.address && flags.address.toLowerCase() !== identity.address.toLowerCase())
     throw usageError("--address must match the active payment wallet");
-  let paymentToken: string = "MACH";
   const payment = Mppx.create({
     methods: [
       tempo.charge({
         ...identity.methodOptions,
         getClient: identity.getClient,
         expectedChainId: chainId(requestOptions.network),
-        // Observe the SDK's chosen calls only to report the funding token.
-        // mppx owns MACH preference and settlement-currency fallback.
-        resolveAccount({ account, operation }) {
-          if (operation.kind === "executeCalls")
-            paymentToken =
-              operation.calls?.[0]?.to.toLowerCase() === output.settlement_currency.toLowerCase()
-                ? output.settlement_currency
-                : "MACH";
-          return account;
-        },
+        ...machChargeParameters(requestOptions),
         clientId: flags["mpp-client-id"],
         mode: "push",
       }),
@@ -231,12 +223,7 @@ export async function transferMach(options: {
     throw paymentOutcomeUnknownError(
       "MACH settlement did not return a transaction hash; check with the provider before retrying.",
     );
-  return {
-    ...output,
-    token: paymentToken,
-    wallet: identity.address.toLowerCase(),
-    tx_hash: payload.hash,
-  };
+  return { ...output, wallet: identity.address.toLowerCase(), tx_hash: payload.hash };
 }
 
 export async function transferCredits(options: {
@@ -358,7 +345,19 @@ async function mppChallengeInput(options: {
   if (options["mpp-challenge"] && options["mpp-challenge-file"])
     throw usageError("Use only one of --mpp-challenge and --mpp-challenge-file");
   if (options["mpp-challenge"]) return options["mpp-challenge"];
-  if (options["mpp-challenge-file"]) return readFile(options["mpp-challenge-file"], "utf8");
+  if (options["mpp-challenge-file"]) {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const stream = createReadStream(options["mpp-challenge-file"], {
+      highWaterMark: maxCreditsChallengeBytes + 1,
+    });
+    for await (const chunk of stream) {
+      size += chunk.length;
+      if (size > maxCreditsChallengeBytes) throw creditsChallengeSizeError();
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, size).toString("utf8");
+  }
   return null;
 }
 
@@ -442,6 +441,8 @@ function buildMppCreditsTransfer(options: {
     );
   if (!/^0x[0-9a-f]{40}$/.test(recipient) || recipient === zeroAddress)
     throw usageError("Invalid configuration: MPP challenge is missing a recipient address");
+  // A uint256 amount has at most 78 decimal digits. Bound work before BigInt parsing.
+  if (amount.length > 78) throw usageError("MPP challenge amount is too large");
   if (!/^\d+$/.test(amount))
     throw usageError(`Invalid configuration: invalid MPP amount: ${escapeInvisible(amount)}`);
 
@@ -521,7 +522,15 @@ function isZeroValue(value: string) {
   return /^0+$/.test(trimmed);
 }
 
+const maxCreditsChallengeBytes = 64 * 1024;
+
+function creditsChallengeSizeError() {
+  return usageError("MPP Credits challenge exceeds the 64 KiB size limit");
+}
+
 function parseMppChallenge(input: string) {
+  if (Buffer.byteLength(input, "utf8") > maxCreditsChallengeBytes)
+    throw creditsChallengeSizeError();
   try {
     return Challenge.deserialize(mppHeaderValue(input));
   } catch {

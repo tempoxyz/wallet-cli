@@ -642,9 +642,9 @@ function describeCli() {
             { valueName: "FEE_TOKEN" },
           ),
           flag("dry_run", "--dry-run", "Show plan + fee estimate, don't send"),
-          flag("mach", "--mach", "Prefer MACH, falling back to the advertised currency"),
+          flag("mach", "--mach", "Pay with on-chain MACH"),
           flag("credits", "--credits", "Spend existing MPP Credits (deprecated)"),
-          option("max_spend", "--max-spend", "Maximum payment spend in USD", {
+          option("max_spend", "--max-spend", "Maximum MACH spend in USD", {
             valueName: "AMOUNT",
           }),
           option(

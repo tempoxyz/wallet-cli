@@ -88,7 +88,7 @@ tempo wallet fund --mach --amount 10 --no-browser --no-wait --format json
 
 Hosted MACH checkout accepts $5–$100 USD with at most two decimal places. The funding handoff identifies the exact destination wallet, chain, and requested USD amount. Pending means the checkout has not been verified. Recheck the MACH balance after checkout. To wait locally, omit `--no-wait`; the default timeout is ten minutes and `--timeout` accepts seconds. Never interpret a small unrelated deposit as fulfillment of the requested funding amount.
 
-For one-time charges, `tempo request --max-spend <USD> <URL>` delegates currency selection to mppx: use MACH when the server enables machine tokens, the balance covers the full payment, and the route is usable; otherwise use the server's advertised currency. Adding `--mach` (or `--payment-token MACH`) requires a machine-enabled charge and still allows this fallback within the spending cap. Sessions are unsupported with `--mach`; use `--dry-run` to inspect an offer without spending.
+For one-time charges, `tempo request --max-spend <USD> <URL>` delegates currency selection to mppx: use MACH when the server enables machine tokens, the balance covers the full payment, and the route is usable; otherwise use the server's advertised currency. Adding `--mach` (or `--payment-token MACH`) requires MACH settlement for a machine-enabled charge and fails without spending stablecoins if MACH is unavailable. Sessions are unsupported with `--mach`; use `--dry-run` to inspect an offer without spending.
 
 MACH uses the canonical MPP SDK settlement route. Do not construct swap calldata or call legacy Coinflow redemption APIs. Do not infer MACH support from a service's hostname; inspect the actual MPP challenge and use the standard request flow.
 

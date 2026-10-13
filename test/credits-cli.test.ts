@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { cliBundle } from "./cli-bundle.js";
 
 import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
 import { usdcToken } from "../src/shared/constants.js";
@@ -15,14 +16,10 @@ async function cli(args: string[]) {
   try {
     return {
       code: 0,
-      ...(await exec(
-        process.execPath,
-        ["--import", "tsx", "src/cli.ts", ...args, "--format", "json"],
-        {
-          cwd: root,
-          env: { ...process.env, NO_COLOR: "1" },
-        },
-      )),
+      ...(await exec(process.execPath, [cliBundle("wallet"), ...args, "--format", "json"], {
+        cwd: root,
+        env: { ...process.env, NO_COLOR: "1" },
+      })),
     };
   } catch (error) {
     return error as { code: number; stdout: string; stderr: string };

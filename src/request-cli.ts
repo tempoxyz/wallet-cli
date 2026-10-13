@@ -18,14 +18,11 @@ const options = z.object({
     .enum(["auto", "session", "charge"])
     .default("auto")
     .describe("Payment intent: auto, session, or charge"),
-  mach: z
-    .boolean()
-    .optional()
-    .describe("Prefer MACH; fall back to the advertised currency (alias for --payment-token MACH)"),
+  mach: z.boolean().optional().describe("Require MACH settlement; alias for --payment-token MACH"),
   "payment-token": z
     .string()
     .optional()
-    .describe("Select an offered currency address, or MACH with fallback to that currency"),
+    .describe("Select a payment token address or MACH settlement"),
   "private-key": z
     .string()
     .optional()
@@ -285,13 +282,13 @@ function describeRequestCli() {
       {
         name: "mach",
         long: "--mach",
-        help: "Prefer MACH; fall back to the advertised currency (alias for --payment-token MACH)",
+        help: "Require MACH settlement; alias for --payment-token MACH",
       },
       {
         name: "payment_token",
         long: "--payment-token",
         value_name: "ADDRESS",
-        help: "Select an offered currency address, or MACH with fallback to that currency",
+        help: "Select a payment token address or MACH settlement",
       },
       {
         name: "private_key",

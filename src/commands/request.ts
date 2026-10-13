@@ -852,7 +852,7 @@ async function payAndRetryRequest(
     };
     const payment = Mppx.create({
       methods: [
-        tempo.charge(methodOptions),
+        tempo.charge({ ...methodOptions, ...machChargeParameters(options) }),
         ...(options.paymentIntent === "auto" ? [tempo.subscription({ getClient })] : []),
       ],
       polyfill: false,
@@ -1763,6 +1763,32 @@ function isMachPaymentToken(token: string | undefined) {
         (deployment) => deployment.token.toLowerCase() === token.toLowerCase(),
       ))
   );
+}
+
+/** Restrict explicit MACH selection to the canonical SDK route; never silently spend stablecoins. */
+export function machChargeParameters(
+  options: RequestOptions,
+): NonNullable<Parameters<typeof tempo.charge>[0]> {
+  if (!isMachPaymentToken(options.paymentToken)) return {};
+  const expectedChain = chainId(options.network);
+  const deployment = machineTokenDeployments[expectedChain as keyof typeof machineTokenDeployments];
+  return {
+    autoSwap: false,
+    resolveAccount({ account, chainId: requestedChain, operation }) {
+      const calls = operation.kind === "executeCalls" ? operation.calls : undefined;
+      if (
+        !deployment ||
+        requestedChain !== expectedChain ||
+        calls?.length !== 2 ||
+        calls[0]?.to.toLowerCase() !== deployment.token.toLowerCase() ||
+        calls[1]?.to.toLowerCase() !== deployment.swap.toLowerCase()
+      )
+        throw paymentError(
+          "MACH settlement is unavailable: check MACH balance, swapper liquidity, and access-key permissions; no stablecoin fallback was authorized",
+        );
+      return account;
+    },
+  };
 }
 
 function paymentTokenValue(value: string) {

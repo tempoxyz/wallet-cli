@@ -265,10 +265,25 @@ it("runs the actual SDK MACH route and sends only the validated credential", asy
   expect(sendTransactionSync).not.toHaveBeenCalled();
 });
 it.each([
+  { flags: ["--mach"], failure: "balance" },
+  { flags: ["--mach"], failure: "simulation" },
+  { flags: ["--payment-token", "MACH"], failure: "balance" },
+  { flags: ["--payment-token", "MACH"], failure: "simulation" },
+  { flags: ["--payment-token", deployment.token], failure: "balance" },
+])("does not spend stablecoins with explicit MACH: $flags $failure", async ({ flags, failure }) => {
+  if (failure === "balance") vi.mocked(readContract).mockResolvedValue(14_999n);
+  else vi.mocked(call).mockRejectedValue(new Error("unavailable"));
+  const service = await server();
+  await expect(runRequest([...flags, "--max-spend", "0.015", service.url])).rejects.toThrow(
+    "no stablecoin fallback",
+  );
+  expect(service.paid).toEqual([]);
+  expect(signTransaction).not.toHaveBeenCalled();
+  expect(sendTransactionSync).not.toHaveBeenCalled();
+});
+it.each([
   { flags: [], network: "mainnet", currency: usdcToken, chain: 4217 },
-  { flags: ["--mach"], network: "mainnet", currency: usdcToken, chain: 4217 },
-  { flags: ["--payment-token", "MACH"], network: "mainnet", currency: usdcToken, chain: 4217 },
-  { flags: ["--mach"], network: "testnet", currency: moderatoToken, chain: 42431 },
+  { flags: [], network: "testnet", currency: moderatoToken, chain: 42431 },
 ])(
   "falls back to the exact advertised currency when MACH is insufficient: $flags $network",
   async ({ flags, network, currency, chain }) => {
@@ -297,7 +312,7 @@ it.each([
 it("uses the advertised currency if the MACH route cannot simulate", async () => {
   vi.mocked(call).mockRejectedValue(new Error("unavailable"));
   const service = await server();
-  await runRequest(["--mach", "--max-spend", "0.015", service.url], {
+  await runRequest(["--max-spend", "0.015", service.url], {
     stdout: { write: () => true },
   });
   expect(
@@ -312,7 +327,7 @@ it("does not retry another payment after fallback signing fails", async () => {
   vi.mocked(readContract).mockResolvedValue(0n);
   vi.mocked(signTransaction).mockRejectedValue(new Error("insufficient settlement currency"));
   const service = await server();
-  await expect(runRequest(["--mach", "--max-spend", "0.015", service.url])).rejects.toThrow(
+  await expect(runRequest(["--max-spend", "0.015", service.url])).rejects.toThrow(
     "insufficient settlement currency",
   );
   expect(signTransaction).toHaveBeenCalledOnce();
@@ -422,29 +437,29 @@ describe("transferMach", () => {
       options: { "mpp-challenge": Challenge.serialize(offer()), "max-spend": "0.015" },
     });
     expect(result).toMatchObject({ tx_hash: hash, token: "MACH", amount_raw: "15000" });
+    expect(spendMachOutput.parse(result)).toEqual(result);
     expect(
       sdkCalls(vi.mocked(sendTransactionSync).mock.calls[0]![1]).map((item) => item.to),
     ).toEqual([deployment.token, deployment.swap]);
     expect(sendTransactionSync).toHaveBeenCalledOnce();
   });
-  it("falls back in push mode and reports the advertised token actually spent", async () => {
-    vi.mocked(readContract).mockResolvedValue(14_999n);
-    const result = await transferMach({
-      options: { "mpp-challenge": Challenge.serialize(offer()), "max-spend": "0.015" },
-    });
-    expect(result).toMatchObject({
-      tx_hash: hash,
-      token: usdcToken,
-      settlement_currency: usdcToken,
-      amount_raw: "15000",
-    });
-    expect(spendMachOutput.parse(result)).toEqual(result);
-    const calls = sdkCalls(vi.mocked(sendTransactionSync).mock.calls[0]![1]);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.to.toLowerCase()).toBe(usdcToken);
-    expect(sendTransactionSync).toHaveBeenCalledOnce();
-    expect(signTransaction).not.toHaveBeenCalled();
-  });
+  it.each(["balance", "simulation"])(
+    "refuses stablecoin fallback in push mode after %s failure",
+    async (failure) => {
+      if (failure === "balance") vi.mocked(readContract).mockResolvedValue(14_999n);
+      else vi.mocked(call).mockRejectedValue(new Error("unavailable"));
+      await expect(
+        transferMach({
+          options: { "mpp-challenge": Challenge.serialize(offer()), "max-spend": "0.015" },
+        }),
+      ).rejects.toMatchObject({
+        code: "E_PAYMENT",
+        message: expect.stringContaining("no stablecoin fallback"),
+      });
+      expect(sendTransactionSync).not.toHaveBeenCalled();
+      expect(signTransaction).not.toHaveBeenCalled();
+    },
+  );
   it("reports an uncertain settlement once without retry or leaked error details", async () => {
     vi.mocked(sendTransactionSync).mockRejectedValue(new Error("sensitive-provider-payload"));
     await expect(

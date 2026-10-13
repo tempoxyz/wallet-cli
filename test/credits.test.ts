@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeFunctionData, hashTypedData, parseAbi } from "viem";
 import { Challenge } from "mppx";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("../src/provider.js", () => ({ createProvider: () => ({ request: mocks.request }) }));
@@ -72,6 +74,72 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("legacy credit spending", () => {
+  it.each(["inline", "file"])(
+    "rejects oversized %s challenges before parsing or spending",
+    async (source) => {
+      const offer = Challenge.deserialize(challenge);
+      offer.request.amount = "9".repeat(1024 * 1024);
+      const input = Challenge.serialize(offer);
+      const path = join(process.env.HOME!, "challenge.txt");
+      if (source === "file") await writeFile(path, input);
+      const fetch = vi.spyOn(globalThis, "fetch");
+      for (const dryRun of [true, false]) {
+        await expect(
+          transferCredits({
+            options: {
+              ...(source === "file" ? { "mpp-challenge-file": path } : { "mpp-challenge": input }),
+              "dry-run": dryRun,
+            },
+          }),
+        ).rejects.toMatchObject({
+          code: "E_USAGE",
+          message: expect.stringContaining("64 KiB size limit"),
+        });
+      }
+      expect(fetch).not.toHaveBeenCalled();
+      expect(mocks.request).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["inline", "file"])("accepts a %s challenge at the size limit", async (source) => {
+    const input = challenge.padEnd(64 * 1024, " ");
+    const path = join(process.env.HOME!, "challenge.txt");
+    if (source === "file") await writeFile(path, input);
+    await expect(
+      transferCredits({
+        options: {
+          ...(source === "file" ? { "mpp-challenge-file": path } : { "mpp-challenge": input }),
+          "dry-run": true,
+        },
+      }),
+    ).resolves.toMatchObject({ amount_cents: 100, to: recipient, dry_run: true });
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it("measures inline challenges in bytes rather than characters", async () => {
+    const input = challenge + "é".repeat(32 * 1024);
+    expect(input.length).toBeLessThan(64 * 1024);
+    await expect(transferCredits({ options: { "mpp-challenge": input } })).rejects.toMatchObject({
+      code: "E_USAGE",
+      message: expect.stringContaining("64 KiB size limit"),
+    });
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized decimal amounts within a bounded challenge", async () => {
+    const offer = Challenge.deserialize(challenge);
+    offer.request.amount = "9".repeat(79);
+    const fetch = vi.spyOn(globalThis, "fetch");
+    await expect(
+      transferCredits({ options: { "mpp-challenge": Challenge.serialize(offer) } }),
+    ).rejects.toMatchObject({
+      code: "E_USAGE",
+      message: "MPP challenge amount is too large",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
   it.each(["balance", "authorization"])(
     "rejects malformed %s JSON without leaking the body",
     async (operation) => {
