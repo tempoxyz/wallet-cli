@@ -17,7 +17,7 @@ import {
   fetch as undiciFetch,
   FormData as UndiciFormData,
   ProxyAgent,
-} from "undici";
+} from "../shared/undici.js";
 import { createWalletClient, encodeFunctionData, http, isAddress, parseUnits } from "viem";
 import { prepareTransactionRequest, signTransaction } from "viem/actions";
 import { privateKeyToAccount } from "viem/accounts";
