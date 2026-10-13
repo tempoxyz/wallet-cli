@@ -1,5 +1,12 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
+import { formatUnits } from "viem";
+
 import { version } from "../shared/constants.js";
-import { httpError, networkError, usageError } from "../shared/errors.js";
+import { httpError, networkError, usageError, walletError } from "../shared/errors.js";
 import { getArray, getRecord, sanitizeText, stringValue } from "../shared/utils.js";
 
 type ServiceSummary = {
@@ -23,47 +30,56 @@ const serviceIdPattern = /^[a-z0-9][a-z0-9._-]*$/i;
 
 export async function fetchServices(
   options: {
+    refresh?: boolean | undefined;
     search?: string | undefined;
     serviceId?: string | undefined;
   } = {},
 ) {
-  const services = await fetchServiceEntries();
+  const { services, staleFetchedAt } = await fetchServiceEntries(options.refresh);
 
   if (options.serviceId) {
     const matches = services.filter((item) => item.summary.id === options.serviceId);
     if (matches.length > 1)
       throw usageError(`Service directory lists '${options.serviceId}' more than once`);
     const service = matches[0];
-    if (!service)
-      throw usageError(`Configuration missing: service '${options.serviceId}' not found`);
-    return service.detail;
+    if (!service) {
+      const suggestions = closestServiceIds(
+        services.map((item) => item.summary.id),
+        options.serviceId,
+      );
+      throw walletError({
+        code: "E_NOT_FOUND",
+        message: `service '${options.serviceId}' not found${
+          suggestions.length ? `; did you mean: ${suggestions.join(", ")}?` : ""
+        }`,
+      });
+    }
+    return staleFetchedAt
+      ? { ...service.detail, stale: true, fetched_at: staleFetchedAt }
+      : service.detail;
   }
 
   const summaries = services.map((service) => service.summary);
-  if (options.search)
-    return summaries.filter((service) => matchesSearch(service, options.search ?? ""));
+  if (options.search) return searchServices(summaries, options.search);
   return summaries;
 }
 
-export async function fetchServiceList(): Promise<ServiceSummary[]> {
-  return (await fetchServiceEntries()).map((service) => service.summary);
+export async function fetchServiceList(
+  options: { refresh?: boolean | undefined } = {},
+): Promise<ServiceSummary[]> {
+  return (await fetchServiceEntries(options.refresh)).services.map((service) => service.summary);
 }
 
 const serviceDirectoryUrl = "https://mpp.dev/api/services";
 const serviceDirectoryTimeout = 10_000;
+const serviceDirectoryCacheTtl = 10 * 60_000;
 
-async function fetchServiceEntries(): Promise<
-  { summary: ServiceSummary; detail: ServiceDetail }[]
-> {
-  const response = await fetch(serviceDirectoryUrl, {
-    headers: { "user-agent": `wallet-cli/${version}` },
-    signal: AbortSignal.timeout(serviceDirectoryTimeout),
-  }).catch(serviceDirectoryNetworkError);
-  if (!response.ok)
-    throw httpError(response.status, `Failed to fetch service directory: HTTP ${response.status}`);
-
-  const body = getRecord((await response.json().catch(serviceDirectoryNetworkError)) as unknown);
-  const services = getArray(body.services).map((service) => {
+async function fetchServiceEntries(refresh = false): Promise<{
+  services: { summary: ServiceSummary; detail: ServiceDetail }[];
+  staleFetchedAt?: string | undefined;
+}> {
+  const directory = await loadServiceDirectory(refresh);
+  const services = getArray(getRecord(directory.body).services).map((service) => {
     const item = getRecord(service);
     const serviceUrl = displayText(item.serviceUrl ?? item.service_url ?? item.url);
     const summary = {
@@ -97,7 +113,50 @@ async function fetchServiceEntries(): Promise<
       },
     };
   });
-  return services.filter((service) => serviceIdPattern.test(service.summary.id));
+  return {
+    services: services.filter((service) => serviceIdPattern.test(service.summary.id)),
+    staleFetchedAt: directory.staleFetchedAt,
+  };
+}
+
+/** Serves a cache younger than the TTL, and falls back to an older one when the fetch fails. */
+async function loadServiceDirectory(
+  refresh: boolean,
+): Promise<{ body: unknown; staleFetchedAt?: string | undefined }> {
+  const cached = refresh ? undefined : await readServiceDirectoryCache();
+  const age = cached ? Date.now() - cached.fetchedAt : Infinity;
+  if (cached && age >= 0 && age < serviceDirectoryCacheTtl) return { body: cached.body };
+
+  try {
+    const text = await fetchServiceDirectoryText();
+    const body = parseServiceDirectory(text);
+    await writeServiceDirectoryCache(text);
+    return { body };
+  } catch (error) {
+    if (!cached) throw error;
+    const fetchedAt = new Date(cached.fetchedAt).toISOString();
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(`Warning: ${reason}; using the cached service directory from ${fetchedAt}`);
+    return { body: cached.body, staleFetchedAt: fetchedAt };
+  }
+}
+
+async function fetchServiceDirectoryText() {
+  const response = await fetch(serviceDirectoryUrl, {
+    headers: { "user-agent": `wallet-cli/${version}` },
+    signal: AbortSignal.timeout(serviceDirectoryTimeout),
+  }).catch(serviceDirectoryNetworkError);
+  if (!response.ok)
+    throw httpError(response.status, `Failed to fetch service directory: HTTP ${response.status}`);
+  return await response.text().catch(serviceDirectoryNetworkError);
+}
+
+function parseServiceDirectory(text: string) {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    return serviceDirectoryNetworkError(error);
+  }
 }
 
 function serviceDirectoryNetworkError(error: unknown): never {
@@ -111,10 +170,54 @@ function serviceDirectoryNetworkError(error: unknown): never {
   throw networkError(`Failed to fetch service directory: ${reason}`, { retryable: true });
 }
 
-function matchesSearch(service: ServiceSummary, query: string) {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return true;
-  return serviceSearchFields(service).some((value) => value.toLowerCase().includes(needle));
+export function serviceDirectoryCachePath() {
+  return join(homedir(), ".tempo", "wallet", "services-cache.json");
+}
+
+async function readServiceDirectoryCache() {
+  const path = serviceDirectoryCachePath();
+  try {
+    const [text, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
+    return { body: JSON.parse(text) as unknown, fetchedAt: info.mtimeMs };
+  } catch {
+    // A missing or corrupt cache is treated as empty.
+    return undefined;
+  }
+}
+
+async function writeServiceDirectoryCache(text: string) {
+  const path = serviceDirectoryCachePath();
+  const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await writeFile(tempPath, text, { mode: 0o600 });
+    await rename(tempPath, path);
+  } catch {
+    // The cache only saves a fetch, so failing to write it must not fail the command.
+    await unlink(tempPath).catch(() => undefined);
+  }
+}
+
+/** Keeps services matching every query word in some field, exact id or name matches first. */
+function searchServices(services: ServiceSummary[], query: string) {
+  const words = searchWords(query);
+  if (!words.length) return services;
+
+  const matches = services.filter((service) => {
+    const fields = serviceSearchFields(service).map((value) => value.toLowerCase());
+    return words.every((word) => fields.some((field) => field.includes(word)));
+  });
+  const phrase = words.join(" ");
+  const isExact = (service: ServiceSummary) =>
+    [service.id, service.name].some((value) => searchWords(value).join(" ") === phrase);
+  return [...matches.filter(isExact), ...matches.filter((service) => !isExact(service))];
+}
+
+function searchWords(value: string) {
+  return value
+    .toLowerCase()
+    .split(/[\s_-]+/)
+    .filter(Boolean);
 }
 
 function serviceSearchFields(service: ServiceSummary) {
@@ -125,6 +228,39 @@ function serviceSearchFields(service: ServiceSummary) {
     ...service.categories,
     ...service.tags,
   ];
+}
+
+/** Returns up to 3 ids sharing a prefix with the query, then containing it, then a few edits away. */
+function closestServiceIds(ids: string[], query: string) {
+  const needle = query.toLowerCase();
+  const maxDistance = Math.max(1, Math.floor(needle.length / 4));
+  return ids
+    .flatMap((id) => {
+      const value = id.toLowerCase();
+      if (value.startsWith(needle) || needle.startsWith(value)) return [{ id, rank: 0 }];
+      if (value.includes(needle) || needle.includes(value)) return [{ id, rank: 1 }];
+      if (Math.abs(value.length - needle.length) > maxDistance) return [];
+      const distance = editDistance(value, needle);
+      return distance <= maxDistance ? [{ id, rank: 1 + distance }] : [];
+    })
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, 3)
+    .map((match) => match.id);
+}
+
+function editDistance(a: string, b: string) {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++)
+      current[j] = Math.min(
+        (previous[j] ?? 0) + 1,
+        (current[j - 1] ?? 0) + 1,
+        (previous[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    previous = current;
+  }
+  return previous[b.length] ?? 0;
 }
 
 function serviceDocs(value: unknown) {
@@ -140,20 +276,31 @@ function serviceDocs(value: unknown) {
 function serviceEndpoint(value: unknown) {
   const endpoint = getRecord(value);
   const payment = getRecord(endpoint.payment);
+  const amount = displayText(payment.amount);
+  const decimals = typeof payment.decimals === "number" ? payment.decimals : null;
   return {
     method: displayText(endpoint.method),
     path: displayText(endpoint.path),
     description: displayText(endpoint.description),
     payment: {
       intent: displayText(payment.intent),
-      amount: displayText(payment.amount),
-      decimals: typeof payment.decimals === "number" ? payment.decimals : null,
+      amount,
+      decimals,
+      price: formatPrice(amount, decimals),
       unitType: displayText(payment.unitType ?? payment.unit_type) || null,
       description: displayText(payment.description),
       dynamic: typeof payment.dynamic === "boolean" ? payment.dynamic : null,
     },
     docs: displayText(endpoint.docs) || null,
   };
+}
+
+/** Formats a base-unit amount in whole tokens, e.g. "10000" with 6 decimals as "0.01". */
+function formatPrice(amount: string, decimals: number | null) {
+  if (!/^\d+$/.test(amount) || decimals === null) return null;
+  // Token decimals fit in a uint8.
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) return null;
+  return formatUnits(BigInt(amount), decimals);
 }
 
 function displayText(value: unknown) {

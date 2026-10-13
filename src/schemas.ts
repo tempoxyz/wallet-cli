@@ -259,6 +259,8 @@ export const serviceOutput = z.object({
 export const serviceDetailOutput = serviceOutput.extend({
   docs: z.unknown().optional(),
   endpoints: z.array(z.unknown()).optional(),
+  stale: z.boolean().optional(),
+  fetched_at: z.string().optional(),
 });
 
 export const debugOutput = z.object({
@@ -449,7 +451,14 @@ export const servicesArgs = z.object({
 
 export const servicesOptions = z.object({
   ...globalOptionShape,
-  search: z.string().optional().describe("Search by name, description, tags, or category"),
+  search: z
+    .string()
+    .optional()
+    .describe("Search by name, id, description, tags, or category; every word must match"),
+  refresh: z
+    .boolean()
+    .optional()
+    .describe("Fetch the service directory instead of using the cached copy"),
 });
 
 export const servicesOutput = z.union([z.array(serviceOutput), serviceDetailOutput]);

@@ -288,8 +288,10 @@ cli.command("services", {
   alias: globalAlias,
   output: servicesOutput,
   async run({ args, options }) {
-    if (args.serviceId === "list" && !options.search) return fetchServiceList();
+    if (args.serviceId === "list" && !options.search)
+      return fetchServiceList({ refresh: options.refresh });
     return fetchServices({
+      refresh: options.refresh,
       search: options.search,
       serviceId: args.serviceId === "list" ? undefined : args.serviceId,
     });

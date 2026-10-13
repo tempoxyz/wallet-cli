@@ -1,7 +1,14 @@
+import { mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fundAction, fundUrl, runFundingFlow } from "../src/commands/fund.js";
-import { fetchServices, fetchServiceList } from "../src/commands/services.js";
+import {
+  fetchServices,
+  fetchServiceList,
+  serviceDirectoryCachePath,
+} from "../src/commands/services.js";
 import { expectUsageError, useTempHome } from "./helpers.js";
 
 type ServiceSummary = Awaited<ReturnType<typeof fetchServiceList>>[number];
@@ -120,12 +127,16 @@ describe("fetchServices", () => {
     ],
   };
 
+  beforeEach(async () => {
+    await useTempHome();
+  });
+
+  function mockFetchText(text: string) {
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(text));
+  }
+
   function mockFetchOk(body: unknown) {
-    return vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => body,
-    } as Response);
+    return mockFetchText(JSON.stringify(body));
   }
 
   it("normalizes the service list", async () => {
@@ -201,6 +212,7 @@ describe("fetchServices", () => {
             intent: "pay",
             amount: "100",
             decimals: 6,
+            price: "0.0001",
             unitType: "usdc",
           },
           docs: "https://weather.example.com/docs",
@@ -308,19 +320,236 @@ describe("fetchServices", () => {
   });
 
   it("ignores deeply nested fields it does not read", async () => {
-    let nested: unknown = [];
-    for (let depth = 0; depth < 20_000; depth++) nested = [nested];
-    mockFetchOk({ services: [{ id: "weather", name: "Weather API", extra: nested }] });
+    const nested = `${"[".repeat(20_000)}${"]".repeat(20_000)}`;
+    mockFetchText(`{"services":[{"id":"weather","name":"Weather API","extra":${nested}}]}`);
 
+    expect(await fetchServiceList()).toEqual([
+      expect.objectContaining({ id: "weather", name: "Weather API" }),
+    ]);
+    // The cached copy is read back without re-serializing the nesting.
     expect(await fetchServiceList()).toEqual([
       expect.objectContaining({ id: "weather", name: "Weather API" }),
     ]);
   });
 
-  it("throws E_USAGE for an unknown service id", async () => {
-    mockFetchOk(serviceDirectory);
-    const error = await fetchServices({ serviceId: "missing" }).catch((e) => e);
-    expectUsageError(error, "Configuration missing: service 'missing' not found");
+  describe("search", () => {
+    const searchDirectory = {
+      services: [
+        {
+          id: "polyglot",
+          name: "Polyglot",
+          description: "Translate text between languages",
+          tags: ["language"],
+        },
+        {
+          id: "studio",
+          name: "Studio",
+          description: "Media tools",
+          categories: ["media"],
+          tags: ["image-generation", "video"],
+        },
+        {
+          id: "translate",
+          name: "Translate Service",
+          description: "Language translation",
+          categories: ["nlp"],
+        },
+        {
+          id: "weather",
+          name: "Weather API",
+          description: "Forecasts and current conditions",
+          tags: ["forecast"],
+        },
+      ],
+    };
+
+    it.each([
+      ["image generation", ["studio"]],
+      ["Image_Generation", ["studio"]],
+      ["image-generation", ["studio"]],
+      ["generation  image", ["studio"]],
+      ["weather forecast", ["weather"]],
+      ["weather language", []],
+      ["language", ["polyglot", "translate"]],
+      ["translate", ["translate", "polyglot"]],
+      ["translate service", ["translate"]],
+      ["weather-api", ["weather"]],
+      [" - ", ["polyglot", "studio", "translate", "weather"]],
+    ])("matches %j to %j", async (search, ids) => {
+      mockFetchOk(searchDirectory);
+      const results = (await fetchServices({ search })) as ServiceSummary[];
+      expect(results.map((service) => service.id)).toEqual(ids);
+    });
+  });
+
+  it.each([
+    ["100", 6, "0.0001"],
+    ["10000", 6, "0.01"],
+    ["1500000", 6, "1.5"],
+    ["0", 6, "0"],
+    ["5", 0, "5"],
+    [undefined, 6, null],
+    ["100", undefined, null],
+    ["1.5", 6, null],
+    ["-1", 6, null],
+    ["100", -1, null],
+    ["100", 1.5, null],
+    ["100", 256, null],
+  ])("formats amount %j with %j decimals as price %j", async (amount, decimals, price) => {
+    mockFetchOk({
+      services: [
+        { id: "weather", name: "Weather API", endpoints: [{ payment: { amount, decimals } }] },
+      ],
+    });
+
+    expect(await fetchServices({ serviceId: "weather" })).toMatchObject({
+      endpoints: [{ payment: { amount: amount ?? "", decimals: decimals ?? null, price } }],
+    });
+  });
+
+  it.each([
+    ["stablenrich", "service 'stablenrich' not found; did you mean: stableenrich?"],
+    [
+      "stable",
+      "service 'stable' not found; did you mean: stableenrich, stablestudio, stablesocial?",
+    ],
+    ["enrich", "service 'enrich' not found; did you mean: stableenrich?"],
+    ["Weather", "service 'Weather' not found; did you mean: weather?"],
+    ["wether", "service 'wether' not found; did you mean: weather?"],
+    ["weather-api", "service 'weather-api' not found; did you mean: weather?"],
+    ["zzzzzz", "service 'zzzzzz' not found"],
+  ])("reports unknown service id %j with suggestions", async (serviceId, message) => {
+    mockFetchOk({
+      services: ["stableenrich", "stablestudio", "stablesocial", "stableemail", "weather"].map(
+        (id) => ({ id, name: id }),
+      ),
+    });
+
+    await expect(fetchServices({ serviceId })).rejects.toMatchObject({
+      code: "E_NOT_FOUND",
+      exitCode: 2,
+      message,
+    });
+  });
+
+  describe("cache", () => {
+    const minute = 60_000;
+    const cachedDirectory = JSON.stringify({ services: [{ id: "weather", name: "Cached" }] });
+    const fetchedDirectory = JSON.stringify({ services: [{ id: "weather", name: "Fetched" }] });
+
+    async function writeCache(text: string, ageMs: number) {
+      const path = serviceDirectoryCachePath();
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, text);
+      // Whole seconds keep the reported fetched_at exact across filesystems.
+      const fetchedAt = new Date(Math.floor((Date.now() - ageMs) / 1000) * 1000);
+      await utimes(path, fetchedAt, fetchedAt);
+      return fetchedAt.toISOString();
+    }
+
+    it.each([
+      { name: "fetches and caches on a miss", fetches: true, result: "Fetched" },
+      { name: "reuses a fresh cache", cache: cachedDirectory, age: minute, result: "Cached" },
+      {
+        name: "refetches an expired cache",
+        cache: cachedDirectory,
+        age: 11 * minute,
+        fetches: true,
+        result: "Fetched",
+      },
+      {
+        name: "refetches a cache dated in the future",
+        cache: cachedDirectory,
+        age: -minute,
+        fetches: true,
+        result: "Fetched",
+      },
+      {
+        name: "falls back to an expired cache when the fetch fails",
+        cache: cachedDirectory,
+        age: 11 * minute,
+        fetches: true,
+        fails: true,
+        result: "Cached",
+        stale: true,
+      },
+      {
+        name: "bypasses a fresh cache with refresh",
+        cache: cachedDirectory,
+        age: minute,
+        refresh: true,
+        fetches: true,
+        result: "Fetched",
+      },
+      {
+        name: "does not fall back to the cache with refresh",
+        cache: cachedDirectory,
+        age: 11 * minute,
+        refresh: true,
+        fetches: true,
+        fails: true,
+      },
+      {
+        name: "replaces a corrupt cache",
+        cache: '{"services":',
+        age: minute,
+        fetches: true,
+        result: "Fetched",
+      },
+      {
+        name: "fails when the only cache is corrupt",
+        cache: '{"services":',
+        age: 11 * minute,
+        fetches: true,
+        fails: true,
+      },
+      { name: "fails without a cache", fetches: true, fails: true },
+    ])(
+      "$name",
+      async ({ cache, age = 0, refresh, fetches = false, fails = false, result, stale }) => {
+        const fetchedAt = cache === undefined ? undefined : await writeCache(cache, age);
+        const fetch = vi
+          .spyOn(globalThis, "fetch")
+          .mockImplementation(async () =>
+            fails ? new Response(null, { status: 503 }) : new Response(fetchedDirectory),
+          );
+        const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        const detail = fetchServices({ serviceId: "weather", refresh }).catch((e) => e);
+        if (result) {
+          const expected = stale
+            ? { name: result, stale: true, fetched_at: fetchedAt }
+            : { name: result };
+          expect(await detail).toEqual(expect.objectContaining(expected));
+          if (!stale) expect(await detail).not.toHaveProperty("stale");
+        } else {
+          expect(await detail).toMatchObject({
+            code: "E_HTTP",
+            message: "Failed to fetch service directory: HTTP 503",
+          });
+        }
+
+        expect(fetch).toHaveBeenCalledTimes(fetches ? 1 : 0);
+        expect(warn).toHaveBeenCalledTimes(stale ? 1 : 0);
+        if (stale)
+          expect(warn).toHaveBeenCalledWith(
+            `Warning: Failed to fetch service directory: HTTP 503; using the cached service directory from ${fetchedAt}`,
+          );
+        const cacheAfter = await readFile(serviceDirectoryCachePath(), "utf8").catch(
+          () => undefined,
+        );
+        expect(cacheAfter).toBe(fetches && !fails ? fetchedDirectory : cache);
+      },
+    );
+
+    it("returns the directory when the cache cannot be written", async () => {
+      const path = serviceDirectoryCachePath();
+      await mkdir(path, { recursive: true });
+      mockFetchText(fetchedDirectory);
+
+      expect(await fetchServices({ serviceId: "weather" })).toMatchObject({ name: "Fetched" });
+      expect(await readdir(dirname(path))).toEqual(["services-cache.json"]);
+    });
   });
 
   it("requests the public directory URL with a timeout", async () => {
@@ -361,14 +590,19 @@ describe("fetchServices", () => {
     [
       "an unreadable body",
       "E_NETWORK",
-      "Failed to fetch service directory: Unexpected end of JSON input",
+      "Failed to fetch service directory: terminated",
       async () =>
         ({
           ok: true,
           status: 200,
-          json: async (): Promise<unknown> =>
-            Promise.reject(new SyntaxError("Unexpected end of JSON input")),
+          text: async (): Promise<string> => Promise.reject(new TypeError("terminated")),
         }) as Response,
+    ],
+    [
+      "a malformed body",
+      "E_NETWORK",
+      "Failed to fetch service directory: Unexpected end of JSON input",
+      async () => new Response(""),
     ],
   ])("maps %s to %s", async (_name, code, message, fetch) => {
     vi.spyOn(globalThis, "fetch").mockImplementation(fetch);

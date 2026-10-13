@@ -25,6 +25,7 @@ describe("generated CLI metadata", () => {
 
     expect(output).toContain("Usage: tempo wallet services [serviceId] [options]");
     expect(output).toContain("--search <string>");
+    expect(output).toContain("--refresh");
     expect(output).not.toContain("Usage: tempo wallet services <command>");
   });
 

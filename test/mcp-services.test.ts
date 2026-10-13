@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { cliBundle } from "./cli-bundle.js";
+import { useTempHome } from "./helpers.js";
 
 const root = resolve(import.meta.dirname, "..");
 const mockFetchModule = resolve(root, "test", "fixtures", "mock-services-fetch.mjs");
@@ -15,6 +16,11 @@ const initParams = {
 };
 
 describe("MCP tools", () => {
+  // Subprocesses inherit HOME, so the service directory cache stays out of the real wallet dir.
+  beforeEach(async () => {
+    await useTempHome();
+  });
+
   it("exposes access key commands as nested tools", async () => {
     const response = await mcpRequest<{ tools: { name: string }[] }>("tools/list", {});
 
