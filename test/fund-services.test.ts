@@ -376,10 +376,22 @@ describe("fetchServices", () => {
       ["translate service", ["translate"]],
       ["weather-api", ["weather"]],
       [" - ", ["polyglot", "studio", "translate", "weather"]],
+      [Array(200).fill("weather").join(" ").slice(0, 256), ["weather"]],
     ])("matches %j to %j", async (search, ids) => {
       mockFetchOk(searchDirectory);
       const results = (await fetchServices({ search })) as ServiceSummary[];
       expect(results.map((service) => service.id)).toEqual(ids);
+    });
+
+    it.each([
+      ["a".repeat(257), "--search accepts at most 256 characters"],
+      [
+        Array.from({ length: 17 }, (_, index) => `w${index}`).join(" "),
+        "--search accepts at most 16 distinct words",
+      ],
+    ])("rejects oversized search %#", async (search, message) => {
+      mockFetchOk(searchDirectory);
+      await expect(fetchServices({ search })).rejects.toMatchObject({ code: "E_USAGE", message });
     });
   });
 
@@ -421,11 +433,19 @@ describe("fetchServices", () => {
     ["wether", "service 'wether' not found; did you mean: weather?"],
     ["weather-api", "service 'weather-api' not found; did you mean: weather?"],
     ["zzzzzz", "service 'zzzzzz' not found"],
+    ["a".repeat(65), `service '${"a".repeat(65)}' not found`],
+    [`${"b".repeat(64)}c`, `service '${"b".repeat(64)}c' not found`],
   ])("reports unknown service id %j with suggestions", async (serviceId, message) => {
     mockFetchOk({
-      services: ["stableenrich", "stablestudio", "stablesocial", "stableemail", "weather"].map(
-        (id) => ({ id, name: id }),
-      ),
+      services: [
+        "stableenrich",
+        "stablestudio",
+        "stablesocial",
+        "stableemail",
+        "weather",
+        "b".repeat(64),
+        "b".repeat(66),
+      ].map((id) => ({ id, name: id })),
     });
 
     await expect(fetchServices({ serviceId })).rejects.toMatchObject({

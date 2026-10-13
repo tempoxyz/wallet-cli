@@ -228,7 +228,11 @@ async function writeServiceDirectoryCache(text: string) {
 
 /** Keeps services matching every query word in some field, exact id or name matches first. */
 function searchServices(services: ServiceSummary[], query: string) {
-  const words = searchWords(query);
+  if (query.length > maxSearchLength)
+    throw usageError(`--search accepts at most ${maxSearchLength} characters`);
+  const words = [...new Set(searchWords(query))];
+  if (words.length > maxSearchWords)
+    throw usageError(`--search accepts at most ${maxSearchWords} distinct words`);
   if (!words.length) return services;
 
   const matches = services.filter((service) => {
@@ -240,6 +244,11 @@ function searchServices(services: ServiceSummary[], query: string) {
     [service.id, service.name].some((value) => searchWords(value).join(" ") === phrase);
   return [...matches.filter(isExact), ...matches.filter((service) => !isExact(service))];
 }
+
+// Bounds keep search and suggestion work small for any input, including MCP calls.
+const maxSearchLength = 256;
+const maxSearchWords = 16;
+const maxSuggestionIdLength = 64;
 
 function searchWords(value: string) {
   return value
@@ -261,10 +270,12 @@ function serviceSearchFields(service: ServiceSummary) {
 /** Returns up to 3 ids sharing a prefix with the query, then containing it, then a few edits away. */
 function closestServiceIds(ids: string[], query: string) {
   const needle = query.toLowerCase();
+  if (needle.length > maxSuggestionIdLength) return [];
   const maxDistance = Math.max(1, Math.floor(needle.length / 4));
   return ids
     .flatMap((id) => {
       const value = id.toLowerCase();
+      if (value.length > maxSuggestionIdLength) return [];
       if (value.startsWith(needle) || needle.startsWith(value)) return [{ id, rank: 0 }];
       if (value.includes(needle) || needle.includes(value)) return [{ id, rank: 1 }];
       if (Math.abs(value.length - needle.length) > maxDistance) return [];
