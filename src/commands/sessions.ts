@@ -256,7 +256,7 @@ export async function closeSessions(options: {
         closeOneSession(target, { finalize: true, network: options.network }),
         target,
       );
-    return withPendingCloseNextStep(summary, options.network);
+    return withPendingCloseNextStep(summary, options);
   }
 
   for (const target of targets)
@@ -265,31 +265,50 @@ export async function closeSessions(options: {
       closeOneSession(target, { cooperative: options.cooperative, network: options.network }),
       target,
     );
-  return withPendingCloseNextStep(summary, options.network);
+  return withPendingCloseNextStep(summary, options);
 }
 
-/** Points pending closes at the withdrawal that becomes available after the grace period. */
-function withPendingCloseNextStep(summary: CloseSummaryOutput, network: string | undefined) {
+/**
+ * Points pending closes at a rerun of the same scope, which reports them as pending without a
+ * transaction until the grace period ends and then withdraws exactly those channels.
+ */
+function withPendingCloseNextStep(
+  summary: CloseSummaryOutput,
+  options: {
+    all?: boolean | undefined;
+    finalize?: boolean | undefined;
+    network?: string | undefined;
+    orphaned?: boolean | undefined;
+    target?: string | undefined;
+  },
+) {
   const pending = summary.results.filter((result) => result.status === "pending");
   if (pending.length === 0) return summary;
   const waitSecs = Math.max(...pending.map((result) => result.remaining_secs ?? 0));
   const readyAt = formatUnixTimestamp(nowSeconds() + waitSecs);
   const single = pending.length === 1 ? pending[0] : undefined;
-  if (single)
+  const status = single
+    ? `Close pending for channel ${single.channel_id}; its deposit can be withdrawn after ${readyAt} (in ${waitSecs}s).`
+    : `${pending.length} session closes are pending; their deposits can be withdrawn after ${readyAt} (in ${waitSecs}s).`;
+  // --orphaned and --finalize select channels by state, so a rerun would skip these closing ones.
+  if (!single && (options.finalize || (options.orphaned && !options.all)))
     return {
       ...summary,
-      ...nextStep(
-        `Close pending for channel ${single.channel_id}; its deposit can be withdrawn after ${readyAt} (in ${waitSecs}s). Then run the next command; before that it only reports the close as pending.`,
-        ["wallet", "sessions", "close", single.channel_id],
-        { network, pollIntervalSeconds: waitSecs, until: ".pending == 0 and .failed == 0" },
-      ),
+      instruction: `${status} Then withdraw each with 'tempo wallet sessions close <channelId>'.`,
     };
+  const scope = single
+    ? [single.channel_id]
+    : [...(options.target ? [options.target] : []), ...(options.all ? ["--all"] : [])];
   return {
     ...summary,
     ...nextStep(
-      `${pending.length} session closes are pending; their deposits can be withdrawn after ${readyAt} (in ${waitSecs}s). Then run the next command to withdraw every finalizable channel.`,
-      ["wallet", "sessions", "close", "--finalize"],
-      { network, pollIntervalSeconds: waitSecs },
+      `${status} Then run the next command; until then it reports the close as pending without sending a transaction.`,
+      ["wallet", "sessions", "close", ...scope],
+      {
+        network: options.network,
+        pollIntervalSeconds: waitSecs,
+        until: ".pending == 0 and .failed == 0",
+      },
     ),
   };
 }

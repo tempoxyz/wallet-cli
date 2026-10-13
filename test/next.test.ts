@@ -11,7 +11,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("viem", async (importOriginal) => ({
   ...(await importOriginal<typeof import("viem")>()),
-  createPublicClient: vi.fn(() => ({ readContract: mocks.readContract })),
+  // A zero block height leaves orphaned-channel discovery with nothing to scan.
+  createPublicClient: vi.fn(() => ({
+    getBlockNumber: async () => 0n,
+    readContract: mocks.readContract,
+  })),
 }));
 
 vi.mock("../src/provider.js", async (importOriginal) => ({
@@ -279,7 +283,7 @@ const continuations: {
     poll_interval_seconds: 800,
   },
   {
-    name: "several pending session closes finalize after the last grace period",
+    name: "several pending closes for an origin rerun that origin's close",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       await saveSession(channelId, chain);
@@ -287,7 +291,21 @@ const continuations: {
       mockEscrow();
       return closeSessions({ network: option, target: origin });
     },
-    argv: ["wallet", "sessions", "close", "--finalize"],
+    argv: ["wallet", "sessions", "close", origin],
+    until: ".pending == 0 and .failed == 0",
+    poll_interval_seconds: 800,
+  },
+  {
+    name: "several pending closes from --all rerun --all",
+    run: async ({ option, chain }) => {
+      await writeWalletState(stateFor(chain));
+      await saveSession(channelId, chain);
+      await saveSession(otherChannelId, chain, { origin: "https://other.example" });
+      mockEscrow();
+      return closeSessions({ network: option, all: true });
+    },
+    argv: ["wallet", "sessions", "close", "--all"],
+    until: ".pending == 0 and .failed == 0",
     poll_interval_seconds: 800,
   },
 ];
@@ -411,6 +429,34 @@ it.each([
   expect(result).not.toHaveProperty("_next");
 });
 
+it.each([
+  { name: "--orphaned", options: { orphaned: true }, session: { state: "orphaned" } },
+  {
+    name: "--finalize",
+    options: { finalize: true },
+    session: { state: "closing", close_requested_at: now - 100, grace_ready_at: now - 1 },
+  },
+])(
+  "leaves several pending $name closes as an instruction because a rerun skips them",
+  async ({ options, session }) => {
+    vi.useFakeTimers({ now: now * 1000, toFake: ["Date"] });
+    vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+    await useTempHome();
+    await writeWalletState(stateFor(4217));
+    await saveSession(channelId, 4217, session);
+    await saveSession(otherChannelId, 4217, session);
+    mockEscrow();
+
+    const result = await closeSessions(options);
+
+    expect(result).toMatchObject({
+      pending: 2,
+      instruction: expect.stringContaining("tempo wallet sessions close <channelId>"),
+    });
+    expect(result).not.toHaveProperty("_next");
+  },
+);
+
 /** Splits a command into words the way a POSIX shell does. */
 async function shellWords(command: string) {
   const { stdout } = await execFileAsync("/bin/sh", ["-c", `printf '%s\\0' ${command}`]);
@@ -452,7 +498,11 @@ function machChallenge(chain: number) {
   );
 }
 
-async function saveSession(id: string, chain: number) {
+async function saveSession(
+  id: string,
+  chain: number,
+  overrides: Partial<Parameters<typeof upsertSessionRecord>[0]> = {},
+) {
   await upsertSessionRecord({
     accepted_cumulative: 2_000n,
     authorized_signer: testAccessKey,
@@ -476,6 +526,7 @@ async function saveSession(id: string, chain: number) {
     session_protocol: "v1",
     state: "active",
     token: usdcToken,
+    ...overrides,
   });
 }
 
