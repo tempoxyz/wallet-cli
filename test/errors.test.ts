@@ -118,11 +118,6 @@ describe("typed error sites", () => {
   });
 
   it("throws typed errors instead of bare Error", async () => {
-    // Sites pending migration in other changes; delete entries once they land.
-    const allowed = [
-      "src/commands/services.ts: if (!response.ok) throw new Error(`Failed to fetch service directory: HTTP ${response.status}`);",
-      'src/commands/transfer.ts: throw new Error("amount, token, and to are required");',
-    ];
     const found: string[] = [];
     for (const dir of ["src/commands", "src/payment", "src/shared"])
       for (const file of await readdir(join(root, dir), { recursive: true })) {
@@ -131,6 +126,6 @@ describe("typed error sites", () => {
         for (const line of source.split("\n"))
           if (/\bthrow\s+(new\s+)?Error\(/.test(line)) found.push(`${dir}/${file}: ${line.trim()}`);
       }
-    expect(found.filter((site) => !allowed.includes(site))).toEqual([]);
+    expect(found).toEqual([]);
   });
 });

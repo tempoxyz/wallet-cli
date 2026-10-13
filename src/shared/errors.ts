@@ -117,8 +117,8 @@ export function authRefreshRequiredError(
   });
 }
 
-export function httpError(status: number) {
-  return walletError({ code: "E_HTTP", message: `HTTP ${status}` });
+export function httpError(status: number, message = `HTTP ${status}`) {
+  return walletError({ code: "E_HTTP", message });
 }
 
 export function paymentOutcomeUnknownError(message: string) {
