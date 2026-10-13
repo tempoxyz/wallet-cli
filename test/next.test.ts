@@ -282,32 +282,6 @@ const continuations: {
     until: ".pending == 0 and .failed == 0",
     poll_interval_seconds: 800,
   },
-  {
-    name: "several pending closes for an origin rerun that origin's close",
-    run: async ({ option, chain }) => {
-      await writeWalletState(stateFor(chain));
-      await saveSession(channelId, chain);
-      await saveSession(otherChannelId, chain);
-      mockEscrow();
-      return closeSessions({ network: option, target: origin });
-    },
-    argv: ["wallet", "sessions", "close", origin],
-    until: ".pending == 0 and .failed == 0",
-    poll_interval_seconds: 800,
-  },
-  {
-    name: "several pending closes from --all rerun --all",
-    run: async ({ option, chain }) => {
-      await writeWalletState(stateFor(chain));
-      await saveSession(channelId, chain);
-      await saveSession(otherChannelId, chain, { origin: "https://other.example" });
-      mockEscrow();
-      return closeSessions({ network: option, all: true });
-    },
-    argv: ["wallet", "sessions", "close", "--all"],
-    until: ".pending == 0 and .failed == 0",
-    poll_interval_seconds: 800,
-  },
 ];
 
 describe.each([
@@ -430,6 +404,8 @@ it.each([
 });
 
 it.each([
+  { name: "an origin", options: { target: origin }, session: {} },
+  { name: "--all", options: { all: true }, session: {} },
   { name: "--orphaned", options: { orphaned: true }, session: { state: "orphaned" } },
   {
     name: "--finalize",
@@ -437,7 +413,7 @@ it.each([
     session: { state: "closing", close_requested_at: now - 100, grace_ready_at: now - 1 },
   },
 ])(
-  "leaves several pending $name closes as an instruction because a rerun skips them",
+  "names each channel when several $name closes are pending, since a rerun may select others",
   async ({ options, session }) => {
     vi.useFakeTimers({ now: now * 1000, toFake: ["Date"] });
     vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
@@ -449,13 +425,41 @@ it.each([
 
     const result = await closeSessions(options);
 
-    expect(result).toMatchObject({
-      pending: 2,
-      instruction: expect.stringContaining("tempo wallet sessions close <channelId>"),
-    });
+    expect(result).toMatchObject({ pending: 2 });
+    for (const id of [channelId, otherChannelId])
+      expect(result).toHaveProperty(
+        "instruction",
+        expect.stringContaining(`'tempo wallet sessions close ${id}'`),
+      );
     expect(result).not.toHaveProperty("_next");
   },
 );
+
+it("omits a keys update command when the input token is not 6-decimal", async () => {
+  vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+  await useTempHome();
+  await writeWalletState(stateFor(4217));
+  const dependencies = swapDependencies();
+  dependencies.getMetadata.mockImplementation(async (token: string) => ({
+    decimals: token === moderatoToken ? 2 : 6,
+    symbol: token === usdcToken ? "USDC.e" : "pathUSD",
+  }));
+
+  const result = await swapTokens(
+    {
+      args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
+      options: { "dry-run": true, "slippage-bps": 50 },
+    },
+    dependencies,
+  );
+
+  // keys update reads --limit as 6-decimal units, so a generated limit would be wrong for this token.
+  expect(result).toMatchObject({
+    requires_access_key_update: true,
+    instruction: expect.stringContaining("in the wallet app"),
+  });
+  expect(result).not.toHaveProperty("_next");
+});
 
 /** Splits a command into words the way a POSIX shell does. */
 async function shellWords(command: string) {

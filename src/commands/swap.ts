@@ -3,7 +3,7 @@ import { Actions, Addresses } from "viem/tempo";
 
 import { paymentOutcomeUnknownError, usageError, walletError } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
-import { chainId, createTempoPublicClient } from "../shared/network.js";
+import { chainId, createTempoPublicClient, tokenDecimals } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
 import { cleanStoredScalar, getRecord, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
@@ -202,26 +202,31 @@ export async function swapTokens(
           ],
           network,
         )
-      : key
-        ? nextStep(
-            `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to run the next command, then rerun this dry run to review the swap.`,
-            [
-              "wallet",
-              "keys",
-              "update",
-              key.address,
-              "--token",
-              tokenIn,
-              "--limit",
-              output.max_amount_in,
-            ],
-            network,
-          )
-        : nextStep(
-            "No usable access key for this wallet and network. Run the next command to log in, then rerun this dry run to review the swap.",
-            ["wallet", "login"],
-            network,
-          );
+      : key && metadataIn.decimals !== tokenDecimals()
+        ? // keys update reads --limit with a fixed decimal count, so a generated command would set the wrong raw limit.
+          {
+            instruction: `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to raise its ${metadataIn.symbol} limit to at least ${output.max_amount_in} in the wallet app, then rerun this dry run to review the swap.`,
+          }
+        : key
+          ? nextStep(
+              `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to run the next command, then rerun this dry run to review the swap.`,
+              [
+                "wallet",
+                "keys",
+                "update",
+                key.address,
+                "--token",
+                tokenIn,
+                "--limit",
+                output.max_amount_in,
+              ],
+              network,
+            )
+          : nextStep(
+              "No usable access key for this wallet and network. Run the next command to log in, then rerun this dry run to review the swap.",
+              ["wallet", "login"],
+              network,
+            );
     return { status: "dry_run" as const, ...output, ...next };
   }
   if (!input.options.yes)
