@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { erc20Abi, formatUnits } from "viem";
 
-import { usageError } from "../shared/errors.js";
+import { usageError, walletError } from "../shared/errors.js";
 import { chainId, createTempoPublicClient, tokenAddress } from "../shared/network.js";
 import {
   fundingAmount,
@@ -110,9 +110,13 @@ export async function runFundingFlow(options: {
     }
   } catch (error) {
     if (signal.aborted) {
-      if (signal.reason?.name === "TimeoutError")
-        throw new Error(`Timed out waiting for funding. Continue at ${url}`);
-      throw new Error(`Funding wait cancelled. Continue at ${url}`);
+      throw walletError({
+        code: "E_POLL_TIMEOUT",
+        message:
+          signal.reason?.name === "TimeoutError"
+            ? `Timed out waiting for funding. Continue at ${url}`
+            : `Funding wait cancelled. Continue at ${url}`,
+      });
     }
     throw error;
   } finally {

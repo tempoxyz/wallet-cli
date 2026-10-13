@@ -50,6 +50,7 @@ import {
   paymentOutcomeUnknownError,
   paymentError,
   usageError,
+  walletError,
 } from "../shared/errors.js";
 import {
   chainId,
@@ -590,7 +591,13 @@ async function buildFetchRequest(options: RequestOptions) {
   }
 
   if (options.json !== undefined) {
-    JSON.parse(options.json);
+    try {
+      JSON.parse(options.json);
+    } catch (error) {
+      throw usageError(
+        `Invalid JSON passed to --json: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     body = options.json;
     headers.set("content-type", headers.get("content-type") ?? "application/json");
     method ??= "POST";
@@ -1044,7 +1051,11 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
     const client = provider.getClient({ chainId: requestedChainId ?? chainId(options.network) });
     const state = providerState.store.getState();
     const account = state.accounts[state.activeAccount];
-    if (!account) throw new Error("No active account.");
+    if (!account)
+      throw walletError({
+        code: "E_NOT_AUTHENTICATED",
+        message: "No active account. Run 'tempo wallet login'.",
+      });
     return Object.assign(client, {
       account: {
         address: account.address,
@@ -1054,7 +1065,11 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
   };
   const state = providerState.store.getState();
   const account = state.accounts[state.activeAccount];
-  if (!account) throw new Error("No active account.");
+  if (!account)
+    throw walletError({
+      code: "E_NOT_AUTHENTICATED",
+      message: "No active account. Run 'tempo wallet login'.",
+    });
   return {
     address: account.address,
     getClient,

@@ -135,14 +135,23 @@ describe("MACH funding", () => {
     mocks.readContract.mockImplementation(() => new Promise(() => {}));
     await expect(
       runFundingFlow({ action: "mach", noBrowser: true, timeout: 0.01 }),
-    ).rejects.toThrow("Timed out waiting");
+    ).rejects.toMatchObject({
+      code: "E_POLL_TIMEOUT",
+      exitCode: 3,
+      retryable: true,
+      message: `Timed out waiting for funding. Continue at ${fundUrl("mach", { address: wallet, chainId: 4217 })}`,
+    });
   });
   it("cancels a waiting operation", async () => {
     const controller = new AbortController();
     controller.abort();
     await expect(
       runFundingFlow({ action: "mach", noBrowser: true, signal: controller.signal }),
-    ).rejects.toThrow("cancelled");
+    ).rejects.toMatchObject({
+      code: "E_POLL_TIMEOUT",
+      retryable: true,
+      message: expect.stringContaining("Funding wait cancelled. Continue at https://"),
+    });
   });
   it.each([NaN, Infinity, -1])("rejects unbounded timeout %s", async (timeout) => {
     await expect(runFundingFlow({ action: "mach", noBrowser: true, timeout })).rejects.toThrow(

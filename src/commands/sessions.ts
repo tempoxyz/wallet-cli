@@ -13,7 +13,12 @@ import {
   logQueryBlockRange,
   logScanDepth,
 } from "../shared/constants.js";
-import { usageError } from "../shared/errors.js";
+import {
+  paymentError,
+  paymentOutcomeUnknownError,
+  usageError,
+  walletError,
+} from "../shared/errors.js";
 import {
   chainId,
   createTempoPublicClient,
@@ -229,7 +234,11 @@ export async function closeSessions(options: {
   validateCooperativeCloseOptions(options);
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
-  if (!activeAccount) throw new Error("No wallet is logged in");
+  if (!activeAccount)
+    throw walletError({
+      code: "E_NOT_AUTHENTICATED",
+      message: "No wallet is logged in. Run 'tempo wallet login'.",
+    });
 
   if (!options.target && !options.all && !options.orphaned && !options.finalize)
     throw usageError(
@@ -395,13 +404,17 @@ async function closeSessionCooperatively(options: {
   record: ChannelRecord;
 }) {
   const closeUrl = options.record.request_url || options.record.origin;
-  if (!closeUrl) throw new Error("cooperative close requires the original session request URL");
+  if (!closeUrl)
+    throw walletError({
+      code: "E_NOT_FOUND",
+      message: "cooperative close requires the original session request URL",
+    });
 
   const chain = chainId(options.network);
   const challenge =
     (await refreshSessionChallenge(closeUrl)) ?? storedSessionChallenge(options.record);
   if (!challenge)
-    throw new Error("cooperative close requires a stored or fresh session payment challenge");
+    throw paymentError("cooperative close requires a stored or fresh session payment challenge");
 
   const cumulativeAmount =
     options.record.accepted_cumulative > 0n
@@ -432,7 +445,10 @@ async function closeSessionCooperatively(options: {
   });
   if (!response.ok) {
     const body = sanitizeText(await response.text().catch(() => ""));
-    throw new Error(body.trim() || `cooperative close failed with HTTP ${response.status}`);
+    throw walletError({
+      code: "E_HTTP",
+      message: body.trim() || `cooperative close failed with HTTP ${response.status}`,
+    });
   }
 }
 
@@ -446,9 +462,13 @@ async function sessionVoucherSigner(record: ChannelRecord) {
       return candidate.address.toLowerCase() === expected;
     return candidate.access.toLowerCase() === activeAccount?.address.toLowerCase();
   });
-  if (!key) throw new Error("cooperative close requires a local secp256k1 session access key");
+  if (!key)
+    throw walletError({
+      code: "E_NOT_FOUND",
+      message: "cooperative close requires a local secp256k1 session access key",
+    });
   if (key.keyType && key.keyType !== "secp256k1")
-    throw new Error("session close vouchers require a secp256k1 access key");
+    throw usageError("session close vouchers require a secp256k1 access key");
   return key;
 }
 
@@ -542,8 +562,8 @@ async function sendSessionManagementTransaction(options: {
   const record = getRecord(receipt);
   const txHash = stringValue(record.transactionHash ?? record.transaction_hash ?? record.hash);
   if (!txHash)
-    throw new Error(
-      `${options.functionName} submitted but receipt did not include a transaction hash`,
+    throw paymentOutcomeUnknownError(
+      `${options.functionName} submitted but receipt did not include a transaction hash; check 'tempo wallet sessions list' before retrying.`,
     );
   return txHash;
 }

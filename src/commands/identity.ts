@@ -254,13 +254,7 @@ async function updateAccessKeyThroughWallet(options: {
 function parseLimit(value: string) {
   if (!/^\d+(?:\.\d{1,6})?$/.test(value))
     throw usageError("Invalid limit: expected a non-negative token amount");
-  try {
-    const limit = parseUnits(value, tokenDecimals());
-    if (limit < 0n) throw new Error("negative limit");
-    return limit;
-  } catch {
-    throw usageError("Invalid limit: expected a non-negative token amount");
-  }
+  return parseUnits(value, tokenDecimals());
 }
 
 type RevokeProvider = Pick<CoreProvider.Provider, "getAccount" | "getClient">;

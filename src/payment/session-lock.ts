@@ -2,6 +2,7 @@ import { open, readFile, stat, unlink, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { walletError } from "../shared/errors.js";
 import { sleep } from "../shared/utils.js";
 
 export async function withSessionLock<T>(url: string, fn: () => Promise<T>): Promise<T> {
@@ -22,7 +23,11 @@ export async function withSessionLock<T>(url: string, fn: () => Promise<T>): Pro
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       if (await removeStaleLock(path)) continue;
-      if (Date.now() > deadline) throw new Error(`Timed out waiting for session lock: ${path}`);
+      if (Date.now() > deadline)
+        throw walletError({
+          code: "E_POLL_TIMEOUT",
+          message: `Timed out waiting for session lock: ${path}`,
+        });
       await sleep(100);
     }
   }

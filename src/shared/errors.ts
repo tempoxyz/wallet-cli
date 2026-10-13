@@ -1,15 +1,106 @@
 import { Errors } from "incur";
 
+/** Every error code the CLI reports, with its process exit code and default retryability. */
+export const errorCodes = {
+  E_USAGE: {
+    exitCode: 2,
+    retryable: false,
+    description: "Invalid arguments, input, or local configuration.",
+  },
+  E_NOT_FOUND: {
+    exitCode: 2,
+    retryable: false,
+    description: "A required session, key, or record was not found.",
+  },
+  E_NETWORK: {
+    exitCode: 3,
+    retryable: false,
+    description: "A network request failed or was refused.",
+  },
+  E_HTTP: {
+    exitCode: 3,
+    retryable: false,
+    description: "The server returned an HTTP error status.",
+  },
+  E_RPC: {
+    exitCode: 3,
+    retryable: false,
+    description: "An RPC read failed; reported inline in command output.",
+  },
+  E_POLL_TIMEOUT: {
+    exitCode: 3,
+    retryable: true,
+    description: "Stopped waiting before the expected result arrived.",
+  },
+  E_PAYMENT: {
+    exitCode: 4,
+    retryable: false,
+    description: "The payment challenge or settlement was rejected.",
+  },
+  E_PAYMENT_OUTCOME_UNKNOWN: {
+    exitCode: 4,
+    retryable: false,
+    description: "A payment or transaction may have completed; check before retrying.",
+  },
+  E_NOT_AUTHENTICATED: {
+    exitCode: 4,
+    retryable: false,
+    description: "No wallet is logged in.",
+  },
+  E_AUTH_REFRESH_REQUIRED: {
+    exitCode: 4,
+    retryable: false,
+    description: "The access key must be refreshed with 'tempo wallet refresh'.",
+  },
+  E_KEY_EXPIRED: {
+    exitCode: 4,
+    retryable: false,
+    description: "The access key has expired.",
+  },
+  E_LIMIT_EXCEEDED: {
+    exitCode: 4,
+    retryable: false,
+    description: "The amount exceeds a spending limit or --max-spend.",
+  },
+  E_INSUFFICIENT_FUNDS: {
+    exitCode: 4,
+    retryable: false,
+    description: "The wallet balance is too low.",
+  },
+  E_RUNTIME: {
+    exitCode: 1,
+    retryable: false,
+    description: "An unexpected internal failure.",
+  },
+} as const satisfies Record<string, { exitCode: number; retryable: boolean; description: string }>;
+
+export type WalletErrorCode = keyof typeof errorCodes;
+
+/** Creates an incur error whose exit code and default retryability come from `errorCodes`. */
+export function walletError(options: {
+  code: WalletErrorCode;
+  message: string;
+  retryable?: boolean | undefined;
+  cause?: Error | undefined;
+}) {
+  const { exitCode, retryable } = errorCodes[options.code];
+  return new Errors.IncurError({
+    ...options,
+    exitCode,
+    retryable: options.retryable ?? retryable,
+  });
+}
+
 export function usageError(message: string) {
-  return new Errors.IncurError({ code: "E_USAGE", message, exitCode: 2 });
+  return walletError({ code: "E_USAGE", message });
 }
 
 export function networkError(message: string) {
-  return new Errors.IncurError({ code: "E_NETWORK", message, exitCode: 3 });
+  return walletError({ code: "E_NETWORK", message });
 }
 
 export function paymentError(message: string) {
-  return new Errors.IncurError({ code: "E_PAYMENT", message, exitCode: 4 });
+  return walletError({ code: "E_PAYMENT", message });
 }
 
 export function authRefreshRequiredError(
@@ -20,17 +111,16 @@ export function authRefreshRequiredError(
     reason === "missing"
       ? "No usable access key is configured."
       : `The configured access key is ${reason}.`;
-  return new Errors.IncurError({
+  return walletError({
     code: "E_AUTH_REFRESH_REQUIRED",
     message: `${detail} Run 'tempo wallet refresh --network ${network}' before retrying.`,
-    exitCode: 4,
   });
 }
 
 export function httpError(status: number) {
-  return new Errors.IncurError({ code: "E_HTTP", message: `HTTP ${status}`, exitCode: 3 });
+  return walletError({ code: "E_HTTP", message: `HTTP ${status}` });
 }
 
 export function paymentOutcomeUnknownError(message: string) {
-  return new Errors.IncurError({ code: "E_PAYMENT_OUTCOME_UNKNOWN", message, exitCode: 4 });
+  return walletError({ code: "E_PAYMENT_OUTCOME_UNKNOWN", message });
 }
