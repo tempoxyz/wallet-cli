@@ -11,6 +11,32 @@ export function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
+// CSI, then OSC/DCS/SOS/PM/APC strings (to BEL, ST, or end of input), then other ESC
+// sequences, each with its 7-bit or 8-bit introducer.
+const terminalEscapeSequences =
+  // oxlint-disable-next-line no-control-regex
+  /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]|(?:\u001b[\]PX^_]|[\u0090\u0098\u009d-\u009f])[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)?|\u001b[ -/]*[0-~]/g;
+// C0/C1 controls except tab and newline, bidi controls, zero-width characters, and tag characters.
+const invisibleCharacters =
+  // oxlint-disable-next-line no-control-regex
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
+
+/** Removes terminal escape sequences and invisible control characters from server-supplied text. */
+export function sanitizeText(value: string) {
+  return value.replace(terminalEscapeSequences, "").replace(invisibleCharacters, "");
+}
+
+/** Applies `sanitizeText` to every string and object key in a parsed JSON value. */
+export function sanitizeJson(value: unknown): unknown {
+  if (typeof value === "string") return sanitizeText(value);
+  if (Array.isArray(value)) return value.map(sanitizeJson);
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [sanitizeText(key), sanitizeJson(item)]),
+    );
+  return value;
+}
+
 export function cleanStoredScalar(value: string) {
   return value.replace(/#__bigint$/, "");
 }

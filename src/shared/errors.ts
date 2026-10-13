@@ -1,5 +1,7 @@
 import { Errors } from "incur";
 
+import { sanitizeText } from "./utils.js";
+
 export function usageError(message: string) {
   return new Errors.IncurError({ code: "E_USAGE", message, exitCode: 2 });
 }
@@ -8,8 +10,9 @@ export function networkError(message: string) {
   return new Errors.IncurError({ code: "E_NETWORK", message, exitCode: 3 });
 }
 
+// Payment messages can embed challenge fields and SDK/RPC error text from servers.
 export function paymentError(message: string) {
-  return new Errors.IncurError({ code: "E_PAYMENT", message, exitCode: 4 });
+  return new Errors.IncurError({ code: "E_PAYMENT", message: sanitizeText(message), exitCode: 4 });
 }
 
 export function authRefreshRequiredError(
@@ -32,5 +35,9 @@ export function httpError(status: number) {
 }
 
 export function paymentOutcomeUnknownError(message: string) {
-  return new Errors.IncurError({ code: "E_PAYMENT_OUTCOME_UNKNOWN", message, exitCode: 4 });
+  return new Errors.IncurError({
+    code: "E_PAYMENT_OUTCOME_UNKNOWN",
+    message: sanitizeText(message),
+    exitCode: 4,
+  });
 }

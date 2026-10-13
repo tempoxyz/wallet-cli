@@ -36,6 +36,7 @@ import {
   parseOnChainBigInt,
   parseStoredBigInt,
   safeNumber,
+  sanitizeText,
   stringValue,
 } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
@@ -430,7 +431,7 @@ async function closeSessionCooperatively(options: {
     headers: { Authorization: authorization },
   });
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
+    const body = sanitizeText(await response.text().catch(() => ""));
     throw new Error(body.trim() || `cooperative close failed with HTTP ${response.status}`);
   }
 }

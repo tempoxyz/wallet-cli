@@ -1,6 +1,6 @@
 import { version } from "../shared/constants.js";
 import { usageError } from "../shared/errors.js";
-import { getArray, getRecord, stringValue } from "../shared/utils.js";
+import { getArray, getRecord, sanitizeJson, stringValue } from "../shared/utils.js";
 
 type ServiceSummary = {
   id: string;
@@ -54,7 +54,7 @@ async function fetchServiceEntries(): Promise<
 
   const body = getRecord((await response.json()) as unknown);
   const services = getArray(body.services).map((service) => {
-    const item = getRecord(service);
+    const item = getRecord(sanitizeJson(service));
     const serviceUrl = stringValue(item.serviceUrl ?? item.service_url ?? item.url);
     const summary = {
       id: stringValue(item.id),

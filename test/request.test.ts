@@ -885,6 +885,89 @@ describe("request command", () => {
   });
 
   it.each([
+    {
+      name: "offered token addresses",
+      run: () =>
+        selectPaymentTokenResponse(
+          new Response(null, {
+            headers: {
+              "www-authenticate": Challenge.serialize(
+                paymentChallenge({
+                  amount: "15000",
+                  id: "offered-token",
+                  intent: "charge",
+                  chainId: 4217,
+                  currency: "0x1111111111111111111111111111111111111111\u001b[2J\u202e",
+                }),
+              ),
+            },
+            status: 402,
+          }),
+          "0x2222222222222222222222222222222222222222",
+        ),
+      message:
+        "Server did not offer payment token 0x2222222222222222222222222222222222222222. Available tokens: 0x1111111111111111111111111111111111111111.",
+    },
+    {
+      name: "session failure reasons",
+      run: () => {
+        const currency = "0x20c000000000000000000000b9537d11c60e8b50";
+        const session = paymentChallenge({
+          amount: "15000",
+          id: "session",
+          intent: "session",
+          chainId: 4217,
+          currency,
+          sessionProtocol: "v2",
+        });
+        const charge = paymentChallenge({
+          amount: "15000",
+          id: "charge",
+          intent: "charge",
+          chainId: 4217,
+          currency,
+        });
+        return chargeFallbackError(
+          [charge, session].map((challenge) => Challenge.serialize(challenge)).join(", "),
+          session,
+          requestOptions("https://example.com"),
+          new Error("rejected\u001b]8;;https://evil.example\u0007 by server\u001b]8;;\u0007\u200b"),
+        );
+      },
+      message: expect.stringMatching(/^Session payment failed: rejected by server\nA one-time/),
+    },
+    {
+      name: "recovery challenge IDs",
+      run: () => {
+        const challenge = Challenge.from({
+          id: "recovery\u202e\u200b-test",
+          intent: "charge",
+          method: "tempo",
+          realm: "example.com",
+          request: { amount: "1", currency: "token", recipient: "recipient" },
+        });
+        const credential = Credential.serialize({ challenge, payload: { type: "hash" } });
+        const options = parseRequestArgs(["https://example.com"]);
+        return fetchPaidRequest(
+          { url: options.url, init: {} },
+          options,
+          credential,
+          vi.fn().mockRejectedValue(new Error("timeout")),
+        );
+      },
+      message: expect.stringContaining('Challenge ID: "recovery-test".'),
+    },
+  ])("strips terminal escapes from $name in payment errors", async ({ run, message }) => {
+    let error: unknown;
+    try {
+      error = await run();
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ message });
+  });
+
+  it.each([
     { name: "unversioned", protocols: [undefined], selectedId: undefined },
     { name: "v1", protocols: ["v1"], selectedId: undefined },
     { name: "v2", protocols: ["v2"], selectedId: "session-v2" },

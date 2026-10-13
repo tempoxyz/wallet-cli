@@ -209,6 +209,48 @@ describe("fetchServices", () => {
     });
   });
 
+  it("strips terminal escapes and invisible characters from directory entries", async () => {
+    mockFetchOk({
+      services: [
+        {
+          id: "evil\u200b",
+          name: "\u001b[2J\u001b[HTrusted API",
+          description: "Safe\u001b]8;;https://evil.example\u0007 link\u001b]8;;\u0007\u202e",
+          categories: ["data\u0007"],
+          tags: ["\u2066tag\u2069"],
+          endpoints: [
+            {
+              method: "GET",
+              path: "/now\u001b[8m",
+              description: "Current\u009b31m weather",
+              payment: { amount: "100", unitType: { label: "us\u200bdc" } },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(await fetchServiceList()).toEqual([
+      {
+        id: "evil",
+        name: "Trusted API",
+        description: "Safe link",
+        categories: ["data"],
+        tags: ["tag"],
+        endpoint_count: 1,
+      },
+    ]);
+    expect(await fetchServices({ serviceId: "evil" })).toMatchObject({
+      endpoints: [
+        {
+          path: "/now",
+          description: "Current weather",
+          payment: { amount: "100", unitType: { label: "usdc" } },
+        },
+      ],
+    });
+  });
+
   it("throws E_USAGE for an unknown service id", async () => {
     mockFetchOk(serviceDirectory);
     const error = await fetchServices({ serviceId: "missing" }).catch((e) => e);

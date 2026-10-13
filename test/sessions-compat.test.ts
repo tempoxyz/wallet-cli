@@ -1,15 +1,30 @@
+import { createServer } from "node:http";
+
+import { Challenge } from "mppx";
 import { describe, expect, it, vi } from "vitest";
-import { decodeFunctionData } from "viem";
+import { decodeFunctionData, encodeFunctionResult, type Hex } from "viem";
 import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
 
 import {
   buildSessionManagementTransactionRequest,
+  closeSessions,
   dryRunCloseSessions,
   listSessions,
 } from "../src/commands/sessions.js";
 import { handleCompatCommand } from "../src/compat.js";
+import { upsertSessionRecord } from "../src/payment/session-store.js";
+import { escrowAbi, mainnetEscrow } from "../src/shared/constants.js";
 
-import { expectUsageError, testAccessKey, testWallet, useTempHome } from "./helpers.js";
+import {
+  expectUsageError,
+  testAccessKey,
+  testWallet,
+  testWallet2,
+  usdc,
+  useTempHome,
+  walletState,
+  writeWalletState,
+} from "./helpers.js";
 
 const validChannelId = `0x${"a".repeat(64)}`;
 
@@ -98,6 +113,88 @@ describe("sessions utilities", () => {
     });
     expect(decoded.functionName).toBe("requestClose");
     expect(normalizeDescriptor(decoded.args[0])).toEqual(normalizeDescriptor(descriptor));
+  });
+
+  it("strips terminal escapes from a cooperative close error body", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      if (request.url === "/session") {
+        response.statusCode = request.headers.authorization ? 409 : 503;
+        response.end("\u001b[2J\u001b[Hvoucher \u202erejected\u001b]8;;https://evil.example\u0007");
+        return;
+      }
+      const rpc = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+        id: number;
+        params: [{ data: Hex }];
+      };
+      const call = decodeFunctionData({ abi: escrowAbi, data: rpc.params[0].data });
+      const result =
+        call.functionName === "CLOSE_GRACE_PERIOD"
+          ? encodeFunctionResult({
+              abi: escrowAbi,
+              functionName: "CLOSE_GRACE_PERIOD",
+              result: 900n,
+            })
+          : encodeFunctionResult({
+              abi: escrowAbi,
+              functionName: "getChannel",
+              result: [false, 0n, testWallet, testWallet2, usdc, testAccessKey, 10_000n, 2_000n],
+            });
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing fixture address");
+    const origin = `http://127.0.0.1:${address.port}`;
+    vi.stubEnv("TEMPO_RPC_URL", `${origin}/rpc`);
+    try {
+      const challenge = Challenge.from({
+        id: "close-test",
+        realm: origin,
+        method: "tempo",
+        intent: "session",
+        request: { amount: "1000", currency: usdc, recipient: testWallet2 },
+      });
+      await upsertSessionRecord({
+        accepted_cumulative: 2_000n,
+        authorized_signer: testAccessKey,
+        chain_id: 4217,
+        challenge_echo: JSON.stringify(challenge),
+        channel_id: validChannelId,
+        close_requested_at: 0,
+        created_at: 1,
+        cumulative_amount: 2_000n,
+        deposit: 10_000n,
+        escrow_contract: mainnetEscrow,
+        grace_ready_at: 0,
+        last_used_at: 1,
+        network: "tempo",
+        origin,
+        payee: testWallet2,
+        payer: testWallet,
+        request_url: `${origin}/session`,
+        salt: `0x${"0".repeat(64)}`,
+        server_spent: 2_000n,
+        session_protocol: "v1",
+        state: "active",
+        token: usdc,
+      });
+
+      const summary = await closeSessions({ cooperative: true, network: "tempo", target: origin });
+
+      expect(summary.results).toEqual([
+        expect.objectContaining({ status: "error", error: "voucher rejected" }),
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 });
 
