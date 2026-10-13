@@ -172,52 +172,64 @@ it("aborts Retry-After backoff at the request deadline without another request",
   expect(requests).toBe(1);
 });
 
+const resetBeforeResponse = (req: IncomingMessage) => req.socket.destroy();
+const resetMidBody = (_req: IncomingMessage, res: ServerResponse) => {
+  res.writeHead(200, { "content-length": "100" });
+  res.write("partial");
+  setImmediate(() => res.socket?.destroy());
+};
+const neverRespond = () => {};
+const redirectForever = (_req: IncomingMessage, res: ServerResponse) => {
+  res.writeHead(302, { location: "/again" });
+  res.end();
+};
+
 it.each([
+  { failure: "reset", args: [], handler: resetBeforeResponse, retryable: true },
+  { failure: "reset", args: ["-I"], handler: resetBeforeResponse, retryable: true },
+  { failure: "reset", args: ["-X", "OPTIONS"], handler: resetBeforeResponse, retryable: true },
   {
-    failure: "a connection reset before the response",
-    retryable: true,
-    args: (url: string) => [url],
-    handler: (req: IncomingMessage) => req.socket.destroy(),
-  },
-  {
-    failure: "a connection reset mid-body",
-    retryable: true,
-    args: (url: string) => [url],
-    handler: (_req: IncomingMessage, res: ServerResponse) => {
-      res.writeHead(200, { "content-length": "100" });
-      res.write("partial");
-      setImmediate(() => res.socket?.destroy());
-    },
-  },
-  {
-    failure: "the request deadline",
-    retryable: true,
-    args: (url: string) => ["-m", "0.1", url],
-    handler: () => {},
-  },
-  {
-    failure: "the redirect limit",
+    failure: "reset",
+    args: ["-X", "POST"],
+    handler: resetBeforeResponse,
     retryable: false,
-    args: (url: string) => ["-L", "--max-redirs", "0", url],
-    handler: (_req: IncomingMessage, res: ServerResponse) => {
-      res.writeHead(302, { location: "/again" });
-      res.end();
-    },
+    unsafe: "POST",
+  },
+  { failure: "mid-body reset", args: [], handler: resetMidBody, retryable: true },
+  {
+    failure: "mid-body reset",
+    args: ["--json", "{}"],
+    handler: resetMidBody,
+    retryable: false,
+    unsafe: "POST",
+  },
+  { failure: "deadline", args: ["-m", "0.1"], handler: neverRespond, retryable: true },
+  {
+    failure: "deadline",
+    args: ["-m", "0.1", "-X", "DELETE"],
+    handler: neverRespond,
+    retryable: false,
+    unsafe: "DELETE",
   },
   {
-    failure: "offline mode",
+    failure: "redirect limit",
+    args: ["-L", "--max-redirs", "0"],
+    handler: redirectForever,
     retryable: false,
-    args: (url: string) => ["--offline", url],
-    handler: () => {},
   },
+  { failure: "offline mode", args: ["--offline"], handler: neverRespond, retryable: false },
 ])(
-  "reports $failure as E_NETWORK with retryable=$retryable",
-  async ({ args, handler, retryable }) => {
+  "reports a $failure with $args as E_NETWORK retryable=$retryable",
+  async ({ args, handler, retryable, unsafe }) => {
     const url = await server(handler);
-    await expect(runRequest(args(url), { stdout: capture() })).rejects.toMatchObject({
+    const replayWarning = "request may have reached the server";
+    await expect(runRequest([...args, url], { stdout: capture() })).rejects.toMatchObject({
       code: "E_NETWORK",
       exitCode: 3,
       retryable,
+      message: unsafe
+        ? expect.stringContaining(`The ${unsafe} ${replayWarning}`)
+        : expect.not.stringContaining(replayWarning),
     });
   },
 );

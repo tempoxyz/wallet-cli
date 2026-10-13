@@ -483,7 +483,9 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
   validateRequestOptions(options);
   const stdout = io.stdout ?? process.stdout;
   const started = Date.now();
-  let { request, response } = await fetchWithRetries(await buildFetchRequest(options), options);
+  const plan = await buildFetchRequest(options);
+  const method = plan.init.method ?? "GET";
+  let { request, response } = await fetchWithRetries(plan, options);
 
   let paid = false;
 
@@ -539,14 +541,14 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
         paid ? privateKeySigner(options) : undefined,
       );
     if (response.status >= 400 && options.sseJson) {
-      const body = await response.text().catch(responseBodyNetworkError);
+      const body = await response.text().catch(responseBodyNetworkError(method));
       await writeOutput(
         options.output ?? (options.remoteName ? remoteNamePath(options.url) : undefined),
         `${JSON.stringify({ event: "error", status: response.status, message: `HTTP ${response.status}${body ? `: ${body}` : ""}`, ts: new Date().toISOString() })}\n`,
         stdout,
       );
     } else {
-      await writeResponseBody(response, options, stdout);
+      await writeResponseBody(response, options, stdout, method);
     }
     if (paidResponseFailures.has(response))
       throw paymentOutcomeUnknownError(
@@ -674,11 +676,9 @@ async function fetchWithRetries(
     }
   }
 
+  // Redirect-limit refusals keep their code.
   if (lastError instanceof Errors.IncurError) throw lastError;
-  // Redirect-limit refusals keep their code; transport failures and timeouts are transient.
-  throw networkError(lastError instanceof Error ? lastError.message : String(lastError), {
-    retryable: true,
-  });
+  throw transportError(lastError, request.init.method ?? "GET");
 }
 
 // Credentials may authorize payment even when the response never arrives. Never
@@ -1816,11 +1816,29 @@ function offeredTempoCurrencies(header: string | null) {
   }
 }
 
-function responseBodyNetworkError(error: unknown): never {
-  throw networkError(error instanceof Error ? error.message : String(error), { retryable: true });
+const replaySafeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// Rerunning the command resends the original method, so only safe methods are retryable.
+function transportError(error: unknown, method: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = method.toUpperCase();
+  if (replaySafeMethods.has(normalized)) return networkError(message, { retryable: true });
+  return networkError(
+    `${message}. The ${normalized} request may have reached the server; check before retrying.`,
+  );
 }
 
-async function* readResponseBody(body: ReadableStream<Uint8Array>, signal?: AbortSignal) {
+function responseBodyNetworkError(method: string) {
+  return (error: unknown): never => {
+    throw transportError(error, method);
+  };
+}
+
+async function* readResponseBody(
+  body: ReadableStream<Uint8Array>,
+  method: string,
+  signal?: AbortSignal,
+) {
   const reader = body.getReader();
   const cancel = () => {
     void reader.cancel().catch(() => undefined);
@@ -1829,7 +1847,7 @@ async function* readResponseBody(body: ReadableStream<Uint8Array>, signal?: Abor
   if (signal?.aborted) cancel();
   try {
     while (true) {
-      const { done, value } = await reader.read().catch(responseBodyNetworkError);
+      const { done, value } = await reader.read().catch(responseBodyNetworkError(method));
       if (done) return;
       yield value;
     }
@@ -1844,6 +1862,7 @@ async function writeResponseBody(
   response: Response,
   options: RequestOptions,
   stdout: Pick<NodeJS.WriteStream, "write">,
+  method: string,
 ) {
   const outputPath =
     options.output ?? (options.remoteName ? remoteNamePath(options.url) : undefined);
@@ -1884,17 +1903,17 @@ async function writeResponseBody(
       await mkdir(dirname(outputPath), { recursive: true });
       if (headerText) await writeFile(outputPath, headerText);
       await pipeline(
-        ({ signal } = {}) => readResponseBody(body, signal),
+        ({ signal } = {}) => readResponseBody(body, method, signal),
         createWriteStream(outputPath, { flags: headerText ? "a" : "w" }),
       );
     } else {
       await write(stdout, headerText);
-      await pipeline(({ signal } = {}) => readResponseBody(body, signal), process.stdout);
+      await pipeline(({ signal } = {}) => readResponseBody(body, method, signal), process.stdout);
     }
     return;
   }
 
-  const body = Buffer.from(await response.arrayBuffer().catch(responseBodyNetworkError));
+  const body = Buffer.from(await response.arrayBuffer().catch(responseBodyNetworkError(method)));
   await writeOutput(
     outputPath,
     headerText ? Buffer.concat([Buffer.from(headerText), body]) : body,
