@@ -172,6 +172,68 @@ it("aborts Retry-After backoff at the request deadline without another request",
   expect(requests).toBe(1);
 });
 
+const resetBeforeResponse = (req: IncomingMessage) => req.socket.destroy();
+const resetMidBody = (_req: IncomingMessage, res: ServerResponse) => {
+  res.writeHead(200, { "content-length": "100" });
+  res.write("partial");
+  setImmediate(() => res.socket?.destroy());
+};
+const neverRespond = () => {};
+const redirectForever = (_req: IncomingMessage, res: ServerResponse) => {
+  res.writeHead(302, { location: "/again" });
+  res.end();
+};
+
+it.each([
+  { failure: "reset", args: [], handler: resetBeforeResponse, retryable: true },
+  { failure: "reset", args: ["-I"], handler: resetBeforeResponse, retryable: true },
+  { failure: "reset", args: ["-X", "OPTIONS"], handler: resetBeforeResponse, retryable: true },
+  {
+    failure: "reset",
+    args: ["-X", "POST"],
+    handler: resetBeforeResponse,
+    retryable: false,
+    unsafe: "POST",
+  },
+  { failure: "mid-body reset", args: [], handler: resetMidBody, retryable: true },
+  {
+    failure: "mid-body reset",
+    args: ["--json", "{}"],
+    handler: resetMidBody,
+    retryable: false,
+    unsafe: "POST",
+  },
+  { failure: "deadline", args: ["-m", "0.1"], handler: neverRespond, retryable: true },
+  {
+    failure: "deadline",
+    args: ["-m", "0.1", "-X", "DELETE"],
+    handler: neverRespond,
+    retryable: false,
+    unsafe: "DELETE",
+  },
+  {
+    failure: "redirect limit",
+    args: ["-L", "--max-redirs", "0"],
+    handler: redirectForever,
+    retryable: false,
+  },
+  { failure: "offline mode", args: ["--offline"], handler: neverRespond, retryable: false },
+])(
+  "reports a $failure with $args as E_NETWORK retryable=$retryable",
+  async ({ args, handler, retryable, unsafe }) => {
+    const url = await server(handler);
+    const replayWarning = "request may have reached the server";
+    await expect(runRequest([...args, url], { stdout: capture() })).rejects.toMatchObject({
+      code: "E_NETWORK",
+      exitCode: 3,
+      retryable,
+      message: unsafe
+        ? expect.stringContaining(`The ${unsafe} ${replayWarning}`)
+        : expect.not.stringContaining(replayWarning),
+    });
+  },
+);
+
 it("preserves repeated multipart fields and files in order", async () => {
   const home = await useTempHome();
   const first = join(home, "first.txt");

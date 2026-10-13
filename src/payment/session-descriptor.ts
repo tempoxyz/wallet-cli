@@ -1,5 +1,7 @@
 import type { Address, Hex } from "viem";
 
+import { walletError } from "../shared/errors.js";
+
 export type SessionDescriptor = {
   authorizedSigner: Address;
   expiringNonceHash: Hex;
@@ -23,6 +25,10 @@ export function sessionDescriptorFromRecord(
 
 export function requireSessionDescriptor(record: SessionDescriptorRecord): SessionDescriptor {
   const descriptor = sessionDescriptorFromRecord(record);
-  if (!descriptor) throw new Error("v2 session management requires a stored channel descriptor");
+  if (!descriptor)
+    throw walletError({
+      code: "E_NOT_FOUND",
+      message: "v2 session management requires a stored channel descriptor",
+    });
   return descriptor;
 }

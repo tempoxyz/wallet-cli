@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 
+import { walletError } from "./errors.js";
+
 type PackageJson = {
   version?: string;
 };
@@ -19,7 +21,8 @@ function packageVersion() {
     readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
   ) as PackageJson;
 
-  if (!packageJson.version) throw new Error("package.json is missing version");
+  if (!packageJson.version)
+    throw walletError({ code: "E_RUNTIME", message: "package.json is missing version" });
 
   return packageJson.version;
 }

@@ -10,6 +10,7 @@ vi.mock("../src/commands/fund.js", async (importOriginal) => ({
 }));
 
 import { handleCompatCommand, validateFundCompatArgs } from "../src/compat.js";
+import { networkError, walletError } from "../src/shared/errors.js";
 
 describe("fund compatibility", () => {
   afterEach(() => {
@@ -37,6 +38,35 @@ describe("fund compatibility", () => {
     expect(mocks.runFundingFlow).toHaveBeenCalledWith(
       expect.objectContaining({ action: "fund", network: "testnet" }),
     );
+  });
+
+  it.each([
+    {
+      thrown: new Error("RPC down"),
+      exitCode: 1,
+      printed: { code: "E_RUNTIME", message: "RPC down", retryable: false },
+    },
+    {
+      thrown: networkError("socket hang up", { retryable: true }),
+      exitCode: 3,
+      printed: { code: "E_NETWORK", message: "socket hang up", retryable: true },
+    },
+    {
+      thrown: walletError({ code: "E_POLL_TIMEOUT", message: "Timed out", retryable: false }),
+      exitCode: 3,
+      printed: { code: "E_POLL_TIMEOUT", message: "Timed out", retryable: false },
+    },
+  ])("prints $printed.code JSON errors with retryable", async ({ thrown, exitCode, printed }) => {
+    mocks.runFundingFlow.mockRejectedValueOnce(thrown);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${code}`);
+    });
+
+    await expect(handleCompatCommand(["fund", "--no-browser", "--json-output"])).rejects.toThrow(
+      `exit ${exitCode}`,
+    );
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual(printed);
   });
 
   it("rejects unknown options before starting a funding flow", () => {

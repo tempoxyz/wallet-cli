@@ -6,6 +6,7 @@ import { Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { Errors } from "incur";
 import { Challenge, Constants, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession, tempo } from "mppx/client";
 import { Keystore } from "accounts";
@@ -50,6 +51,7 @@ import {
   paymentOutcomeUnknownError,
   paymentError,
   usageError,
+  walletError,
 } from "../shared/errors.js";
 import {
   chainId,
@@ -481,7 +483,9 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
   validateRequestOptions(options);
   const stdout = io.stdout ?? process.stdout;
   const started = Date.now();
-  let { request, response } = await fetchWithRetries(await buildFetchRequest(options), options);
+  const plan = await buildFetchRequest(options);
+  const method = plan.init.method ?? "GET";
+  let { request, response } = await fetchWithRetries(plan, options);
 
   let paid = false;
 
@@ -537,14 +541,14 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
         paid ? privateKeySigner(options) : undefined,
       );
     if (response.status >= 400 && options.sseJson) {
-      const body = await response.text().catch(responseBodyNetworkError);
+      const body = await response.text().catch(responseBodyNetworkError(method));
       await writeOutput(
         options.output ?? (options.remoteName ? remoteNamePath(options.url) : undefined),
         `${JSON.stringify({ event: "error", status: response.status, message: `HTTP ${response.status}${body ? `: ${body}` : ""}`, ts: new Date().toISOString() })}\n`,
         stdout,
       );
     } else {
-      await writeResponseBody(response, options, stdout);
+      await writeResponseBody(response, options, stdout, method);
     }
     if (paidResponseFailures.has(response))
       throw paymentOutcomeUnknownError(
@@ -590,7 +594,13 @@ async function buildFetchRequest(options: RequestOptions) {
   }
 
   if (options.json !== undefined) {
-    JSON.parse(options.json);
+    try {
+      JSON.parse(options.json);
+    } catch (error) {
+      throw usageError(
+        `Invalid JSON passed to --json: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     body = options.json;
     headers.set("content-type", headers.get("content-type") ?? "application/json");
     method ??= "POST";
@@ -666,7 +676,9 @@ async function fetchWithRetries(
     }
   }
 
-  throw networkError(lastError instanceof Error ? lastError.message : String(lastError));
+  // Redirect-limit refusals keep their code.
+  if (lastError instanceof Errors.IncurError) throw lastError;
+  throw transportError(lastError, request.init.method ?? "GET");
 }
 
 // Credentials may authorize payment even when the response never arrives. Never
@@ -800,15 +812,11 @@ async function payAndRetryRequest(
         paySessionAndRetryRequest(selectedResponse, request, options, sessionChallenge),
       );
     } catch (error) {
+      // Only payment failures fall back to a charge offer; other typed errors keep their code.
       if (
-        isAuthRefreshRequiredError(error) ||
-        (error &&
-          typeof error === "object" &&
-          "code" in error &&
-          error.code === "E_PAYMENT_OUTCOME_UNKNOWN")
+        options.paymentIntent === "auto" &&
+        !(error instanceof Errors.IncurError && error.code !== "E_PAYMENT")
       )
-        throw error;
-      if (options.paymentIntent === "auto")
         throw chargeFallbackError(header, sessionChallenge, options, error) ?? error;
       throw error;
     }
@@ -847,7 +855,7 @@ async function payAndRetryRequest(
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
     return await fetchPaidRequest({ init: paidInit, url: request.url }, options, credential);
   } catch (error) {
-    if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
+    if (error instanceof Errors.IncurError) throw error;
     const diagnostic = spendingLimitDiagnostic(error, header, options);
     if (diagnostic) throw diagnostic;
     throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
@@ -956,7 +964,7 @@ async function paySessionAndRetryRequest(
     }
     return response;
   } catch (error) {
-    if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
+    if (error instanceof Errors.IncurError) throw error;
     throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
   }
 }
@@ -1044,7 +1052,11 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
     const client = provider.getClient({ chainId: requestedChainId ?? chainId(options.network) });
     const state = providerState.store.getState();
     const account = state.accounts[state.activeAccount];
-    if (!account) throw new Error("No active account.");
+    if (!account)
+      throw walletError({
+        code: "E_NOT_AUTHENTICATED",
+        message: "No active account. Run 'tempo wallet login'.",
+      });
     return Object.assign(client, {
       account: {
         address: account.address,
@@ -1054,7 +1066,11 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
   };
   const state = providerState.store.getState();
   const account = state.accounts[state.activeAccount];
-  if (!account) throw new Error("No active account.");
+  if (!account)
+    throw walletError({
+      code: "E_NOT_AUTHENTICATED",
+      message: "No active account. Run 'tempo wallet login'.",
+    });
   return {
     address: account.address,
     getClient,
@@ -1147,24 +1163,6 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
   }
 
   return undefined;
-}
-
-function isActionablePaymentError(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const code = (error as Record<string, unknown>).code;
-  return (
-    code === "E_PAYMENT_OUTCOME_UNKNOWN" ||
-    code === "E_PAYMENT" ||
-    code === "E_AUTH_REFRESH_REQUIRED"
-  );
-}
-
-function isAuthRefreshRequiredError(error: unknown) {
-  return (
-    Boolean(error) &&
-    typeof error === "object" &&
-    (error as Record<string, unknown>).code === "E_AUTH_REFRESH_REQUIRED"
-  );
 }
 
 type PaymentIdentity = Awaited<ReturnType<typeof resolvePaymentIdentity>>;
@@ -1818,11 +1816,29 @@ function offeredTempoCurrencies(header: string | null) {
   }
 }
 
-function responseBodyNetworkError(error: unknown): never {
-  throw networkError(error instanceof Error ? error.message : String(error));
+const replaySafeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// Rerunning the command resends the original method, so only safe methods are retryable.
+function transportError(error: unknown, method: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = method.toUpperCase();
+  if (replaySafeMethods.has(normalized)) return networkError(message, { retryable: true });
+  return networkError(
+    `${message}. The ${normalized} request may have reached the server; check before retrying.`,
+  );
 }
 
-async function* readResponseBody(body: ReadableStream<Uint8Array>, signal?: AbortSignal) {
+function responseBodyNetworkError(method: string) {
+  return (error: unknown): never => {
+    throw transportError(error, method);
+  };
+}
+
+async function* readResponseBody(
+  body: ReadableStream<Uint8Array>,
+  method: string,
+  signal?: AbortSignal,
+) {
   const reader = body.getReader();
   const cancel = () => {
     void reader.cancel().catch(() => undefined);
@@ -1831,7 +1847,7 @@ async function* readResponseBody(body: ReadableStream<Uint8Array>, signal?: Abor
   if (signal?.aborted) cancel();
   try {
     while (true) {
-      const { done, value } = await reader.read().catch(responseBodyNetworkError);
+      const { done, value } = await reader.read().catch(responseBodyNetworkError(method));
       if (done) return;
       yield value;
     }
@@ -1846,6 +1862,7 @@ async function writeResponseBody(
   response: Response,
   options: RequestOptions,
   stdout: Pick<NodeJS.WriteStream, "write">,
+  method: string,
 ) {
   const outputPath =
     options.output ?? (options.remoteName ? remoteNamePath(options.url) : undefined);
@@ -1886,17 +1903,17 @@ async function writeResponseBody(
       await mkdir(dirname(outputPath), { recursive: true });
       if (headerText) await writeFile(outputPath, headerText);
       await pipeline(
-        ({ signal } = {}) => readResponseBody(body, signal),
+        ({ signal } = {}) => readResponseBody(body, method, signal),
         createWriteStream(outputPath, { flags: headerText ? "a" : "w" }),
       );
     } else {
       await write(stdout, headerText);
-      await pipeline(({ signal } = {}) => readResponseBody(body, signal), process.stdout);
+      await pipeline(({ signal } = {}) => readResponseBody(body, method, signal), process.stdout);
     }
     return;
   }
 
-  const body = Buffer.from(await response.arrayBuffer().catch(responseBodyNetworkError));
+  const body = Buffer.from(await response.arrayBuffer().catch(responseBodyNetworkError(method)));
   await writeOutput(
     outputPath,
     headerText ? Buffer.concat([Buffer.from(headerText), body]) : body,

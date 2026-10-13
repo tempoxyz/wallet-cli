@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { withSessionLock } from "../src/payment/session-lock.js";
 import { useTempHome } from "./helpers.js";
@@ -68,5 +68,19 @@ describe("withSessionLock", () => {
 
     await rm(path, { force: true });
     await expect(pending).resolves.toBe("ran");
+  });
+
+  it("reports a lock held past the deadline as a retryable timeout", async () => {
+    await useTempHome();
+    const path = await seedLock(`${process.pid}\n${new Date().toISOString()}\n`);
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => (now += 20_000));
+
+    await expect(withSessionLock(url, async () => "ran")).rejects.toMatchObject({
+      code: "E_POLL_TIMEOUT",
+      exitCode: 3,
+      retryable: true,
+      message: `Timed out waiting for session lock: ${path}`,
+    });
   });
 });

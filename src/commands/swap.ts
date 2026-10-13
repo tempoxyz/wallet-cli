@@ -1,7 +1,7 @@
 import { formatUnits, isAddress, parseUnits } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
-import { usageError } from "../shared/errors.js";
+import { paymentOutcomeUnknownError, usageError } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
 import { chainId, createTempoPublicClient } from "../shared/network.js";
 import { cleanStoredScalar, getRecord, stringValue } from "../shared/utils.js";
@@ -156,15 +156,12 @@ export async function swapTokens(
 function parseSwapAmount(value: string, decimals: number) {
   if (!/^\d+(?:\.\d+)?$/.test(value))
     throw usageError("Invalid amount: expected a positive token amount");
-  try {
-    const amount = parseUnits(value, decimals);
-    if (amount <= 0n) throw new Error("non-positive amount");
-    return amount;
-  } catch {
+  const amount = parseUnits(value, decimals);
+  if (amount <= 0n)
     throw usageError(
       `Invalid amount: expected a positive amount with at most ${decimals} decimals`,
     );
-  }
+  return amount;
 }
 
 function divideRoundUp(value: bigint, divisor: bigint) {
@@ -204,7 +201,10 @@ function defaultDependencies(network: string | undefined): SwapDependencies {
       });
       const record = getRecord(receipt);
       const txHash = stringValue(record.transactionHash ?? record.transaction_hash ?? record.hash);
-      if (!txHash) throw new Error("Swap submitted but receipt did not include a transaction hash");
+      if (!txHash)
+        throw paymentOutcomeUnknownError(
+          "Swap submitted but receipt did not include a transaction hash; check the wallet balance before retrying.",
+        );
       return txHash;
     },
   };

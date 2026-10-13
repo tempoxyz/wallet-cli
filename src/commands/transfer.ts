@@ -87,7 +87,10 @@ export async function transferTokens(options: {
   });
   const record = getRecord(receipt);
   const txHash = stringValue(record.transactionHash ?? record.transaction_hash ?? record.hash);
-  if (!txHash) throw new Error("Transfer submitted but receipt did not include a transaction hash");
+  if (!txHash)
+    throw paymentOutcomeUnknownError(
+      "Transfer submitted but receipt did not include a transaction hash; check the wallet balance before retrying.",
+    );
 
   return {
     status: "success" as const,
