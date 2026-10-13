@@ -175,7 +175,13 @@ cli.command("transfer", {
   ],
   async run({ args, options }) {
     if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
-    if (options.credits) return transferCredits({ options });
+    if (options.credits) {
+      if (Object.values(args).some((value) => value !== undefined))
+        throw usageError(
+          "Positional amount, token, and recipient arguments cannot be used with --credits; use --amount-cents and --to, or an MPP challenge",
+        );
+      return transferCredits({ options });
+    }
     if (options.mach) return transferMach({ options });
     return transferTokens({ args, options });
   },

@@ -125,6 +125,7 @@ export async function queryCreditBalance(options: {
   const url = new URL("/api/coinflow/balances", appUrl);
   url.searchParams.set("wallet", options.walletAddress);
   const response = await fetch(url.toString(), {
+    signal: AbortSignal.timeout(3_000),
     headers: {
       "user-agent": `wallet-cli/${version}`,
     },

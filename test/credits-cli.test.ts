@@ -75,7 +75,7 @@ describe("credits CLI compatibility", () => {
     ).toString("base64url");
     await writeFile(
       file,
-      `WWW-Authenticate: Payment realm="example", method="tempo", intent="charge", id="abc123", request="${request}"`,
+      `WWW-Authenticate: Payment realm="example", method="tempo", intent="charge", id="abc123", expires="2099-01-01T00:00:00Z", request="${request}"`,
     );
     const credits = await cli(["transfer", "--credits", "--mpp-challenge-file", file, "--dry-run"]);
     expect(credits.code).toBe(0);
@@ -97,4 +97,14 @@ describe("credits CLI compatibility", () => {
     expect(result.code).toBe(2);
     expect(result.stdout + result.stderr).toContain("Use only one of --credits and --mach");
   });
+
+  it.each([["1"], ["1", usdcToken], ["1", usdcToken, recipient]])(
+    "rejects positional transfer arguments with credits: %j",
+    async (...args) => {
+      await useTempHome();
+      const result = await cli(["transfer", ...args, "--credits", "--mpp-challenge", "ignored"]);
+      expect(result.code).toBe(2);
+      expect(result.stdout + result.stderr).toContain("Positional amount, token, and recipient");
+    },
+  );
 });

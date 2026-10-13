@@ -293,6 +293,9 @@ export async function transferCredits(options: {
     };
   }
 
+  if (challenge && cents === undefined && maxSpend === undefined)
+    throw usageError("MPP Credits challenge payments require --amount-cents or TEMPO_MAX_SPEND");
+
   const redemption = { wallet, subtotal: { cents: amountCents, currency: "USD" }, transactionData };
   const provider = createProvider({ network: options.options.network });
   const auth = (await postCredits("auth-msg", redemption)) as CreditsAuthorization;
@@ -307,6 +310,8 @@ export async function transferCredits(options: {
     method: "eth_signTypedData_v4",
     params: [wallet as `0x${string}`, typedData],
   });
+  if (creditsTransfer.expiresAt !== undefined && creditsTransfer.expiresAt <= Date.now())
+    throw usageError("MPP challenge expired before redemption; obtain a fresh challenge");
   let redeem: unknown;
   try {
     redeem = await postCredits("send", {
@@ -379,6 +384,7 @@ function buildDirectCreditsTransfer(options: {
   return {
     amountCents,
     transactionData,
+    expiresAt: undefined,
     preview: { to: to.toLowerCase(), transaction_data: transactionData },
   };
 }
@@ -397,16 +403,14 @@ function buildMppCreditsTransfer(options: {
     throw usageError(
       `Invalid configuration: unsupported MPP intent for Coinflow credits: ${escapeInvisible(challenge.intent)}`,
     );
-  if (challenge.expires) {
-    const expiry = Date.parse(challenge.expires);
-    if (!Number.isFinite(expiry)) throw usageError("MPP challenge has an invalid expiry");
-    if (expiry <= Date.now()) throw usageError("Invalid configuration: MPP challenge is expired");
-  }
+  const expiresAt = challenge.expires ? Date.parse(challenge.expires) : NaN;
+  if (!Number.isFinite(expiresAt)) throw usageError("MPP challenge requires a valid expiry");
+  if (expiresAt <= Date.now()) throw usageError("Invalid configuration: MPP challenge is expired");
 
   const request = challenge.request;
   const amount = stringValue(request.amount);
   const token = stringValue(request.currency).toLowerCase();
-  const recipient = stringValue(request.recipient).toLowerCase();
+  const recipient = stringValue(request.recipient);
   const methodDetails = getRecord(request.methodDetails);
   if (
     methodDetails.splits !== undefined &&
@@ -435,8 +439,8 @@ function buildMppCreditsTransfer(options: {
     throw usageError(
       `Invalid configuration: MPP challenge currency ${escapeInvisible(token)} does not match token ${selectedToken} for chain ${selectedChainId}`,
     );
-  if (!/^0x[0-9a-f]{40}$/.test(recipient) || recipient === zeroAddress)
-    throw usageError("Invalid configuration: MPP challenge is missing a recipient address");
+  if (!isAddress(recipient) || recipient.toLowerCase() === zeroAddress)
+    throw usageError("Invalid configuration: MPP challenge requires a valid recipient address");
   // A uint256 amount has at most 78 decimal digits. Bound work before BigInt parsing.
   if (amount.length > 78) throw usageError("MPP challenge amount is too large");
   if (!/^\d+$/.test(amount))
@@ -462,8 +466,9 @@ function buildMppCreditsTransfer(options: {
   return {
     amountCents,
     transactionData,
+    expiresAt,
     preview: {
-      to: recipient,
+      to: recipient.toLowerCase(),
       token,
       chain_id: selectedChainId,
       challenge_id: challenge.id,
@@ -561,6 +566,7 @@ function hashPrefix(value: string, length: number) {
 async function postCredits(path: "auth-msg" | "send", body: Record<string, unknown>) {
   const response = await fetch(`${new URL(appUrl).origin}/api/coinflow/redeem/${path}`, {
     method: "POST",
+    signal: AbortSignal.timeout(30_000),
     headers: {
       "content-type": "application/json",
       "user-agent": `wallet-cli/${version}`,

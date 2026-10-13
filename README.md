@@ -139,14 +139,14 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 
 ```sh
 tempo wallet whoami --credits
-tempo wallet transfer --credits --mpp-challenge-file challenge.txt
+tempo wallet transfer --credits --amount-cents 105 --mpp-challenge-file challenge.txt
 # Or a direct legacy credit payment (USD cents):
 tempo wallet transfer --credits --amount-cents 100 --to 0x...
 ```
 
-Legacy credit payments retain whole-cent precision. With a challenge, `--amount-cents` optionally caps the total credit debit, including Coinflow's quoted gas fees. `TEMPO_MAX_SPEND` also caps that total, including for direct transfers; `--max-spend` is for MACH. Direct `--to`, `--data`, and `--value` options cannot be combined with a challenge. `--credits` and `--mach` cannot be combined.
+Legacy credit payments retain whole-cent precision. Spending against a challenge requires a cap via `--amount-cents` or `TEMPO_MAX_SPEND`, including Coinflow's quoted gas fees; `--dry-run` needs no cap. `TEMPO_MAX_SPEND` also caps direct transfers; `--max-spend` is for MACH. Positional transfer arguments are unsupported with `--credits`. Direct `--to`, `--data`, and `--value` options cannot be combined with a challenge. `--credits` and `--mach` cannot be combined.
 
-Use `--dry-run` to inspect the destination and calldata. Credit challenges must support push payments (transaction-hash receipts); split payments are unsupported. Coinflow remains trusted to quote gas fees and execute the transaction because its permit authorizes a credit debit without binding the recipient or calldata.
+Use `--dry-run` to inspect the destination and calldata. Credit challenges must be unexpired and support push payments (transaction-hash receipts); split payments are unsupported. Coinflow remains trusted to quote gas fees and execute the transaction because its permit authorizes a credit debit without binding the recipient or calldata.
 
 For funding from another device or an automated host:
 

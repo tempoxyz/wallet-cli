@@ -3,6 +3,7 @@ import { decodeFunctionData, hashTypedData, parseAbi } from "viem";
 import { Challenge } from "mppx";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createServer } from "node:http";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("../src/provider.js", () => ({ createProvider: () => ({ request: mocks.request }) }));
@@ -54,7 +55,7 @@ const auth = {
   nonce: `0x${"ab".repeat(32)}`,
   creditsRawAmount: 1000000,
 };
-const challenge = `Payment realm="example", method="tempo", intent="charge", id="abc123", request="${Buffer.from(
+const challenge = `Payment realm="example", method="tempo", intent="charge", id="abc123", expires="2099-01-01T00:00:00Z", request="${Buffer.from(
   JSON.stringify({
     amount: "1000000",
     currency: usdcToken,
@@ -64,7 +65,7 @@ const challenge = `Payment realm="example", method="tempo", intent="charge", id=
 ).toString("base64url")}"`;
 
 beforeEach(async () => {
-  vi.stubEnv("TEMPO_MAX_SPEND", "");
+  vi.stubEnv("TEMPO_MAX_SPEND", "5");
   await useTempHome();
   await writeWalletState(walletState());
   mocks.request.mockReset().mockResolvedValue(signature);
@@ -335,17 +336,89 @@ describe("legacy credit spending", () => {
     },
   );
 
-  it.each(["not-a-date", "2020-01-01T00:00:00Z", "2099-99-99T00:00:00Z"])(
+  it.each([undefined, "", "not-a-date", "2020-01-01T00:00:00Z", "2099-99-99T00:00:00Z"])(
     "rejects invalid or expired challenge expiry %s before signing",
     async (expires) => {
       const fetch = vi.spyOn(globalThis, "fetch");
-      await expect(
-        transferCredits({ options: { "mpp-challenge": `${challenge}, expires="${expires}"` } }),
-      ).rejects.toMatchObject({ code: "E_USAGE" });
+      const input = challenge.replace(
+        /, expires="[^"]*"/,
+        expires === undefined ? "" : `, expires="${expires}"`,
+      );
+      await expect(transferCredits({ options: { "mpp-challenge": input } })).rejects.toMatchObject({
+        code: "E_USAGE",
+      });
       expect(fetch).not.toHaveBeenCalled();
       expect(mocks.request).not.toHaveBeenCalled();
     },
   );
+
+  it.each(["id", "realm"])("rejects a challenge missing %s before authorization", async (field) => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const input = challenge.replace(new RegExp(`${field}="[^"]*",? ?`), "");
+    await expect(transferCredits({ options: { "mpp-challenge": input } })).rejects.toMatchObject({
+      code: "E_USAGE",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it.each(["authorization", "signature"])(
+    "does not redeem a challenge that expires during %s",
+    async (stage) => {
+      const now = Date.now();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      const offer = Challenge.deserialize(challenge);
+      offer.expires = new Date(now + 1_000).toISOString();
+      const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        if (stage === "authorization") clock.mockReturnValue(now + 2_000);
+        return Response.json(auth);
+      });
+      mocks.request.mockImplementation(async () => {
+        if (stage === "signature") clock.mockReturnValue(now + 2_000);
+        return signature;
+      });
+      await expect(
+        transferCredits({ options: { "mpp-challenge": Challenge.serialize(offer) } }),
+      ).rejects.toMatchObject({ code: "E_USAGE", message: expect.stringContaining("expired") });
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rejects an invalid recipient checksum before authorization", async () => {
+    const offer = Challenge.deserialize(challenge);
+    offer.request.recipient = "0xABfB663C1F9cd7438f54846D6B827E315719eC0f";
+    const fetch = vi.spyOn(globalThis, "fetch");
+    await expect(
+      transferCredits({ options: { "mpp-challenge": Challenge.serialize(offer) } }),
+    ).rejects.toMatchObject({ code: "E_USAGE", message: expect.stringContaining("recipient") });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 100])("requires a cap only for challenge spending: %s", async (cents) => {
+    vi.stubEnv("TEMPO_MAX_SPEND", "");
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json(auth))
+      .mockResolvedValueOnce(Response.json({ hash }));
+    const options = { "mpp-challenge": challenge, "amount-cents": cents };
+    await expect(
+      transferCredits({ options: { ...options, "dry-run": true } }),
+    ).resolves.toMatchObject({
+      dry_run: true,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    if (cents === undefined) {
+      await expect(transferCredits({ options })).rejects.toMatchObject({
+        code: "E_USAGE",
+        message: expect.stringContaining("require --amount-cents or TEMPO_MAX_SPEND"),
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(mocks.request).not.toHaveBeenCalled();
+    } else {
+      await expect(transferCredits({ options })).resolves.toMatchObject({ tx_hash: hash });
+    }
+  });
 
   it.each([[{ recipient, amount: "10000" }], "invalid", null])(
     "rejects unsupported split charges before signing: %j",
@@ -481,65 +554,66 @@ describe("legacy credit spending", () => {
     expect(mocks.request).toHaveBeenCalledOnce();
   });
 
-  it.each([{ "amount-cents": 100, to: recipient }, { "mpp-challenge": challenge }])(
-    "signs and redeems existing credits without a MACH payment: %j",
-    async (options) => {
-      const fetch = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValueOnce(Response.json(auth))
-        .mockResolvedValueOnce(Response.json({ hash }));
-      const result = await transferCredits({ options });
-      expect(result).toMatchObject({
-        wallet: testWallet.toLowerCase(),
-        amount_cents: 100,
-        tx_hash: hash,
+  it.each([
+    { "amount-cents": 100, to: recipient },
+    { "mpp-challenge": challenge, "amount-cents": 100 },
+  ])("signs and redeems existing credits without a MACH payment: %j", async (options) => {
+    vi.stubEnv("TEMPO_MAX_SPEND", "");
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json(auth))
+      .mockResolvedValueOnce(Response.json({ hash }));
+    const result = await transferCredits({ options });
+    expect(result).toMatchObject({
+      wallet: testWallet.toLowerCase(),
+      amount_cents: 100,
+      tx_hash: hash,
+    });
+    expect(transferOutput.parse(result)).toEqual(result);
+    expect(console.error).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("--credits is deprecated"),
+    );
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      `${new URL(appUrl).origin}/api/coinflow/redeem/auth-msg`,
+      `${new URL(appUrl).origin}/api/coinflow/redeem/send`,
+    ]);
+    const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
+    expect(request).toMatchObject({
+      wallet: testWallet.toLowerCase(),
+      subtotal: { cents: 100, currency: "USD" },
+    });
+    if ("to" in options) {
+      expect(request.transactionData).toEqual({ type: "token", destination: recipient });
+    } else {
+      expect(request.transactionData.transaction.to).toBe(usdcToken);
+      const decoded = decodeFunctionData({
+        abi: parseAbi([
+          "function transferWithMemo(address to, uint256 amount, bytes32 memo) returns (bool)",
+        ]),
+        data: request.transactionData.transaction.data,
       });
-      expect(transferOutput.parse(result)).toEqual(result);
-      expect(console.error).toHaveBeenCalledExactlyOnceWith(
-        expect.stringContaining("--credits is deprecated"),
-      );
-      expect(fetch).toHaveBeenCalledTimes(2);
-      expect(fetch.mock.calls.map(([url]) => url)).toEqual([
-        `${new URL(appUrl).origin}/api/coinflow/redeem/auth-msg`,
-        `${new URL(appUrl).origin}/api/coinflow/redeem/send`,
+      expect(decoded.args).toEqual([
+        recipient,
+        1000000n,
+        expect.stringMatching(/^0x[0-9a-f]{64}$/),
       ]);
-      const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
-      expect(request).toMatchObject({
-        wallet: testWallet.toLowerCase(),
-        subtotal: { cents: 100, currency: "USD" },
-      });
-      if ("to" in options) {
-        expect(request.transactionData).toEqual({ type: "token", destination: recipient });
-      } else {
-        expect(request.transactionData.transaction.to).toBe(usdcToken);
-        const decoded = decodeFunctionData({
-          abi: parseAbi([
-            "function transferWithMemo(address to, uint256 amount, bytes32 memo) returns (bool)",
-          ]),
-          data: request.transactionData.transaction.data,
-        });
-        expect(decoded.args).toEqual([
-          recipient,
-          1000000n,
-          expect.stringMatching(/^0x[0-9a-f]{64}$/),
-        ]);
-      }
-      expect(mocks.request).toHaveBeenCalledExactlyOnceWith({
-        method: "eth_signTypedData_v4",
-        params: [testWallet.toLowerCase(), expect.any(String)],
-      });
-      expect(hashTypedData(JSON.parse(mocks.request.mock.calls[0]![0].params[1]))).toBe(
-        hashTypedData(JSON.parse(auth.message)),
-      );
-      expect(JSON.parse(fetch.mock.calls[1]![1]!.body as string)).toEqual({
-        ...request,
-        permitCreditsSignature: signature,
-        validBefore: auth.validBefore,
-        nonce: auth.nonce,
-        creditsRawAmount: auth.creditsRawAmount,
-      });
-    },
-  );
+    }
+    expect(mocks.request).toHaveBeenCalledExactlyOnceWith({
+      method: "eth_signTypedData_v4",
+      params: [testWallet.toLowerCase(), expect.any(String)],
+    });
+    expect(hashTypedData(JSON.parse(mocks.request.mock.calls[0]![0].params[1]))).toBe(
+      hashTypedData(JSON.parse(auth.message)),
+    );
+    expect(JSON.parse(fetch.mock.calls[1]![1]!.body as string)).toEqual({
+      ...request,
+      permitCreditsSignature: signature,
+      validBefore: auth.validBefore,
+      nonce: auth.nonce,
+      creditsRawAmount: auth.creditsRawAmount,
+    });
+  });
 
   it.each([
     { options: { "mpp-challenge": challenge }, cap: "0.99" },
@@ -686,4 +760,51 @@ describe("legacy credit balances", () => {
     });
     expect(fetch).not.toHaveBeenCalled();
   });
+});
+
+it.each(
+  ["balances", "auth-msg", "send"].flatMap((endpoint) =>
+    ["headers", "body"].map((stalled) => ({ endpoint, stalled })),
+  ),
+)("aborts stalled $endpoint $stalled without retrying", async ({ endpoint, stalled }) => {
+  const fetch = globalThis.fetch;
+  const timeout = AbortSignal.timeout;
+  const deadline = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => timeout(100));
+  const paths: string[] = [];
+  const server = createServer((request, response) => {
+    paths.push(request.url!);
+    if (request.url!.endsWith(endpoint)) {
+      if (stalled === "body") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.write("{");
+      }
+      return;
+    }
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(auth));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing server address");
+    vi.spyOn(globalThis, "fetch").mockImplementation((url, options) =>
+      fetch(`http://127.0.0.1:${address.port}${new URL(String(url)).pathname}`, options),
+    );
+    const action =
+      endpoint === "balances"
+        ? whoamiHandler({ credits: true })
+        : transferCredits({ options: { "mpp-challenge": challenge } });
+    const error = await action.catch((error: Error) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(deadline).toHaveBeenCalledWith(endpoint === "balances" ? 3_000 : 30_000);
+    expect(paths).toHaveLength(endpoint === "send" ? 2 : 1);
+    expect(paths.at(-1)).toMatch(new RegExp(`/${endpoint}$`));
+    if (endpoint === "send") {
+      expect(error).toMatchObject({ code: "E_PAYMENT_OUTCOME_UNKNOWN", retryable: false });
+      expect(mocks.request).toHaveBeenCalledOnce();
+    } else expect(mocks.request).not.toHaveBeenCalled();
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
