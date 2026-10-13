@@ -17,6 +17,7 @@ import {
   walletState,
   writeWalletState,
 } from "./helpers.js";
+import { cliBundle } from "./cli-bundle.js";
 
 const exec = promisify(execFile);
 const servers: ReturnType<typeof createServer>[] = [];
@@ -182,7 +183,7 @@ it("keeps keys out of the actual CLI output", async () => {
   const home = await useTempHome();
   const server = await fixture();
   const cli = (...args: string[]) =>
-    exec(process.execPath, ["--import", "tsx", "src/request-cli.ts", ...args, server.url], {
+    exec(process.execPath, [cliBundle("request"), ...args, server.url], {
       env: { ...process.env, TEMPO_PRIVATE_KEY: "", TEMPO_WALLET_NETWORK: "mainnet" },
     }).catch((error: { stdout: string; stderr: string; code: number }) => error);
 

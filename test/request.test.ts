@@ -45,6 +45,7 @@ import {
   writeWalletState,
 } from "./helpers.js";
 import { loadWalletState } from "../src/wallet/store.js";
+import { cliBundle } from "./cli-bundle.js";
 
 vi.mock("mppx/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("mppx/client")>();
@@ -214,7 +215,7 @@ describe("request command", () => {
     }>((resolve) => {
       execFile(
         process.execPath,
-        ["--import", "tsx", "src/request-cli.ts", "--write-meta", meta, server.url("/error")],
+        [cliBundle("request"), "--write-meta", meta, server.url("/error")],
         { cwd: join(import.meta.dirname, ".."), timeout: 15000 },
         (error, stdout, stderr) => resolve({ code: error?.code, stdout, stderr }),
       );
@@ -248,14 +249,7 @@ describe("request command", () => {
       }>((resolve) => {
         execFile(
           process.execPath,
-          [
-            "--import",
-            "tsx",
-            "src/request-cli.ts",
-            ...flags,
-            ...(file ? ["-o", output] : []),
-            server.url("/error"),
-          ],
+          [cliBundle("request"), ...flags, ...(file ? ["-o", output] : []), server.url("/error")],
           { cwd: join(import.meta.dirname, ".."), timeout: 15000 },
           (error, _stdout, stderr) => resolve({ code: error?.code, stderr }),
         );
@@ -277,7 +271,7 @@ describe("request command", () => {
     }>((resolve) => {
       execFile(
         process.execPath,
-        ["--import", "tsx", "src/request-cli.ts", "--stream", "-o", home, server.url("/stream")],
+        [cliBundle("request"), "--stream", "-o", home, server.url("/stream")],
         { cwd: join(import.meta.dirname, ".."), timeout: 5000 },
         (error, _stdout, stderr) => resolve({ code: error?.code, stderr }),
       );
@@ -298,7 +292,7 @@ describe("request command", () => {
     }>((resolve) => {
       execFile(
         process.execPath,
-        ["--import", "tsx", "src/request-cli.ts", "--sse-json", server.url("/error")],
+        [cliBundle("request"), "--sse-json", server.url("/error")],
         { cwd: join(import.meta.dirname, ".."), timeout: 15000 },
         (error, stdout) => resolve({ code: error?.code, stdout }),
       );

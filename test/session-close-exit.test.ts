@@ -17,6 +17,7 @@ import {
   walletState,
   writeWalletState,
 } from "./helpers.js";
+import { cliBundle } from "./cli-bundle.js";
 
 const root = resolve(import.meta.dirname, "..");
 const channelId = `0x${"a".repeat(64)}` as const;
@@ -135,7 +136,7 @@ describe("session close process exit status", () => {
           (resolve, reject) => {
             execFile(
               process.execPath,
-              ["--import", "tsx", "src/cli.ts", ...args],
+              [cliBundle("wallet"), ...args],
               {
                 cwd: root,
                 env: {
