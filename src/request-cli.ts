@@ -119,8 +119,12 @@ const cli = Cli.create("tempo request", {
       description: "Set a header and write output to a file",
     },
   ],
-  async run({ args, options }) {
-    await executeRequest(toRequestOptions(args.url, options));
+  async run({ args, formatExplicit, options }) {
+    // Structured output (-j, --format) keeps stderr parseable; --dry-run JSON reports the signer.
+    await executeRequest(
+      toRequestOptions(args.url, options),
+      formatExplicit ? { stderr: { write: () => true } } : {},
+    );
     return undefined;
   },
 });

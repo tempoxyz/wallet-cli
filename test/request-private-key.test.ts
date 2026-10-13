@@ -67,9 +67,9 @@ it.each([
     stderr: "",
   },
   {
-    name: "blank env",
+    name: "empty env",
     flag: undefined,
-    env: " ",
+    env: "",
     signer: { address: null, source: "wallet" },
     stderr: "",
   },
@@ -120,6 +120,8 @@ it.each([
     source: "--private-key",
   },
   { name: "short env", flag: undefined, env: "0xdeadbeef", source: "TEMPO_PRIVATE_KEY" },
+  { name: "blank env", flag: undefined, env: " ", source: "TEMPO_PRIVATE_KEY" },
+  { name: "padded env", flag: undefined, env: `${testPrivateKey}\n`, source: "TEMPO_PRIVATE_KEY" },
   { name: "zero env", flag: undefined, env: `0x${"0".repeat(64)}`, source: "TEMPO_PRIVATE_KEY" },
   { name: "non-hex env", flag: undefined, env: `0x${"g".repeat(64)}`, source: "TEMPO_PRIVATE_KEY" },
 ])("rejects an invalid $name before HTTP without echoing it", async (row) => {
@@ -142,6 +144,26 @@ it.each([
   expect(server.requests()).toBe(0);
 });
 
+it.each([
+  { name: "missing challenge", header: "", args: [] },
+  { name: "malformed challenge", header: "Basic realm=local", args: [] },
+  { name: "network mismatch", header: charge({ methodDetails: { chainId: 42431 } }), args: [] },
+  { name: "expired challenge", header: charge({}, "2000-01-01T00:00:00Z"), args: [] },
+  {
+    name: "over max spend",
+    header: charge({ amount: "6000", recipient: "0x0000000000000000000000000000000000000001" }),
+    args: ["--max-spend", "0.001"],
+  },
+])("announces no signer for an unusable 402 ($name)", async (row) => {
+  const server = await fixture(row.header);
+  const io = { stdout: capture(), stderr: capture() };
+  await expect(
+    runRequest(["--private-key", testPrivateKey2, ...row.args, server.url], io),
+  ).rejects.toMatchObject({ code: "E_PAYMENT" });
+  expect(io.stderr.text()).toBe("");
+  expect(server.requests()).toBe(1);
+});
+
 it("keeps keys out of the actual CLI output", async () => {
   await useTempHome();
   const server = await fixture();
@@ -154,6 +176,11 @@ it("keeps keys out of the actual CLI output", async () => {
   expect(paid.stderr).toBe(`${flagNotice}${flagWarning}`);
   expect(`${paid.stdout}${paid.stderr}`).not.toContain(testPrivateKey2.slice(2));
 
+  // Structured output keeps stderr free of plain-text notices.
+  const structured = await cli("-j", "--private-key", testPrivateKey2);
+  expect(JSON.parse(structured.stdout).source).toMatch(new RegExp(`${flagAddress}$`, "i"));
+  expect(structured.stderr).toBe("");
+
   const invalid = `0x${"f".repeat(64)}`;
   const rejected = await cli("--private-key", invalid);
   expect(rejected).toMatchObject({ code: 2 });
@@ -164,19 +191,26 @@ it("keeps keys out of the actual CLI output", async () => {
 }, 30_000);
 
 // A zero-amount charge is authorized with a signed proof, so no funds or RPC are involved.
-async function fixture() {
+function charge(request: Record<string, unknown> = {}, expires?: string) {
+  return Challenge.serialize(
+    Challenge.from({
+      id: "private-key",
+      realm: "local",
+      method: "tempo",
+      intent: "charge",
+      ...(expires ? { expires } : {}),
+      request: {
+        amount: "0",
+        currency: "0x20c0000000000000000000000000000000000000",
+        methodDetails: { chainId: 4217 },
+        ...request,
+      },
+    }),
+  );
+}
+
+async function fixture(wwwAuthenticate = charge()) {
   let requests = 0;
-  const challenge = Challenge.from({
-    id: "private-key",
-    realm: "local",
-    method: "tempo",
-    intent: "charge",
-    request: {
-      amount: "0",
-      currency: "0x20c0000000000000000000000000000000000000",
-      methodDetails: { chainId: 4217 },
-    },
-  });
   const server = createServer((req, res) => {
     requests++;
     if (req.headers.authorization) {
@@ -184,7 +218,7 @@ async function fixture() {
       res.end(JSON.stringify({ source: Credential.deserialize(req.headers.authorization).source }));
       return;
     }
-    res.writeHead(402, { "www-authenticate": Challenge.serialize(challenge) });
+    res.writeHead(402, wwwAuthenticate ? { "www-authenticate": wwwAuthenticate } : {});
     res.end("Payment Required");
   });
   servers.push(server);

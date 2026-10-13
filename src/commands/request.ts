@@ -479,9 +479,9 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
   let paid = false;
 
   if (response.status === 402) {
-    const signer = privateKeySigner(options);
     if (options.dryRun) {
       const { challenge } = preparePaymentChallenge(response, options, request.url);
+      const signer = privateKeySigner(options);
       if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
       if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
       await writeOutput(
@@ -516,8 +516,7 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
       return;
     }
 
-    if (signer) writePrivateKeyNotice(io.stderr ?? process.stderr, signer);
-    response = await payAndRetryRequest(response, request, options);
+    response = await payAndRetryRequest(response, request, options, io.stderr ?? process.stderr);
     paid = true;
   }
 
@@ -766,12 +765,14 @@ async function payAndRetryRequest(
   paymentRequiredResponse: Response,
   request: FetchPlan,
   options: RequestOptions,
+  stderr: Pick<NodeJS.WriteStream, "write">,
 ) {
   const { challenge: selectedChallenge, response: selectedResponse } = preparePaymentChallenge(
     paymentRequiredResponse,
     options,
     request.url,
   );
+  writePrivateKeyNotice(stderr, options);
   const header = selectPaymentTokenResponse(
     paymentRequiredResponse,
     options.paymentToken,
@@ -950,7 +951,7 @@ async function paySessionAndRetryRequest(
 /** Private key that replaces the logged-in wallet as payer. Errors never echo the key. */
 function privateKeySigner(options: RequestOptions) {
   const source: "flag" | "env" = options.privateKey !== undefined ? "flag" : "env";
-  const key = options.privateKey ?? (process.env.TEMPO_PRIVATE_KEY?.trim() || undefined);
+  const key = options.privateKey ?? (process.env.TEMPO_PRIVATE_KEY || undefined);
   if (key === undefined) return undefined;
   try {
     if (/^0x[0-9a-fA-F]{64}$/.test(key))
@@ -967,10 +968,9 @@ function privateKeySourceName(source: "flag" | "env") {
   return source === "flag" ? "--private-key" : "TEMPO_PRIVATE_KEY";
 }
 
-function writePrivateKeyNotice(
-  stderr: Pick<NodeJS.WriteStream, "write">,
-  signer: NonNullable<ReturnType<typeof privateKeySigner>>,
-) {
+function writePrivateKeyNotice(stderr: Pick<NodeJS.WriteStream, "write">, options: RequestOptions) {
+  const signer = privateKeySigner(options);
+  if (!signer) return;
   stderr.write(
     `Paying with key from ${privateKeySourceName(signer.source)} (${signer.account.address}), not the logged-in wallet\n`,
   );
