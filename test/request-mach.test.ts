@@ -386,6 +386,21 @@ describe("transferMach", () => {
     ).rejects.toMatchObject({ code: "E_PAYMENT_OUTCOME_UNKNOWN" });
     expect(sendTransactionSync).toHaveBeenCalledOnce();
   });
+  it("shows an untrusted challenge ID with visible escapes after an uncertain settlement", async () => {
+    vi.mocked(sendTransactionSync).mockRejectedValue(new Error("timeout"));
+    await expect(
+      transferMach({
+        options: {
+          "mpp-challenge": Challenge.serialize(offer({}, { id: "mach\u009d\u200b-offer" })),
+          "max-spend": "0.015",
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "E_PAYMENT_OUTCOME_UNKNOWN",
+      message:
+        'MACH settlement did not return a confirmed result. Check challenge "mach\\u009d\\u200b-offer" with the provider before retrying.',
+    });
+  });
 });
 
 function sdkCalls(parameters: unknown) {

@@ -59,7 +59,14 @@ import {
   normalizeNetwork,
   rpcUrl,
 } from "../shared/network.js";
-import { getRecord, nowSeconds, parseOnChainBigInt, stringValue } from "../shared/utils.js";
+import {
+  escapeInvisible,
+  getRecord,
+  nowSeconds,
+  parseOnChainBigInt,
+  sanitizeText,
+  stringValue,
+} from "../shared/utils.js";
 import {
   accessKeyMatches,
   isPaymentCapableAccessKey,
@@ -433,7 +440,7 @@ export function preparePaymentChallenge(
   const offeredChain = paymentChallengeChainId(challenge, options);
   if (offeredChain !== chainId(options.network))
     throw paymentError(
-      `Payment network mismatch: expected chain ${chainId(options.network)}, received ${String(offeredChain)}`,
+      `Payment network mismatch: expected chain ${chainId(options.network)}, received ${escapeInvisible(String(offeredChain))}`,
     );
   if (challenge.intent === "subscription" && options.maxSpend !== undefined)
     throw paymentError(
@@ -696,7 +703,7 @@ function paymentRecoveryReference(credential: string) {
 }
 
 function recoveryReferenceValue(value: unknown) {
-  return JSON.stringify(String(value).slice(0, 200));
+  return escapeInvisible(JSON.stringify(String(value).slice(0, 200)));
 }
 
 async function fetchWithRedirects(
@@ -830,7 +837,7 @@ async function payAndRetryRequest(
     if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
     const diagnostic = spendingLimitDiagnostic(error, header, options);
     if (diagnostic) throw diagnostic;
-    throw paymentError(error instanceof Error ? error.message : String(error));
+    throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
   }
 }
 
@@ -937,7 +944,7 @@ async function paySessionAndRetryRequest(
     return response;
   } catch (error) {
     if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
-    throw paymentError(error instanceof Error ? error.message : String(error));
+    throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
   }
 }
 
@@ -1133,7 +1140,7 @@ function sessionDetails(
   if (!token) throw paymentError("Session challenge is missing currency");
   if (!payee) throw paymentError("Session challenge is missing recipient");
   if (sessionProtocol !== "v1" && sessionProtocol !== "v2")
-    throw paymentError(`Unsupported Tempo session protocol: ${sessionProtocol}`);
+    throw paymentError(`Unsupported Tempo session protocol: ${escapeInvisible(sessionProtocol)}`);
 
   const expectedEscrow =
     sessionProtocol === "v2" ? TempoChannel.address : escrowContract(resolvedChainId);
@@ -1141,7 +1148,7 @@ function sessionDetails(
     const address = stringValue(advertisedEscrow);
     if (address && address.toLowerCase() !== expectedEscrow.toLowerCase())
       throw paymentError(
-        `Unsupported Tempo session escrow: expected ${expectedEscrow}, received ${address}`,
+        `Unsupported Tempo session escrow: expected ${expectedEscrow}, received ${escapeInvisible(address)}`,
       );
   }
 
@@ -1643,7 +1650,7 @@ export function chargeFallbackError(
   if (!challenge) return undefined;
   const amount = challengeAmount(challenge);
   if (options.maxSpend && amount > parseUnits(options.maxSpend, 6)) return undefined;
-  const message = reason instanceof Error ? reason.message : String(reason);
+  const message = sanitizeText(reason instanceof Error ? reason.message : String(reason));
   const formattedAmount = formatTokenAmount(amount);
   return paymentError(
     `Session payment failed: ${message}\nA one-time charge of ${formattedAmount} is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --max-spend ${formattedAmount} --payment-intent charge.`,
@@ -1735,9 +1742,9 @@ function paymentTokenValue(value: string) {
 }
 
 function spendingLimitDiagnostic(error: unknown, header: string | null, options: RequestOptions) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = sanitizeText(error instanceof Error ? error.message : String(error));
   if (!/SpendingLimitExceeded|spending limit exceeded/i.test(message)) return undefined;
-  const currencies = offeredTempoCurrencies(header);
+  const currencies = offeredTempoCurrencies(header).map(escapeInvisible);
   const token = options.paymentToken ?? (currencies.length === 1 ? currencies[0] : undefined);
   if (!token)
     return paymentError(
@@ -1928,7 +1935,7 @@ export function selectPaymentTokenResponse(response: Response, token: string | u
   }
 
   if (challenges.length === 0) {
-    const available = offeredTempoCurrencies(header);
+    const available = offeredTempoCurrencies(header).map(escapeInvisible);
     throw paymentError(
       `Server did not offer payment token ${token}.${available.length > 0 ? ` Available tokens: ${available.join(", ")}.` : ""}`,
     );

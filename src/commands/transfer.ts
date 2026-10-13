@@ -7,7 +7,7 @@ import { Actions } from "viem/tempo";
 
 import { paymentOutcomeUnknownError, usageError } from "../shared/errors.js";
 import { chainId, tokenDecimals, tokenSymbol } from "../shared/network.js";
-import { getRecord, stringValue } from "../shared/utils.js";
+import { escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
 import {
@@ -201,7 +201,7 @@ export async function transferMach(options: {
       throw error;
     // The SDK may have broadcast before a transport failure. Never automatically retry.
     throw paymentOutcomeUnknownError(
-      `MACH settlement did not return a confirmed result. Check challenge ${JSON.stringify(challenge.id)} with the provider before retrying.`,
+      `MACH settlement did not return a confirmed result. Check challenge ${escapeInvisible(JSON.stringify(challenge.id))} with the provider before retrying.`,
     );
   }
   const { payload } = Credential.deserialize<{ type: string; hash?: string }>(credential);
