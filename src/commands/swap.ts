@@ -164,7 +164,16 @@ export async function swapTokens(
       : key
         ? nextStep(
             `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to run the next command, then rerun this swap with --yes.`,
-            ["wallet", "keys", "update", "--token", tokenIn, "--limit", output.max_amount_in],
+            [
+              "wallet",
+              "keys",
+              "update",
+              key.address,
+              "--token",
+              tokenIn,
+              "--limit",
+              output.max_amount_in,
+            ],
             network,
           )
         : nextStep(

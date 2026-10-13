@@ -232,7 +232,7 @@ export async function updateAccessKeyHandler(
     token: tokenAddress_resolved.toLowerCase(),
     limit: formatUnits(limit, tokenDecimals()),
     ...nextStep("Run the next command to confirm the new limit.", ["wallet", "keys", "list"], {
-      network: options.network,
+      network: networkName(selectedChainId) ?? undefined,
     }),
   };
 }
@@ -309,7 +309,7 @@ export async function revokeHandler(
       ...nextStep(
         `Run the next command to revoke access key ${output.access_key} on-chain. Revocation cannot be undone.`,
         ["wallet", "revoke", output.access_key],
-        { network: options.network },
+        { network: networkName(selectedChainId) ?? undefined },
       ),
     };
 

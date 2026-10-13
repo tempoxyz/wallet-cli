@@ -86,6 +86,8 @@ const continuations: {
   argv: string[];
   until?: string;
   poll_interval_seconds?: number;
+  /** The command acts on the wallet's stored chain, so its continuation always names it. */
+  storedChain?: boolean;
 }[] = [
   {
     name: "swap --dry-run reruns the swap with --yes",
@@ -145,7 +147,7 @@ const continuations: {
         swapDependencies(),
       );
     },
-    argv: ["wallet", "keys", "update", "--token", moderatoToken, "--limit", "10"],
+    argv: ["wallet", "keys", "update", testAccessKey, "--token", moderatoToken, "--limit", "10"],
   },
   {
     name: "swap --dry-run without a usable key points at login",
@@ -229,6 +231,7 @@ const continuations: {
       return revokeHandler({ accessKey: testAccessKey2 }, { network: option, "dry-run": true });
     },
     argv: ["wallet", "revoke", testAccessKey2.toLowerCase()],
+    storedChain: true,
   },
   {
     name: "keys update confirms the new limit with keys list",
@@ -239,6 +242,7 @@ const continuations: {
       }));
     },
     argv: ["wallet", "keys", "list"],
+    storedChain: true,
   },
   {
     name: "fresh login confirms readiness with whoami",
@@ -258,7 +262,7 @@ const continuations: {
       return closeSessions({ network: option, target: channelId });
     },
     argv: ["wallet", "sessions", "close", channelId],
-    until: ".pending == 0",
+    until: ".pending == 0 and .failed == 0",
     poll_interval_seconds: 800,
   },
   {
@@ -285,32 +289,48 @@ describe.each([
     network: ["--network", "testnet"],
   },
 ])("continuations on $name", ({ option, env, network }) => {
-  it.each(continuations)("$name", async ({ run, argv, until, poll_interval_seconds }) => {
-    vi.useFakeTimers({ now: now * 1000, toFake: ["Date"] });
-    vi.stubEnv("TEMPO_WALLET_NETWORK", env);
-    vi.stubEnv("TEMPO_MAX_SPEND", undefined);
-    await useTempHome();
-    const chain = (option ?? env) ? 42431 : 4217;
+  it.each(continuations)(
+    "$name",
+    async ({ run, argv, until, poll_interval_seconds, storedChain }) => {
+      vi.useFakeTimers({ now: now * 1000, toFake: ["Date"] });
+      vi.stubEnv("TEMPO_WALLET_NETWORK", env);
+      vi.stubEnv("TEMPO_MAX_SPEND", undefined);
+      await useTempHome();
+      const chain = (option ?? env) ? 42431 : 4217;
 
-    const result = (await run({ option, chain })) as {
-      instruction?: unknown;
-      _next?: { argv: string[]; command: string };
-    };
+      const result = (await run({ option, chain })) as {
+        instruction?: unknown;
+        _next?: { argv: string[]; command: string };
+      };
 
-    const expected = [
-      "tempo",
-      ...argv.map((arg) => (arg === "<challenge>" ? machChallenge(chain) : arg)),
-      ...network,
-    ];
-    expect(result.instruction).toEqual(expect.any(String));
-    expect(result._next).toEqual({
-      argv: expected,
-      command: expect.any(String),
-      ...(until ? { until } : {}),
-      ...(poll_interval_seconds ? { poll_interval_seconds } : {}),
-    });
-    expect(await shellWords(result._next!.command)).toEqual(expected);
-  });
+      const expected = [
+        "tempo",
+        ...argv.map((arg) => (arg === "<challenge>" ? machChallenge(chain) : arg)),
+        ...(storedChain ? ["--network", chain === 42431 ? "tempo-moderato" : "tempo"] : network),
+      ];
+      expect(result.instruction).toEqual(expect.any(String));
+      expect(result._next).toEqual({
+        argv: expected,
+        command: expect.any(String),
+        ...(until ? { until } : {}),
+        ...(poll_interval_seconds ? { poll_interval_seconds } : {}),
+      });
+      expect(await shellWords(result._next!.command)).toEqual(expected);
+    },
+  );
+});
+
+it("keeps the revoke continuation on the stored chain when TEMPO_WALLET_NETWORK differs", async () => {
+  vi.stubEnv("TEMPO_WALLET_NETWORK", "testnet");
+  await useTempHome();
+  await writeWalletState(stateFor(4217));
+
+  const result = await revokeHandler({ accessKey: testAccessKey2 }, { "dry-run": true });
+
+  expect("_next" in result ? result._next.argv.slice(-2) : undefined).toEqual([
+    "--network",
+    "tempo",
+  ]);
 });
 
 it("states when a pending session close becomes withdrawable", async () => {

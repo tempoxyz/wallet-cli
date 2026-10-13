@@ -281,7 +281,7 @@ function withPendingCloseNextStep(summary: CloseSummaryOutput, network: string |
       ...nextStep(
         `Close pending for channel ${single.channel_id}; its deposit can be withdrawn after ${readyAt} (in ${waitSecs}s). Then run the next command; before that it only reports the close as pending.`,
         ["wallet", "sessions", "close", single.channel_id],
-        { network, pollIntervalSeconds: waitSecs, until: ".pending == 0" },
+        { network, pollIntervalSeconds: waitSecs, until: ".pending == 0 and .failed == 0" },
       ),
     };
   return {
