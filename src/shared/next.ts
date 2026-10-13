@@ -13,8 +13,7 @@ export function nextStep(
     until?: string | undefined;
   } = {},
 ) {
-  const network = options.network ?? process.env.TEMPO_WALLET_NETWORK;
-  const fullArgv = ["tempo", ...argv, ...(network ? ["--network", network] : [])];
+  const fullArgv = continuationArgv(argv, options.network);
   return {
     instruction,
     _next: {
@@ -26,6 +25,16 @@ export function nextStep(
         : {}),
     },
   };
+}
+
+/** A follow-up command as a quoted POSIX shell string, for instructions that name several. */
+export function continuationCommand(argv: readonly string[], network?: string | undefined) {
+  return continuationArgv(argv, network).map(shellQuote).join(" ");
+}
+
+function continuationArgv(argv: readonly string[], network: string | undefined) {
+  const selected = network ?? process.env.TEMPO_WALLET_NETWORK;
+  return ["tempo", ...argv, ...(selected ? ["--network", selected] : [])];
 }
 
 /** Quotes a word for a POSIX shell, leaving it bare when it has no special characters. */

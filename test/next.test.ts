@@ -461,6 +461,24 @@ it("omits a keys update command when the input token is not 6-decimal", async ()
   expect(result).not.toHaveProperty("_next");
 });
 
+it("keeps the selected network on each per-channel close command", async () => {
+  vi.useFakeTimers({ now: now * 1000, toFake: ["Date"] });
+  vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+  await useTempHome();
+  await writeWalletState(stateFor(42431));
+  await saveSession(channelId, 42431);
+  await saveSession(otherChannelId, 42431);
+  mockEscrow();
+
+  const result = await closeSessions({ network: "testnet", target: origin });
+
+  for (const id of [channelId, otherChannelId])
+    expect(result).toHaveProperty(
+      "instruction",
+      expect.stringContaining(`'tempo wallet sessions close ${id} --network testnet'`),
+    );
+});
+
 /** Splits a command into words the way a POSIX shell does. */
 async function shellWords(command: string) {
   const { stdout } = await execFileAsync("/bin/sh", ["-c", `printf '%s\\0' ${command}`]);

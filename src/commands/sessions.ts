@@ -44,7 +44,7 @@ import {
   sanitizeText,
   stringValue,
 } from "../shared/utils.js";
-import { nextStep } from "../shared/next.js";
+import { continuationCommand, nextStep } from "../shared/next.js";
 import { createProvider } from "../provider.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -287,7 +287,10 @@ function withPendingCloseNextStep(summary: CloseSummaryOutput, network: string |
     return {
       ...summary,
       instruction: `${status} Then withdraw each with ${pending
-        .map((result) => `'tempo wallet sessions close ${result.channel_id}'`)
+        .map(
+          (result) =>
+            `'${continuationCommand(["wallet", "sessions", "close", result.channel_id], network)}'`,
+        )
         .join(", ")}.`,
     };
   return {
