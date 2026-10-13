@@ -120,6 +120,8 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 
 `tempo wallet sessions close` preserves its per-session result summary and exits with status 1 if any close failed. A pending close awaiting the grace period is successful initiation, so pending-only results still exit 0; dry runs also exit 0.
 
+Results with a follow-up step include `instruction` and `_next`. `swap`, `transfer`, and `revoke` dry runs point at the command that submits them; a pending `sessions close` points at the withdrawal and sets `poll_interval_seconds` to the remaining grace period; `keys update` and a fresh `login` point at the command that confirms the result. `_next.argv` is authoritative and repeats `--network` when one was selected by flag or `TEMPO_WALLET_NETWORK`; `_next.command` is the same argv quoted for a POSIX shell.
+
 ## Commands
 
 ### Wallet

@@ -178,7 +178,18 @@ describe("session close process exit status", () => {
                 error: "cooperative close requires a local secp256k1 session access key",
               }),
             );
-          if (scenario === "pending") expect(summary.results[0].remaining_secs).toBeGreaterThan(0);
+          if (scenario === "pending") {
+            expect(summary.results[0].remaining_secs).toBeGreaterThan(0);
+            expect(summary._next.argv).toEqual([
+              "tempo",
+              "wallet",
+              "sessions",
+              "close",
+              channelId,
+              "--network",
+              "tempo",
+            ]);
+          } else expect(summary).not.toHaveProperty("_next");
         }
       } finally {
         await new Promise<void>((resolve, reject) =>

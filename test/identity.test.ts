@@ -889,6 +889,8 @@ limit = "100000000"
       wallet: testWallet.toLowerCase(),
       access_key: testAccessKey.toLowerCase(),
       local_key_removed: false,
+      instruction: expect.any(String),
+      _next: expect.any(Object),
     });
     expect(createProvider).not.toHaveBeenCalled();
     expect((await loadWalletState()).accessKeys).toHaveLength(1);
@@ -997,6 +999,8 @@ limit = "100000000"
       chain_id: 4217,
       token: usdc.toLowerCase(),
       limit: "250",
+      instruction: expect.any(String),
+      _next: expect.any(Object),
     });
     expect((await loadWalletState()).accessKeys[0]?.limits).toEqual([
       { token: usdc, limit: "250000000#__bigint" },

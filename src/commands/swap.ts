@@ -4,6 +4,7 @@ import { Actions, Addresses } from "viem/tempo";
 import { paymentOutcomeUnknownError, usageError } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
 import { chainId, createTempoPublicClient } from "../shared/network.js";
+import { nextStep } from "../shared/next.js";
 import { cleanStoredScalar, getRecord, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { selectPaymentCapableAccessKey } from "../wallet/access-key.js";
@@ -141,7 +142,38 @@ export async function swapTokens(
     calls: calls.map((call) => ({ to: call.to.toLowerCase(), data: call.data })),
   };
 
-  if (input.options["dry-run"]) return { status: "dry_run" as const, ...output };
+  if (input.options["dry-run"]) {
+    const network = { network: input.options.network };
+    const next = !requiresAccessKeyUpdate
+      ? nextStep(
+          "Review the quote, then run the next command to submit it. Submission re-quotes within the same slippage limit.",
+          [
+            "wallet",
+            "swap",
+            input.args.amount,
+            tokenIn,
+            tokenOut,
+            ...(exactOut ? ["--exact-out"] : []),
+            "--slippage-bps",
+            String(input.options["slippage-bps"]),
+            ...(input.options["fee-token"] ? ["--fee-token", feeToken] : []),
+            "--yes",
+          ],
+          network,
+        )
+      : key
+        ? nextStep(
+            `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to run the next command, then rerun this swap with --yes.`,
+            ["wallet", "keys", "update", "--token", tokenIn, "--limit", output.max_amount_in],
+            network,
+          )
+        : nextStep(
+            "No usable access key for this wallet and network. Run the next command to log in, then rerun this swap with --yes.",
+            ["wallet", "login"],
+            network,
+          );
+    return { status: "dry_run" as const, ...output, ...next };
+  }
   if (!input.options.yes)
     throw usageError("Swap not submitted: review the quote with --dry-run, then pass --yes");
   if (requiresAccessKeyUpdate)

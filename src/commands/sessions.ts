@@ -44,6 +44,7 @@ import {
   sanitizeText,
   stringValue,
 } from "../shared/utils.js";
+import { nextStep } from "../shared/next.js";
 import { createProvider } from "../provider.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -255,7 +256,7 @@ export async function closeSessions(options: {
         closeOneSession(target, { finalize: true, network: options.network }),
         target,
       );
-    return summary;
+    return withPendingCloseNextStep(summary, options.network);
   }
 
   for (const target of targets)
@@ -264,7 +265,33 @@ export async function closeSessions(options: {
       closeOneSession(target, { cooperative: options.cooperative, network: options.network }),
       target,
     );
-  return summary;
+  return withPendingCloseNextStep(summary, options.network);
+}
+
+/** Points pending closes at the withdrawal that becomes available after the grace period. */
+function withPendingCloseNextStep(summary: CloseSummaryOutput, network: string | undefined) {
+  const pending = summary.results.filter((result) => result.status === "pending");
+  if (pending.length === 0) return summary;
+  const waitSecs = Math.max(...pending.map((result) => result.remaining_secs ?? 0));
+  const readyAt = formatUnixTimestamp(nowSeconds() + waitSecs);
+  const single = pending.length === 1 ? pending[0] : undefined;
+  if (single)
+    return {
+      ...summary,
+      ...nextStep(
+        `Close pending for channel ${single.channel_id}; its deposit can be withdrawn after ${readyAt} (in ${waitSecs}s). Then run the next command; before that it only reports the close as pending.`,
+        ["wallet", "sessions", "close", single.channel_id],
+        { network, pollIntervalSeconds: waitSecs, until: ".pending == 0" },
+      ),
+    };
+  return {
+    ...summary,
+    ...nextStep(
+      `${pending.length} session closes are pending; their deposits can be withdrawn after ${readyAt} (in ${waitSecs}s). Then run the next command to withdraw every finalizable channel.`,
+      ["wallet", "sessions", "close", "--finalize"],
+      { network, pollIntervalSeconds: waitSecs },
+    ),
+  };
 }
 
 function validateCooperativeCloseOptions(options: {

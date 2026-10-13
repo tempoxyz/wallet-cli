@@ -99,6 +99,7 @@ MACH uses the canonical MPP SDK settlement route. Do not construct swap calldata
 - If response is a usage/auth readiness error, run `tempo wallet login` and retry once.
 - If response indicates payment/funding limit issues, report clearly and stop. Check `tempo wallet whoami --mach` and offer `tempo wallet fund --mach --no-browser --no-wait --format json` to fund from another device. Review token-specific access-key limits before retrying.
 - After multi-request workflows, check remaining balance with `tempo wallet whoami`.
+- Wallet results with a follow-up step include `instruction` and `_next`. Run `_next.argv` as given (`_next.command` is the shell-quoted form), but only after the user approves any spend, transfer, or revocation it performs.
 
 ### Rules
 

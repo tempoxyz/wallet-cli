@@ -7,6 +7,7 @@ import { Actions } from "viem/tempo";
 
 import { paymentOutcomeUnknownError, usageError } from "../shared/errors.js";
 import { chainId, tokenDecimals, tokenSymbol } from "../shared/network.js";
+import { nextStep } from "../shared/next.js";
 import { escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -65,6 +66,19 @@ export async function transferTokens(options: {
     return {
       status: "dry_run" as const,
       ...outputBase,
+      ...nextStep(
+        `Run the next command to send ${args.amount} ${outputBase.symbol} to ${to}.`,
+        [
+          "wallet",
+          "transfer",
+          args.amount,
+          token,
+          to,
+          ...(options.options["fee-token"] ? ["--fee-token", options.options["fee-token"]] : []),
+          ...(options.options.address ? ["--address", options.options.address] : []),
+        ],
+        { network: options.options.network },
+      ),
     };
   }
 
@@ -179,7 +193,28 @@ export async function transferMach(options: {
     challenge_id: challenge.id,
     max_spend: requestOptions.maxSpend ?? null,
   };
-  if (flags["dry-run"]) return { ...output, dry_run: true };
+  if (flags["dry-run"])
+    return {
+      ...output,
+      dry_run: true,
+      ...(output.max_spend !== null
+        ? nextStep(
+            `Run the next command to pay ${output.amount} MACH for this challenge.`,
+            [
+              "wallet",
+              "transfer",
+              "--mach",
+              "--max-spend",
+              output.max_spend,
+              "--mpp-challenge",
+              header,
+              ...(flags["mpp-client-id"] ? ["--mpp-client-id", flags["mpp-client-id"]] : []),
+              ...(flags.address ? ["--address", flags.address] : []),
+            ],
+            { network: flags.network },
+          )
+        : {}),
+    };
   const identity = await resolvePaymentIdentity(requestOptions);
   if (flags.address && flags.address.toLowerCase() !== identity.address.toLowerCase())
     throw usageError("--address must match the active payment wallet");

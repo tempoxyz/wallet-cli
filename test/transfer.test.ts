@@ -98,6 +98,8 @@ describe("transferTokens", () => {
       token: usdcToken,
       to: recipient,
       from: testWallet.toLowerCase(),
+      instruction: expect.any(String),
+      _next: expect.any(Object),
     });
   });
 

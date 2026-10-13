@@ -123,6 +123,20 @@ describe("generated CLI metadata", () => {
     expect(schema.output.properties.status.enum).toEqual(["success", "pending"]);
   });
 
+  it.each([
+    { command: ["swap"] },
+    { command: ["transfer"] },
+    { command: ["revoke"] },
+    { command: ["keys", "update"] },
+    { command: ["login"] },
+    { command: ["sessions", "close"] },
+  ])("advertises next-step fields in the $command output schema", async ({ command }) => {
+    const schema = JSON.parse(await walletCli([...command, "--schema", "--format", "json"])) as {
+      output: unknown;
+    };
+    expect(hasNextStep(schema.output)).toBe(true);
+  });
+
   it("returns schema for the direct services command", async () => {
     const output = await walletCli(["services", "--schema", "--format", "json"]);
     const schema = JSON.parse(output) as {
@@ -271,6 +285,15 @@ describe("generated CLI metadata", () => {
     expect(schema.output.properties.sessions.items.properties.status.type).toBe("string");
   });
 });
+
+function hasNextStep(schema: unknown): boolean {
+  const { anyOf, properties } = schema as {
+    anyOf?: unknown[] | undefined;
+    properties?: Record<string, { properties?: Record<string, unknown> }> | undefined;
+  };
+  if (properties?.instruction && properties._next?.properties?.argv) return true;
+  return (anyOf ?? []).some(hasNextStep);
+}
 
 async function walletCli(args: string[]) {
   return bundledCli(cliBundle("wallet"), args);

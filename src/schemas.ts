@@ -16,6 +16,25 @@ export const globalAlias = {
   "toon-output": "t",
 };
 
+/** Continuation fields on results with a follow-up command; built by `nextStep`. */
+const nextOutputShape = {
+  instruction: z.string().optional().describe("What to do next"),
+  _next: z
+    .object({
+      argv: z.array(z.string()).describe("Next command as an argument vector; authoritative"),
+      command: z.string().describe("argv quoted for a POSIX shell"),
+      until: z
+        .string()
+        .optional()
+        .describe("jq condition on the next command's JSON output; rerun it until true"),
+      poll_interval_seconds: z
+        .number()
+        .optional()
+        .describe("Seconds to wait before running the next command, and between reruns"),
+    })
+    .optional(),
+};
+
 export const completionsOutput = z.object({
   supported_shells: z.array(z.string()),
 });
@@ -159,6 +178,7 @@ export const revokeOutput = z.object({
   wallet: z.string(),
   access_key: z.string(),
   local_key_removed: z.boolean(),
+  ...nextOutputShape,
 });
 
 export const updateAccessKeyOutput = z.object({
@@ -168,6 +188,7 @@ export const updateAccessKeyOutput = z.object({
   chain_id: z.number(),
   token: z.string(),
   limit: z.string(),
+  ...nextOutputShape,
 });
 
 export const updateAccessKeyOptions = z.object({
@@ -189,6 +210,7 @@ export const transferDryRunOutput = z.object({
   token: z.string(),
   to: z.string(),
   from: z.string(),
+  ...nextOutputShape,
 });
 
 export const transferSuccessOutput = z.object({
@@ -213,6 +235,7 @@ export const spendMachOutput = z.object({
   max_spend: z.string().nullable(),
   tx_hash: z.string().optional(),
   dry_run: z.boolean().optional(),
+  ...nextOutputShape,
 });
 
 export const sessionOutput = z.object({
@@ -243,6 +266,7 @@ export const sessionsCloseOutput = z.object({
   pending: z.number(),
   failed: z.number(),
   results: z.array(z.unknown()),
+  ...nextOutputShape,
 });
 
 export const serviceOutput = z.object({
@@ -304,6 +328,7 @@ export const loginOutput = z.union([
   z.object({
     accounts: z.array(z.string()),
     chainId: z.number(),
+    ...nextOutputShape,
   }),
 ]);
 
@@ -396,7 +421,7 @@ const swapBaseOutputShape = {
 };
 
 export const swapOutput = z.union([
-  z.object({ status: z.literal("dry_run"), ...swapBaseOutputShape }),
+  z.object({ status: z.literal("dry_run"), ...swapBaseOutputShape, ...nextOutputShape }),
   z.object({ status: z.literal("success"), tx_hash: z.string(), ...swapBaseOutputShape }),
 ]);
 
