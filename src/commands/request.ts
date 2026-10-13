@@ -141,7 +141,6 @@ type RequestInitWithDispatcher = RequestInit & {
 };
 
 const defaultRetryStatuses = new Set([408, 429, 500, 502, 503, 504]);
-const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export async function runRequest(argv: readonly string[], io: RequestRunOptions = {}) {
   const options = parseRequestArgs(argv);
@@ -506,7 +505,7 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
           payment_required: false,
           status: response.status,
           probe_sent: true,
-          ...(safeMethods.has(probeMethod)
+          ...(replaySafeMethods.has(probeMethod)
             ? {}
             : {
                 warning: `The ${probeMethod} request was sent to the server and may have had side effects`,
