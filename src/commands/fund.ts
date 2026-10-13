@@ -8,7 +8,6 @@ import {
   machFundingAmount,
   machFundingToken,
   requireWalletAddress,
-  warnCreditsAlias,
 } from "../shared/mach.js";
 import { openExternal } from "../shared/process.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -26,8 +25,8 @@ export async function runFundingFlow(options: {
   timeout?: number | undefined;
   signal?: AbortSignal | undefined;
 }) {
-  if (options.action === "credits") warnCreditsAlias();
-  const action = options.action === "credits" ? "mach" : options.action;
+  if (options.action === "credits") throw creditsFundingError();
+  const action = options.action;
   const chain = chainId(options.network);
   const token = action === "mach" ? machFundingToken(chain) : tokenAddress(chain);
   const requested =
@@ -156,10 +155,10 @@ export function fundAction(options: {
   crypto?: boolean | undefined;
   referralCode?: string | undefined;
 }): FundAction {
-  if ((options.mach || options.credits) && (options.crypto || options.referralCode))
-    throw usageError("--mach/--credits cannot be combined with --crypto or --claim");
-  if (options.credits) warnCreditsAlias();
-  if (options.mach || options.credits) return "mach";
+  if (options.credits) throw creditsFundingError();
+  if (options.mach && (options.crypto || options.referralCode))
+    throw usageError("--mach cannot be combined with --crypto or --claim");
+  if (options.mach) return "mach";
   if (options.crypto) return "crypto";
   if (options.referralCode) return "claim";
   return "fund";
@@ -174,10 +173,11 @@ export function fundUrl(
     code?: string | undefined;
   } = {},
 ) {
+  if (action === "credits") throw creditsFundingError();
   const url = new URL("https://wallet.tempo.xyz/agent");
   if (action === "claim" && options.code) url.searchParams.set("claim", options.code);
   else {
-    const mach = action === "mach" || action === "credits";
+    const mach = action === "mach";
     url.searchParams.set("action", mach ? "fund" : action);
     if (mach) {
       machFundingToken(options.chainId ?? 4217);
@@ -187,9 +187,15 @@ export function fundUrl(
   if (options.address) url.searchParams.set("address", requireWalletAddress(options.address));
   if (options.chainId !== undefined) url.searchParams.set("chainId", String(options.chainId));
   if (options.amount !== undefined) {
-    if (action === "mach" || action === "credits") machFundingAmount(options.amount);
+    if (action === "mach") machFundingAmount(options.amount);
     else fundingAmount(options.amount);
     url.searchParams.set("amount", options.amount);
   }
   return url.toString();
+}
+
+function creditsFundingError() {
+  return usageError(
+    "MPP Credits can no longer be purchased. Use 'tempo wallet fund --mach' to buy MACH instead.",
+  );
 }

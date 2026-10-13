@@ -12,7 +12,7 @@ import {
 import { Abis } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseRequestArgs, preparePaymentChallenge, runRequest } from "../src/commands/request.js";
-import { transferCredits, transferMach } from "../src/commands/transfer.js";
+import { transferMach } from "../src/commands/transfer.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 
 vi.mock("viem/actions", async (importOriginal) => {
@@ -316,7 +316,6 @@ it.each([{ flags: [] }, { flags: ["--mach"] }])(
 );
 
 describe("transferMach", () => {
-  it("keeps credits as a compatibility alias", () => expect(transferCredits).toBe(transferMach));
   it("inspects a standalone challenge without a budget or wallet access", async () => {
     const result = await transferMach({
       options: { "dry-run": true, "mpp-challenge": Challenge.serialize(offer()) },
@@ -347,7 +346,7 @@ describe("transferMach", () => {
   it.each([{ to: recipient, "amount-cents": 1 }, { data: "0x1234" }, { value: "0" }])(
     "rejects unsupported direct transfer flags",
     async (flags) => {
-      await expect(transferCredits({ options: { ...flags, "dry-run": true } })).rejects.toThrow(
+      await expect(transferMach({ options: { ...flags, "dry-run": true } })).rejects.toThrow(
         "does not support direct calldata",
       );
     },
@@ -359,10 +358,10 @@ describe("transferMach", () => {
   });
   it("treats legacy cents as a cap instead of rounding the payment", async () => {
     const options = { "dry-run": true, "mpp-challenge": Challenge.serialize(offer()) };
-    await expect(transferCredits({ options: { ...options, "amount-cents": 1 } })).rejects.toThrow(
+    await expect(transferMach({ options: { ...options, "amount-cents": 1 } })).rejects.toThrow(
       "max spend exceeded",
     );
-    expect(await transferCredits({ options: { ...options, "amount-cents": 2 } })).toMatchObject({
+    expect(await transferMach({ options: { ...options, "amount-cents": 2 } })).toMatchObject({
       amount_raw: "15000",
       max_spend: "0.02",
     });
