@@ -215,3 +215,57 @@ it.each([
     expect(server.counts()).toEqual({ requests: 2, authenticated: 0, rpc: 0 });
   },
 );
+
+it.each([
+  { insecure: false, allow: false, dryRun: false, outcome: "paid" },
+  { insecure: false, allow: true, dryRun: false, outcome: "paid" },
+  { insecure: true, allow: false, dryRun: false, outcome: "refused" },
+  { insecure: true, allow: true, dryRun: false, outcome: "paid" },
+  { insecure: false, allow: false, dryRun: true, outcome: "quoted" },
+  { insecure: false, allow: true, dryRun: true, outcome: "quoted" },
+  { insecure: true, allow: false, dryRun: true, outcome: "quoted" },
+  { insecure: true, allow: true, dryRun: true, outcome: "quoted" },
+] as const)(
+  "insecure=$insecure allow=$allow dry-run=$dryRun $outcome a 402",
+  async ({ insecure, allow, dryRun, outcome }) => {
+    const server = await fixture("charge", 4217, { amount: "0", recipient: undefined });
+    const result = await server.run(
+      ...(insecure ? ["-k"] : []),
+      ...(allow ? ["--allow-insecure-payment"] : []),
+      ...(dryRun ? ["--dry-run"] : []),
+    );
+    if (outcome === "refused") {
+      expect(result.code).toBe(4);
+      expect(`${result.stdout}${result.stderr}`).toMatch(
+        /E_PAYMENT[\s\S]*--allow-insecure-payment/,
+      );
+    } else {
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject(
+        outcome === "paid" ? { type: "proof" } : { payment_required: true, amount: "0" },
+      );
+    }
+    expect(server.counts()).toEqual({
+      requests: outcome === "paid" ? 2 : 1,
+      authenticated: outcome === "paid" ? 1 : 0,
+      rpc: 0,
+    });
+  },
+);
+
+it.each([
+  ["charge", ["--stream"]],
+  ["charge", ["--sse-json"]],
+  ["session", []],
+] as const)(
+  "refuses %s payments with %j over insecure TLS before wallet access",
+  async (intent, flags) => {
+    const server = await fixture(intent, 4217, {
+      methodDetails: { chainId: 4217, sessionProtocol: "v2" },
+    });
+    const result = await server.run("--insecure", ...flags);
+    expect(result.code).toBe(4);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/E_PAYMENT[\s\S]*--allow-insecure-payment/);
+    expect(server.counts()).toEqual({ requests: 1, authenticated: 0, rpc: 0 });
+  },
+);
