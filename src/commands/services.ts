@@ -1,5 +1,5 @@
 import { version } from "../shared/constants.js";
-import { usageError } from "../shared/errors.js";
+import { httpError, networkError, usageError } from "../shared/errors.js";
 import { getArray, getRecord, sanitizeText, stringValue } from "../shared/utils.js";
 
 type ServiceSummary = {
@@ -49,16 +49,20 @@ export async function fetchServiceList(): Promise<ServiceSummary[]> {
   return (await fetchServiceEntries()).map((service) => service.summary);
 }
 
+const serviceDirectoryUrl = "https://mpp.dev/api/services";
+const serviceDirectoryTimeout = 10_000;
+
 async function fetchServiceEntries(): Promise<
   { summary: ServiceSummary; detail: ServiceDetail }[]
 > {
-  const response = await fetch(
-    "https://mpp.dev/api/services?x-vercel-protection-bypass=iGDnLnmF0nK6LWloAotUbTo3urEsaIkB",
-    { headers: { "user-agent": `wallet-cli/${version}` } },
-  );
-  if (!response.ok) throw new Error(`Failed to fetch service directory: HTTP ${response.status}`);
+  const response = await fetch(serviceDirectoryUrl, {
+    headers: { "user-agent": `wallet-cli/${version}` },
+    signal: AbortSignal.timeout(serviceDirectoryTimeout),
+  }).catch(serviceDirectoryNetworkError);
+  if (!response.ok)
+    throw httpError(response.status, `Failed to fetch service directory: HTTP ${response.status}`);
 
-  const body = getRecord((await response.json()) as unknown);
+  const body = getRecord((await response.json().catch(serviceDirectoryNetworkError)) as unknown);
   const services = getArray(body.services).map((service) => {
     const item = getRecord(service);
     const serviceUrl = displayText(item.serviceUrl ?? item.service_url ?? item.url);
@@ -94,6 +98,17 @@ async function fetchServiceEntries(): Promise<
     };
   });
   return services.filter((service) => serviceIdPattern.test(service.summary.id));
+}
+
+function serviceDirectoryNetworkError(error: unknown): never {
+  const reason =
+    error instanceof Error && error.name === "TimeoutError"
+      ? `timed out after ${serviceDirectoryTimeout / 1000}s`
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  // The directory is a GET, so transport failures are safe to retry.
+  throw networkError(`Failed to fetch service directory: ${reason}`, { retryable: true });
 }
 
 function matchesSearch(service: ServiceSummary, query: string) {

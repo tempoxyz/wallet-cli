@@ -323,9 +323,60 @@ describe("fetchServices", () => {
     expectUsageError(error, "Configuration missing: service 'missing' not found");
   });
 
-  it("throws when the directory request fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: false, status: 503 } as Response);
-    const error = await fetchServiceList().catch((e) => e);
-    expect((error as Error).message).toBe("Failed to fetch service directory: HTTP 503");
+  it("requests the public directory URL with a timeout", async () => {
+    const fetch = mockFetchOk(serviceDirectory);
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+
+    await fetchServiceList();
+
+    const [url, init] = fetch.mock.calls[0] ?? [];
+    expect(url).toBe("https://mpp.dev/api/services");
+    expect(new URL(String(url)).search).toBe("");
+    expect(timeout).toHaveBeenCalledWith(10_000);
+    expect(init?.signal).toBe(timeout.mock.results[0]?.value);
+  });
+
+  it.each([
+    [
+      "a non-OK response",
+      "E_HTTP",
+      "Failed to fetch service directory: HTTP 503",
+      async () => ({ ok: false, status: 503 }) as Response,
+    ],
+    [
+      "a network failure",
+      "E_NETWORK",
+      "Failed to fetch service directory: fetch failed",
+      async () => Promise.reject(new TypeError("fetch failed")),
+    ],
+    [
+      "a timeout",
+      "E_NETWORK",
+      "Failed to fetch service directory: timed out after 10s",
+      async () =>
+        Promise.reject(
+          new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+        ),
+    ],
+    [
+      "an unreadable body",
+      "E_NETWORK",
+      "Failed to fetch service directory: Unexpected end of JSON input",
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async (): Promise<unknown> =>
+            Promise.reject(new SyntaxError("Unexpected end of JSON input")),
+        }) as Response,
+    ],
+  ])("maps %s to %s", async (_name, code, message, fetch) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetch);
+    await expect(fetchServiceList()).rejects.toMatchObject({
+      code,
+      exitCode: 3,
+      message,
+      retryable: code === "E_NETWORK",
+    });
   });
 });
