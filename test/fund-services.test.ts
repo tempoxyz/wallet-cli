@@ -8,6 +8,7 @@ import {
   fetchServices,
   fetchServiceList,
   serviceDirectoryCachePath,
+  staleListFetchedAt,
 } from "../src/commands/services.js";
 import { expectUsageError, useTempHome } from "./helpers.js";
 
@@ -395,6 +396,8 @@ describe("fetchServices", () => {
     ["100", -1, null],
     ["100", 1.5, null],
     ["100", 256, null],
+    ["9".repeat(78), 0, "9".repeat(78)],
+    ["9".repeat(79), 0, null],
   ])("formats amount %j with %j decimals as price %j", async (amount, decimals, price) => {
     mockFetchOk({
       services: [
@@ -539,6 +542,12 @@ describe("fetchServices", () => {
           () => undefined,
         );
         expect(cacheAfter).toBe(fetches && !fails ? fetchedDirectory : cache);
+
+        // Lists carry the same provenance for MCP results.
+        if (result)
+          expect(staleListFetchedAt(await fetchServiceList({ refresh }))).toBe(
+            stale ? fetchedAt : undefined,
+          );
       },
     );
 
@@ -603,6 +612,12 @@ describe("fetchServices", () => {
       "E_NETWORK",
       "Failed to fetch service directory: Unexpected end of JSON input",
       async () => new Response(""),
+    ],
+    [
+      "an oversized body",
+      "E_NETWORK",
+      "Failed to fetch service directory: response is larger than 5 MB",
+      async () => new Response(`{"services":[],"pad":"${"x".repeat(5 * 1024 * 1024)}"}`),
     ],
     [
       "a body without a services list",

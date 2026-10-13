@@ -60,19 +60,40 @@ export async function fetchServices(
   }
 
   const summaries = services.map((service) => service.summary);
-  if (options.search) return searchServices(summaries, options.search);
-  return summaries;
+  return markStale(
+    options.search ? searchServices(summaries, options.search) : summaries,
+    staleFetchedAt,
+  );
 }
 
 export async function fetchServiceList(
   options: { refresh?: boolean | undefined } = {},
 ): Promise<ServiceSummary[]> {
-  return (await fetchServiceEntries(options.refresh)).services.map((service) => service.summary);
+  const { services, staleFetchedAt } = await fetchServiceEntries(options.refresh);
+  return markStale(
+    services.map((service) => service.summary),
+    staleFetchedAt,
+  );
+}
+
+// Lists stay plain arrays in CLI output, so their staleness travels beside them for MCP results.
+const staleLists = new WeakMap<object, string>();
+
+/** When a service list came from an expired cache, the time that cache was fetched. */
+export function staleListFetchedAt(value: unknown) {
+  return value && typeof value === "object" ? staleLists.get(value) : undefined;
+}
+
+function markStale<value extends object>(list: value, fetchedAt: string | undefined) {
+  if (fetchedAt) staleLists.set(list, fetchedAt);
+  return list;
 }
 
 const serviceDirectoryUrl = "https://mpp.dev/api/services";
 const serviceDirectoryTimeout = 10_000;
 const serviceDirectoryCacheTtl = 10 * 60_000;
+// The directory is ~560KB today; anything far larger is rejected before parsing or caching.
+const serviceDirectoryMaxLength = 5 * 1024 * 1024;
 
 async function fetchServiceEntries(refresh = false): Promise<{
   services: { summary: ServiceSummary; detail: ServiceDetail }[];
@@ -153,6 +174,8 @@ async function fetchServiceDirectoryText() {
 
 /** Parses a directory response, rejecting anything without a `services` list so it is never cached. */
 function parseServiceDirectory(text: string) {
+  if (text.length > serviceDirectoryMaxLength)
+    return serviceDirectoryNetworkError(new Error("response is larger than 5 MB"));
   let body: unknown;
   try {
     body = JSON.parse(text);
@@ -302,7 +325,8 @@ function serviceEndpoint(value: unknown) {
 
 /** Formats a base-unit amount in whole tokens, e.g. "10000" with 6 decimals as "0.01". */
 function formatPrice(amount: string, decimals: number | null) {
-  if (!/^\d+$/.test(amount) || decimals === null) return null;
+  // A uint256 has at most 78 digits; longer amounts are not real prices and would be costly to parse.
+  if (!/^\d{1,78}$/.test(amount) || decimals === null) return null;
   // Token decimals fit in a uint8.
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) return null;
   return formatUnits(BigInt(amount), decimals);

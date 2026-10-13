@@ -23,7 +23,7 @@ import {
   listSessions,
   syncSessions,
 } from "./commands/sessions.js";
-import { fetchServiceList, fetchServices } from "./commands/services.js";
+import { fetchServiceList, fetchServices, staleListFetchedAt } from "./commands/services.js";
 import { handleCompatCommand } from "./compat.js";
 import {
   completionsArgs,
@@ -336,7 +336,10 @@ function createMcpCommands() {
       async run(context: unknown) {
         const value = await servicesCommand.run(context);
         // MCP structuredContent must be a top-level object. Keep normal CLI output unchanged.
-        if (Array.isArray(value)) return { services: value };
+        if (Array.isArray(value)) {
+          const fetchedAt = staleListFetchedAt(value);
+          return { services: value, ...(fetchedAt ? { stale: true, fetched_at: fetchedAt } : {}) };
+        }
         return value;
       },
     });
