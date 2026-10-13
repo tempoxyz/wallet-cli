@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -74,10 +74,9 @@ async function mcpCall(params: Record<string, unknown>) {
 }
 
 async function mcpRequest<result>(method: string, params: Record<string, unknown>) {
-  // Runs from source: the bundled CLI cannot load incur's MCP stdio transport yet.
   const child = spawn(
     process.execPath,
-    ["--import", "tsx", "--import", mockFetchModule, "src/cli.ts", "--mcp"],
+    ["--import", mockFetchModule, cliBundle("wallet"), "--mcp"],
     {
       cwd: root,
       env: { ...process.env, NO_COLOR: "1" },
@@ -108,7 +107,7 @@ async function mcpRequest<result>(method: string, params: Record<string, unknown
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method, params })}\n`);
 
   try {
-    const response = await waitForResponse(responses, 2, () => stderr);
+    const response = await waitForResponse(responses, 2, child, () => stderr);
     child.stdin.end();
     const exitCode = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     if (exitCode !== 0) throw new Error(stderr || `MCP process exited with ${exitCode}`);
@@ -119,10 +118,18 @@ async function mcpRequest<result>(method: string, params: Record<string, unknown
   }
 }
 
-async function waitForResponse(responses: unknown[], id: number, getStderr: () => string) {
+async function waitForResponse(
+  responses: unknown[],
+  id: number,
+  child: ChildProcess,
+  getStderr: () => string,
+) {
   for (let index = 0; index < 500; index++) {
     const response = responses.find((item) => isRpcResponse(item, id));
     if (response) return response;
+    if (child.exitCode !== null) {
+      throw new Error(getStderr() || `MCP process exited with ${child.exitCode}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   const diagnostic = getStderr().trim();
