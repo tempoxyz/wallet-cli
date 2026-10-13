@@ -23,7 +23,10 @@ const options = z.object({
     .string()
     .optional()
     .describe("Select a payment token address or MACH settlement"),
-  "private-key": z.string().optional().describe("Sign payments with an ephemeral private key"),
+  "private-key": z
+    .string()
+    .optional()
+    .describe("Sign payments with an ephemeral private key (or TEMPO_PRIVATE_KEY)"),
   network: z
     .string()
     .optional()
@@ -275,7 +278,7 @@ function describeRequestCli() {
         name: "private_key",
         long: "--private-key",
         value_name: "HEX",
-        help: "Sign payments with an ephemeral private key",
+        help: "Sign payments with an ephemeral private key (or TEMPO_PRIVATE_KEY)",
       },
       {
         name: "network",

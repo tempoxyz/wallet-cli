@@ -343,6 +343,7 @@ function validateRequestOptions(options: RequestOptions) {
     throw usageError(
       "--max-spend (or TEMPO_MAX_SPEND) must be a non-negative amount with at most 6 decimal places",
     );
+  privateKeySigner(options);
   if (options.mach) {
     if (options.paymentToken !== undefined && !isMachPaymentToken(options.paymentToken))
       throw usageError("--mach conflicts with --payment-token for another token");
@@ -478,6 +479,7 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
   let paid = false;
 
   if (response.status === 402) {
+    const signer = privateKeySigner(options);
     if (options.dryRun) {
       const { challenge } = preparePaymentChallenge(response, options, request.url);
       if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
@@ -502,6 +504,9 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
             ),
             max_spend: options.maxSpend ?? null,
             within_budget: options.maxSpend ? true : null,
+            signer: signer
+              ? { address: signer.account.address, source: signer.source }
+              : { address: null, source: "wallet" },
           },
           null,
           2,
@@ -511,6 +516,7 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
       return;
     }
 
+    if (signer) writePrivateKeyNotice(io.stderr ?? process.stderr, signer);
     response = await payAndRetryRequest(response, request, options);
     paid = true;
   }
@@ -941,10 +947,43 @@ async function paySessionAndRetryRequest(
   }
 }
 
+/** Private key that replaces the logged-in wallet as payer. Errors never echo the key. */
+function privateKeySigner(options: RequestOptions) {
+  const source: "flag" | "env" = options.privateKey !== undefined ? "flag" : "env";
+  const key = options.privateKey ?? (process.env.TEMPO_PRIVATE_KEY?.trim() || undefined);
+  if (key === undefined) return undefined;
+  try {
+    if (/^0x[0-9a-fA-F]{64}$/.test(key))
+      return { account: privateKeyToAccount(key as `0x${string}`), source };
+  } catch {
+    // Out-of-range keys fall through; signer errors include the key value.
+  }
+  throw usageError(
+    `${privateKeySourceName(source)} must be a valid private key (0x followed by 64 hex characters)`,
+  );
+}
+
+function privateKeySourceName(source: "flag" | "env") {
+  return source === "flag" ? "--private-key" : "TEMPO_PRIVATE_KEY";
+}
+
+function writePrivateKeyNotice(
+  stderr: Pick<NodeJS.WriteStream, "write">,
+  signer: NonNullable<ReturnType<typeof privateKeySigner>>,
+) {
+  stderr.write(
+    `Paying with key from ${privateKeySourceName(signer.source)} (${signer.account.address}), not the logged-in wallet\n`,
+  );
+  if (signer.source === "flag")
+    stderr.write(
+      "Warning: --private-key can leak through shell history and process listings; set TEMPO_PRIVATE_KEY instead\n",
+    );
+}
+
 export async function resolvePaymentIdentity(options: RequestOptions) {
-  const privateKey = options.privateKey ?? process.env.TEMPO_PRIVATE_KEY;
-  if (privateKey) {
-    const account = privateKeyToAccount(privateKey as `0x${string}`);
+  const signer = privateKeySigner(options);
+  if (signer) {
+    const { account } = signer;
     const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) =>
       createWalletClient({
         account,
