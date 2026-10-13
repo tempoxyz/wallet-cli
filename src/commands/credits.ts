@@ -22,8 +22,15 @@ const creditPermitTypes = {
   ],
 } as const;
 
+export type CreditsAuthorization = {
+  message: string;
+  validBefore: string;
+  nonce: string;
+  creditsRawAmount: number;
+};
+
 export function validateCreditPermit(
-  auth: { message: string; validBefore: string; nonce: string; creditsRawAmount: number },
+  auth: CreditsAuthorization,
   options: {
     wallet: string;
     network?: string | undefined;
@@ -115,8 +122,9 @@ export function validateCreditPermit(
 export async function queryCreditBalance(options: {
   walletAddress: string;
 }): Promise<{ wallet: string; balance: string; rawBalance: string }> {
-  const url = coinflowBalancesUrl(appUrl, options.walletAddress);
-  const response = await fetch(url, {
+  const url = new URL("/api/coinflow/balances", appUrl);
+  url.searchParams.set("wallet", options.walletAddress);
+  const response = await fetch(url.toString(), {
     headers: {
       "user-agent": `wallet-cli/${version}`,
     },
@@ -142,14 +150,6 @@ export async function queryCreditBalance(options: {
     balance: formatCreditBalance(rawBalance),
     rawBalance: rawBalance.toString(),
   };
-}
-
-function coinflowBalancesUrl(appUrl: string, walletAddress: string) {
-  const url = new URL(appUrl);
-  url.pathname = "/api/coinflow/balances";
-  url.search = "";
-  url.searchParams.set("wallet", walletAddress);
-  return url.toString();
 }
 
 function parseCreditBalance(value: unknown) {

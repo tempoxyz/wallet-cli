@@ -644,9 +644,7 @@ function describeCli() {
           flag("dry_run", "--dry-run", "Show plan + fee estimate, don't send"),
           flag("mach", "--mach", "Pay with on-chain MACH"),
           flag("credits", "--credits", "Spend existing MPP Credits (deprecated)"),
-          option("max_spend", "--max-spend", "Maximum MACH spend in USD", {
-            valueName: "AMOUNT",
-          }),
+          option("max_spend", "--max-spend", "Maximum MACH spend in USD", { valueName: "AMOUNT" }),
           option(
             "amount_cents",
             "--amount-cents",

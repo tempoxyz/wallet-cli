@@ -11,7 +11,7 @@ import { whoamiHandler } from "../src/commands/identity.js";
 import { transferCredits } from "../src/commands/transfer.js";
 import { validateCreditPermit } from "../src/commands/credits.js";
 import { appUrl } from "../src/shared/network.js";
-import { usdcToken } from "../src/shared/constants.js";
+import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { transferOutput, whoamiOutput } from "../src/schemas.js";
 import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
 
@@ -74,6 +74,70 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("legacy credit spending", () => {
+  it("previews a direct legacy calldata payment", async () => {
+    const result = await transferCredits({
+      options: {
+        "amount-cents": 100,
+        to: recipient,
+        data: "0xabcdef",
+        value: "0",
+        "dry-run": true,
+      },
+    });
+    expect(result).toMatchObject({
+      amount_cents: 100,
+      dry_run: true,
+      to: recipient,
+      transaction_data: { transaction: { to: recipient, data: "0xabcdef" } },
+    });
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it("accepts PathUSD challenges on testnet", async () => {
+    const offer = Challenge.deserialize(challenge);
+    offer.request.currency = moderatoToken;
+    offer.request.methodDetails = { chainId: 42431 };
+    await expect(
+      transferCredits({
+        options: {
+          "mpp-challenge": Challenge.serialize(offer),
+          network: "testnet",
+          "dry-run": true,
+        },
+      }),
+    ).resolves.toMatchObject({ amount_cents: 100, token: moderatoToken, chain_id: 42431 });
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it.each([{ amount: "15000" }, { currency: moderatoToken }])(
+    "rejects unsupported precision or currency: %j",
+    async (request) => {
+      const offer = Challenge.deserialize(challenge);
+      Object.assign(offer.request, request);
+      const fetch = vi.spyOn(globalThis, "fetch");
+      await expect(
+        transferCredits({ options: { "mpp-challenge": Challenge.serialize(offer) } }),
+      ).rejects.toMatchObject({ code: "E_USAGE" });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(mocks.request).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    undefined,
+    "!!!!",
+    ...["not-json", "null", "[]", "5"].map((s) => Buffer.from(s).toString("base64url")),
+  ])("rejects missing or malformed challenge requests: %s", async (request) => {
+    const header = `Payment realm="example", method="tempo", intent="charge", id="abc123"${request ? `, request="${request}"` : ""}`;
+    const fetch = vi.spyOn(globalThis, "fetch");
+    await expect(transferCredits({ options: { "mpp-challenge": header } })).rejects.toMatchObject({
+      code: "E_USAGE",
+      message: "Invalid configuration: invalid MPP challenge",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
   it.each(["inline", "file"])(
     "rejects oversized %s challenges before parsing or spending",
     async (source) => {
@@ -583,6 +647,7 @@ describe("legacy credit spending", () => {
     { "amount-cents": 0, to: recipient },
     { "amount-cents": -1, to: recipient },
     { "amount-cents": 1.5, to: recipient },
+    { "amount-cents": 100, to: recipient, value: "1" },
     { "amount-cents": Number.MAX_SAFE_INTEGER + 1, to: recipient },
     { "amount-cents": 99, "mpp-challenge": challenge },
     { "max-spend": "0.99", "mpp-challenge": challenge },

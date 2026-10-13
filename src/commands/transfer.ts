@@ -11,13 +11,17 @@ import {
 } from "viem";
 import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
-import { Actions } from "viem/tempo";
+import { Abis, Actions } from "viem/tempo";
 
 import { networkError, paymentOutcomeUnknownError, usageError } from "../shared/errors.js";
 import { appUrl, chainId, tokenAddress, tokenDecimals, tokenSymbol } from "../shared/network.js";
 import { escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
 import { version } from "../shared/constants.js";
-import { validateCreditPermit, warnCreditsDeprecated } from "./credits.js";
+import {
+  type CreditsAuthorization,
+  validateCreditPermit,
+  warnCreditsDeprecated,
+} from "./credits.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
 import {
@@ -259,9 +263,7 @@ export async function transferCredits(options: {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   const wallet = (options.options.address ?? activeAccount?.address)?.toLowerCase();
-  if (!activeAccount)
-    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-  if (!wallet)
+  if (!activeAccount || !wallet)
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
 
   const challenge = await mppChallengeInput(options.options);
@@ -291,14 +293,9 @@ export async function transferCredits(options: {
     };
   }
 
-  const baseUrl = apiBaseUrl(appUrl);
+  const redemption = { wallet, subtotal: { cents: amountCents, currency: "USD" }, transactionData };
   const provider = createProvider({ network: options.options.network });
-  const auth = await requestCreditsAuthMessage({
-    baseUrl,
-    wallet,
-    amountCents,
-    transactionData,
-  });
+  const auth = (await postCredits("auth-msg", redemption)) as CreditsAuthorization;
   const typedData = validateCreditPermit(auth, {
     wallet,
     network: options.options.network,
@@ -312,13 +309,12 @@ export async function transferCredits(options: {
   });
   let redeem: unknown;
   try {
-    redeem = await submitCreditsRedeem({
-      baseUrl,
-      wallet,
-      amountCents,
-      transactionData,
-      auth,
-      signature,
+    redeem = await postCredits("send", {
+      ...redemption,
+      permitCreditsSignature: signature,
+      validBefore: auth.validBefore,
+      nonce: auth.nonce,
+      creditsRawAmount: auth.creditsRawAmount,
     });
   } catch {
     // The permit may have been redeemed even if the response was lost. Never retry automatically.
@@ -369,7 +365,7 @@ function buildDirectCreditsTransfer(options: {
 }) {
   const amountCents = options["amount-cents"];
   const to = options.to;
-  if (!Number.isSafeInteger(amountCents) || amountCents === undefined || !to)
+  if (amountCents === undefined || !to)
     throw usageError(
       "Configuration missing: --amount-cents and --to are required when using --credits, unless --mpp-challenge is provided",
     );
@@ -449,19 +445,7 @@ function buildMppCreditsTransfer(options: {
   const atomicAmount = BigInt(amount);
   const amountCents = amountToUsdCents(atomicAmount);
   const data = encodeFunctionData({
-    abi: [
-      {
-        type: "function",
-        name: "transferWithMemo",
-        inputs: [
-          { name: "to", type: "address" },
-          { name: "amount", type: "uint256" },
-          { name: "memo", type: "bytes32" },
-        ],
-        outputs: [{ name: "", type: "bool" }],
-        stateMutability: "nonpayable",
-      },
-    ],
+    abi: Abis.tip20,
     functionName: "transferWithMemo",
     args: [
       recipient as `0x${string}`,
@@ -493,7 +477,7 @@ function buildCreditsTransactionData(options: { to: string; data: string; value:
     throw usageError("Invalid credits destination: expected a non-zero address");
   if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(options.data))
     throw usageError("Invalid credits calldata: expected hex-encoded bytes");
-  if (!isZeroValue(options.value))
+  if (!/^(?:0*|0x0*)$/.test(options.value.trim()))
     throw usageError(
       "Invalid configuration: Coinflow credits redeem does not support non-zero ETH value",
     );
@@ -511,15 +495,6 @@ function buildCreditsTransactionData(options: { to: string; data: string; value:
       data: options.data,
     },
   };
-}
-
-function isZeroValue(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return true;
-  const hex = trimmed.match(/^0x([0-9a-fA-F]*)$/);
-  if (hex) return !hex[1] || /^0+$/.test(hex[1]);
-  if (!/^\d+$/.test(trimmed)) throw usageError(`Invalid ETH value: ${escapeInvisible(value)}`);
-  return /^0+$/.test(trimmed);
 }
 
 const maxCreditsChallengeBytes = 64 * 1024;
@@ -583,83 +558,24 @@ function hashPrefix(value: string, length: number) {
   );
 }
 
-async function requestCreditsAuthMessage(options: {
-  baseUrl: string;
-  wallet: string;
-  amountCents: number;
-  transactionData: unknown;
-}) {
-  const response = await fetch(`${options.baseUrl}/api/coinflow/redeem/auth-msg`, {
+async function postCredits(path: "auth-msg" | "send", body: Record<string, unknown>) {
+  const response = await fetch(`${new URL(appUrl).origin}/api/coinflow/redeem/${path}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "user-agent": `wallet-cli/${version}`,
     },
-    body: JSON.stringify({
-      wallet: options.wallet,
-      subtotal: {
-        cents: options.amountCents,
-        currency: "USD",
-      },
-      transactionData: options.transactionData,
-    }),
+    body: JSON.stringify(body),
   });
   const text = await response.text();
   if (!response.ok)
     throw networkError(
-      `HTTP ${response.status} during get credits auth message: ${escapeInvisible(text.slice(0, 500))}`,
+      `HTTP ${response.status} during credits ${path}: ${escapeInvisible(text.slice(0, 500))}`,
     );
-
-  let data: unknown;
   try {
-    data = JSON.parse(text);
+    return getRecord(JSON.parse(text));
   } catch {
-    throw networkError("Coinflow credits authorization response is not valid JSON");
+    const operation = path === "auth-msg" ? "authorization" : "redemption";
+    throw networkError(`Coinflow credits ${operation} response is not valid JSON`);
   }
-  return getRecord(data) as {
-    message: string;
-    validBefore: string;
-    nonce: string;
-    creditsRawAmount: number;
-  };
-}
-
-async function submitCreditsRedeem(options: {
-  baseUrl: string;
-  wallet: string;
-  amountCents: number;
-  transactionData: unknown;
-  auth: { validBefore: string; nonce: string; creditsRawAmount: number };
-  signature: string;
-}) {
-  const response = await fetch(`${options.baseUrl}/api/coinflow/redeem/send`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "user-agent": `wallet-cli/${version}`,
-    },
-    body: JSON.stringify({
-      wallet: options.wallet,
-      subtotal: {
-        cents: options.amountCents,
-        currency: "USD",
-      },
-      transactionData: options.transactionData,
-      permitCreditsSignature: options.signature,
-      validBefore: options.auth.validBefore,
-      nonce: options.auth.nonce,
-      creditsRawAmount: options.auth.creditsRawAmount,
-    }),
-  });
-  const text = await response.text();
-  if (!response.ok)
-    throw networkError(
-      `HTTP ${response.status} during send redeem transaction: ${escapeInvisible(text.slice(0, 500))}`,
-    );
-
-  return JSON.parse(text) as unknown;
-}
-
-function apiBaseUrl(urlString: string) {
-  return new URL(urlString).origin;
 }

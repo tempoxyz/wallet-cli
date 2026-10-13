@@ -146,9 +146,7 @@ tempo wallet transfer --credits --amount-cents 100 --to 0x...
 
 Legacy credit payments retain whole-cent precision. With a challenge, `--amount-cents` optionally caps the total credit debit, including Coinflow's quoted gas fees. `TEMPO_MAX_SPEND` also caps that total, including for direct transfers; `--max-spend` is for MACH. Direct `--to`, `--data`, and `--value` options cannot be combined with a challenge. `--credits` and `--mach` cannot be combined.
 
-Credit challenge inputs, including files, are limited to 64 KiB before parsing. Decimal amounts are limited to 78 digits before conversion.
-
-Credit dry runs show the destination and calldata, plus the token, chain, and challenge ID for MPP payments. Malformed, expired, split-payment, or pull-only challenges are rejected before authorization. Credits require support for push payments (transaction-hash receipts). The CLI validates the legacy permit's schema, wallet, chain, credit seed, nonce, expiry, and amount before signing. Coinflow's permit authorizes a credit debit rather than binding the recipient or calldata; Coinflow remains trusted to quote gas fees and execute the submitted transaction.
+Use `--dry-run` to inspect the destination and calldata. Credit challenges must support push payments (transaction-hash receipts); split payments are unsupported. Coinflow remains trusted to quote gas fees and execute the transaction because its permit authorizes a credit debit without binding the recipient or calldata.
 
 For funding from another device or an automated host:
 
@@ -160,8 +158,6 @@ tempo wallet whoami --mach
 The JSON handoff includes `status: "pending"`, the destination wallet, chain, token, amount, and a URL under `https://wallet.tempo.xyz/agent?action=fund&intent=mach`. Open that URL on any device to complete the wallet's available funding flow. `--address` can specify a destination without a local login. Hosted checkout accepts $5–$100 USD with at most two decimal places. MACH funding currently supports mainnet (4217), with token `0x20c000000000000000000000f37de3740adec032` and six decimals.
 
 Omit `--no-wait` to poll the destination's MACH balance. A requested amount is complete only after the balance increases by that full amount. Without an amount, any positive increase completes the wait. The default timeout is 600 seconds; use `--timeout <seconds>` to change it, or Ctrl-C to cancel. A balance delta is observational evidence, not a checkout receipt. Concurrent spending can delay detection. No-wait returns the handoff without requiring RPC access.
-
-For one-time charges without an explicit token selector, mppx prefers MACH when enabled, sufficiently funded, and usable; otherwise it uses the advertised currency.
 
 Use `tempo request --mach --max-spend 0.05 <url>` to require MACH for a one-time charge. The exact challenge must advertise `machineTokenEnabled: true`; the installed `mppx` SDK settles into the merchant's advertised currency. An explicit MACH selection never silently falls back to stablecoins. `--payment-token MACH` is equivalent. `--dry-run` inspects an offer without spending. MACH is not supported for sessions. Funding MACH does not convert old Coinflow credits.
 
