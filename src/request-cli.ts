@@ -23,7 +23,12 @@ const options = z.object({
     .string()
     .optional()
     .describe("Select a payment token address or MACH settlement"),
-  "private-key": z.string().optional().describe("Sign payments with an ephemeral private key"),
+  "private-key": z
+    .string()
+    .optional()
+    .describe(
+      "Sign payments with an ephemeral private key (or TEMPO_PRIVATE_KEY); structured output reports the signer via --dry-run and --write-meta",
+    ),
   network: z
     .string()
     .optional()
@@ -118,8 +123,12 @@ const cli = Cli.create("tempo request", {
       description: "Set a header and write output to a file",
     },
   ],
-  async run({ args, options }) {
-    await executeRequest(toRequestOptions(args.url, options));
+  async run({ args, formatExplicit, options }) {
+    // Structured output (-j, --format) keeps stderr parseable; --dry-run JSON reports the signer.
+    await executeRequest(
+      toRequestOptions(args.url, options),
+      formatExplicit ? { stderr: { write: () => true } } : {},
+    );
     return undefined;
   },
 });
@@ -277,7 +286,7 @@ function describeRequestCli() {
         name: "private_key",
         long: "--private-key",
         value_name: "HEX",
-        help: "Sign payments with an ephemeral private key",
+        help: "Sign payments with an ephemeral private key (or TEMPO_PRIVATE_KEY); structured output reports the signer via --dry-run and --write-meta",
       },
       {
         name: "network",

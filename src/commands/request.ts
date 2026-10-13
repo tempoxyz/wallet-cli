@@ -350,6 +350,7 @@ function validateRequestOptions(options: RequestOptions) {
     throw usageError(
       "--max-spend (or TEMPO_MAX_SPEND) must be a non-negative amount with at most 6 decimal places",
     );
+  privateKeySigner(options);
   if (options.mach) {
     if (options.paymentToken !== undefined && !isMachPaymentToken(options.paymentToken))
       throw usageError("--mach conflicts with --payment-token for another token");
@@ -487,6 +488,7 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
   if (response.status === 402) {
     if (options.dryRun) {
       const { challenge } = preparePaymentChallenge(response, options, request.url);
+      const signer = privateKeySigner(options);
       if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
       if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
       await writeOutput(
@@ -509,6 +511,9 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
             ),
             max_spend: options.maxSpend ?? null,
             within_budget: options.maxSpend ? true : null,
+            signer: signer
+              ? { address: signer.account.address, source: signer.source }
+              : { address: null, source: "wallet" },
           },
           null,
           2,
@@ -518,13 +523,19 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
       return;
     }
 
-    response = await payAndRetryRequest(response, request, options);
+    response = await payAndRetryRequest(response, request, options, io.stderr ?? process.stderr);
     paid = true;
   }
 
   try {
     if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
-    if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
+    if (options.writeMeta)
+      await writeMetaFile(
+        options.writeMeta,
+        response,
+        started,
+        paid ? privateKeySigner(options) : undefined,
+      );
     if (response.status >= 400 && options.sseJson) {
       const body = await response.text().catch(responseBodyNetworkError);
       await writeOutput(
@@ -767,12 +778,14 @@ async function payAndRetryRequest(
   paymentRequiredResponse: Response,
   request: FetchPlan,
   options: RequestOptions,
+  stderr: Pick<NodeJS.WriteStream, "write">,
 ) {
   const { challenge: selectedChallenge, response: selectedResponse } = preparePaymentChallenge(
     paymentRequiredResponse,
     options,
     request.url,
   );
+  writePrivateKeyNotice(stderr, options);
   const header = selectPaymentTokenResponse(
     paymentRequiredResponse,
     options.paymentToken,
@@ -948,10 +961,42 @@ async function paySessionAndRetryRequest(
   }
 }
 
+/** Private key that replaces the logged-in wallet as payer. Errors never echo the key. */
+function privateKeySigner(options: RequestOptions) {
+  const source: "flag" | "env" = options.privateKey !== undefined ? "flag" : "env";
+  const key = options.privateKey ?? (process.env.TEMPO_PRIVATE_KEY || undefined);
+  if (key === undefined) return undefined;
+  try {
+    if (/^0x[0-9a-fA-F]{64}$/.test(key))
+      return { account: privateKeyToAccount(key as `0x${string}`), source };
+  } catch {
+    // Out-of-range keys fall through; signer errors include the key value.
+  }
+  throw usageError(
+    `${privateKeySourceName(source)} must be a valid private key (0x followed by 64 hex characters)`,
+  );
+}
+
+function privateKeySourceName(source: "flag" | "env") {
+  return source === "flag" ? "--private-key" : "TEMPO_PRIVATE_KEY";
+}
+
+const privateKeyFlagWarning =
+  "--private-key can leak through shell history and process listings; set TEMPO_PRIVATE_KEY instead";
+
+function writePrivateKeyNotice(stderr: Pick<NodeJS.WriteStream, "write">, options: RequestOptions) {
+  const signer = privateKeySigner(options);
+  if (!signer) return;
+  stderr.write(
+    `Paying with key from ${privateKeySourceName(signer.source)} (${signer.account.address}), not the logged-in wallet\n`,
+  );
+  if (signer.source === "flag") stderr.write(`Warning: ${privateKeyFlagWarning}\n`);
+}
+
 export async function resolvePaymentIdentity(options: RequestOptions) {
-  const privateKey = options.privateKey ?? process.env.TEMPO_PRIVATE_KEY;
-  if (privateKey) {
-    const account = privateKeyToAccount(privateKey as `0x${string}`);
+  const signer = privateKeySigner(options);
+  if (signer) {
+    const { account } = signer;
     const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) =>
       createWalletClient({
         account,
@@ -1877,7 +1922,12 @@ async function writeHeadersFile(path: string, response: Response) {
   await writeFile(path, responseHeaderText(response));
 }
 
-async function writeMetaFile(path: string, response: Response, started: number) {
+async function writeMetaFile(
+  path: string,
+  response: Response,
+  started: number,
+  signer?: ReturnType<typeof privateKeySigner>,
+) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(
     path,
@@ -1887,6 +1937,15 @@ async function writeMetaFile(path: string, response: Response, started: number) 
         url: response.url,
         elapsed_ms: Date.now() - started,
         headers: Object.fromEntries(response.headers.entries()),
+        ...(signer
+          ? {
+              signer: {
+                address: signer.account.address,
+                source: signer.source,
+                ...(signer.source === "flag" ? { warning: privateKeyFlagWarning } : {}),
+              },
+            }
+          : {}),
       },
       null,
       2,
