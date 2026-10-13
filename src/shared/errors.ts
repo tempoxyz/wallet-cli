@@ -95,8 +95,8 @@ export function usageError(message: string) {
   return walletError({ code: "E_USAGE", message });
 }
 
-export function networkError(message: string) {
-  return walletError({ code: "E_NETWORK", message });
+export function networkError(message: string, options: { retryable?: boolean } = {}) {
+  return walletError({ code: "E_NETWORK", message, ...options });
 }
 
 export function paymentError(message: string) {

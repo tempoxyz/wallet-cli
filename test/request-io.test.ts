@@ -172,6 +172,56 @@ it("aborts Retry-After backoff at the request deadline without another request",
   expect(requests).toBe(1);
 });
 
+it.each([
+  {
+    failure: "a connection reset before the response",
+    retryable: true,
+    args: (url: string) => [url],
+    handler: (req: IncomingMessage) => req.socket.destroy(),
+  },
+  {
+    failure: "a connection reset mid-body",
+    retryable: true,
+    args: (url: string) => [url],
+    handler: (_req: IncomingMessage, res: ServerResponse) => {
+      res.writeHead(200, { "content-length": "100" });
+      res.write("partial");
+      setImmediate(() => res.socket?.destroy());
+    },
+  },
+  {
+    failure: "the request deadline",
+    retryable: true,
+    args: (url: string) => ["-m", "0.1", url],
+    handler: () => {},
+  },
+  {
+    failure: "the redirect limit",
+    retryable: false,
+    args: (url: string) => ["-L", "--max-redirs", "0", url],
+    handler: (_req: IncomingMessage, res: ServerResponse) => {
+      res.writeHead(302, { location: "/again" });
+      res.end();
+    },
+  },
+  {
+    failure: "offline mode",
+    retryable: false,
+    args: (url: string) => ["--offline", url],
+    handler: () => {},
+  },
+])(
+  "reports $failure as E_NETWORK with retryable=$retryable",
+  async ({ args, handler, retryable }) => {
+    const url = await server(handler);
+    await expect(runRequest(args(url), { stdout: capture() })).rejects.toMatchObject({
+      code: "E_NETWORK",
+      exitCode: 3,
+      retryable,
+    });
+  },
+);
+
 it("preserves repeated multipart fields and files in order", async () => {
   const home = await useTempHome();
   const first = join(home, "first.txt");

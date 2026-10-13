@@ -110,8 +110,10 @@ export async function runFundingFlow(options: {
     }
   } catch (error) {
     if (signal.aborted) {
+      // A rerun waits for a new deposit from a fresh baseline, so neither case is retryable.
       throw walletError({
         code: "E_POLL_TIMEOUT",
+        retryable: false,
         message:
           signal.reason?.name === "TimeoutError"
             ? `Timed out waiting for funding. Continue at ${url}`

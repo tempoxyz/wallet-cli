@@ -6,6 +6,7 @@ import { Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { Errors } from "incur";
 import { Challenge, Constants, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession, tempo } from "mppx/client";
 import { Keystore } from "accounts";
@@ -673,7 +674,11 @@ async function fetchWithRetries(
     }
   }
 
-  throw networkError(lastError instanceof Error ? lastError.message : String(lastError));
+  if (lastError instanceof Errors.IncurError) throw lastError;
+  // Redirect-limit refusals keep their code; transport failures and timeouts are transient.
+  throw networkError(lastError instanceof Error ? lastError.message : String(lastError), {
+    retryable: true,
+  });
 }
 
 // Credentials may authorize payment even when the response never arrives. Never
@@ -807,15 +812,11 @@ async function payAndRetryRequest(
         paySessionAndRetryRequest(selectedResponse, request, options, sessionChallenge),
       );
     } catch (error) {
+      // Only payment failures fall back to a charge offer; other typed errors keep their code.
       if (
-        isAuthRefreshRequiredError(error) ||
-        (error &&
-          typeof error === "object" &&
-          "code" in error &&
-          error.code === "E_PAYMENT_OUTCOME_UNKNOWN")
+        options.paymentIntent === "auto" &&
+        !(error instanceof Errors.IncurError && error.code !== "E_PAYMENT")
       )
-        throw error;
-      if (options.paymentIntent === "auto")
         throw chargeFallbackError(header, sessionChallenge, options, error) ?? error;
       throw error;
     }
@@ -854,7 +855,7 @@ async function payAndRetryRequest(
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
     return await fetchPaidRequest({ init: paidInit, url: request.url }, options, credential);
   } catch (error) {
-    if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
+    if (error instanceof Errors.IncurError) throw error;
     const diagnostic = spendingLimitDiagnostic(error, header, options);
     if (diagnostic) throw diagnostic;
     throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
@@ -963,7 +964,7 @@ async function paySessionAndRetryRequest(
     }
     return response;
   } catch (error) {
-    if (error && typeof error === "object" && isActionablePaymentError(error)) throw error;
+    if (error instanceof Errors.IncurError) throw error;
     throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
   }
 }
@@ -1162,24 +1163,6 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
   }
 
   return undefined;
-}
-
-function isActionablePaymentError(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const code = (error as Record<string, unknown>).code;
-  return (
-    code === "E_PAYMENT_OUTCOME_UNKNOWN" ||
-    code === "E_PAYMENT" ||
-    code === "E_AUTH_REFRESH_REQUIRED"
-  );
-}
-
-function isAuthRefreshRequiredError(error: unknown) {
-  return (
-    Boolean(error) &&
-    typeof error === "object" &&
-    (error as Record<string, unknown>).code === "E_AUTH_REFRESH_REQUIRED"
-  );
 }
 
 type PaymentIdentity = Awaited<ReturnType<typeof resolvePaymentIdentity>>;
@@ -1834,7 +1817,7 @@ function offeredTempoCurrencies(header: string | null) {
 }
 
 function responseBodyNetworkError(error: unknown): never {
-  throw networkError(error instanceof Error ? error.message : String(error));
+  throw networkError(error instanceof Error ? error.message : String(error), { retryable: true });
 }
 
 async function* readResponseBody(body: ReadableStream<Uint8Array>, signal?: AbortSignal) {

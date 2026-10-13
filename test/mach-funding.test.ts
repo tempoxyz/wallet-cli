@@ -138,7 +138,7 @@ describe("MACH funding", () => {
     ).rejects.toMatchObject({
       code: "E_POLL_TIMEOUT",
       exitCode: 3,
-      retryable: true,
+      retryable: false,
       message: `Timed out waiting for funding. Continue at ${fundUrl("mach", { address: wallet, chainId: 4217 })}`,
     });
   });
@@ -149,7 +149,7 @@ describe("MACH funding", () => {
       runFundingFlow({ action: "mach", noBrowser: true, signal: controller.signal }),
     ).rejects.toMatchObject({
       code: "E_POLL_TIMEOUT",
-      retryable: true,
+      retryable: false,
       message: expect.stringContaining("Funding wait cancelled. Continue at https://"),
     });
   });

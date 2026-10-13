@@ -263,7 +263,7 @@ function printCompatErrorAndExit(error: unknown, args: readonly string[]): never
   const code = typeof record.code === "string" ? record.code : "E_RUNTIME";
   const message = error instanceof Error ? error.message : String(error);
   const exitCode = typeof record.exitCode === "number" ? record.exitCode : 1;
-  const retryable = typeof record.retryable === "boolean" ? record.retryable : undefined;
+  const retryable = typeof record.retryable === "boolean" ? record.retryable : false;
 
   if (args.includes("--json-output") || args.includes("--format")) {
     console.log(JSON.stringify({ code, message, retryable }));
