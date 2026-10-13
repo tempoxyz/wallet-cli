@@ -70,7 +70,7 @@ export async function swapTokens(
 
   const tokenIn = input.args.tokenIn.toLowerCase() as `0x${string}`;
   const tokenOut = input.args.tokenOut.toLowerCase() as `0x${string}`;
-  const network = await resolveNetwork(input.options.network);
+  const network = await resolveNetwork(input.options.network, state);
   const selectedChainId = network.chainId;
   const mach = machToken(selectedChainId).toLowerCase();
   if (tokenIn === mach || tokenOut === mach)

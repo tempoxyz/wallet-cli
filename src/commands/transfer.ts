@@ -71,7 +71,7 @@ export async function transferTokens(options: {
   if (!from)
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
 
-  const network = await resolveNetwork(options.options.network);
+  const network = await resolveNetwork(options.options.network, state);
   const token = args.token.toLowerCase() as `0x${string}`;
   const to = args.to.toLowerCase() as `0x${string}`;
   const fromAddress = from.toLowerCase();
@@ -275,7 +275,7 @@ export async function transferCredits(options: {
   const wallet = (options.options.address ?? activeAccount?.address)?.toLowerCase();
   if (!activeAccount || !wallet)
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-  const network = await resolveNetwork(flags.network);
+  const network = await resolveNetwork(flags.network, state);
 
   const challenge = await mppChallengeInput(options.options);
   const creditsTransfer = challenge

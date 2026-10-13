@@ -46,8 +46,9 @@ export async function loginHandler(options: {
   network?: string | undefined;
   browser?: boolean | undefined;
 }) {
-  const network = await resolveNetwork(options.network);
-  const cached = await cachedLoginOutput(network);
+  const state = await loadWalletState();
+  const network = await resolveNetwork(options.network, state);
+  const cached = await cachedLoginOutput(state, network);
   if (cached) return cached;
 
   const provider = createProvider({ network, noBrowser: options.browser === false });
@@ -60,8 +61,7 @@ export async function loginHandler(options: {
 }
 
 /** Whoami output when the active wallet already has a usable access key on `network`. */
-export async function cachedLoginOutput(network: Network) {
-  const state = await loadWalletState();
+export async function cachedLoginOutput(state: WalletState, network: Network) {
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   if (
     !activeAccount ||
@@ -109,7 +109,7 @@ export async function whoamiHandler(options: {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   const walletAddress = activeAccount?.address ?? null;
-  const network = await resolveNetwork(options.network);
+  const network = await resolveNetwork(options.network, state);
 
   if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
   if (options.credits) warnCreditsDeprecated();
@@ -359,7 +359,7 @@ function localKeyMatchesRevoke(options: {
 export async function debugHandler(options: { network?: string | undefined }) {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
-  const network = await resolveNetwork(options.network);
+  const network = await resolveNetwork(options.network, state);
 
   return {
     wallet_version: `${version} (local)`,
@@ -731,7 +731,7 @@ function debugArch() {
 
 /** Key management signs through the wallet session, so it must target the logged-in chain. */
 async function walletNetwork(state: WalletState, flag: string | undefined) {
-  const network = await resolveNetwork(flag);
+  const network = await resolveNetwork(flag, state);
   if (storedChainId(state) !== network.chainId)
     throw usageError(
       "Wallet is not configured for the requested network. Run 'tempo wallet login'.",

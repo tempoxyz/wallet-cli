@@ -14,14 +14,18 @@ const testnet: Network = { name: "testnet", chainId: 42431 };
 
 /**
  * Selects the network for a command: the `--network` flag, then `TEMPO_WALLET_NETWORK`,
- * then the logged-in wallet's chain, then mainnet.
+ * then the logged-in wallet's chain, then mainnet. Resolve once per command, passing the
+ * wallet `state` the command already loaded so both read the same snapshot.
  */
-export async function resolveNetwork(flag: string | undefined): Promise<Network> {
+export async function resolveNetwork(
+  flag: string | undefined,
+  state?: WalletState,
+): Promise<Network> {
   const explicit = explicitNetwork(flag);
   if (explicit) return explicit;
-  const state = await loadWalletState();
-  const loggedIn = state.accounts[state.activeAccount ?? 0] !== undefined;
-  return loggedIn && storedChainId(state) === testnet.chainId ? testnet : mainnet;
+  const wallet = state ?? (await loadWalletState());
+  const loggedIn = wallet.accounts[wallet.activeAccount ?? 0] !== undefined;
+  return loggedIn && storedChainId(wallet) === testnet.chainId ? testnet : mainnet;
 }
 
 /** The wallet store's chain; a store without one is on mainnet, the default it is saved with. */

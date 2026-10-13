@@ -107,7 +107,13 @@ export async function listSessions(
     orphaned?: boolean | undefined;
   } = {},
 ) {
-  const network = await resolveNetwork(options.network);
+  return sessionList(await resolveNetwork(options.network), options);
+}
+
+async function sessionList(
+  network: Network,
+  options: { all?: boolean | undefined; orphaned?: boolean | undefined },
+) {
   const records =
     options.all || options.orphaned
       ? await discoverAndPersistOrphanedChannels(network)
@@ -161,7 +167,7 @@ export async function syncSessions(options: {
     }
   }
 
-  return listSessions({ network: options.network });
+  return sessionList(network, {});
 }
 
 export async function dryRunCloseSessions(options: {
@@ -248,7 +254,7 @@ export async function closeSessions(options: {
       "Specify a URL, channel ID (0x...), or use --all/--orphaned/--finalize to close sessions",
     );
 
-  const network = await resolveNetwork(options.network);
+  const network = await resolveNetwork(options.network, state);
   const summary = closeSummary();
   const targets = await closeTargets(options, network);
 

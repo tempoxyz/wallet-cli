@@ -1,4 +1,5 @@
 import { cachedLoginOutput } from "./commands/identity.js";
+import { loadWalletState } from "./wallet/store.js";
 import { fundAction, runFundingFlow } from "./commands/fund.js";
 import { listSessions } from "./commands/sessions.js";
 import { usageError } from "./shared/errors.js";
@@ -17,7 +18,8 @@ export async function handleCompatCommand(args: readonly string[]) {
   if (command === "completions" && printCompletions(args)) return true;
 
   if (command === "login" && args.includes("--no-browser")) {
-    const output = await cachedLoginOutput(await resolveNetwork(networkArg(args)));
+    const state = await loadWalletState();
+    const output = await cachedLoginOutput(state, await resolveNetwork(networkArg(args), state));
     if (!output) return false;
     printCompatOutput(output, args);
     return true;

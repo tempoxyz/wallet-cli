@@ -32,7 +32,8 @@ export async function runFundingFlow(options: {
 }) {
   if (options.action === "credits") throw creditsFundingError();
   const action = options.action;
-  const chain = (await resolveNetwork(options.network)).chainId;
+  const state = await loadWalletState();
+  const chain = (await resolveNetwork(options.network, state)).chainId;
   const token = action === "mach" ? machFundingToken(chain) : tokenAddress(chain);
   const requested =
     action === "mach" ? machFundingAmount(options.amount) : fundingAmount(options.amount);
@@ -46,7 +47,6 @@ export async function runFundingFlow(options: {
     Number(process.env.TEMPO_WALLET_FUND_POLL_MS ?? 2_000),
     "Funding poll interval",
   );
-  const state = await loadWalletState();
   const address = options.address ?? state.accounts[state.activeAccount ?? 0]?.address;
   if (!address && action !== "claim")
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
