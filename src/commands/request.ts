@@ -141,6 +141,7 @@ type RequestInitWithDispatcher = RequestInit & {
 };
 
 const defaultRetryStatuses = new Set([408, 429, 500, 502, 503, 504]);
+const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export async function runRequest(argv: readonly string[], io: RequestRunOptions = {}) {
   const options = parseRequestArgs(argv);
@@ -492,6 +493,32 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
   let { request, response } = await fetchWithRetries(plan, options);
 
   let paid = false;
+
+  if (options.dryRun && response.status !== 402) {
+    await response.body?.cancel().catch(() => undefined);
+    const probeMethod = method.toUpperCase();
+    if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
+    if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
+    await writeOutput(
+      options.output,
+      `${JSON.stringify(
+        {
+          payment_required: false,
+          status: response.status,
+          probe_sent: true,
+          ...(safeMethods.has(probeMethod)
+            ? {}
+            : {
+                warning: `The ${probeMethod} request was sent to the server and may have had side effects`,
+              }),
+        },
+        null,
+        2,
+      )}\n`,
+      stdout,
+    );
+    return;
+  }
 
   if (response.status === 402) {
     if (options.dryRun) {

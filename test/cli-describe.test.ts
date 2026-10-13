@@ -64,6 +64,16 @@ describe("generated CLI metadata", () => {
     );
   });
 
+  it("documents that request dry-runs send the request", async () => {
+    const help = "Send the request to discover the payment challenge without paying";
+    expect(await requestCli(["--help"])).toContain(help);
+
+    const description = JSON.parse(await requestCli(["--describe"])) as {
+      args: { help: string; long?: string | undefined }[];
+    };
+    expect(description.args).toContainEqual(expect.objectContaining({ long: "--dry-run", help }));
+  });
+
   it("documents insecure TLS and the insecure payment opt-in", async () => {
     const help = await requestCli(["--help"]);
     expect(help).toMatch(/--insecure, -k\s+Allow insecure TLS connections/);

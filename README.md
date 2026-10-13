@@ -79,8 +79,11 @@ tempo request https://example.mpp.tempo.xyz/v1/resource
 ```
 
 On HTTP 402, `--dry-run` prints a JSON quote with the selected amount, token, chain and
-budget assessment, without opening the wallet or paying. `--max-spend` rejects an offer
-above the cap in both preview and execution; invalid amounts fail before the HTTP request.
+budget assessment, without opening the wallet or paying. Any other status prints
+`payment_required: false` with the status instead of the body. The probe request is still
+sent, so methods other than GET, HEAD and OPTIONS also report a side-effect `warning`.
+`--max-spend` rejects an offer above the cap in both preview and execution; invalid amounts
+fail before the HTTP request.
 For reusable sessions, execution also checks cumulative spending against the cap.
 Capped recurring subscriptions are rejected because a per-period authorization cannot enforce
 a cumulative cap.
