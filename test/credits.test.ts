@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeFunctionData, parseAbi } from "viem";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }));
@@ -41,11 +41,14 @@ const challenge = `Payment realm="example", method="tempo", intent="charge", id=
 ).toString("base64url")}"`;
 
 beforeEach(async () => {
+  vi.stubEnv("TEMPO_MAX_SPEND", "");
   await useTempHome();
   await writeWalletState(walletState());
   mocks.request.mockReset().mockResolvedValue(signature);
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("legacy credit spending", () => {
   it.each([{ "amount-cents": 100, to: recipient }, { "mpp-challenge": challenge }])(
@@ -107,6 +110,76 @@ describe("legacy credit spending", () => {
       });
     },
   );
+
+  it.each([
+    { options: { "mpp-challenge": challenge }, cap: "0.99" },
+    { options: { "mpp-challenge": challenge, "amount-cents": 200 }, cap: "0.99" },
+    { options: { "amount-cents": 100, to: recipient }, cap: "0.99" },
+    { options: { "mpp-challenge": challenge }, cap: "0" },
+    { options: { "mpp-challenge": challenge }, cap: "0.999999" },
+  ])(
+    "enforces TEMPO_MAX_SPEND before requesting a permit: $cap $options",
+    async ({ options, cap }) => {
+      vi.stubEnv("TEMPO_MAX_SPEND", cap);
+      const fetch = vi.spyOn(globalThis, "fetch");
+      await expect(transferCredits({ options })).rejects.toMatchObject({
+        code: "E_USAGE",
+        message: expect.stringContaining("exceeds TEMPO_MAX_SPEND"),
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(mocks.request).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["1", " 1.00 ", "1.000001", "2"])(
+    "redeems credits within environment cap %s",
+    async (cap) => {
+      vi.stubEnv("TEMPO_MAX_SPEND", cap);
+      const fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(Response.json(auth))
+        .mockResolvedValueOnce(Response.json({ hash }));
+      expect(await transferCredits({ options: { "mpp-challenge": challenge } })).toMatchObject({
+        amount_cents: 100,
+        tx_hash: hash,
+      });
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(mocks.request).toHaveBeenCalledOnce();
+    },
+  );
+  it.each(["-1", "NaN", "1e2", "0.0000001"])(
+    "rejects invalid environment cap %s before signing",
+    async (cap) => {
+      vi.stubEnv("TEMPO_MAX_SPEND", cap);
+      const fetch = vi.spyOn(globalThis, "fetch");
+      await expect(
+        transferCredits({ options: { "mpp-challenge": challenge } }),
+      ).rejects.toMatchObject({ code: "E_USAGE" });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(mocks.request).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
+    { to: "0x2222222222222222222222222222222222222222" },
+    { to: recipient },
+    { data: "0x" },
+    { data: "0xabcdef" },
+    { value: "0" },
+    { value: "1" },
+  ])("rejects direct-transfer flags alongside either challenge input: %j", async (flags) => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    for (const input of [{ "mpp-challenge": challenge }, { "mpp-challenge-file": "ignored.txt" }]) {
+      for (const dryRun of [true, false]) {
+        await expect(
+          transferCredits({ options: { ...input, ...flags, "dry-run": dryRun } }),
+        ).rejects.toMatchObject({
+          code: "E_USAGE",
+          message: expect.stringContaining("cannot be combined with an MPP challenge"),
+        });
+      }
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
 
   it("does not sign or submit when fetching the permit fails", async () => {
     const fetch = vi

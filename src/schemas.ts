@@ -224,7 +224,9 @@ export const spendMachOutput = z.object({
   wallet: z.string().optional(),
   amount: z.string(),
   amount_raw: z.string(),
-  token: z.literal("MACH"),
+  token: z
+    .string()
+    .describe("MACH or the advertised currency used for fallback; MACH preference in dry-run"),
   settlement_currency: z.string(),
   chain_id: z.number(),
   challenge_id: z.string(),
@@ -351,12 +353,12 @@ export const transferOptions = z.object({
   ...globalOptionShape,
   "fee-token": z.string().optional().describe("Pay fees in a different token"),
   "dry-run": z.boolean().optional().describe("Show plan + fee estimate, don't send"),
-  mach: z.boolean().optional().describe("Pay with on-chain MACH"),
+  mach: z.boolean().optional().describe("Prefer MACH, falling back to the advertised currency"),
   credits: z.boolean().optional().describe("Spend existing MPP Credits (deprecated)"),
   "max-spend": z
     .string()
     .optional()
-    .describe("Maximum MACH spend in USD for the exact MPP challenge"),
+    .describe("Maximum payment spend in USD for the exact MPP challenge"),
   "amount-cents": z.coerce
     .number()
     .optional()

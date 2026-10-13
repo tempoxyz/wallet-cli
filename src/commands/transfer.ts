@@ -13,10 +13,10 @@ import { warnCreditsDeprecated } from "./credits.js";
 import { createProvider } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
 import {
-  machChargeParameters,
   parseRequestArgs,
   preparePaymentChallenge,
   resolvePaymentIdentity,
+  resolveMaxSpend,
 } from "./request.js";
 
 export async function transferTokens(options: {
@@ -185,13 +185,23 @@ export async function transferMach(options: {
   const identity = await resolvePaymentIdentity(requestOptions);
   if (flags.address && flags.address.toLowerCase() !== identity.address.toLowerCase())
     throw usageError("--address must match the active payment wallet");
+  let paymentToken: string = "MACH";
   const payment = Mppx.create({
     methods: [
       tempo.charge({
         ...identity.methodOptions,
         getClient: identity.getClient,
         expectedChainId: chainId(requestOptions.network),
-        ...machChargeParameters(requestOptions),
+        // Observe the SDK's chosen calls only to report the funding token.
+        // mppx owns MACH preference and settlement-currency fallback.
+        resolveAccount({ account, operation }) {
+          if (operation.kind === "executeCalls")
+            paymentToken =
+              operation.calls?.[0]?.to.toLowerCase() === output.settlement_currency.toLowerCase()
+                ? output.settlement_currency
+                : "MACH";
+          return account;
+        },
         clientId: flags["mpp-client-id"],
         mode: "push",
       }),
@@ -214,7 +224,12 @@ export async function transferMach(options: {
     throw paymentOutcomeUnknownError(
       "MACH settlement did not return a transaction hash; check with the provider before retrying.",
     );
-  return { ...output, wallet: identity.address.toLowerCase(), tx_hash: payload.hash };
+  return {
+    ...output,
+    token: paymentToken,
+    wallet: identity.address.toLowerCase(),
+    tx_hash: payload.hash,
+  };
 }
 
 export async function transferCredits(options: {
@@ -237,6 +252,13 @@ export async function transferCredits(options: {
     throw usageError(
       "--max-spend is only supported with --mach; use --amount-cents with --credits",
     );
+  const flags = options.options;
+  if (
+    (flags["mpp-challenge"] !== undefined || flags["mpp-challenge-file"] !== undefined) &&
+    (flags.to !== undefined || flags.data !== undefined || flags.value !== undefined)
+  )
+    throw usageError("--to, --data, and --value cannot be combined with an MPP challenge");
+  const maxSpend = resolveMaxSpend();
   const cents = options.options["amount-cents"];
   if (cents !== undefined && (!Number.isSafeInteger(cents) || cents <= 0))
     throw usageError("--amount-cents must be a positive safe integer");
@@ -260,6 +282,8 @@ export async function transferCredits(options: {
   const { amountCents, transactionData } = creditsTransfer;
   if (challenge && cents !== undefined && amountCents > cents)
     throw usageError("MPP challenge exceeds --amount-cents spending cap");
+  if (maxSpend !== undefined && BigInt(amountCents) * 10_000n > parseUnits(maxSpend, 6))
+    throw usageError(`MPP Credits payment exceeds TEMPO_MAX_SPEND (${maxSpend})`);
 
   if (options.options["dry-run"]) {
     return {

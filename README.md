@@ -144,7 +144,7 @@ tempo wallet transfer --credits --mpp-challenge-file challenge.txt
 tempo wallet transfer --credits --amount-cents 100 --to 0x...
 ```
 
-Legacy credit payments retain whole-cent precision. With a challenge, `--amount-cents` optionally caps its amount; `--max-spend` is for MACH. `--credits` and `--mach` cannot be combined.
+Legacy credit payments retain whole-cent precision. With a challenge, `--amount-cents` optionally caps its amount. `TEMPO_MAX_SPEND` also caps credit payments, including direct transfers; `--max-spend` is for MACH. Direct `--to`, `--data`, and `--value` options cannot be combined with a challenge. `--credits` and `--mach` cannot be combined.
 
 For funding from another device or an automated host:
 
@@ -157,9 +157,9 @@ The JSON handoff includes `status: "pending"`, the destination wallet, chain, to
 
 Omit `--no-wait` to poll the destination's MACH balance. A requested amount is complete only after the balance increases by that full amount. Without an amount, any positive increase completes the wait. The default timeout is 600 seconds; use `--timeout <seconds>` to change it, or Ctrl-C to cancel. A balance delta is observational evidence, not a checkout receipt. Concurrent spending can delay detection. No-wait returns the handoff without requiring RPC access.
 
-Use `tempo request --mach --max-spend 0.05 <url>` to require MACH for a one-time charge. The exact challenge must advertise `machineTokenEnabled: true`; the installed `mppx` SDK settles into the merchant's advertised currency. An explicit MACH selection never silently falls back to stablecoins. `--payment-token MACH` is equivalent. `--dry-run` inspects an offer without spending. MACH is not supported for sessions. Funding MACH does not convert old Coinflow credits.
+Use `tempo request --mach --max-spend 0.05 <url>` to prefer MACH for a one-time charge. The exact challenge must advertise `machineTokenEnabled: true`; the installed `mppx` SDK settles into the merchant's advertised currency. If the MACH balance is insufficient or its route is unavailable, mppx pays the same challenge in its advertised currency instead, within the same spending cap. `--payment-token MACH` is equivalent. `--dry-run` inspects an offer without spending. MACH is not supported for sessions. Funding MACH does not convert old Coinflow credits.
 
-For a captured challenge, `tempo wallet transfer --mach --max-spend 0.05 --mpp-challenge-file <headers>` settles that exact charge and returns its transaction hash. It does not deliver the credential to the merchant; prefer `tempo request` for the complete request/payment flow. Legacy direct calldata redemption is unsupported.
+For a captured challenge, `tempo wallet transfer --mach --max-spend 0.05 --mpp-challenge-file <headers>` settles that exact charge with the same fallback and returns its transaction hash and actual funding token. It does not deliver the credential to the merchant; prefer `tempo request` for the complete request/payment flow. Direct calldata is unsupported with `--mach`.
 
 `tempo request` supports common curl-style flags for methods, headers, bodies, output files, redirects, retries, proxies, and streaming responses.
 
