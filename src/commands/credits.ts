@@ -1,8 +1,8 @@
 import { version } from "../shared/constants.js";
 import { appUrl, chainId } from "../shared/network.js";
-import { formatCreditBalance, getRecord, parseAmount } from "../shared/utils.js";
+import { escapeInvisible, formatCreditBalance, getRecord, parseAmount } from "../shared/utils.js";
 import { isAddress, parseUnits, serializeTypedData, zeroAddress } from "viem";
-import { usageError } from "../shared/errors.js";
+import { networkError, usageError } from "../shared/errors.js";
 
 // Coinflow's legacy permit authorizes a credit debit, not the redemption calldata.
 // Coinflow remains trusted to execute the requested transaction and quote its gas fee.
@@ -123,13 +123,19 @@ export async function queryCreditBalance(options: {
   });
 
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(
+    const body = escapeInvisible((await response.text().catch(() => "")).slice(0, 500));
+    throw networkError(
       `Failed to fetch credit balance: HTTP ${response.status}${body ? ` ${body}` : ""}`,
     );
   }
 
-  const rawBalance = parseCreditBalance((await response.json()) as unknown);
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    throw networkError("Coinflow balances response is not valid JSON");
+  }
+  const rawBalance = parseCreditBalance(data);
 
   return {
     wallet: options.walletAddress,
@@ -154,7 +160,7 @@ function parseCreditBalance(value: unknown) {
   const cents = parseAmount(credits.cents);
   if (cents !== undefined) return cents * 100n;
 
-  throw new Error("Coinflow balances response is missing credits.rawAmount or credits.cents");
+  throw networkError("Coinflow balances response is missing credits.rawAmount or credits.cents");
 }
 
 export function warnCreditsDeprecated() {

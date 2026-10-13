@@ -396,11 +396,11 @@ function buildMppCreditsTransfer(options: {
   const challenge = parseMppChallenge(options.challenge);
   if (challenge.method !== "tempo")
     throw usageError(
-      `Invalid configuration: unsupported MPP method for Coinflow credits: ${challenge.method}`,
+      `Invalid configuration: unsupported MPP method for Coinflow credits: ${escapeInvisible(challenge.method)}`,
     );
   if (challenge.intent !== "charge")
     throw usageError(
-      `Invalid configuration: unsupported MPP intent for Coinflow credits: ${challenge.intent}`,
+      `Invalid configuration: unsupported MPP intent for Coinflow credits: ${escapeInvisible(challenge.intent)}`,
     );
   if (challenge.expires) {
     const expiry = Date.parse(challenge.expires);
@@ -418,22 +418,32 @@ function buildMppCreditsTransfer(options: {
     (!Array.isArray(methodDetails.splits) || methodDetails.splits.length > 0)
   )
     throw usageError("MPP split payments are not supported with --credits");
-  const requestChainId = typeof methodDetails.chainId === "number" ? methodDetails.chainId : null;
+  const modes = methodDetails.supportedModes;
+  if (
+    modes !== undefined &&
+    (!Array.isArray(modes) ||
+      !modes.includes("push") ||
+      modes.some((mode) => mode !== "push" && mode !== "pull"))
+  )
+    throw usageError("MPP challenge must support push payments to use --credits");
+  const requestChainId = methodDetails.chainId;
+  if (requestChainId !== undefined && !Number.isSafeInteger(requestChainId))
+    throw usageError("MPP challenge has an invalid chain ID");
   const selectedChainId = chainId(options.network);
 
-  if (requestChainId !== null && requestChainId !== selectedChainId)
+  if (requestChainId !== undefined && requestChainId !== selectedChainId)
     throw usageError(
       `Invalid configuration: MPP challenge is for chain ${requestChainId}, but selected chain is ${selectedChainId}`,
     );
   const selectedToken = tokenAddress(selectedChainId);
   if (token !== selectedToken)
     throw usageError(
-      `Invalid configuration: MPP challenge currency ${token} does not match token ${selectedToken} for chain ${selectedChainId}`,
+      `Invalid configuration: MPP challenge currency ${escapeInvisible(token)} does not match token ${selectedToken} for chain ${selectedChainId}`,
     );
   if (!/^0x[0-9a-f]{40}$/.test(recipient) || recipient === zeroAddress)
     throw usageError("Invalid configuration: MPP challenge is missing a recipient address");
   if (!/^\d+$/.test(amount))
-    throw usageError(`Invalid configuration: invalid MPP amount: ${amount}`);
+    throw usageError(`Invalid configuration: invalid MPP amount: ${escapeInvisible(amount)}`);
 
   const atomicAmount = BigInt(amount);
   const amountCents = amountToUsdCents(atomicAmount);
@@ -507,7 +517,7 @@ function isZeroValue(value: string) {
   if (!trimmed) return true;
   const hex = trimmed.match(/^0x([0-9a-fA-F]*)$/);
   if (hex) return !hex[1] || /^0+$/.test(hex[1]);
-  if (!/^\d+$/.test(trimmed)) throw new Error(`Invalid ETH value: ${value}`);
+  if (!/^\d+$/.test(trimmed)) throw usageError(`Invalid ETH value: ${escapeInvisible(value)}`);
   return /^0+$/.test(trimmed);
 }
 
@@ -587,9 +597,17 @@ async function requestCreditsAuthMessage(options: {
   });
   const text = await response.text();
   if (!response.ok)
-    throw networkError(`HTTP ${response.status} during get credits auth message: ${text}`);
+    throw networkError(
+      `HTTP ${response.status} during get credits auth message: ${escapeInvisible(text.slice(0, 500))}`,
+    );
 
-  return getRecord(JSON.parse(text)) as {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw networkError("Coinflow credits authorization response is not valid JSON");
+  }
+  return getRecord(data) as {
     message: string;
     validBefore: string;
     nonce: string;
@@ -626,7 +644,9 @@ async function submitCreditsRedeem(options: {
   });
   const text = await response.text();
   if (!response.ok)
-    throw networkError(`HTTP ${response.status} during send redeem transaction: ${text}`);
+    throw networkError(
+      `HTTP ${response.status} during send redeem transaction: ${escapeInvisible(text.slice(0, 500))}`,
+    );
 
   return JSON.parse(text) as unknown;
 }

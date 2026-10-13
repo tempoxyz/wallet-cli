@@ -7,6 +7,7 @@ vi.mock("../src/provider.js", () => ({ createProvider: () => ({ request: mocks.r
 
 import { whoamiHandler } from "../src/commands/identity.js";
 import { transferCredits } from "../src/commands/transfer.js";
+import { validateCreditPermit } from "../src/commands/credits.js";
 import { appUrl } from "../src/shared/network.js";
 import { usdcToken } from "../src/shared/constants.js";
 import { transferOutput, whoamiOutput } from "../src/schemas.js";
@@ -71,6 +72,137 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("legacy credit spending", () => {
+  it.each(["balance", "authorization"])(
+    "rejects malformed %s JSON without leaking the body",
+    async (operation) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("bad\u001b[2Jresponse"));
+      const action =
+        operation === "balance"
+          ? whoamiHandler({ credits: true })
+          : transferCredits({ options: { "mpp-challenge": challenge } });
+      await expect(action).rejects.toMatchObject({
+        code: "E_NETWORK",
+        message:
+          operation === "balance"
+            ? "Coinflow balances response is not valid JSON"
+            : "Coinflow credits authorization response is not valid JSON",
+      });
+      expect(mocks.request).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves the signature digest of the historical Coinflow testnet permit", () => {
+    // The Coinflow fixture and expected digest from wallet-rs spend_credits.rs.
+    vi.spyOn(Date, "now").mockReturnValue(1777483800000);
+    const typed = JSON.parse(auth.message);
+    typed.domain.chainId = 42431;
+    typed.domain.verifyingContract = "0x02af2603e2A7d891684854CBC4aaeBa310bf7C1c";
+    typed.message = {
+      customerWallet: "0x480F8659821A7a5f6209cDA338A53E9Dea09DB46",
+      creditSeed: "tempo-sandbox",
+      amount: 1030000,
+      validBefore: "1777483839",
+      nonce: "0x7968399a1307417362f545e43d5a12eb942562dd8c181d41f68fd881f56ba23d",
+    };
+    const serialized = validateCreditPermit(
+      {
+        message: JSON.stringify(typed),
+        validBefore: typed.message.validBefore,
+        nonce: typed.message.nonce,
+        creditsRawAmount: 1030000,
+      },
+      {
+        wallet: typed.message.customerWallet,
+        network: "testnet",
+        amountCents: 100,
+        maxSpend: "1.03",
+      },
+    );
+    expect(hashTypedData(JSON.parse(serialized))).toBe(
+      "0x3caf17f85e96e489a081eab08cdc14794d8725d4356ef252fc98de3c65e03225",
+    );
+  });
+
+  it.each([[], ["pull"], ["push", "invalid"], "push", null])(
+    "rejects unsupported payment modes before spending: %j",
+    async (supportedModes) => {
+      const offer = Challenge.deserialize(challenge);
+      offer.request.methodDetails = { chainId: 4217, supportedModes };
+      const fetch = vi.spyOn(globalThis, "fetch");
+      await expect(
+        transferCredits({ options: { "mpp-challenge": Challenge.serialize(offer) } }),
+      ).rejects.toMatchObject({ code: "E_USAGE", message: expect.stringContaining("push") });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(mocks.request).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([undefined, ["push"], ["pull", "push"]])(
+    "retains supported push payments: %j",
+    async (supportedModes) => {
+      const offer = Challenge.deserialize(challenge);
+      offer.request.methodDetails = { supportedModes };
+      const fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(Response.json(auth))
+        .mockResolvedValueOnce(Response.json({ hash }));
+      await expect(
+        transferCredits({ options: { "mpp-challenge": Challenge.serialize(offer) } }),
+      ).resolves.toMatchObject({ tx_hash: hash });
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(mocks.request).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["42431", "4217", null, 4217.5, {}])(
+    "rejects malformed challenge chain IDs before spending: %j",
+    async (chainId) => {
+      const offer = Challenge.deserialize(challenge);
+      offer.request.methodDetails = { chainId };
+      const fetch = vi.spyOn(globalThis, "fetch");
+      await expect(
+        transferCredits({ options: { "mpp-challenge": Challenge.serialize(offer) } }),
+      ).rejects.toMatchObject({ code: "E_USAGE", message: expect.stringContaining("chain ID") });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(mocks.request).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["amount", "currency"])(
+    "escapes terminal controls in challenge %s errors",
+    async (field) => {
+      const offer = Challenge.deserialize(challenge);
+      offer.request[field] = "\u001b[2J\r\u202eevil";
+      await expect(
+        transferCredits({ options: { "mpp-challenge": Challenge.serialize(offer) } }),
+      ).rejects.toMatchObject({
+        code: "E_USAGE",
+        message: expect.stringContaining(
+          `\\u001b[2${field === "currency" ? "j" : "J"}\\u000d\\u202eevil`,
+        ),
+      });
+      expect(mocks.request).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["balance", "authorization"])(
+    "bounds and escapes %s server errors",
+    async (operation) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response("\u001b[2J\r\u202eevil" + "x".repeat(10000), { status: 503 }),
+      );
+      const action =
+        operation === "balance"
+          ? whoamiHandler({ credits: true })
+          : transferCredits({ options: { "mpp-challenge": challenge } });
+      const error = await action.catch((error: Error) => error);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("\\u001b[2J\\u000d\\u202eevil");
+      expect((error as Error).message.length).toBeLessThan(1000);
+      expect(mocks.request).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["not-a-date", "2020-01-01T00:00:00Z", "2099-99-99T00:00:00Z"])(
     "rejects invalid or expired challenge expiry %s before signing",
     async (expires) => {
