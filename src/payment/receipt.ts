@@ -65,12 +65,20 @@ export function paymentReceipt(payment: {
   };
 }
 
-/** The stderr summary of `receipt`: one line, plus the close command for a new session. */
+/**
+ * The stderr summary of `receipt`: one line, plus the close command for a new session. A
+ * subscription whose receipt names a transaction paid its first period on activation, so the line
+ * reports that payment as well as the recurring authorization.
+ */
 export function receiptSummary(receipt: PaymentReceipt) {
   const label = receipt.symbol ?? receipt.token;
-  if (receipt.subscription)
-    return `Authorized a subscription of up to ${receipt.amount} ${label} every ${receipt.subscription.period} until ${receipt.subscription.expires}\n`;
   const paid = `Paid ${receipt.amount} ${label}`;
+  if (receipt.subscription) {
+    const terms = `up to ${receipt.amount} ${label} every ${receipt.subscription.period} until ${receipt.subscription.expires}`;
+    return receipt.tx_hash
+      ? `${paid} for the first period · tx ${receipt.tx_hash} · authorized ${terms}\n`
+      : `Authorized a subscription of ${terms}\n`;
+  }
   if (receipt._next)
     return `${paid} · opened a session with ${receipt.deposit_locked} ${label} locked\nWhen done, request its close, then rerun after the grace period to withdraw the unspent deposit: ${receipt._next.command}\n`;
   if (receipt.session === "reuse")

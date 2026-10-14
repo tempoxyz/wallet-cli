@@ -383,6 +383,24 @@ it.each<{
       "Authorized a subscription of up to 25 USDC.e every 1 week until 2027-01-01T00:00:00.000Z\n",
   },
   {
+    name: "a subscription whose activation paid the first period",
+    challenge: offer("subscription", {
+      amount: "25000000",
+      periodCount: "1",
+      periodUnit: "week",
+      subscriptionExpires: "2027-01-01T00:00:00.000Z",
+    }),
+    receipt: chargeReceipt(txHash),
+    payment: {
+      ...charged,
+      intent: "subscription",
+      amount: "25",
+      tx_hash: txHash,
+      subscription: { period: "1 week", expires: "2027-01-01T00:00:00.000Z" },
+    },
+    stderr: `Paid 25 USDC.e for the first period · tx ${txHash} · authorized up to 25 USDC.e every 1 week until 2027-01-01T00:00:00.000Z\n`,
+  },
+  {
     name: "a private-key payer",
     challenge: offer("charge"),
     privateKey: true,

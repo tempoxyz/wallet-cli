@@ -93,7 +93,9 @@ MACH it debits); `tx_hash` when the server's Payment-Receipt names a transaction
 `session` (`open` or `reuse`), `channel_id`, `deposit_locked` and the channel's `cumulative`
 voucher, `null` for a charge; for a subscription, `subscription` with its billing `period` and
 `expires`, since it authorizes `amount` every period instead of paying it once (stderr says
-`Authorized a subscription of up to …`); the `payer`; and `chain_id` and `network`. A newly opened session
+`Authorized a subscription of up to …`, or, when the receipt's `tx_hash` shows activation paid
+the first period, `Paid … for the first period` as well); the `payer`; and `chain_id` and
+`network`. A newly opened session
 also names `tempo wallet sessions close <channel_id> --network <network>`, on stderr and as
 `instruction` and `_next`: it requests the close, and rerunning it after the grace period
 withdraws the unspent deposit. Structured output
