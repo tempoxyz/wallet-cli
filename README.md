@@ -149,7 +149,7 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 - `completions <bash|zsh|fish|nushell|powershell|elvish>`
 - `help [command]` (same as `[command] --help`)
 
-Completion scripts hook the `tempo` launcher and complete after `tempo wallet`, for example `eval "$(tempo wallet completions zsh)"` in `~/.zshrc`.
+Completion scripts hook the `tempo` launcher and complete after `tempo wallet`, for example `eval "$(tempo wallet completions zsh)"` in `~/.zshrc`. The bash, zsh, and Elvish scripts pass other `tempo` subcommands to a completer registered before them. The PowerShell script replaces any existing `tempo` completer, because PowerShell cannot read or chain one.
 
 `tempo wallet fund` opens the wallet's general funding UI, which also offers Buy MACH. By default, the CLI waits for USDC.e on mainnet or pathUSD on testnet. Use `fund --mach` to open MACH checkout and wait for MACH instead; `whoami --mach` reads its on-chain balance. MACH replaces MPP Credits. Existing MPP Credits remain spendable through `transfer --credits`, and `whoami --credits` shows the legacy balance. Both emit a deprecation warning. `fund --credits` fails: new MPP Credits cannot be purchased; use `fund --mach` to buy MACH instead.
 

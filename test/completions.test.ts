@@ -29,6 +29,18 @@ const topLevel = [
   "help",
   "--network",
   "-n",
+  "--filter-output",
+  "--format",
+  "--full-output",
+  "--help",
+  "--llms",
+  "--llms-full",
+  "--mcp",
+  "--schema",
+  "--token-count",
+  "--token-limit",
+  "--token-offset",
+  "--version",
 ];
 
 describe("tempo wallet completions", () => {
@@ -46,6 +58,7 @@ describe("tempo wallet completions", () => {
     {
       shell: "powershell",
       expected: [
+        "# Replaces any other native completer for tempo",
         "Register-ArgumentCompleter -Native -CommandName tempo",
         ...topLevel.map((name) => `        '${name}' = '`),
       ],
@@ -53,7 +66,9 @@ describe("tempo wallet completions", () => {
     {
       shell: "elvish",
       expected: [
+        "set tempo-wallet-previous = $edit:completion:arg-completer[tempo]",
         "set edit:completion:arg-completer[tempo]",
+        "$tempo-wallet-previous $@words",
         ...topLevel.map((name) => `edit:complex-candidate '${name}' &display='${name}  `),
       ],
     },
@@ -61,7 +76,15 @@ describe("tempo wallet completions", () => {
     const script = await wallet(["completions", shell]);
 
     for (const line of expected) expect(script).toContain(line);
-    expect(await wallet(["-n", "testnet", "completions", shell])).toBe(script);
+  });
+
+  it.each([
+    [["completions", "-n", "testnet", "bash"], "bash"],
+    [["completions", "bash", "-n", "testnet"], "bash"],
+    [["-n", "testnet", "completions", "bash"], "bash"],
+    [["completions", "--format", "json", "zsh"], "zsh"],
+  ])("%j prints the %s script", async (args, shell) => {
+    expect(await wallet(args)).toBe(await wallet(["completions", shell]));
   });
 
   describe("shell hooks", () => {
@@ -79,36 +102,56 @@ describe("tempo wallet completions", () => {
 
     afterAll(() => rm(bin, { force: true, recursive: true }));
 
+    // `previous` registers another `tempo` completer first; the hook must delegate to it.
     const cases = [
-      { words: ["tempo", "wallet", "sw"], expected: ["swap"] },
-      { words: ["tempo", "wallet", "sessions", ""], expected: ["list", "close", "sync"] },
-      { words: ["tempo", "wallet", "-n", "testnet", "fu"], expected: ["fund"] },
-      { words: ["tempo", "node", ""], expected: [] },
+      { words: ["tempo", "wallet", "sw"], previous: false, expected: ["swap"] },
+      {
+        words: ["tempo", "wallet", "sessions", ""],
+        previous: false,
+        expected: ["list", "close", "sync"],
+      },
+      { words: ["tempo", "wallet", "-n", "testnet", "fu"], previous: false, expected: ["fund"] },
+      { words: ["tempo", "node", ""], previous: false, expected: [] },
+      { words: ["tempo", "wallet", "sw"], previous: true, expected: ["swap"] },
+      { words: ["tempo", "request", ""], previous: true, expected: ["from-previous"] },
+      { words: ["tempo", "wal"], previous: true, expected: ["from-previous"] },
     ];
 
-    it.each(cases)("bash completes $words", async ({ words, expected }) => {
-      const hook = await wallet(["completions", "bash"]);
-      const script = `${hook}
+    // Each script sources the hook twice: re-sourcing must keep delegating, not recurse.
+    it.each(cases)(
+      "bash completes $words (previous: $previous)",
+      async ({ words, previous, expected }) => {
+        const hook = await wallet(["completions", "bash"]);
+        const script = `${previous ? "_tempo_previous() { COMPREPLY=(from-previous); }\ncomplete -F _tempo_previous tempo" : ""}
+${hook}
+${hook}
 COMP_WORDS=(${words.map((word) => `'${word}'`).join(" ")})
 COMP_CWORD=${words.length - 1}
 _tempo_wallet
 printf '%s\\n' "\${COMPREPLY[@]}"`;
 
-      expect(await shell("bash", script, bin)).toEqual(expected);
-    });
+        expect(await shell("bash", script, bin)).toEqual(expected);
+      },
+    );
 
-    it.skipIf(!hasShell("zsh")).each(cases)("zsh completes $words", async ({ words, expected }) => {
-      const hook = await wallet(["completions", "zsh"]);
-      // Stub the completion system: capture what the hook hands to _describe.
-      const script = `compdef() { :; }
+    it.skipIf(!hasShell("zsh")).each(cases)(
+      "zsh completes $words (previous: $previous)",
+      async ({ words, previous, expected }) => {
+        const hook = await wallet(["completions", "zsh"]);
+        // Stub the completion system: record compdef in _comps and print what reaches _describe.
+        const script = `typeset -A _comps
+compdef() { _comps[$2]=$1; }
 _describe() { print -rl -- "\${(@P)2%%:*}"; }
+${previous ? "_tempo_previous() { print -r -- from-previous; }\n_comps[tempo]=_tempo_previous" : ""}
+${hook}
 ${hook}
 words=(${words.map((word) => `'${word}'`).join(" ")})
 CURRENT=${words.length}
 _tempo_wallet || true`;
 
-      expect(await shell("zsh", script, bin)).toEqual(expected);
-    });
+        expect(await shell("zsh", script, bin)).toEqual(expected);
+      },
+    );
   });
 });
 

@@ -429,7 +429,8 @@ function walletCompletions(args: readonly string[]) {
   const index = firstCommandIndex(args);
   if (index === undefined || args[index] !== "completions") return undefined;
   if (args.includes("--help") || args.includes("-h")) return undefined;
-  const shell = args[index + 1]?.startsWith("-") ? undefined : args[index + 1];
+  // The first positional after `completions`, skipping flags and their values.
+  const [shell] = commandTokens(args.slice(index + 1));
   return completionScript(shell, () => {
     const commands = walletCommands() as Parameters<typeof Completions.complete>[0];
     return [
