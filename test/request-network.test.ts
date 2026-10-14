@@ -15,6 +15,7 @@ import {
 } from "../src/commands/request.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import {
+  testnetUsdc,
   testPrivateKey,
   testPrivateKey2,
   testWallet,
@@ -172,6 +173,79 @@ it("rejects a mainnet-only offer when testnet is selected", () => {
     "Payment network mismatch: expected chain 42431, received 4217",
   );
 });
+
+// A symbol names a different token on each network, so it resolves on the payment network.
+it.each([
+  { source: "the logged-in chain", args: [], chain: 42431, token: testnetUsdc },
+  { source: "--network", args: ["-n", "mainnet"], chain: 4217, token: usdcToken },
+])("resolves a --payment-token symbol on $source", async ({ args, chain, token }) => {
+  await useTempHome();
+  vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+  await writeWalletState(walletState({ chainId: 42431 }));
+  const testnetUsdcOffer = Challenge.from({
+    ...offer(42431),
+    id: "42431-usdc",
+    request: { ...offer(42431).request, currency: testnetUsdc },
+  });
+  const endpoint = await service([offer(4217), offer(42431), testnetUsdcOffer]);
+  let output = "";
+
+  await runRequest(["--dry-run", "--payment-token", "usdc", ...args, endpoint.url], {
+    stdout: {
+      write: ((chunk: string | Uint8Array) => {
+        output += chunk.toString();
+        return true;
+      }) as NodeJS.WriteStream["write"],
+    },
+  });
+
+  expect(JSON.parse(output)).toMatchObject({ chain_id: chain, token, payment_token: token });
+  expect(endpoint.paid).toEqual([]);
+});
+
+it("rejects a --payment-token symbol not listed on the logged-in chain before paying", async () => {
+  await useTempHome();
+  vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+  await writeWalletState(walletState({ chainId: 42431 }));
+  const endpoint = await service([offer(42431)]);
+
+  await expect(
+    runRequest(["--payment-intent", "charge", "--payment-token", "OUSD", endpoint.url]),
+  ).rejects.toMatchObject({
+    code: "E_USAGE",
+    message: expect.stringContaining(
+      'Unknown payment token "OUSD" on testnet (listed on mainnet; pass --network mainnet).',
+    ),
+  });
+  expect(signTransaction).not.toHaveBeenCalled();
+  expect(endpoint.paid).toEqual([]);
+});
+
+it.each([{ flags: [] }, { flags: ["--dry-run"] }])(
+  "rejects a --payment-token symbol no network lists before sending the request with $flags",
+  async ({ flags }) => {
+    await useTempHome();
+    vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+    await writeWalletState(walletState({ chainId: 42431 }));
+    let requests = 0;
+    const server = createServer((_request, response) => {
+      requests += 1;
+      response.end("free");
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected listening address");
+
+    await expect(
+      runRequest([...flags, "--payment-token", "USDCC", `http://127.0.0.1:${address.port}`]),
+    ).rejects.toMatchObject({
+      code: "E_USAGE",
+      message: expect.stringContaining('Unknown payment token "USDCC". Use a 0x address'),
+    });
+    expect(requests).toBe(0);
+  },
+);
 
 it("rejects a wrong-network charge before signing or sending a credential", async () => {
   await configureWallet();

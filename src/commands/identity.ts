@@ -12,8 +12,6 @@ import {
   resolveNetwork,
   storedChainId,
   tokenAddress,
-  tokenDecimals,
-  tokenSymbol,
   type Network,
 } from "../shared/network.js";
 import { usageError } from "../shared/errors.js";
@@ -21,8 +19,15 @@ import { nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
 import { channelsDbPath, runProcess } from "../shared/process.js";
 import {
+  knownToken,
+  readTokenMetadata,
+  resolveTokenAddress,
+  tickerSymbol,
+  tokenMetadata,
+  tokenSymbol,
+} from "../shared/tokens.js";
+import {
   cleanStoredScalar,
-  formatMicroUnits,
   formatTokenUnits,
   formatUnixTimestamp,
   getArray,
@@ -199,12 +204,16 @@ export async function updateAccessKeyHandler(
         : "Selected access key is not configured for the current wallet and network.",
     );
 
-  const token = options.token ?? key.limits?.[0]?.token ?? tokenAddress(selectedChainId);
-  if (!isAddress(token)) throw usageError("Invalid token address: expected a 0x address");
-  const limit = parseLimit(options.limit);
+  const { address: token, decimals } = await tokenMetadata(
+    resolveTokenAddress(
+      options.token ?? key.limits?.[0]?.token ?? tokenAddress(selectedChainId),
+      network,
+    ),
+    selectedChainId,
+  );
+  const limit = parseLimit(options.limit, decimals);
   const walletAddress = account.address as Address;
   const accessKeyAddress = key.address as Address;
-  const tokenAddress_resolved = token as Address;
   const provider = createUpdateProvider({ network, noBrowser: options.browser === false });
 
   await updateAccessKey({
@@ -212,20 +221,18 @@ export async function updateAccessKeyHandler(
     walletAddress,
     accessKeyAddress,
     chainId: selectedChainId,
-    token: tokenAddress_resolved,
+    token,
     limit,
   });
 
   const accessKeys = state.accessKeys.map((candidate) => {
     if (candidate !== key) return candidate;
     const storedLimits = candidate.limits ?? [];
-    const existing = storedLimits.findIndex(
-      (item) => item.token.toLowerCase() === tokenAddress_resolved.toLowerCase(),
-    );
+    const existing = storedLimits.findIndex((item) => item.token.toLowerCase() === token);
     const nextLimit = `${limit}#__bigint`;
     const limits =
       existing === -1
-        ? [...storedLimits, { token: tokenAddress_resolved, limit: nextLimit }]
+        ? [...storedLimits, { token, limit: nextLimit }]
         : storedLimits.map((item, index) =>
             index === existing ? { ...item, limit: nextLimit } : item,
           );
@@ -238,8 +245,8 @@ export async function updateAccessKeyHandler(
     wallet: walletAddress.toLowerCase(),
     access_key: accessKeyAddress.toLowerCase(),
     ...networkFields(selectedChainId),
-    token: tokenAddress_resolved.toLowerCase(),
-    limit: formatUnits(limit, tokenDecimals()),
+    token,
+    limit: formatUnits(limit, decimals),
     ...nextStep("Run the next command to confirm the new limit.", ["wallet", "keys", "list"], {
       network,
     }),
@@ -267,10 +274,14 @@ async function updateAccessKeyThroughWallet(options: {
   });
 }
 
-function parseLimit(value: string) {
-  if (!/^\d+(?:\.\d{1,6})?$/.test(value))
-    throw usageError("Invalid limit: expected a non-negative token amount");
-  return parseUnits(value, tokenDecimals());
+/** Parses a limit in the token's decimals; zero is allowed and leaves the key unable to spend it. */
+function parseLimit(value: string, decimals: number) {
+  const fraction = value.split(".")[1] ?? "";
+  if (!/^\d+(?:\.\d+)?$/.test(value) || fraction.length > decimals)
+    throw usageError(
+      `Invalid limit: expected a non-negative token amount with at most ${decimals} decimals`,
+    );
+  return parseUnits(value, decimals);
 }
 
 type RevokeProvider = Pick<CoreProvider.Provider, "getAccount" | "getClient">;
@@ -419,45 +430,54 @@ export async function currentWhoamiOutput(options: {
         )
       : undefined);
   const token = key?.limits?.[0]?.token ?? tokenAddress(options.chain);
-  const [balance, assets, sessions] = await Promise.all([
+  const [balance, assets, sessions, details] = await Promise.all([
     tokenBalance({ chain: options.chain, token, walletAddress: options.walletAddress }),
     fetchWalletAssets({
       chain: options.chain,
       walletAddress: options.walletAddress,
     }),
     sessionStats({ token, walletAddress: options.walletAddress }),
+    tokenDetails(key ? keyTokens(key) : [{ chain: options.chain, token, read: true }]),
   ]);
+  const symbol = details.get(tokenKey(options.chain, token))?.symbol ?? null;
   const balances = walletBalances({
     accessKey: key,
     assets,
     fallback: balance,
+    symbol,
   });
   return {
     ready: Boolean(options.walletAddress && paymentKey && balance),
     wallet: options.walletAddress?.toLowerCase() ?? null,
     ...networkFields(options.chain),
     balance: {
-      ...balanceOutput(balance, sessions, tokenSymbol(token)),
+      ...balanceOutput(balance, sessions, symbol),
       ...(options.walletAddress && !balance ? { error: balanceQueryError } : {}),
     },
     balances,
-    key: key ? currentKeyOutput(key, balance) : null,
+    key: key ? currentKeyOutput(key, balance, details) : null,
   };
 }
 
 /**
- * Labels each key from its own chain and wallet. Balances are queried only for the active
- * wallet's keys, so the RPC never learns the other stored wallets; theirs report `null`.
+ * Labels each key from its own chain and wallet. Balances and unlisted tokens are queried only
+ * for the active wallet's keys, so the RPC never learns the other stored wallets or their tokens;
+ * their balances report `null`, and their unlisted tokens have no symbol or formatted limit.
  */
 export async function currentKeysOutput(options: {
   walletAddress: string | null;
   accessKeys: WalletState["accessKeys"];
 }) {
+  const active = (key: WalletState["accessKeys"][number]) =>
+    key.access.toLowerCase() === options.walletAddress?.toLowerCase();
   const balances = new Map<string, TokenBalance | null>();
+  const details = await tokenDetails(
+    options.accessKeys.flatMap((key) => keyTokens(key, active(key))),
+  );
   const keys = [];
   for (const key of options.accessKeys) {
-    if (key.access.toLowerCase() !== options.walletAddress?.toLowerCase()) {
-      keys.push(currentKeyOutput(key, undefined));
+    if (!active(key)) {
+      keys.push(currentKeyOutput(key, undefined, details));
       continue;
     }
     const token = key.limits?.[0]?.token ?? tokenAddress(key.chainId);
@@ -466,7 +486,7 @@ export async function currentKeysOutput(options: {
       ? (balances.get(balanceKey) ?? null)
       : await tokenBalance({ chain: key.chainId, token, walletAddress: key.access });
     balances.set(balanceKey, balance);
-    keys.push(currentKeyOutput(key, balance));
+    keys.push(currentKeyOutput(key, balance, details));
   }
 
   return {
@@ -479,17 +499,19 @@ export async function currentKeysOutput(options: {
 function currentKeyOutput(
   key: WalletState["accessKeys"][number],
   balance: TokenBalance | null | undefined,
+  details: TokenDetails,
 ) {
   const limit = key.limits?.[0];
   const spendingMode = permissionMode(key.limits, key.permissionSemantics);
   const callMode = permissionMode(key.scopes, key.permissionSemantics);
   const token = limit?.token ?? tokenAddress(key.chainId);
-  const spendingLimits = accessKeyLimitsOutput(key);
+  const tokenDetail = details.get(tokenKey(key.chainId, token));
+  const spendingLimits = accessKeyLimitsOutput(key, details);
   return {
     address: key.address.toLowerCase(),
     ...networkFields(key.chainId),
     wallet_address: key.access.toLowerCase(),
-    symbol: tokenSymbol(token),
+    symbol: tokenDetail?.symbol ?? null,
     token: token.toLowerCase(),
     balance:
       balance && balance.token.toLowerCase() === token.toLowerCase() ? balance.formatted : null,
@@ -501,7 +523,13 @@ function currentKeyOutput(
         spendingMode === "none"
           ? "0.000000"
           : spendingMode === "restricted" && limit
-            ? formatMicroUnits(cleanStoredScalar(limit.limit))
+            ? formatLimit(limit.limit, tokenDetail)
+            : null,
+      raw_limit:
+        spendingMode === "none"
+          ? "0"
+          : spendingMode === "restricted" && limit
+            ? cleanStoredScalar(limit.limit)
             : null,
       period_seconds: limit?.period ?? null,
       remaining: null,
@@ -515,16 +543,31 @@ function currentKeyOutput(
   };
 }
 
-function accessKeyLimitsOutput(key: WalletState["accessKeys"][number]) {
-  return (key.limits ?? []).map((limit) => ({
-    unlimited: false,
-    symbol: tokenSymbol(limit.token),
-    token: limit.token.toLowerCase(),
-    limit: formatMicroUnits(cleanStoredScalar(limit.limit)),
-    period_seconds: limit.period ?? null,
-    remaining: null,
-    spent: null,
-  }));
+function accessKeyLimitsOutput(key: WalletState["accessKeys"][number], details: TokenDetails) {
+  return (key.limits ?? []).map((limit) => {
+    const detail = details.get(tokenKey(key.chainId, limit.token));
+    return {
+      unlimited: false,
+      symbol: detail?.symbol ?? null,
+      token: limit.token.toLowerCase(),
+      limit: formatLimit(limit.limit, detail),
+      raw_limit: cleanStoredScalar(limit.limit),
+      period_seconds: limit.period ?? null,
+      remaining: null,
+      spent: null,
+    };
+  });
+}
+
+/**
+ * A stored raw limit in the token's decimals, or `null` when they are unknown; a value that is not
+ * an integer is shown as stored.
+ */
+function formatLimit(value: string, detail: TokenDetail | undefined) {
+  const raw = cleanStoredScalar(value);
+  if (!/^\d+$/.test(raw)) return raw;
+  const decimals = detail?.decimals ?? null;
+  return decimals === null ? null : formatTokenUnits(BigInt(raw), decimals);
 }
 
 function accessKeyScopesOutput(key: WalletState["accessKeys"][number]) {
@@ -545,15 +588,66 @@ function permissionMode(values: readonly unknown[] | undefined, semantics: 1 | u
 type TokenBalance = {
   formatted: string;
   raw: bigint;
-  symbol: string;
   token: string;
 };
+
+type TokenDetail = { symbol: string | null; decimals: number | null };
+type TokenDetails = Map<string, TokenDetail>;
+
+const unknownToken: TokenDetail = { symbol: null, decimals: null };
+
+function tokenKey(chain: number, token: string) {
+  return `${chain}:${token.toLowerCase()}`;
+}
+
+/**
+ * A key's primary token, then each token it has a limit for, on the key's chain. `read` allows an
+ * unlisted token to be read on chain.
+ */
+function keyTokens(key: WalletState["accessKeys"][number], read = true) {
+  return [
+    key.limits?.[0]?.token ?? tokenAddress(key.chainId),
+    ...(key.limits ?? []).map((limit) => limit.token),
+  ].map((token) => ({ chain: key.chainId, token, read }));
+}
+
+/**
+ * Display symbols and decimals by `tokenKey`: viem's listing, else read on chain when an entry
+ * allows it. A token not read or unreadable has neither. Each distinct chain and token is looked
+ * up once, and the lookups run in parallel.
+ */
+async function tokenDetails(
+  tokens: readonly { chain: number; token: string; read: boolean }[],
+): Promise<TokenDetails> {
+  const unique = new Map<string, (typeof tokens)[number]>();
+  for (const entry of tokens) {
+    const id = tokenKey(entry.chain, entry.token);
+    unique.set(id, { ...entry, read: entry.read || unique.get(id)?.read === true });
+  }
+  const details = await Promise.all(
+    [...unique].map(async ([id, { chain, token, read }]) => {
+      if (!read && !knownToken(token, chain)) return [id, unknownToken] as const;
+      const readOnChain = (address: Address) =>
+        readTokenMetadata(address, chain, { timeout: statusQueryTimeout, retryCount: 0 });
+      const detail: TokenDetail = await tokenMetadata(
+        token.toLowerCase() as Address,
+        chain,
+        readOnChain,
+      ).then(
+        ({ symbol, decimals }) => ({ symbol, decimals }),
+        () => unknownToken,
+      );
+      return [id, detail] as const;
+    }),
+  );
+  return new Map(details);
+}
 
 type WalletAsset = {
   address: string;
   balance: string;
   decimals: number;
-  symbol: string;
+  symbol: string | null;
   verified: boolean;
 };
 
@@ -561,6 +655,7 @@ function walletBalances(options: {
   accessKey: WalletState["accessKeys"][number] | undefined;
   assets: WalletAsset[];
   fallback: TokenBalance | null;
+  symbol: string | null;
 }) {
   const balances = options.assets.map((asset) => {
     const limit = options.accessKey?.limits?.find(
@@ -587,7 +682,7 @@ function walletBalances(options: {
     );
     balances.push({
       token: options.fallback.token.toLowerCase(),
-      symbol: options.fallback.symbol,
+      symbol: options.symbol,
       decimals: 6,
       balance: options.fallback.formatted,
       verified: true,
@@ -634,7 +729,7 @@ async function fetchWalletAssets(options: {
           address: asset.address,
           balance: asset.balance,
           decimals: asset.decimals,
-          symbol: asset.symbol,
+          symbol: tokenSymbol(asset.address, options.chain) ?? tickerSymbol(asset.symbol),
           verified: asset.verified === true,
         },
       ];
@@ -684,7 +779,6 @@ async function tokenBalance(options: {
     return {
       formatted: formatUnits(raw, 6),
       raw,
-      symbol: tokenSymbol(options.token),
       token: options.token,
     };
   } catch {
@@ -734,7 +828,7 @@ async function sessionStats(options: {
 function balanceOutput(
   balance: TokenBalance | null,
   sessions: SessionStats,
-  fallbackSymbol: string,
+  symbol: string | null,
 ) {
   const total = balance ? balance.raw + sessions.locked + sessions.pendingRefund : null;
   return {
@@ -743,7 +837,7 @@ function balanceOutput(
     pending_refund: formatTokenUnits(sessions.pendingRefund, 6),
     available: balance?.formatted ?? null,
     active_sessions: sessions.active,
-    symbol: balance?.symbol ?? fallbackSymbol,
+    symbol,
   };
 }
 

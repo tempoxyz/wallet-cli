@@ -91,13 +91,13 @@ export const whoamiOutput = z.union([
       pending_refund: z.string(),
       available: z.string().nullable(),
       active_sessions: z.number(),
-      symbol: z.string(),
+      symbol: z.string().nullable(),
       error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
     }),
     balances: z.array(
       z.object({
         token: z.string(),
-        symbol: z.string(),
+        symbol: z.string().nullable(),
         decimals: z.number(),
         balance: z.string(),
         verified: z.boolean(),
@@ -108,7 +108,7 @@ export const whoamiOutput = z.union([
       .object({
         address: z.string(),
         ...networkOutputShape,
-        symbol: z.string(),
+        symbol: z.string().nullable(),
         token: z.string(),
         balance: z.string().nullable(),
         balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
@@ -116,6 +116,7 @@ export const whoamiOutput = z.union([
           mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
           unlimited: z.boolean().nullable(),
           limit: z.string().nullable(),
+          raw_limit: z.string().nullable(),
           period_seconds: z.number().nullable(),
           remaining: z.string().nullable(),
           spent: z.string().nullable(),
@@ -123,9 +124,10 @@ export const whoamiOutput = z.union([
         spending_limits: z.array(
           z.object({
             unlimited: z.boolean(),
-            symbol: z.string(),
+            symbol: z.string().nullable(),
             token: z.string(),
-            limit: z.string(),
+            limit: z.string().nullable(),
+            raw_limit: z.string(),
             period_seconds: z.number().nullable(),
             remaining: z.string().nullable(),
             spent: z.string().nullable(),
@@ -154,7 +156,7 @@ export const keysOutput = z.object({
       address: z.string(),
       ...networkOutputShape,
       wallet_address: z.string(),
-      symbol: z.string(),
+      symbol: z.string().nullable(),
       token: z.string(),
       balance: z.string().nullable(),
       balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
@@ -162,6 +164,7 @@ export const keysOutput = z.object({
         mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
         unlimited: z.boolean().nullable(),
         limit: z.string().nullable(),
+        raw_limit: z.string().nullable(),
         period_seconds: z.number().nullable(),
         remaining: z.string().nullable(),
         spent: z.string().nullable(),
@@ -169,9 +172,10 @@ export const keysOutput = z.object({
       spending_limits: z.array(
         z.object({
           unlimited: z.boolean(),
-          symbol: z.string(),
+          symbol: z.string().nullable(),
           token: z.string(),
-          limit: z.string(),
+          limit: z.string().nullable(),
+          raw_limit: z.string(),
           period_seconds: z.number().nullable(),
           remaining: z.string().nullable(),
           spent: z.string().nullable(),
@@ -223,7 +227,10 @@ export const updateAccessKeyOutput = z.object({
 export const updateAccessKeyOptions = z.object({
   ...globalOptionShape,
   limit: z.string().describe("New remaining limit in human token units"),
-  token: z.string().optional().describe("Token address; defaults to the current limit token"),
+  token: z
+    .string()
+    .optional()
+    .describe("Token address or symbol (e.g. USDC.e); defaults to the current limit token"),
   browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
 });
 
@@ -238,7 +245,7 @@ export const transferDryRunOutput = z.object({
   status: z.literal("dry_run"),
   ...networkOutputShape,
   amount: z.string(),
-  symbol: z.string(),
+  symbol: z.string().nullable(),
   token: z.string(),
   to: z.string(),
   from: z.string(),
@@ -250,7 +257,7 @@ export const transferSuccessOutput = z.object({
   tx_hash: z.string(),
   ...networkOutputShape,
   amount: z.string(),
-  symbol: z.string(),
+  symbol: z.string().nullable(),
   token: z.string(),
   to: z.string(),
   from: z.string(),
@@ -289,7 +296,7 @@ export const sessionOutput = z.object({
   channel_id: z.string(),
   network: z.string(),
   origin: z.string(),
-  symbol: z.string(),
+  symbol: z.string().nullable(),
   deposit: z.string(),
   spent: z.string(),
   remaining: z.string(),
@@ -400,13 +407,13 @@ export const whoamiOptions = z.object({
 
 export const transferArgs = z.object({
   amount: z.string().optional().describe('Amount in human units ("1.00", "50")'),
-  token: z.string().optional().describe("Token contract address (0x...)"),
+  token: z.string().optional().describe("Token address (0x...) or symbol (e.g. USDC.e)"),
   to: z.string().optional().describe("Recipient address (0x...)"),
 });
 
 export const transferOptions = z.object({
   ...globalOptionShape,
-  "fee-token": z.string().optional().describe("Pay fees in a different token"),
+  "fee-token": z.string().optional().describe("Pay fees in a different token (address or symbol)"),
   "dry-run": z.boolean().optional().describe("Show plan + fee estimate, don't send"),
   mach: z.boolean().optional().describe("Pay with on-chain MACH"),
   credits: z.boolean().optional().describe("Spend existing MPP Credits (deprecated)"),
@@ -438,8 +445,8 @@ export const swapArgs = z.object({
   amount: z
     .string()
     .describe("Exact input amount by default; exact output amount with --exact-out"),
-  tokenIn: z.string().describe("Full input token address (0x...)"),
-  tokenOut: z.string().describe("Full output token address (0x...)"),
+  tokenIn: z.string().describe("Input token address (0x...) or symbol (e.g. USDC.e)"),
+  tokenOut: z.string().describe("Output token address (0x...) or symbol (e.g. pathUSD)"),
 });
 
 export const swapOptions = z.object({
@@ -454,7 +461,10 @@ export const swapOptions = z.object({
     .string()
     .optional()
     .describe("Exact output: refuse to spend more than this reviewed tokenIn amount"),
-  "fee-token": z.string().optional().describe("Token used to pay fees; defaults to tokenIn"),
+  "fee-token": z
+    .string()
+    .optional()
+    .describe("Token address or symbol used to pay fees; defaults to tokenIn"),
   "dry-run": z.boolean().optional().describe("Quote and show calls without submitting"),
   yes: z.boolean().optional().describe("Confirm the reviewed swap for submission"),
 });
@@ -465,9 +475,9 @@ const swapBaseOutputShape = {
   from: z.string(),
   dex: z.string(),
   token_in: z.string(),
-  token_in_symbol: z.string(),
+  token_in_symbol: z.string().nullable(),
   token_out: z.string(),
-  token_out_symbol: z.string(),
+  token_out_symbol: z.string().nullable(),
   amount_in: z.string(),
   max_amount_in: z.string(),
   amount_out: z.string(),

@@ -60,15 +60,6 @@ export function formatUnixTimestamp(value: number | undefined) {
   return new Date(value * 1000).toISOString().replace(".000Z", "Z");
 }
 
-export function formatMicroUnits(value: string) {
-  if (!/^\d+$/.test(value)) return value;
-  const raw = BigInt(value);
-  const divisor = 1_000_000n;
-  const whole = raw / divisor;
-  const fractional = raw % divisor;
-  return `${whole}.${fractional.toString().padStart(6, "0")}`;
-}
-
 export function formatTokenUnits(value: bigint, decimals: number) {
   const divisor = 10n ** BigInt(decimals);
   const whole = value / divisor;

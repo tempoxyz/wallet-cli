@@ -5,6 +5,14 @@ import { Actions } from "viem/tempo";
 const mocks = vi.hoisted(() => ({
   readContract: vi.fn(async () => 0n),
   fetch: vi.fn(async () => new Response("[]", { status: 200 })),
+  getMetadata: vi.fn(
+    async (
+      _client: unknown,
+      _parameters: { token: string },
+    ): Promise<{ decimals: number; symbol: string }> => {
+      throw new Error("no metadata");
+    },
+  ),
 }));
 
 vi.stubGlobal("fetch", mocks.fetch);
@@ -27,6 +35,7 @@ vi.mock("viem/tempo", async (importOriginal) => {
         ...actual.Actions.accessKey,
         revoke: vi.fn(),
       },
+      token: { ...actual.Actions.token, getMetadata: mocks.getMetadata },
     },
   };
 });
@@ -41,13 +50,19 @@ import {
   whoamiHandler,
 } from "../src/commands/identity.js";
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
-import { moderatoToken } from "../src/shared/constants.js";
+import { moderatoToken, usdcToken } from "../src/shared/constants.js";
+import { machToken } from "../src/shared/mach.js";
+import { parseNetwork } from "../src/shared/network.js";
 import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
 import { keysOutput, whoamiOutput } from "../src/schemas.js";
 
 import {
+  containsSymbol,
+  expectTokenError,
   expectUsageError,
+  invalidTokenInputs,
+  ousdToken,
   readWalletStoreJson,
   readyWallet,
   testAccessKey,
@@ -56,6 +71,9 @@ import {
   testPrivateKey2,
   testWallet,
   testWallet2,
+  tokenInputs,
+  unlistedToken,
+  untrustedSymbols,
   useTempHome,
   usdc,
   walletState,
@@ -65,12 +83,17 @@ import {
   writeWalletState,
 } from "./helpers.js";
 
+/** cbBTC is a 6-decimal TIP-20 token on Tempo, as viem lists it and as it reports on chain. */
+const cbBtcToken = "0x20c000000000000000000000c412ec89d0c08be5";
+
 afterEach(() => {
   vi.useRealTimers();
   mocks.readContract.mockReset();
   mocks.readContract.mockResolvedValue(0n);
   mocks.fetch.mockReset();
   mocks.fetch.mockResolvedValue(new Response("[]", { status: 200 }));
+  mocks.getMetadata.mockReset();
+  mocks.getMetadata.mockRejectedValue(new Error("no metadata"));
 });
 
 describe("wallet store", () => {
@@ -330,7 +353,7 @@ key = "${testPrivateKey}"
 });
 
 describe("identity commands", () => {
-  it("whoami queries and formats the PathUSD balance on testnet", async () => {
+  it("whoami queries and formats the pathUSD balance on testnet", async () => {
     await useTempHome();
     await writeWalletState(
       walletState({
@@ -353,7 +376,7 @@ describe("identity commands", () => {
       balance: {
         total: "1000004.996912",
         available: "1000004.996912",
-        symbol: "PathUSD",
+        symbol: "pathUSD",
       },
     });
   });
@@ -427,14 +450,235 @@ describe("identity commands", () => {
     });
   });
 
-  it("uses the PathUSD symbol for an unavailable testnet balance", async () => {
+  it("uses the pathUSD symbol for an unavailable testnet balance", async () => {
     const result = await currentWhoamiOutput({
       walletAddress: null,
       chain: 42431,
       accessKeys: [],
     });
 
-    expect(result.balance.symbol).toBe("PathUSD");
+    expect(result.balance.symbol).toBe("pathUSD");
+  });
+
+  it.each([
+    { name: "MACH", chain: 4217, token: machToken(4217), symbol: "MACH" },
+    {
+      name: "OUSD",
+      chain: 4217,
+      token: "0x20c0000000000000000000006a37DA5C996874BE",
+      symbol: "OUSD",
+    },
+    { name: "pathUSD on testnet", chain: 42431, token: moderatoToken, symbol: "pathUSD" },
+    {
+      name: "an unlisted token's sanitized on-chain symbol",
+      chain: 4217,
+      token: unlistedToken,
+      metadata: { decimals: 6, symbol: "\u001b]0;title\u0007EVIL\u200b\u202e" },
+      symbol: "EVIL",
+    },
+    {
+      name: "no symbol for an unreadable unlisted token",
+      chain: 4217,
+      token: unlistedToken,
+      symbol: null,
+    },
+  ])(
+    "whoami and keys show $name, never the address",
+    async ({ chain, token, metadata, symbol }) => {
+      if (metadata) mocks.getMetadata.mockResolvedValue(metadata);
+      const key = {
+        ...walletState().accessKeys[0]!,
+        chainId: chain,
+        permissionSemantics: 1 as const,
+        limits: [{ token, limit: "100000000#__bigint" }],
+      };
+
+      const whoami = await currentWhoamiOutput({
+        walletAddress: testWallet,
+        chain,
+        accessKeys: [key],
+      });
+      const keys = await currentKeysOutput({ walletAddress: testWallet, accessKeys: [key] });
+
+      const shown = { symbol, token: token.toLowerCase() };
+      expect(whoamiOutput.options[1].parse(whoami)).toMatchObject({
+        balance: { symbol },
+        balances: [shown],
+        key: { ...shown, spending_limits: [shown] },
+      });
+      expect(keysOutput.parse(keys).keys).toMatchObject([{ ...shown, spending_limits: [shown] }]);
+      expect(mocks.getMetadata.mock.calls.map(([, parameters]) => parameters)).toEqual(
+        token === unlistedToken ? [{ token }, { token }] : [],
+      );
+    },
+  );
+
+  it.each([
+    { name: "USDC.e", token: usdc, limit: "100000000", shown: "100.000000" },
+    {
+      name: "an unlisted 2-decimal token",
+      token: unlistedToken,
+      decimals: 2,
+      limit: "1021",
+      shown: "10.21",
+    },
+    {
+      name: "an unlisted 18-decimal token",
+      token: unlistedToken,
+      decimals: 18,
+      limit: "1500000000000000000",
+      shown: "1.500000000000000000",
+    },
+    // Without decimals the scale is unknown, so only the stored base units are shown.
+    { name: "an unreadable unlisted token", token: unlistedToken, limit: "100000000", shown: null },
+  ])(
+    "shows a limit for $name in its decimals in whoami and keys",
+    async ({ token, decimals, limit, shown }) => {
+      if (decimals !== undefined) mocks.getMetadata.mockResolvedValue({ decimals, symbol: "TKN" });
+      const key = {
+        ...walletState().accessKeys[0]!,
+        permissionSemantics: 1 as const,
+        limits: [{ token, limit: `${limit}#__bigint` }],
+      };
+
+      const whoami = await currentWhoamiOutput({
+        walletAddress: testWallet,
+        chain: 4217,
+        accessKeys: [key],
+      });
+      const keys = await currentKeysOutput({ walletAddress: testWallet, accessKeys: [key] });
+
+      for (const output of [whoami.key, keys.keys[0]])
+        expect(output).toMatchObject({
+          spending_limit: { mode: "restricted", limit: shown, raw_limit: limit },
+          spending_limits: [{ limit: shown, raw_limit: limit }],
+        });
+    },
+  );
+
+  it("reads no token metadata for another wallet's keys and shows their unlisted limits raw", async () => {
+    mocks.getMetadata.mockResolvedValue({ decimals: 2, symbol: "TKN" });
+    const key = {
+      ...walletState().accessKeys[0]!,
+      access: testWallet2,
+      permissionSemantics: 1 as const,
+      limits: [
+        { token: unlistedToken, limit: "1021#__bigint" },
+        { token: usdc, limit: "5000000#__bigint" },
+      ],
+    };
+
+    const result = keysOutput.parse(
+      await currentKeysOutput({ walletAddress: testWallet, accessKeys: [key] }),
+    );
+
+    expect(result.keys[0]).toMatchObject({
+      wallet_address: testWallet2.toLowerCase(),
+      symbol: null,
+      balance: null,
+      spending_limit: { limit: null, raw_limit: "1021" },
+      spending_limits: [
+        { symbol: null, token: unlistedToken, limit: null, raw_limit: "1021" },
+        { symbol: "USDC.e", token: usdcToken, limit: "5.000000", raw_limit: "5000000" },
+      ],
+    });
+    expect(mocks.getMetadata).not.toHaveBeenCalled();
+    expect(mocks.readContract).not.toHaveBeenCalled();
+  });
+
+  it("looks up each unlisted key token once, in parallel, for keys list", async () => {
+    const otherToken = "0x20c000000000000000000000000000000000cafe";
+    const metadata = Promise.withResolvers<{ decimals: number; symbol: string }>();
+    mocks.getMetadata.mockReturnValue(metadata.promise);
+    const key = {
+      ...walletState().accessKeys[0]!,
+      limits: [{ token: unlistedToken, limit: "1000000#__bigint" }],
+    };
+    const accessKeys = [
+      key,
+      { ...key, address: testAccessKey2 },
+      { ...key, access: testWallet2 },
+      { ...key, limits: [{ token: otherToken, limit: "1000000#__bigint" }] },
+    ];
+
+    const output = currentKeysOutput({ walletAddress: testWallet, accessKeys });
+    try {
+      expect(mocks.getMetadata.mock.calls.map(([, parameters]) => parameters)).toEqual([
+        { token: unlistedToken },
+        { token: otherToken },
+      ]);
+    } finally {
+      metadata.resolve({ decimals: 6, symbol: "NEW" });
+    }
+    expect((await output).keys.map((output) => output.symbol)).toEqual([
+      "NEW",
+      "NEW",
+      "NEW",
+      "NEW",
+    ]);
+    expect(mocks.getMetadata).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(untrustedSymbols)(
+    "never shows on-chain or asset symbol %j in whoami or keys",
+    async (symbol) => {
+      await useTempHome();
+      await writeWalletState(walletState());
+      mocks.getMetadata.mockResolvedValue({ decimals: 6, symbol });
+      mocks.fetch.mockResolvedValueOnce(
+        Response.json([
+          { address: unlistedToken, balance: "1000000", decimals: 6, symbol, verified: false },
+        ]),
+      );
+      const key = {
+        ...walletState().accessKeys[0]!,
+        limits: [{ token: unlistedToken, limit: "1000000#__bigint" }],
+      };
+
+      const whoami = await currentWhoamiOutput({
+        walletAddress: testWallet,
+        chain: 4217,
+        accessKeys: [key],
+      });
+      const keys = await currentKeysOutput({ walletAddress: testWallet, accessKeys: [key] });
+
+      const shown = { symbol: null, token: unlistedToken };
+      expect(whoami).toMatchObject({
+        balance: { symbol: null },
+        balances: [shown],
+        key: { ...shown, spending_limits: [shown] },
+      });
+      expect(keys.keys).toMatchObject([{ ...shown, spending_limits: [shown] }]);
+      expect(containsSymbol(whoami, symbol)).toBe(false);
+      expect(containsSymbol(keys, symbol)).toBe(false);
+    },
+  );
+
+  it("shows listed symbols for held tokens and sanitizes other asset symbols", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    mocks.readContract.mockResolvedValueOnce(5_000_000n);
+    mocks.fetch.mockResolvedValueOnce(
+      Response.json([
+        { address: ousdToken, balance: "1000000", decimals: 6, symbol: ousdToken, verified: true },
+        {
+          address: unlistedToken,
+          balance: "2000000",
+          decimals: 6,
+          symbol: "\u001b[31mNEW\u200b",
+          verified: false,
+        },
+      ]),
+    );
+
+    const result = await whoamiHandler({});
+
+    expect("balances" in result ? result.balances : null).toMatchObject([
+      { token: ousdToken, symbol: "OUSD" },
+      { token: unlistedToken, symbol: "NEW" },
+      { token: usdcToken, symbol: "USDC.e" },
+    ]);
+    expect(mocks.getMetadata).not.toHaveBeenCalled();
   });
 
   it("does not report an RPC error or query a balance without a wallet", async () => {
@@ -763,16 +1007,20 @@ limit = "100000000"
       status: "ready",
       spending_limit: {
         limit: "100.000000",
+        raw_limit: "100000000",
         period_seconds: 86_400,
       },
       spending_limits: [
         {
           limit: "100.000000",
+          raw_limit: "100000000",
           period_seconds: 86_400,
           token: usdc.toLowerCase(),
         },
         {
-          limit: "2.500000",
+          // Its metadata is unreadable, so only the stored base units are known.
+          limit: null,
+          raw_limit: "2500000",
           period_seconds: null,
           token: "0x1111111111111111111111111111111111111111",
         },
@@ -1002,7 +1250,7 @@ limit = "100000000"
           address: testWallet,
           accessKeyAddress: testAccessKey,
           chainId: toHex(4217),
-          limits: [{ token: usdc, limit: toHex(250_000_000n) }],
+          limits: [{ token: usdcToken, limit: toHex(250_000_000n) }],
         },
       ],
     });
@@ -1106,7 +1354,7 @@ limit = "100000000"
       params: [
         expect.objectContaining({
           accessKeyAddress: testAccessKey2,
-          limits: [{ token: usdc, limit: toHex(250_000_000n) }],
+          limits: [{ token: usdcToken, limit: toHex(250_000_000n) }],
         }),
       ],
     });
@@ -1172,38 +1420,122 @@ limit = "100000000"
     expect(createProvider).not.toHaveBeenCalled();
   });
 
-  it.each(["-1", "not-an-amount", "0.0000001"])(
-    "rejects invalid access key limit %s",
-    async (limit) => {
+  it.each([
+    { limit: "-1", token: undefined, decimals: 6 },
+    { limit: "not-an-amount", token: undefined, decimals: 6 },
+    { limit: "0.0000001", token: undefined, decimals: 6 },
+    { limit: "1.5", token: unlistedToken, decimals: 0 },
+    { limit: "0.0000000000000000001", token: unlistedToken, decimals: 18 },
+  ])(
+    "rejects access key limit $limit for a $decimals-decimal token",
+    async ({ limit, token, decimals }) => {
       await useTempHome();
       await writeWalletState(walletState());
+      mocks.getMetadata.mockResolvedValue({ decimals, symbol: "TOKEN" });
       const createProvider = vi.fn();
 
-      try {
-        await updateAccessKeyHandler(await readyWallet(), { limit }, createProvider);
-        expect.unreachable("expected updateAccessKeyHandler to throw");
-      } catch (error) {
-        expectUsageError(error, "Invalid limit: expected a non-negative token amount");
-      }
+      const error = await updateAccessKeyHandler(
+        await readyWallet(),
+        { limit, token },
+        createProvider,
+      ).catch((value: unknown) => value);
+
+      expectUsageError(
+        error,
+        `Invalid limit: expected a non-negative token amount with at most ${decimals} decimals`,
+      );
       expect(createProvider).not.toHaveBeenCalled();
     },
   );
 
-  it("rejects an invalid access key limit token", async () => {
+  it.each([
+    { name: "cbBTC", token: "cbBTC", address: cbBtcToken, limit: "0.5", raw: 500_000n },
+    { name: "USDC.e", token: "USDC.e", address: usdcToken, limit: "0", raw: 0n },
+    {
+      name: "an unlisted 18-decimal token",
+      token: unlistedToken,
+      address: unlistedToken,
+      metadata: { decimals: 18, symbol: "WEI" },
+      limit: "1.000000000000000001",
+      raw: 10n ** 18n + 1n,
+    },
+    {
+      name: "an unlisted 0-decimal token",
+      token: unlistedToken,
+      address: unlistedToken,
+      metadata: { decimals: 0, symbol: "WHOLE" },
+      limit: "7",
+      raw: 7n,
+    },
+  ])(
+    "sets --limit $limit in the decimals of $name",
+    async ({ token, address, metadata, limit, raw }) => {
+      await useTempHome();
+      await writeWalletState(walletState());
+      if (metadata) mocks.getMetadata.mockResolvedValue(metadata);
+      const updateAccessKey = vi.fn(async () => undefined);
+
+      const result = await updateAccessKeyHandler(
+        await readyWallet(),
+        { limit, token },
+        () => ({ request: vi.fn() }),
+        updateAccessKey,
+      );
+
+      expect(updateAccessKey).toHaveBeenCalledWith(
+        expect.objectContaining({ token: address, limit: raw }),
+      );
+      expect(result).toMatchObject({ token: address, limit });
+      expect(mocks.getMetadata.mock.calls.map(([, parameters]) => parameters)).toEqual(
+        metadata ? [{ token: address }] : [],
+      );
+    },
+  );
+
+  it.each(tokenInputs)(
+    "updates the limit for --token $input on $network",
+    async ({ input, network, address }) => {
+      await useTempHome();
+      const chainId = parseNetwork(network).chainId;
+      const key = { ...walletState().accessKeys[0]!, chainId, limits: [] };
+      await writeWalletState(walletState({ chainId, accessKeys: [key] }));
+      const updateAccessKey = vi.fn(async () => undefined);
+
+      const result = await updateAccessKeyHandler(
+        await readyWallet(network),
+        { limit: "5", token: input },
+        () => ({ request: vi.fn() }),
+        updateAccessKey,
+      );
+
+      expect(updateAccessKey).toHaveBeenCalledWith(
+        expect.objectContaining({ chainId, token: address, limit: 5_000_000n }),
+      );
+      expect(result).toMatchObject({ token: address, limit: "5" });
+      expect((await loadWalletState()).accessKeys[0]?.limits).toEqual([
+        { token: address, limit: "5000000#__bigint" },
+      ]);
+    },
+  );
+
+  it.each([
+    ...invalidTokenInputs("token"),
+    { input: "not-an-address", network: "mainnet", message: 'Unknown token "not-an-address"' },
+  ])("rejects --token $input on $network", async ({ input, network, message }) => {
     await useTempHome();
-    await writeWalletState(walletState());
+    const chainId = parseNetwork(network).chainId;
+    await writeWalletState(
+      walletState({ chainId, accessKeys: [{ ...walletState().accessKeys[0]!, chainId }] }),
+    );
     const createProvider = vi.fn();
 
-    try {
-      await updateAccessKeyHandler(
-        await readyWallet(),
-        { limit: "250", token: "not-an-address" },
-        createProvider,
-      );
-      expect.unreachable("expected updateAccessKeyHandler to throw");
-    } catch (error) {
-      expectUsageError(error, "Invalid token address: expected a 0x address");
-    }
+    const error = await updateAccessKeyHandler(
+      await readyWallet(network),
+      { limit: "250", token: input },
+      createProvider,
+    ).catch((value: unknown) => value);
+
+    expectTokenError(error, message);
     expect(createProvider).not.toHaveBeenCalled();
   });
 

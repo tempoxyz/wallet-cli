@@ -52,10 +52,10 @@ tempo wallet login --no-browser
 tempo wallet whoami
 
 # Quote a swap without submitting it
-tempo wallet swap 10 <TOKEN_IN> <TOKEN_OUT> --dry-run
+tempo wallet swap 10 USDC.e pathUSD --dry-run
 
 # Submit the reviewed swap, refusing less output than the reviewed min_amount_out
-tempo wallet swap 10 <TOKEN_IN> <TOKEN_OUT> --min-amount-out <MIN_AMOUNT_OUT> --yes
+tempo wallet swap 10 USDC.e pathUSD --min-amount-out <MIN_AMOUNT_OUT> --yes
 
 # Fund your wallet
 tempo wallet fund
@@ -63,6 +63,8 @@ tempo wallet fund
 # Discover available paid services
 tempo wallet services --search ai
 ```
+
+Token arguments (`swap`, `transfer`, `--fee-token`, `keys update --token`, and `tempo request --payment-token`) take a full 0x address or a symbol that viem lists for the selected network, matched case-insensitively; a bridged token also answers to its symbol without `.e` (`USDC` is `USDC.e`). An unknown symbol fails with `E_USAGE` and lists the network's symbols. Output and `_next` continuations always carry the resolved address.
 
 `tempo wallet whoami` separates available funds, active-session `locked` reserves, and `pending_refund` reserves in closing or finalizable sessions. `total` includes all three; pending refunds remain unavailable until withdrawal completes.
 
@@ -112,10 +114,10 @@ extension attempt. If that fails and a compatible charge is available, the CLI r
 amount and requires an explicit retry with `--payment-intent charge`; it never silently purchases
 non-refundable charge capacity.
 
-When a service offers the same payment in multiple tokens, select the exact token address:
+When a service offers the same payment in multiple tokens, select one by symbol or exact address:
 
 ```sh
-tempo request --payment-intent charge --payment-token 0x20c000000000000000000000b9537d11c60e8b50 https://example.mpp.tempo.xyz/v1/resource
+tempo request --payment-intent charge --payment-token USDC.e https://example.mpp.tempo.xyz/v1/resource
 ```
 
 Session-based services open a reusable payment channel:

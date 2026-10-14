@@ -63,6 +63,7 @@ import {
   rpcUrl,
   type Network,
 } from "../shared/network.js";
+import { listedSymbol, resolveTokenAddress } from "../shared/tokens.js";
 import {
   escapeInvisible,
   getRecord,
@@ -194,7 +195,7 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
         options.mach = true;
         break;
       case "--payment-token":
-        options.paymentToken = paymentTokenValue(requireValue(argv, ++index, arg));
+        options.paymentToken = requireValue(argv, ++index, arg);
         break;
       case "--private-key":
         options.privateKey = requireValue(argv, ++index, arg);
@@ -367,8 +368,7 @@ function validateRequestOptions(options: RequestOptions) {
       throw usageError("--mach conflicts with --payment-token for another token");
     options.paymentToken = "MACH";
   }
-  if (options.paymentToken !== undefined)
-    options.paymentToken = paymentTokenValue(options.paymentToken);
+  options.paymentToken = paymentTokenValue(options);
   if (options.paymentIntent !== undefined) paymentIntentValue(options.paymentIntent);
   if (isMachPaymentToken(options.paymentToken) && options.paymentIntent === "session")
     throw usageError("MACH settlement supports charge payments, not sessions");
@@ -527,6 +527,7 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
   if (response.status === 402) {
     // Only payment depends on the network, so free requests never read the wallet store.
     options.network = (await resolvePaymentNetwork(options)).name;
+    options.paymentToken = paymentTokenValue(options);
     if (options.dryRun) {
       const { challenge } = preparePaymentChallenge(response, options, request.url);
       const signer = privateKeySigner(options);
@@ -1830,10 +1831,17 @@ export function machChargeParameters(
   };
 }
 
-function paymentTokenValue(value: string) {
+/**
+ * "MACH" or the selected token's address. A symbol listed on some network is kept until the
+ * payment network is known; one no network lists is rejected before any request is sent.
+ */
+function paymentTokenValue(options: RequestOptions) {
+  const value = options.paymentToken;
+  if (value === undefined) return undefined;
   if (value.toLowerCase() === "mach") return "MACH";
-  if (!isAddress(value)) throw usageError("--payment-token must be MACH or a 0x token address");
-  return value.toLowerCase();
+  if (options.network === undefined && !/^0x/i.test(value))
+    return listedSymbol(value, "payment token");
+  return resolveTokenAddress(value, requestNetwork(options), "payment token");
 }
 
 function spendingLimitDiagnostic(error: unknown, header: string | null, options: RequestOptions) {
