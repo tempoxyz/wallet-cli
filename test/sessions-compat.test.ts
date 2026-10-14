@@ -108,6 +108,7 @@ describe("sessions utilities", () => {
       },
     });
 
+    expect(request.chainId).toBe("0x1079");
     expect(request.feeToken).toBe(descriptor.token);
     expect(request.calls).toHaveLength(1);
     expect(request.calls[0]?.to.toLowerCase()).toBe(TempoChannel.address.toLowerCase());

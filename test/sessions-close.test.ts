@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 
 import { Challenge, Credential } from "mppx";
-import { decodeFunctionData, type Hex } from "viem";
+import { decodeFunctionData, toHex, type Hex } from "viem";
 import { Channel as TempoChannel } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -108,6 +108,8 @@ describe("closing a session from another network", () => {
       wallet: mainnet,
       target: channelId,
       message: `No session for ${channelId} on tempo; it is on tempo-moderato. Rerun with 'tempo wallet sessions close ${channelId}{flags} --network testnet'.`,
+      // A close sends its transactions on the session's chain, which needs a login there.
+      closeMessage: `No session for ${channelId} on tempo; it is on tempo-moderato, where the wallet is not logged in. Run 'tempo wallet login --network testnet', then rerun with 'tempo wallet sessions close ${channelId} --network testnet'.`,
     },
     {
       name: "a channel id from --network",
@@ -145,7 +147,7 @@ describe("closing a session from another network", () => {
     },
   ])(
     "refuses $name before any on-chain call and keeps the record",
-    async ({ chain, network, wallet, target, finalize, cooperative, message }) => {
+    async ({ chain, network, wallet, target, finalize, cooperative, message, closeMessage }) => {
       await writeWalletState(stateFor(wallet));
       await saveSession(channelId, chain);
 
@@ -159,7 +161,10 @@ describe("closing a session from another network", () => {
         await expect(close({ cooperative, finalize, network, target })).rejects.toMatchObject({
           code: "E_USAGE",
           exitCode: 2,
-          message: message.replace("{flags}", flags),
+          message: (close === closeSessions && closeMessage ? closeMessage : message).replace(
+            "{flags}",
+            flags,
+          ),
         });
       }
 
@@ -314,7 +319,7 @@ describe("--finalize", () => {
       [otherChannelId]: escrowChannel({ closeRequestedAt: now - 1000 }),
       [activeChannelId]: escrowChannel(),
     });
-    mocks.request.mockResolvedValue({ transactionHash: `0x${"c".repeat(64)}` });
+    mocks.request.mockResolvedValue({ transactionHash: `0x${"c".repeat(64)}`, status: "0x1" });
 
     const dryRun = await dryRunCloseSessions({ ...options, finalize: true });
     const result = await closeSessions({ ...options, finalize: true });
@@ -357,6 +362,97 @@ describe("--finalize", () => {
     expect(output.results).toEqual([result]);
     expect(mocks.request).not.toHaveBeenCalled();
     expect(await sessionIds(mainnet)).toEqual([channelId]);
+  });
+});
+
+describe("close transactions", () => {
+  const closing = { state: "closing", close_requested_at: now - 1000, grace_ready_at: now - 100 };
+  const txHash = `0x${"c".repeat(64)}`;
+
+  it.each([
+    { name: "a close request", onChain: escrowChannel(), session: {} },
+    {
+      name: "a withdrawal",
+      onChain: escrowChannel({ closeRequestedAt: now - 1000 }),
+      session: closing,
+    },
+  ])(
+    "refuses $name for a session on a chain the wallet is not logged in on",
+    async ({ onChain, session }) => {
+      await writeWalletState(stateFor(mainnet));
+      await saveSession(channelId, testnet, session);
+      mockEscrow({ [channelId]: onChain });
+
+      const result = await closeSessions({ network: "testnet", target: channelId });
+
+      expect(result).toEqual({
+        closed: 0,
+        pending: 0,
+        failed: 1,
+        results: [
+          {
+            channel_id: channelId,
+            status: "error",
+            origin,
+            error:
+              "wallet is logged in on tempo, not tempo-moderato; log in with 'tempo wallet login --network testnet', then rerun the close",
+          },
+        ],
+      });
+      expect(mocks.request).not.toHaveBeenCalled();
+      expect(await readSessionRecordsByOrigin(origin)).toEqual([
+        expect.objectContaining({
+          channel_id: channelId,
+          state: "active",
+          close_requested_at: 0,
+          ...session,
+        }),
+      ]);
+    },
+  );
+
+  it.each([
+    { functionName: "requestClose", onChain: escrowChannel(), session: {} },
+    {
+      functionName: "withdraw",
+      onChain: escrowChannel({ closeRequestedAt: now - 1000 }),
+      session: closing,
+    },
+  ])("keeps the record when $functionName reverts", async ({ functionName, onChain, session }) => {
+    await writeWalletState(stateFor(mainnet));
+    await saveSession(channelId, mainnet, session);
+    mockEscrow({ [channelId]: onChain });
+    mocks.request.mockResolvedValue({ transactionHash: txHash, status: "0x0" });
+
+    const result = await closeSessions({ target: channelId });
+
+    expect(result).toEqual({
+      closed: 0,
+      pending: 0,
+      failed: 1,
+      results: [
+        {
+          channel_id: channelId,
+          status: "error",
+          origin,
+          error: `${functionName} transaction ${txHash} did not succeed (receipt status 0x0); the session record was kept`,
+        },
+      ],
+    });
+    // The transaction names the session's chain instead of relying on the wallet's.
+    expect(mocks.request).toHaveBeenCalledWith({
+      method: "eth_sendTransactionSync",
+      params: [expect.objectContaining({ chainId: toHex(mainnet) })],
+    });
+    expect(withdrawals()).toEqual([{ functionName, args: [channelId] }]);
+    expect(await readSessionRecordsByOrigin(origin)).toEqual([
+      expect.objectContaining({
+        channel_id: channelId,
+        state: "active",
+        close_requested_at: 0,
+        ...session,
+      }),
+    ]);
   });
 });
 

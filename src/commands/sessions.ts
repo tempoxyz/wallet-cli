@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { encodeFunctionData, getAddress, parseAbiItem, type Address, type Hex } from "viem";
+import { encodeFunctionData, getAddress, parseAbiItem, toHex, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
 import { Challenge, Credential } from "mppx";
@@ -26,6 +26,7 @@ import {
   networkName,
   parseNetwork,
   resolveNetwork,
+  storedChainId,
   tokenAddress,
   tokenDecimals,
   tokenSymbol,
@@ -206,7 +207,7 @@ export async function closeSessions(options: CloseOptions) {
 
   const network = await resolveNetwork(options.network, state);
   const summary = closeSummary();
-  const targets = await closeTargets(options, network);
+  const targets = await closeTargets(options, network, { walletChainId: storedChainId(state) });
   for (const target of targets)
     await recordCloseResult(
       summary,
@@ -320,19 +321,26 @@ function validateCloseOptions(options: CloseOptions) {
 /**
  * Selects the sessions a close acts on. A target selects its own sessions, also with `--finalize`,
  * so each one reports why it was or was not withdrawn. Otherwise the selected network is scanned,
- * and `--finalize` keeps only channels whose grace period has ended.
+ * and `--finalize` keeps only channels whose grace period has ended. `walletChainId`, the chain
+ * the wallet is logged in on, is set when the close may send transactions.
  */
 async function closeTargets(
   options: CloseOptions,
   network: Network,
-  { dryRun = false }: { dryRun?: boolean } = {},
+  { dryRun = false, walletChainId }: { dryRun?: boolean; walletChainId?: number } = {},
 ) {
   if (options.target && !options.all && !options.orphaned)
-    return targetRecords(options.target, await readChannelRecords(), network, [
-      ...(options.finalize ? ["--finalize"] : []),
-      ...(options.cooperative ? ["--cooperative"] : []),
-      ...(dryRun ? ["--dry-run"] : []),
-    ]);
+    return targetRecords(
+      options.target,
+      await readChannelRecords(),
+      network,
+      [
+        ...(options.finalize ? ["--finalize"] : []),
+        ...(options.cooperative ? ["--cooperative"] : []),
+        ...(dryRun ? ["--dry-run"] : []),
+      ],
+      walletChainId,
+    );
 
   const local = (await discoverAndPersistOrphanedChannels(network)).filter(
     (record) => record.chain_id === network.chainId,
@@ -349,13 +357,15 @@ async function closeTargets(
 /**
  * The sessions a channel ID, origin, or URL names on `network`. A target whose sessions are all on
  * another network is refused before any on-chain read, since the selected chain says nothing
- * about a channel whose deposit is locked on another one.
+ * about a channel whose deposit is locked on another one. When the wallet is logged in on another
+ * chain than the sessions, the refusal also names the login their transactions need.
  */
 function targetRecords(
   target: string,
   records: ChannelRecord[],
   network: Network,
   modeFlags: readonly string[],
+  walletChainId?: number,
 ) {
   const channelId = isChannelId(target) ? target.toLowerCase() : undefined;
   const origin = normalizeOrigin(target);
@@ -367,14 +377,18 @@ function targetRecords(
 
   const elsewhere = matches[0];
   if (elsewhere) {
+    const sessionNetwork = parseNetwork(elsewhere.network);
     const rerun = continuationCommand(
       // Keep the requested mode so the rerun performs the same operation on the right network.
       ["wallet", "sessions", "close", target, ...modeFlags],
-      parseNetwork(elsewhere.network),
+      sessionNetwork,
     );
-    throw usageError(
-      `No session for ${target} on ${networkName(network.chainId)}; it is on ${elsewhere.network}. Rerun with '${rerun}'.`,
-    );
+    const location = `No session for ${target} on ${networkName(network.chainId)}; it is on ${elsewhere.network}`;
+    if (walletChainId !== undefined && walletChainId !== elsewhere.chain_id)
+      throw usageError(
+        `${location}, where the wallet is not logged in. Run '${continuationCommand(["wallet", "login"], sessionNetwork)}', then rerun with '${rerun}'.`,
+      );
+    throw usageError(`${location}. Rerun with '${rerun}'.`);
   }
   return [
     channelId
@@ -662,6 +676,14 @@ async function sendSessionManagementTransaction(options: {
   network: Network;
   record: ChannelRecord;
 }) {
+  // The provider signs through the wallet's login, which is for one chain; a session on another
+  // chain needs a login there, or its transaction could go to the wrong chain.
+  const walletChainId = storedChainId(await loadWalletState());
+  if (walletChainId !== options.record.chain_id)
+    throw usageError(
+      `wallet is logged in on ${networkName(walletChainId)}, not ${networkName(options.record.chain_id)}; log in with '${continuationCommand(["wallet", "login"], options.network)}', then rerun the close`,
+    );
+
   const provider = createProvider({ network: options.network });
   const request = buildSessionManagementTransactionRequest(options);
   const receipt = await provider.request({
@@ -673,6 +695,12 @@ async function sendSessionManagementTransaction(options: {
   if (!txHash)
     throw paymentOutcomeUnknownError(
       `${options.functionName} submitted but receipt did not include a transaction hash; check 'tempo wallet sessions list' before retrying.`,
+    );
+  // A reverted transaction still returns its receipt, so only a successful one may change the record.
+  const status = stringValue(record.status);
+  if (status !== "0x1" && status !== "success")
+    throw paymentError(
+      `${options.functionName} transaction ${txHash} did not succeed (receipt status ${status || "missing"}); the session record was kept`,
     );
   return txHash;
 }
@@ -686,6 +714,7 @@ export function buildSessionManagementTransactionRequest(options: {
   const isPrecompile = isPrecompileEscrow(options.escrowContract);
   const descriptor = isPrecompile ? requireSessionDescriptor(options.record) : undefined;
   return {
+    chainId: toHex(options.record.chain_id),
     feeToken: options.record.token as Address,
     calls: [
       {
