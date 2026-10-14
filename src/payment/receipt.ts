@@ -79,15 +79,19 @@ export function receiptSummary(receipt: PaymentReceipt) {
 }
 
 /**
- * The transaction hash in a paid response's Payment-Receipt: a charge's `reference`, or a session
- * receipt's `txHash` (its `reference` names the channel). Only a 32-byte hex hash is kept.
+ * The transaction hash in a paid response's successful Tempo Payment-Receipt: a charge's or
+ * subscription's `reference`, or, given the paid session's `channelId`, the `txHash` of a session
+ * receipt for that channel (its `reference` names the channel). Only a 32-byte hex hash is kept.
  */
-export function receiptTxHash(response: Response, intent: string) {
+export function receiptTxHash(response: Response, channelId?: string) {
   const header = response.headers.get("payment-receipt");
   if (!header) return null;
   try {
     const receipt = decodeBase64UrlJson(header);
-    return transactionHash(intent === "session" ? receipt.txHash : receipt.reference);
+    if (receipt.method !== "tempo" || receipt.status !== "success") return null;
+    if (channelId === undefined) return transactionHash(receipt.reference);
+    const sameChannel = stringValue(receipt.channelId).toLowerCase() === channelId.toLowerCase();
+    return receipt.intent === "session" && sameChannel ? transactionHash(receipt.txHash) : null;
   } catch {
     return null;
   }

@@ -165,11 +165,11 @@ function chargeReceipt(reference: string) {
   );
 }
 
-function sessionReceipt(cumulative: bigint, hash?: string) {
+function sessionReceipt(cumulative: bigint, hash?: string, channel: Hex = channelId) {
   return TempoSession.Precompile.Receipt.serializeSessionReceipt(
     TempoSession.Precompile.Receipt.createSessionReceipt({
       challengeId: "receipt-session",
-      channelId,
+      channelId: channel,
       acceptedCumulative: cumulative,
       spent: cumulative,
       ...(hash ? { txHash: hash as Hex } : {}),
@@ -406,6 +406,14 @@ it.each<{
     stderr: `Paid 0.01 USDC.e · opened a session with 1 USDC.e locked\nWhen done, request its close, then rerun after the grace period to withdraw the unspent deposit: ${close.join(" ")}\n`,
   },
   {
+    name: "a reused session whose server receipt names another channel's transaction",
+    challenge: offer("session"),
+    stored: { cumulative_amount: 50_000n },
+    receipt: sessionReceipt(60_000n, txHash, `0x${"9".repeat(64)}`),
+    payment: { ...session, session: "reuse", deposit_locked: "1", cumulative: "0.06" },
+    stderr: `Paid 0.01 USDC.e · session ${channelId} (0.06 of 1 USDC.e deposit in signed vouchers)\n`,
+  },
+  {
     name: "a reused session's voucher, as signed rather than as the server reports spent",
     challenge: offer("session"),
     stored: { cumulative_amount: 50_000n },
@@ -594,19 +602,48 @@ it.each([
   expect(receiptSummary(built)).toBe(stderr);
 });
 
-it.each([
-  { name: "a charge reference", intent: "charge", header: chargeReceipt(txHash), hash: txHash },
-  { name: "a session txHash", intent: "session", header: sessionReceipt(1n, txHash), hash: txHash },
-  { name: "a session reference", intent: "session", header: sessionReceipt(1n), hash: null },
-  { name: "a short reference", intent: "charge", header: chargeReceipt("0x1234"), hash: null },
+const otherChannel = `0x${"9".repeat(64)}` as Hex;
+const encoded = (receipt: object) => Buffer.from(JSON.stringify(receipt)).toString("base64url");
+
+it.each<{ name: string; header: string; channel?: string; hash: string | null }>([
+  { name: "a charge reference", header: chargeReceipt(txHash), hash: txHash },
+  {
+    name: "a session txHash for the paid channel",
+    header: sessionReceipt(1n, txHash),
+    channel: channelId.toUpperCase().replace("0X", "0x"),
+    hash: txHash,
+  },
+  {
+    name: "a session txHash for another channel",
+    header: sessionReceipt(1n, txHash, otherChannel),
+    channel: channelId,
+    hash: null,
+  },
+  { name: "a session reference", header: sessionReceipt(1n), channel: channelId, hash: null },
+  {
+    name: "a charge reference read for a session",
+    header: chargeReceipt(txHash),
+    channel: channelId,
+    hash: null,
+  },
+  {
+    name: "a receipt for another payment method",
+    header: encoded({ method: "stripe", reference: txHash, status: "success" }),
+    hash: null,
+  },
+  {
+    name: "a receipt that is not a success",
+    header: encoded({ method: "tempo", reference: txHash, status: "failed" }),
+    hash: null,
+  },
+  { name: "a short reference", header: chargeReceipt("0x1234"), hash: null },
   {
     name: "a reference with invisible characters",
-    intent: "charge",
     header: chargeReceipt(`${txHash}${rlo}`),
     hash: null,
   },
-  { name: "a malformed header", intent: "charge", header: "not-base64-json", hash: null },
-])("reads the transaction hash from $name", ({ intent, header, hash }) => {
+  { name: "a malformed header", header: "not-base64-json", hash: null },
+])("reads the transaction hash from $name", ({ header, channel, hash }) => {
   const response = new Response(null, { headers: { "payment-receipt": header } });
-  expect(receiptTxHash(response, intent)).toBe(hash);
+  expect(receiptTxHash(response, channel)).toBe(hash);
 });

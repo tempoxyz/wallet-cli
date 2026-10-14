@@ -1142,7 +1142,7 @@ async function paySessionAndRetryRequest(
         token: details.token,
         network: requestNetwork(options),
         payer: identity.address,
-        txHash: receiptTxHash(response, challenge.intent),
+        txHash: receiptTxHash(response, record.channel_id),
         session: {
           channelId: record.channel_id,
           deposit: record.deposit,
@@ -1617,7 +1617,7 @@ async function tryTopUpAndRetry(options: {
       network: requestNetwork(options.options),
       payer: options.identity.address,
       // The top-up sent the transaction; the retried voucher sends none.
-      txHash: receiptTxHash(topUpResponse, "session"),
+      txHash: receiptTxHash(topUpResponse, options.record.channel_id),
       session: {
         channelId: options.record.channel_id,
         deposit,
@@ -1891,10 +1891,7 @@ function recordChargeReceipt(
       token: mach ? deployment.token : stringValue(challenge.request.currency),
       network,
       payer,
-      txHash:
-        payload.type === "hash"
-          ? transactionHash(payload.hash)
-          : receiptTxHash(response, challenge.intent),
+      txHash: payload.type === "hash" ? transactionHash(payload.hash) : receiptTxHash(response),
       subscription:
         challenge.intent === "subscription"
           ? {
