@@ -88,7 +88,7 @@ tempo request -t --dry-run -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPO
 tempo request -t --dry-run -X GET <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
-Present the dry-run price and wait for explicit approval before making a paid request, unless the user already supplied a budget that covers it. Then run the matching request without `--dry-run`, bound to the approved quote so a fresh challenge that differs is refused: `--max-spend` is the approved amount or budget, `--payment-intent` is the quote's `intent`, and `--payment-token` is the quote's `token` address (keep `--mach` instead when the quote used it):
+Present the dry-run price and any session `deposit`, and wait for explicit approval before making a paid request, unless the user already supplied a budget that covers it. Pass that budget as `--max-spend` on the dry run too, since the cap changes the deposit a session locks. Then run the matching request without `--dry-run`, with `--max-spend` set to the approved amount or budget, `--payment-intent` to the quote's `intent`, and `--payment-token` to the quote's `token` address (keep `--mach` instead when the quote used it). These refuse a fresh challenge for more, in another token, or with another intent; they do not pin the recipient.
 
 ```bash
 tempo request -t -X POST --max-spend <APPROVED_AMOUNT> --payment-intent <QUOTED_INTENT> --payment-token <QUOTED_TOKEN> --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
