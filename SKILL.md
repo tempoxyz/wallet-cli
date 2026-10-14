@@ -13,7 +13,7 @@ license: MIT OR Apache-2.0
 
 ## Networks
 
-- Tempo Mainnet (chain ID `4217`) is live and is the default. Commands use `--network`, then `TEMPO_WALLET_NETWORK`, then the logged-in wallet's network, then mainnet; output reports `chain_id` and `network`.
+- Tempo Mainnet (chain ID `4217`) is live and is the default. Commands use `--network`, then `TEMPO_WALLET_NETWORK`, then the logged-in wallet's network, then mainnet. A `--private-key` or `TEMPO_PRIVATE_KEY` payer skips the logged-in wallet's network. `tempo wallet whoami` reports `chain_id` and `network`; a paid quote reports `chain_id`.
 - Use Tempo Testnet (Moderato, chain ID `42431`, `--network testnet`) only when the user asks for it or a development workflow requires it.
 - `pathUSD` is a live mainnet TIP-20 at `0x20c0000000000000000000000000000000000000`. The faucet-issued testnet token at the same address is a test token, not the production asset.
 
@@ -88,14 +88,15 @@ tempo request -t --dry-run -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPO
 tempo request -t --dry-run -X GET <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
-Present the dry-run price and wait for explicit approval before making a paid request, unless the user already supplied a budget that covers it (pass it as `--max-spend`). Then run the matching request without `--dry-run`:
+Present the dry-run price and wait for explicit approval before making a paid request, unless the user already supplied a budget that covers it. Then run the matching request without `--dry-run`, with `--max-spend` set to the approved amount or budget so a higher fresh challenge is refused:
 
 ```bash
-tempo request -t -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
-tempo request -t -X GET <SERVICE_URL>/<ENDPOINT_PATH>
+tempo request -t -X POST --max-spend <APPROVED_AMOUNT> --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
+tempo request -t -X GET --max-spend <APPROVED_AMOUNT> <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
-A quote with `payment_required: false` means no payment is needed, but the dry run already sent the request (`probe_sent`); rerun it without `--dry-run` only when repeating the request is safe.
+- `recurring: true` marks a subscription, which has no spending cap and which `--max-spend` refuses. Present it as a recurring payment, and run it without `--max-spend` only after the user explicitly approves the subscription.
+- `payment_required: false` means no payment is needed, but the dry run already sent the request (`probe_sent`); rerun it without `--dry-run` only when repeating the request is safe.
 
 ### MACH Funding and Payments
 
