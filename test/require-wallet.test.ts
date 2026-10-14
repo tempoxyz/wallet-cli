@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
+import { join } from "node:path";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -123,9 +124,9 @@ const ready: {
   },
 ];
 
-function runContext(network: string | undefined) {
+function runContext(network: string | undefined, agent = true) {
   const error = vi.fn((value: unknown) => value);
-  return { error, context: { globals: { network }, error: error as never } };
+  return { error, context: { agent, globals: { network }, error: error as never } };
 }
 
 describe("withWallet", () => {
@@ -172,6 +173,51 @@ describe("withWallet", () => {
     });
     expect(loadWalletState).toHaveBeenCalledOnce();
   });
+
+  const loggedOut = { name: "logged out", state: walletState({ accounts: [] }) };
+  const expired = { name: "an expired key", state: walletState({ accessKeys: [expiredKey] }) };
+  const unusable = {
+    name: "a key without signing material",
+    state: walletState({ accessKeys: [{ ...key, privateKey: undefined }] }),
+  };
+  const noKeys = { name: "no keys", state: walletState({ accessKeys: [] }) };
+  it.each([
+    { requireKey: "agent", agent: true, ...loggedOut, result: "E_NOT_AUTHENTICATED" },
+    { requireKey: "agent", agent: false, ...loggedOut, result: "E_NOT_AUTHENTICATED" },
+    { requireKey: "never", agent: false, ...loggedOut, result: "E_NOT_AUTHENTICATED" },
+    { requireKey: "always", agent: false, ...expired, result: "E_KEY_EXPIRED" },
+    { requireKey: "agent", agent: true, ...expired, result: "E_KEY_EXPIRED" },
+    { requireKey: "agent", agent: true, ...unusable, result: "E_AUTH_REFRESH_REQUIRED" },
+    { requireKey: "agent", agent: false, ...expired, result: "run" },
+    { requireKey: "agent", agent: false, ...unusable, result: "run" },
+    { requireKey: "never", agent: true, ...expired, result: "run" },
+    { requireKey: "never", agent: true, ...unusable, result: "run" },
+    { requireKey: "never", agent: true, ...noKeys, result: "run" },
+  ] as const)(
+    "requireKey $requireKey with agent $agent and $name: $result",
+    async ({ requireKey, agent, state, result }) => {
+      await useTempHome();
+      vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+      await writeWalletState(state);
+      const handler = vi.fn(async () => "done");
+      const { context } = runContext(undefined, agent);
+
+      const output = await withWallet(handler, { requireKey })(context);
+
+      if (result !== "run") {
+        expect(output).toMatchObject({ code: result, exitCode: 4 });
+        expect(handler).not.toHaveBeenCalled();
+        return;
+      }
+      expect(output).toBe("done");
+      expect(handler).toHaveBeenCalledExactlyOnceWith(context, {
+        state: expect.objectContaining({ accounts: [{ address: testWallet }] }),
+        network: { name: "mainnet", chainId: 4217 },
+        account: { address: testWallet },
+        key: undefined,
+      });
+    },
+  );
 });
 
 const recipient = "0x1111111111111111111111111111111111111111";
@@ -184,16 +230,44 @@ const machChallenge = `Payment realm="example", method="tempo", intent="charge",
   }),
 ).toString("base64url")}"`;
 
-const gatedCommands = [
+// Payments sign with the local access key, so agent runs need a usable one.
+const keyCommands = [
   { command: "transfer", argv: ["transfer", "1", usdcToken, recipient, "--dry-run"] },
   {
     command: "transfer --mach",
     argv: ["transfer", "--mach", "--max-spend", "1", "--mpp-challenge", machChallenge, "--dry-run"],
   },
   { command: "swap", argv: ["swap", "1", usdcToken, moderatoToken, "--dry-run"] },
-  { command: "keys update", argv: ["keys", "update", "--limit", "1", "--no-browser"] },
-  { command: "revoke", argv: ["revoke", testAccessKey, "--dry-run"] },
-  { command: "sessions close", argv: ["sessions", "close", "https://service.example"] },
+];
+
+// The wallet app approves these, so they need only the logged-in account. `ran` is what each
+// does once past the check.
+const walletAppCommands = [
+  {
+    command: "keys update",
+    argv: ["keys", "update", testAccessKey, "--limit", "1", "--no-browser"],
+    ran: { code: 1, request: "POST /api/auth/device/register" },
+  },
+  {
+    command: "revoke",
+    argv: ["revoke", testAccessKey, "--dry-run"],
+    ran: { code: 0, stdout: { status: "dry_run", access_key: testAccessKey.toLowerCase() } },
+  },
+  {
+    command: "sessions close",
+    argv: ["sessions", "close", "https://service.example"],
+    ran: { code: 1, stdout: { failed: 1, results: [{ error: "no active session" }] } },
+  },
+  {
+    command: "sessions close --dry-run",
+    argv: ["sessions", "close", "https://service.example", "--dry-run"],
+    ran: { code: 0, stdout: { targets: [{ state: "not found" }] } },
+  },
+  {
+    command: "sessions close --finalize",
+    argv: ["sessions", "close", "--finalize"],
+    ran: { code: 1, request: "POST /" },
+  },
 ];
 
 // Each state selects testnet a different way, so the cta must carry the network the CLI resolved.
@@ -220,7 +294,7 @@ const gatedStates = [
   },
 ];
 
-describe("wallet CLI commands that need a usable key", () => {
+describe("wallet CLI login and access key checks", () => {
   // Any RPC or wallet-approval request means the command ran past the check.
   const requests: string[] = [];
   const server = createServer((request, response) => {
@@ -241,7 +315,13 @@ describe("wallet CLI commands that need a usable key", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it.each(gatedStates.flatMap((state) => gatedCommands.map((gated) => ({ ...state, ...gated }))))(
+  it.each(
+    gatedStates.flatMap((state) =>
+      [...keyCommands, ...(state.code === "E_NOT_AUTHENTICATED" ? walletAppCommands : [])].map(
+        (gated) => ({ ...state, ...gated }),
+      ),
+    ),
+  )(
     "$command with $name returns $code",
     async ({ argv, state, flags = [], env = {}, code, cta }) => {
       const home = await useTempHome();
@@ -297,16 +377,91 @@ describe("wallet CLI commands that need a usable key", () => {
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ dry_run: true });
   });
+
+  const keyProblems = [
+    { name: "an expired key", state: walletState({ accessKeys: [expiredKey] }) },
+    {
+      name: "a key without signing material",
+      state: walletState({ accessKeys: [{ ...key, privateKey: undefined }] }),
+    },
+  ];
+
+  it.each(
+    keyProblems.flatMap((state) => walletAppCommands.map((command) => ({ ...state, ...command }))),
+  )("$command with $name runs past the check", async ({ argv, state, ran }) => {
+    const home = await useTempHome();
+    await writeWalletState(state);
+    requests.length = 0;
+
+    const result = await wallet(argv, {
+      HOME: home,
+      TEMPO_AUTH_URL: origin,
+      TEMPO_RPC_URL: origin,
+    });
+
+    expect(result.code).toBe(ran.code);
+    if ("stdout" in ran) expect(JSON.parse(result.stdout)).toMatchObject(ran.stdout);
+    if ("request" in ran) expect(requests).toContain(ran.request);
+  });
+
+  // Interactive runs fall back to approving in the wallet app; agent runs above fail fast.
+  it.each([
+    {
+      command: "transfer",
+      argv: ["transfer", "1", usdcToken, recipient, "--dry-run"],
+      ran: { code: 0 },
+    },
+    // The quote's first RPC call means the swap ran past the check.
+    {
+      command: "swap",
+      argv: ["swap", "1", usdcToken, moderatoToken, "--dry-run"],
+      ran: { code: 1, request: "POST /" },
+    },
+  ])("interactive $command with an expired key runs past the check", async ({ argv, ran }) => {
+    const home = await useTempHome();
+    await writeWalletState(walletState({ accessKeys: [expiredKey] }));
+    requests.length = 0;
+
+    const result = await wallet(argv, { HOME: home, TEMPO_RPC_URL: origin }, { interactive: true });
+
+    expect(result.code).toBe(ran.code);
+    expect(result.stdout).not.toContain("E_KEY_EXPIRED");
+    if ("request" in ran) expect(requests).toContain(ran.request);
+  });
+
+  it.each(keyCommands)(
+    "interactive $command with no account returns E_NOT_AUTHENTICATED",
+    async ({ argv }) => {
+      const home = await useTempHome();
+      await writeWalletState(walletState({ accounts: [] }));
+      requests.length = 0;
+
+      const result = await wallet(
+        argv,
+        { HOME: home, TEMPO_RPC_URL: origin },
+        { interactive: true },
+      );
+
+      expect(result.code).toBe(4);
+      expect(result.stdout).toContain("E_NOT_AUTHENTICATED");
+      expect(requests).toEqual([]);
+    },
+  );
 });
 
-function wallet(args: string[], env: Record<string, string>) {
+const interactiveStdout = join(import.meta.dirname, "fixtures", "interactive-stdout.mjs");
+
+/** Runs the wallet CLI as an agent (`--format json`), or with `interactive` as a terminal user. */
+function wallet(args: string[], env: Record<string, string>, { interactive = false } = {}) {
   const childEnv: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1", ...env };
   for (const name of ["TEMPO_PRIVATE_KEY", "TEMPO_WALLET_NETWORK"])
     if (!(name in env)) delete childEnv[name];
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
     execFile(
       process.execPath,
-      [cliBundle("wallet"), ...args, "--format", "json"],
+      interactive
+        ? ["--import", interactiveStdout, cliBundle("wallet"), ...args]
+        : [cliBundle("wallet"), ...args, "--format", "json"],
       { env: childEnv, timeout: 10_000 },
       (error, stdout, stderr) => {
         if (error && typeof error.code !== "number") return reject(error);

@@ -149,8 +149,11 @@ keys.command("update", {
   options: updateAccessKeyOptions,
   alias: globalAlias,
   output: updateAccessKeyOutput,
-  run: withWallet(({ args, options }, wallet) =>
-    updateAccessKeyHandler(wallet, { ...options, accessKey: args.accessKey }),
+  // The wallet app approves the new limit, so an expired or unusable key can still be limited.
+  run: withWallet(
+    ({ args, options }, wallet) =>
+      updateAccessKeyHandler(wallet, { ...options, accessKey: args.accessKey }),
+    { requireKey: "never" },
   ),
 });
 
@@ -162,7 +165,10 @@ cli.command("revoke", {
   options: revokeOptions,
   alias: globalAlias,
   output: revokeOutput,
-  run: withWallet(({ args, options }, wallet) => revokeHandler(wallet, args, options)),
+  // Revocation is signed by the wallet owner, not the local access key.
+  run: withWallet(({ args, options }, wallet) => revokeHandler(wallet, args, options), {
+    requireKey: "never",
+  }),
 });
 
 cli.command("transfer", {
@@ -194,10 +200,14 @@ cli.command("transfer", {
     }
     // A TEMPO_PRIVATE_KEY payer stands in for the logged-in wallet.
     if (options.mach && process.env.TEMPO_PRIVATE_KEY) return transferMach({ options: flags });
-    return withWallet(async (_, wallet) =>
-      options.mach
-        ? transferMach({ options: { ...flags, network: wallet.network.name } })
-        : transferTokens(wallet, { args, options }),
+    // MACH pays with the stored access key; a token transfer without one, run interactively,
+    // is approved in the wallet app instead.
+    return withWallet(
+      async (_, wallet) =>
+        options.mach
+          ? transferMach({ options: { ...flags, network: wallet.network.name } })
+          : transferTokens(wallet, { args, options }),
+      { requireKey: options.mach ? "always" : "agent" },
     )(context);
   },
 });
@@ -218,7 +228,9 @@ cli.command("swap", {
       options: { "dry-run": true },
     },
   ],
-  run: withWallet(({ args, options }, wallet) => swapTokens(wallet, { args, options })),
+  run: withWallet(({ args, options }, wallet) => swapTokens(wallet, { args, options }), {
+    requireKey: "agent",
+  }),
 });
 
 cli.command("fund", {
@@ -273,19 +285,24 @@ sessions.command("close", {
   options: sessionsCloseOptions,
   alias: globalAlias,
   output: sessionsCloseCommandOutput,
-  run: withWallet(async ({ args, options }, wallet) => {
-    const close = {
-      all: options.all,
-      cooperative: options.cooperative,
-      finalize: options.finalize,
-      orphaned: options.orphaned,
-      target: args.url,
-    };
-    if (options["dry-run"]) return dryRunCloseSessions(wallet, close);
-    const summary = await closeSessions(wallet, close);
-    closeCommandFailed = summary.failed > 0;
-    return summary;
-  }),
+  // Close and withdraw transactions fall back to wallet app approval, so channel funds stay
+  // recoverable without a usable access key.
+  run: withWallet(
+    async ({ args, options }, wallet) => {
+      const close = {
+        all: options.all,
+        cooperative: options.cooperative,
+        finalize: options.finalize,
+        orphaned: options.orphaned,
+        target: args.url,
+      };
+      if (options["dry-run"]) return dryRunCloseSessions(wallet, close);
+      const summary = await closeSessions(wallet, close);
+      closeCommandFailed = summary.failed > 0;
+      return summary;
+    },
+    { requireKey: "never" },
+  ),
 });
 
 sessions.command("sync", {
@@ -727,7 +744,10 @@ function describeCli() {
             name: "update",
             about: "Update an access key spending limit",
             args: [
-              positional("access_key", "Access key address (defaults to the connected key)"),
+              positional(
+                "access_key",
+                "Access key address (defaults to the only key for this wallet and network)",
+              ),
               option("limit", "--limit", "New remaining limit in human token units", {
                 valueName: "AMOUNT",
               }),

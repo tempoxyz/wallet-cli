@@ -178,18 +178,26 @@ export async function updateAccessKeyHandler(
   const selected = options.accessKey;
   if (selected !== undefined && !isAddress(selected))
     throw usageError("Invalid access key address: expected a 0x address");
+  // Expired and unusable keys count: the wallet app approves the update, not the local key.
+  const stored = state.accessKeys.filter((candidate) =>
+    accessKeyMatches(candidate, { chainId: selectedChainId, walletAddress: account.address }),
+  );
+  if (selected === undefined && stored.length > 1)
+    throw usageError(
+      `More than one access key is configured for the current wallet and network (${stored
+        .map((candidate) => candidate.address.toLowerCase())
+        .join(", ")}); pass the access key to update.`,
+    );
   const key =
     selected === undefined
-      ? wallet.key
-      : state.accessKeys.find(
-          (candidate) =>
-            accessKeyMatches(candidate, {
-              chainId: selectedChainId,
-              walletAddress: account.address,
-            }) && candidate.address.toLowerCase() === selected.toLowerCase(),
-        );
+      ? stored[0]
+      : stored.find((candidate) => candidate.address.toLowerCase() === selected.toLowerCase());
   if (!key)
-    throw usageError("Selected access key is not configured for the current wallet and network.");
+    throw usageError(
+      selected === undefined
+        ? "No access key is configured for the current wallet and network."
+        : "Selected access key is not configured for the current wallet and network.",
+    );
 
   const token = options.token ?? key.limits?.[0]?.token ?? tokenAddress(selectedChainId);
   if (!isAddress(token)) throw usageError("Invalid token address: expected a 0x address");

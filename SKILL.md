@@ -102,7 +102,7 @@ For credit payments, use `--amount-cents` as the direct payment amount or the ma
 
 - Return result payload to user directly when request succeeds.
 - If response contains a file URL (e.g., image generation), download it locally: `curl -fsSL "<url>" -o <filename>`.
-- If response is a usage/auth readiness error, run `tempo wallet login` and retry once. When a wallet command returns `E_NOT_AUTHENTICATED`, `E_KEY_EXPIRED`, or `E_AUTH_REFRESH_REQUIRED`, run the `tempo wallet login` or `tempo wallet refresh` command in its `cta` instead; it keeps the command's `--network`.
+- If response is a usage/auth readiness error, run `tempo wallet login` and retry once. When a wallet command returns `E_NOT_AUTHENTICATED`, `E_KEY_EXPIRED`, or `E_AUTH_REFRESH_REQUIRED`, run the `tempo wallet login` or `tempo wallet refresh` command in its `cta` instead; it keeps the command's `--network`. `transfer` and `swap` need a usable access key; `keys update`, `revoke`, and `sessions close` need only the login.
 - If response indicates payment/funding limit issues, report clearly and stop. Check `tempo wallet whoami --mach` and offer `tempo wallet fund --mach --no-browser --no-wait --format json` to fund from another device. Review token-specific access-key limits before retrying.
 - After multi-request workflows, check remaining balance with `tempo wallet whoami`.
 - Wallet results with a follow-up step include `instruction` and `_next`. Run `_next.argv` as given (`_next.command` is the shell-quoted form), but only after the user approves any spend, transfer, or revocation it performs.

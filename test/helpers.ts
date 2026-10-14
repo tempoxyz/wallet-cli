@@ -118,9 +118,9 @@ export function walletState(overrides: Partial<WalletState> = {}): WalletState {
 }
 
 /** The wallet `withWallet` hands a command, loaded from the test store; throws if it is not ready. */
-export async function readyWallet(network?: string) {
-  const wallet = await loadWallet(network);
-  if (!("key" in wallet)) throw new Error(wallet.message);
+export async function readyWallet(network?: string, requireKey = true) {
+  const wallet = await loadWallet(network, requireKey);
+  if ("code" in wallet) throw new Error(wallet.message);
   return wallet;
 }
 

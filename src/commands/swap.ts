@@ -147,11 +147,12 @@ export async function swapTokens(
     ? Actions.dex.buy.call({ amountOut, maxAmountIn, tokenIn, tokenOut })
     : Actions.dex.sell.call({ amountIn, minAmountOut, tokenIn, tokenOut });
   const calls = [approve, swap] as const;
-  const accessKeyLimit = key.limits?.find((limit) => limit.token.toLowerCase() === tokenIn);
+  const accessKeyLimit = key?.limits?.find((limit) => limit.token.toLowerCase() === tokenIn);
   const accessKeyLimitRaw = parseAccessKeyLimit(accessKeyLimit?.limit);
-  // A key stored without limits is unrestricted; only a limited key can fall short.
+  // A key stored without limits is unrestricted, and without a key the wallet app approves the
+  // swap; only a limited key can fall short.
   const requiresAccessKeyUpdate =
-    key.limits !== undefined && (accessKeyLimitRaw === null || accessKeyLimitRaw < maxAmountIn);
+    key?.limits !== undefined && (accessKeyLimitRaw === null || accessKeyLimitRaw < maxAmountIn);
   const feeToken = (input.options["fee-token"]?.toLowerCase() ?? tokenIn) as `0x${string}`;
   const output = {
     ...networkFields(selectedChainId),

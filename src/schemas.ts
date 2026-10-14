@@ -228,7 +228,10 @@ export const updateAccessKeyOptions = z.object({
 });
 
 export const updateAccessKeyArgs = z.object({
-  accessKey: z.string().optional().describe("Access key address; defaults to the connected key"),
+  accessKey: z
+    .string()
+    .optional()
+    .describe("Access key address; defaults to the only key for this wallet and network"),
 });
 
 export const transferDryRunOutput = z.object({

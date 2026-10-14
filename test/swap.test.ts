@@ -260,17 +260,21 @@ describe("swapTokens", () => {
     );
   });
 
-  it("submits with an access key that has no stored limits", async () => {
+  it.each([
+    { name: "an access key that has no stored limits", key: { limits: undefined } },
+    // An interactive run without a usable key is approved in the wallet app.
+    { name: "no usable access key", key: { expiry: 1 } },
+  ])("submits with $name", async ({ key }) => {
     await useTempHome();
     const state = walletState();
     await writeWalletState({
       ...state,
-      accessKeys: state.accessKeys.map((key) => ({ ...key, limits: undefined })),
+      accessKeys: state.accessKeys.map((stored) => ({ ...stored, ...key })),
     });
     const runtime = dependencies();
 
     const result = await swapTokens(
-      await readyWallet(),
+      await readyWallet(undefined, false),
       {
         args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
         options: { "slippage-bps": 50, yes: true },

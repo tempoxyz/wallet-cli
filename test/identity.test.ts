@@ -1087,21 +1087,16 @@ limit = "100000000"
 
   it.each([
     { name: "a selected access key", first: {}, accessKey: testAccessKey2 },
-    { name: "the usable key by default", first: { expiry: 1 }, accessKey: undefined },
-  ])("updates $name", async ({ first: overrides, accessKey }) => {
+    { name: "a selected expired access key", first: {}, accessKey: testAccessKey2, expiry: 1 },
+  ])("updates $name", async ({ first: overrides, accessKey, expiry = 2_000_000_000 }) => {
     await useTempHome();
     const first = { ...walletState().accessKeys[0]!, ...overrides };
-    const selected = {
-      ...first,
-      address: testAccessKey2,
-      privateKey: testPrivateKey2,
-      expiry: 2_000_000_000,
-    };
+    const selected = { ...first, address: testAccessKey2, privateKey: testPrivateKey2, expiry };
     await writeWalletState(walletState({ accessKeys: [first, selected] }));
     const request = vi.fn().mockResolvedValue(undefined);
 
     const result = await updateAccessKeyHandler(
-      await readyWallet(),
+      await readyWallet(undefined, false),
       { accessKey, limit: "250" },
       () => ({ request }),
     );
@@ -1120,6 +1115,61 @@ limit = "100000000"
       "100000000#__bigint",
       "250000000#__bigint",
     ]);
+  });
+
+  it.each([
+    { name: "an expired key", key: { expiry: 1 } },
+    { name: "a key without signing material", key: { privateKey: undefined } },
+  ])("updates the only stored key by default, even $name", async ({ key: overrides }) => {
+    await useTempHome();
+    await writeWalletState(
+      walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, ...overrides }] }),
+    );
+    const request = vi.fn().mockResolvedValue(undefined);
+
+    const result = await updateAccessKeyHandler(
+      await readyWallet(undefined, false),
+      { limit: "0" },
+      () => ({ request }),
+    );
+
+    expect(request).toHaveBeenCalledWith({
+      method: "wallet_updateAccessKey",
+      params: [expect.objectContaining({ accessKeyAddress: testAccessKey })],
+    });
+    expect(result).toMatchObject({ access_key: testAccessKey.toLowerCase(), limit: "0" });
+  });
+
+  it.each([
+    {
+      name: "more than one stored key, even when only one is usable",
+      accessKeys: [
+        { ...walletState().accessKeys[0]!, privateKey: undefined },
+        { ...walletState().accessKeys[0]!, address: testAccessKey2, privateKey: testPrivateKey2 },
+      ],
+      message: `More than one access key is configured for the current wallet and network (${testAccessKey.toLowerCase()}, ${testAccessKey2.toLowerCase()}); pass the access key to update.`,
+    },
+    {
+      name: "no stored key",
+      accessKeys: [],
+      message: "No access key is configured for the current wallet and network.",
+    },
+  ])("asks for the access key with $name", async ({ accessKeys, message }) => {
+    await useTempHome();
+    await writeWalletState(walletState({ accessKeys }));
+    const createProvider = vi.fn();
+
+    try {
+      await updateAccessKeyHandler(
+        await readyWallet(undefined, false),
+        { limit: "0" },
+        createProvider,
+      );
+      expect.unreachable("expected updateAccessKeyHandler to throw");
+    } catch (error) {
+      expectUsageError(error, message);
+    }
+    expect(createProvider).not.toHaveBeenCalled();
   });
 
   it.each(["-1", "not-an-amount", "0.0000001"])(
