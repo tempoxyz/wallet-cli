@@ -30,7 +30,7 @@ import {
   tempoPaymentChallengeResponse,
 } from "../src/commands/request.js";
 import {
-  findReusableSession,
+  findReusableSessions,
   preserveSessionCumulative,
   readSessionRecordsByOrigin,
   updateSessionReceipt,
@@ -773,7 +773,11 @@ describe("request command", () => {
 
     await runRequest(["--dry-run", "-D", headersPath, server.url("/paid")], { stdout });
 
-    expect(JSON.parse(stdout.text())).toMatchObject({ amount: "0.006", within_budget: null });
+    expect(JSON.parse(stdout.text())).toMatchObject({
+      amount: "0.006",
+      max_spend: "10",
+      within_budget: true,
+    });
     expect(await readFile(headersPath, "utf8")).toContain("www-authenticate");
   });
 
@@ -1343,7 +1347,7 @@ describe("request command", () => {
     });
 
     const rows = await readSessionRecordsByOrigin(origin);
-    const reusable = await findReusableSession({
+    const [reusable] = await findReusableSessions({
       authorizedSigner: "0x0000000000000000000000000000000000000aaa",
       chainId: 4217,
       escrowContract: "0x0000000000000000000000000000000000000bbb",
@@ -1545,7 +1549,7 @@ describe("request command", () => {
       token: descriptor.token,
     });
 
-    const reusable = await findReusableSession({
+    const [reusable] = await findReusableSessions({
       authorizedSigner: testAccessKey,
       chainId: 4217,
       escrowContract: "0x4d50500000000000000000000000000000000000",

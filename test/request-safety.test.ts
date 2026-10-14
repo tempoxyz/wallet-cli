@@ -27,7 +27,7 @@ async function fixture(
 ) {
   let requests = 0;
   let authenticated = 0;
-  let rpc = 0;
+  const rpc: string[] = [];
   const challenge = Challenge.from({
     id: "safety",
     realm: "local",
@@ -43,8 +43,12 @@ async function fixture(
   });
   const server = createServer((req, res) => {
     if (req.url === "/rpc") {
-      rpc++;
-      res.end("{}");
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        rpc.push((JSON.parse(body) as { method: string }).method);
+        res.end("{}");
+      });
       return;
     }
     requests++;
@@ -82,7 +86,7 @@ async function fixture(
     }
   };
   const run = (...args: string[]) => cli([url, ...args]);
-  return { cli, run, url, counts: () => ({ requests, authenticated, rpc }) };
+  return { cli, run, url, counts: () => ({ requests, authenticated, rpc: rpc.length }), rpc };
 }
 
 it.each([
@@ -213,7 +217,7 @@ it.each([
   },
 );
 
-it("dry-run decodes and validates a quote without accessing the wallet", async () => {
+it("dry-run decodes and validates a quote without signing", async () => {
   const server = await fixture();
   const result = await server.run(
     "--dry-run",
@@ -232,7 +236,9 @@ it("dry-run decodes and validates a quote without accessing the wallet", async (
   });
   const rejected = await server.run("--dry-run", "--max-spend", "0.001");
   expect(rejected.code).not.toBe(0);
-  expect(server.counts()).toEqual({ requests: 2, authenticated: 0, rpc: 0 });
+  // The quote reads the payer's balance; the rejected offer fails before any read.
+  expect(server.counts()).toEqual({ requests: 2, authenticated: 0, rpc: 1 });
+  expect(server.rpc).toEqual(["eth_call"]);
 });
 
 it("rejects capped recurring subscriptions before RPC or authorization", async () => {
@@ -247,8 +253,13 @@ it("authenticates a zero-amount charge without a recipient or RPC access", async
   const server = await fixture("charge", 4217, { amount: "0", recipient: undefined });
   const quote = await server.run("--dry-run", "--max-spend", "0");
   expect(quote.code).toBe(0);
-  expect(JSON.parse(quote.stdout)).toMatchObject({ amount: "0", within_budget: true });
-  expect(server.counts()).toEqual({ requests: 1, authenticated: 0, rpc: 0 });
+  expect(JSON.parse(quote.stdout)).toMatchObject({
+    amount: "0",
+    balance: null,
+    within_budget: true,
+  });
+  // Only the quote reads the RPC, for the payer's balance.
+  expect(server.counts()).toEqual({ requests: 1, authenticated: 0, rpc: 1 });
 
   const result = await server.run("--max-spend", "0");
   expect(result.code).toBe(0);
@@ -256,7 +267,7 @@ it("authenticates a zero-amount charge without a recipient or RPC access", async
     type: "proof",
     signature: expect.stringMatching(/^0x[0-9a-f]+$/i),
   });
-  expect(server.counts()).toEqual({ requests: 3, authenticated: 1, rpc: 0 });
+  expect(server.counts()).toEqual({ requests: 3, authenticated: 1, rpc: 1 });
 });
 
 it.each([
@@ -343,7 +354,8 @@ it.each([
     expect(server.counts()).toEqual({
       requests: outcome === "paid" ? 2 : 1,
       authenticated: outcome === "paid" ? 1 : 0,
-      rpc: 0,
+      // A quote reads the payer's balance.
+      rpc: outcome === "quoted" ? 1 : 0,
     });
   },
 );

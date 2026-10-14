@@ -39,7 +39,8 @@ export type PersistedSessionRecord = {
   token: string;
 };
 
-export async function findReusableSession(options: {
+/** Active stored sessions matching the payment, most recently used first. */
+export async function findReusableSessions(options: {
   authorizedSigner: string;
   chainId: number;
   escrowContract: string;
@@ -54,7 +55,7 @@ export async function findReusableSession(options: {
   const payee = normalizeAddress(options.payee);
   const payer = normalizeAddress(options.payer);
   const token = normalizeAddress(options.token);
-  return records.find(
+  return records.filter(
     (record) =>
       record.state === "active" &&
       record.close_requested_at === 0 &&
