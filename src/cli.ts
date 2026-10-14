@@ -23,7 +23,7 @@ import {
   listSessions,
   syncSessions,
 } from "./commands/sessions.js";
-import { fetchServiceList, fetchServices } from "./commands/services.js";
+import { fetchServiceList, fetchServices, staleListFetchedAt } from "./commands/services.js";
 import { handleCompatCommand } from "./compat.js";
 import {
   completionsArgs,
@@ -295,8 +295,10 @@ cli.command("services", {
   alias: globalAlias,
   output: servicesOutput,
   async run({ args, options }) {
-    if (args.serviceId === "list" && !options.search) return fetchServiceList();
+    if (args.serviceId === "list" && !options.search)
+      return fetchServiceList({ refresh: options.refresh });
     return fetchServices({
+      refresh: options.refresh,
       search: options.search,
       serviceId: args.serviceId === "list" ? undefined : args.serviceId,
     });
@@ -341,7 +343,10 @@ function createMcpCommands() {
       async run(context: unknown) {
         const value = await servicesCommand.run(context);
         // MCP structuredContent must be a top-level object. Keep normal CLI output unchanged.
-        if (Array.isArray(value)) return { services: value };
+        if (Array.isArray(value)) {
+          const fetchedAt = staleListFetchedAt(value);
+          return { services: value, ...(fetchedAt ? { stale: true, fetched_at: fetchedAt } : {}) };
+        }
         return value;
       },
     });
@@ -785,9 +790,17 @@ function describeCli() {
         about: "Browse the MPP service directory",
         args: [
           positional("service_id", "Service ID to show details for"),
-          option("search", "--search", "Search by name, description, tags, or category", {
-            valueName: "QUERY",
-          }),
+          option(
+            "search",
+            "--search",
+            "Search by name, id, description, tags, or category; every word must match",
+            { valueName: "QUERY" },
+          ),
+          flag(
+            "refresh",
+            "--refresh",
+            "Fetch the service directory instead of using the cached copy",
+          ),
         ],
       },
       {
