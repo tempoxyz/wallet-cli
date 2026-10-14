@@ -92,8 +92,9 @@ and `--write-meta` adds it as `payment`: the `intent`; the `amount` in token uni
 MACH it debits); `tx_hash` when the server's Payment-Receipt names a transaction; for a session,
 `session` (`open` or `reuse`), `channel_id`, `deposit_locked` and the channel's `cumulative`
 voucher, `null` for a charge; the `payer`; and `chain_id` and `network`. A newly opened session
-also names the `tempo wallet sessions close <channel_id> --network <network>` command that
-withdraws its unspent deposit, on stderr and as `instruction` and `_next`. Structured output
+also names `tempo wallet sessions close <channel_id> --network <network>`, on stderr and as
+`instruction` and `_next`: it requests the close, and rerunning it after the grace period
+withdraws the unspent deposit. Structured output
 (`-j`, `--format`) keeps stderr free of the summary, so pass `--write-meta` to get the receipt.
 The summary follows the delivered body. When a paid response's body then fails to arrive, the
 command exits with `E_PAYMENT_OUTCOME_UNKNOWN` and `--write-meta` keeps the receipt for recovery,

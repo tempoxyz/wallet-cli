@@ -12,8 +12,8 @@ export type PaymentReceipt = ReturnType<typeof paymentReceipt>;
  * The receipt of a paid request, built from what its payment already holds. Amounts are in token
  * units, as `--max-spend` counts them; `symbol` and `decimals` are known only for listed tokens.
  * The session fields are `null` for a charge. A newly opened session adds `instruction` and
- * `_next` naming the close that withdraws its unspent deposit. Strings the server chose are shown
- * with visible escapes.
+ * `_next` naming the command that requests its close; rerun after the close grace period, it
+ * withdraws the unspent deposit. Strings the server chose are shown with visible escapes.
  */
 export function paymentReceipt(payment: {
   intent: string;
@@ -47,7 +47,7 @@ export function paymentReceipt(payment: {
     ...networkFields(network.chainId),
     ...(session && !session.reused && channelId
       ? nextStep(
-          `Session ${channelId} keeps ${deposit} ${listed?.symbol ?? token} locked until it is closed. When you are done with this service, run the next command to close it and withdraw the unspent deposit.`,
+          `Session ${channelId} keeps ${deposit} ${listed?.symbol ?? token} locked until it is closed. When you are done with this service, run the next command to request its close, then follow that command's _next to withdraw the unspent deposit once the close grace period ends.`,
           ["wallet", "sessions", "close", channelId],
           { network },
         )
@@ -60,7 +60,7 @@ export function receiptSummary(receipt: PaymentReceipt) {
   const label = receipt.symbol ?? receipt.token;
   const paid = `Paid ${receipt.amount} ${label}`;
   if (receipt._next)
-    return `${paid} · opened a session with ${receipt.deposit_locked} ${label} locked\nWhen done, close it to withdraw the unspent deposit: ${receipt._next.command}\n`;
+    return `${paid} · opened a session with ${receipt.deposit_locked} ${label} locked\nWhen done, request its close, then rerun after the grace period to withdraw the unspent deposit: ${receipt._next.command}\n`;
   if (receipt.session === "reuse")
     return `${paid} · session ${receipt.channel_id} (${receipt.cumulative} of ${receipt.deposit_locked} ${label} deposit used)\n`;
   return `${paid}${receipt.tx_hash ? ` · tx ${receipt.tx_hash}` : ""}\n`;

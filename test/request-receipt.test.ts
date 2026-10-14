@@ -369,7 +369,7 @@ it.each<{
     stderr: `Paying with key from TEMPO_PRIVATE_KEY (${keyPayer}), not the logged-in wallet\nPaid 0.01 USDC.e\n`,
   },
   {
-    name: "a new session, naming the close that withdraws its deposit",
+    name: "a new session, naming the close that requests its deposit back",
     challenge: offer("session", { suggestedDeposit: "1000000" }),
     receipt: sessionReceipt(10_000n, txHash),
     payment: {
@@ -378,10 +378,11 @@ it.each<{
       session: "open",
       deposit_locked: "1",
       cumulative: "0.01",
-      instruction: `Session ${channelId} keeps 1 USDC.e locked until it is closed. When you are done with this service, run the next command to close it and withdraw the unspent deposit.`,
+      // The close only requests it; the deposit is withdrawn by a rerun after the grace period.
+      instruction: `Session ${channelId} keeps 1 USDC.e locked until it is closed. When you are done with this service, run the next command to request its close, then follow that command's _next to withdraw the unspent deposit once the close grace period ends.`,
       _next: { argv: close, command: close.join(" ") },
     },
-    stderr: `Paid 0.01 USDC.e · opened a session with 1 USDC.e locked\nWhen done, close it to withdraw the unspent deposit: ${close.join(" ")}\n`,
+    stderr: `Paid 0.01 USDC.e · opened a session with 1 USDC.e locked\nWhen done, request its close, then rerun after the grace period to withdraw the unspent deposit: ${close.join(" ")}\n`,
   },
   {
     name: "a reused session's voucher",
