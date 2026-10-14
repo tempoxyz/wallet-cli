@@ -16,6 +16,10 @@ declare module "vitest" {
 // Subprocess tests run the CLIs from one prebuilt bundle instead of transpiling the
 // sources with tsx on every spawn. Options mirror the release bundle in scripts/package.ts.
 export default async function setup(project: TestProject) {
+  // incur keeps skill sync state under XDG_DATA_HOME; an empty directory keeps the developer's
+  // installed skills from adding a "Skills are out of date" notice to test output.
+  const dataHome = await mkdtemp(join(tmpdir(), "wallet-cli-data-"));
+  process.env.XDG_DATA_HOME = dataHome;
   const outdir = await mkdtemp(join(tmpdir(), "wallet-cli-bundle-"));
   const { version } = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
     version: string;
@@ -38,5 +42,8 @@ export default async function setup(project: TestProject) {
     request: join(outdir, "tempo-request.cjs"),
     wallet: join(outdir, "tempo-wallet.cjs"),
   });
-  return () => rm(outdir, { force: true, recursive: true });
+  return async () => {
+    await rm(outdir, { force: true, recursive: true });
+    await rm(dataHome, { force: true, recursive: true });
+  };
 }
