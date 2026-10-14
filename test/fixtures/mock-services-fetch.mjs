@@ -25,8 +25,15 @@ const serviceDirectory = {
   ],
 };
 
-globalThis.fetch = async () =>
-  new Response(JSON.stringify(serviceDirectory), {
+const realFetch = globalThis.fetch;
+
+globalThis.fetch = async (input, init) => {
+  // Device-code login requests reach the test's wallet host.
+  const authUrl = process.env.TEMPO_AUTH_URL;
+  if (authUrl && String(input instanceof Request ? input.url : input).startsWith(authUrl))
+    return await realFetch(input, init);
+  return new Response(JSON.stringify(serviceDirectory), {
     headers: { "content-type": "application/json" },
     status: 200,
   });
+};

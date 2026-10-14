@@ -30,6 +30,8 @@ describe("errorCodes", () => {
     ["E_PAYMENT", 4, false],
     ["E_PAYMENT_OUTCOME_UNKNOWN", 4, false],
     ["E_NOT_AUTHENTICATED", 4, false],
+    ["E_LOGIN_DENIED", 4, false],
+    ["E_LOGIN_EXPIRED", 4, false],
     ["E_AUTH_REFRESH_REQUIRED", 4, false],
     ["E_KEY_EXPIRED", 4, false],
     ["E_LIMIT_EXCEEDED", 4, false],

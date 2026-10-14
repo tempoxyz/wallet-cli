@@ -38,10 +38,9 @@ vi.mock("../src/shared/network.js", async (importOriginal) => ({
   createTempoPublicClient: vi.fn(() => ({ readContract: vi.fn(async () => 0n) })),
 }));
 
-import { loginHandler } from "../src/commands/identity.js";
 import { parseRequestArgs, resolvePaymentIdentity, runRequest } from "../src/commands/request.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
-import { testWallet, useTempHome, walletState } from "./helpers.js";
+import { useTempHome } from "./helpers.js";
 
 afterEach(() => {
   mocks.loadAccounts.mockReset();
@@ -63,53 +62,6 @@ it("request-triggered authorization selects Moderato despite the persisted mainn
   } finally {
     vi.unstubAllEnvs();
   }
-});
-
-it.each([true, false])(
-  "login with browser=%s reuses a payment-capable key without authorizing",
-  async (browser) => {
-    await useTempHome();
-    await saveWalletState(walletState());
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("[]", { status: 200 })),
-    );
-
-    expect(await loginHandler({ network: "mainnet", browser })).toMatchObject({
-      wallet: testWallet.toLowerCase(),
-      key: { chain_id: 4217 },
-    });
-    expect(mocks.loadAccounts).not.toHaveBeenCalled();
-  },
-);
-
-it.each([
-  { failure: "User denied the device-code request.", browser: true },
-  { failure: "Device code expired before authorization completed.", browser: true },
-  { failure: "User denied the device-code request.", browser: false },
-  { failure: "Device code expired before authorization completed.", browser: false },
-])("login can retry $failure with browser=$browser", async ({ failure, browser }) => {
-  await useTempHome();
-  await saveWalletState(walletState());
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => new Response("[]", { status: 200 })),
-  );
-  vi.spyOn(console, "log").mockImplementation(() => undefined);
-  mocks.loadAccounts.mockRejectedValue(new Error(failure));
-
-  const login = () => loginHandler({ network: "testnet", browser });
-
-  await expect(login()).rejects.toThrow(failure);
-  // Drain the SDK's filesystem write queue before reading its persisted selection.
-  await Storage.filesystem().getItem("store");
-  const state = await loadWalletState();
-  expect(state.chainId).toBe(42431);
-  expect(state.accessKeys.map((key) => key.chainId)).toEqual([4217]);
-
-  await expect(login()).rejects.toThrow(failure);
-  expect(mocks.loadAccounts).toHaveBeenCalledTimes(2);
-  await Storage.filesystem().getItem("store");
 });
 
 it.each([

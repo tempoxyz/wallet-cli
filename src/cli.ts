@@ -9,13 +9,13 @@ import {
   completionsHandler,
   debugHandler,
   keysHandler,
-  loginHandler,
   logoutHandler,
   refreshHandler,
   revokeHandler,
   updateAccessKeyHandler,
   whoamiHandler,
 } from "./commands/identity.js";
+import { loginHandler, loginStatusHandler } from "./commands/login.js";
 import { swapTokens } from "./commands/swap.js";
 import { transferCredits, transferMach, transferTokens } from "./commands/transfer.js";
 import { fundAction, runFundingFlow } from "./commands/fund.js";
@@ -40,6 +40,8 @@ import {
   keysOutput,
   loginOptions,
   loginOutput,
+  loginStatusOptions,
+  loginStatusOutput,
   logoutOptions,
   logoutOutput,
   refreshOptions,
@@ -88,15 +90,40 @@ const cli = Cli.create("tempo wallet", {
   update: false,
 });
 
-cli.command("login", {
+// Bare `tempo wallet login` starts a login; `login status` finishes a pending one.
+const login = Cli.create("login", {
   description: "Sign up or log in to your Tempo wallet",
+  globals: cliGlobals,
   options: loginOptions,
   alias: globalAlias,
   output: loginOutput,
-  async run({ globals, options }) {
-    return loginHandler({ ...options, network: globals.network });
+  async run({ agent, error, globals, options }) {
+    const result = await loginHandler({
+      ...options,
+      network: globals.network,
+      // Agents get the code and URL back at once; a terminal waits for approval.
+      wait: options.wait ?? !agent,
+    });
+    return "code" in result ? error(result) : result;
   },
 });
+
+login.command("status", {
+  description: "Wait for a pending login's approval and finish it",
+  options: loginStatusOptions,
+  alias: globalAlias,
+  output: loginStatusOutput,
+  async run({ error, globals, options }) {
+    const result = await loginStatusHandler({
+      network: globals.network,
+      interval: options.interval,
+      maxAttempts: options["max-attempts"],
+    });
+    return "code" in result ? error(result) : result;
+  },
+});
+
+cli.command(login);
 
 cli.command("refresh", {
   description: "Refresh your access key without logging out",
@@ -458,21 +485,29 @@ function withMcpGlobals(commands: Map<string, unknown>): Map<string, unknown> {
   return new Map(
     [...commands].map(([name, entry]) => {
       if (isCommandGroup(entry))
-        return [name, { ...entry, commands: withMcpGlobals(entry.commands) }];
-      if (!isRunnableCommand(entry)) return [name, entry];
-      return [
-        name,
-        {
-          ...entry,
-          options: entry.options ? entry.options.extend(cliGlobals.shape) : cliGlobals,
-          run(context: { options: Record<string, unknown> }) {
-            const { network, ...options } = context.options;
-            return entry.run({ ...context, globals: { network }, options });
+        return [
+          name,
+          {
+            ...entry,
+            // A group root (bare `login`) is a tool of its own.
+            ...(isRunnableCommand(entry.root) ? { root: withMcpGlobal(entry.root) } : {}),
+            commands: withMcpGlobals(entry.commands),
           },
-        },
-      ];
+        ];
+      return [name, isRunnableCommand(entry) ? withMcpGlobal(entry) : entry];
     }),
   );
+}
+
+function withMcpGlobal(entry: RunnableCommand) {
+  return {
+    ...entry,
+    options: entry.options ? entry.options.extend(cliGlobals.shape) : cliGlobals,
+    run(context: { options: Record<string, unknown> }) {
+      const { network, ...options } = context.options;
+      return entry.run({ ...context, globals: { network }, options });
+    },
+  };
 }
 
 function isCommandGroup(
@@ -501,12 +536,14 @@ function bindCommandOptions(args: readonly string[]) {
   ]);
 }
 
-function isRunnableCommand(value: unknown): value is {
+type RunnableCommand = {
   alias?: Record<string, string | undefined> | undefined;
   options?: z.ZodObject | undefined;
   output?: unknown;
   run: (context: unknown) => unknown | Promise<unknown>;
-} {
+};
+
+function isRunnableCommand(value: unknown): value is RunnableCommand {
   return (
     typeof value === "object" && value !== null && "run" in value && typeof value.run === "function"
   );
@@ -717,7 +754,25 @@ function describeCli() {
       {
         name: "login",
         about: "Sign up or log in to your Tempo wallet",
-        args: [flag("no_browser", "--no-browser", "Do not attempt to open a browser")],
+        args: [
+          flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
+          flag("wait", "--wait", "Wait for approval (default in a terminal)"),
+          flag("no_wait", "--no-wait", "Return the code and URL for 'login status' immediately"),
+        ],
+        subcommands: [
+          {
+            name: "status",
+            about: "Wait for a pending login's approval and finish it",
+            args: [
+              option("interval", "--interval", "Seconds between checks", {
+                valueName: "SECONDS",
+              }),
+              option("max_attempts", "--max-attempts", "Checks before giving up", {
+                valueName: "COUNT",
+              }),
+            ],
+          },
+        ],
       },
       {
         name: "refresh",

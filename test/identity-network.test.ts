@@ -30,12 +30,12 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 import {
   debugHandler,
   keysHandler,
-  loginHandler,
   refreshHandler,
   revokeHandler,
   updateAccessKeyHandler,
   whoamiHandler,
 } from "../src/commands/identity.js";
+import { loginHandler } from "../src/commands/login.js";
 import { listSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";
 import { transferCredits, transferTokens } from "../src/commands/transfer.js";
@@ -54,6 +54,7 @@ import {
   walletState,
   writeRawWalletStore,
 } from "./helpers.js";
+import { deviceCodeHost } from "./device-code-host.js";
 
 const mainnet = { chain_id: 4217, network: "tempo" };
 const testnet = { chain_id: 42431, network: "tempo-moderato" };
@@ -81,10 +82,7 @@ afterEach(() => {
   vi.mocked(http).mockClear();
 });
 
-it.each([
-  { name: "login", handler: loginHandler },
-  { name: "refresh", handler: refreshHandler },
-])("$name connects on Moderato when the persisted chain is mainnet", async ({ handler }) => {
+it("refresh connects on Moderato when the persisted chain is mainnet", async () => {
   await useTempHome();
   await saveWalletState(walletState());
   mocks.request.mockImplementation(async ({ params }) => {
@@ -101,7 +99,7 @@ it.each([
     return { accounts: [{ address: testWallet }] };
   });
 
-  expect(await handler({ network: "testnet" })).toMatchObject({ chainId: 42431 });
+  expect(await refreshHandler({ network: "testnet" })).toMatchObject({ chainId: 42431 });
   expect(mocks.request).toHaveBeenCalledWith(
     expect.objectContaining({
       method: "wallet_connect",
@@ -182,21 +180,6 @@ it("whoami honors TEMPO_WALLET_NETWORK when no flag is supplied", async () => {
 });
 
 it.each([
-  { name: "expired", overrides: { expiry: 1 } },
-  { name: "missing signing material", overrides: { privateKey: undefined } },
-  { name: "another wallet", overrides: { access: testWallet2 } },
-])("login does not reuse a cached $name key", async ({ overrides }) => {
-  await useTempHome();
-  await saveWalletState(
-    walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, ...overrides }] }),
-  );
-  mocks.request.mockResolvedValue({ accounts: [{ address: testWallet }] });
-
-  expect(await loginHandler({ network: "mainnet" })).toMatchObject({ chainId: 4217 });
-  expect(mocks.request).toHaveBeenCalledTimes(1);
-});
-
-it.each([
   { store: "a mainnet chain", write: () => saveWalletState(walletState()) },
   { store: "no chain", write: () => writeStoreWithoutChain([walletState().accessKeys[0]!]) },
 ])("login reuses a usable cached key on a store with $store", async ({ write }) => {
@@ -207,29 +190,33 @@ it.each([
     vi.fn(async () => new Response("[]", { status: 200 })),
   );
 
-  expect(await loginHandler({ network: "mainnet" })).toMatchObject({ ready: true });
-  expect(mocks.request).not.toHaveBeenCalled();
+  expect(await loginHandler({ network: "mainnet", wait: false })).toMatchObject({ ready: true });
+  expect(fetch).not.toHaveBeenCalledWith(
+    expect.stringContaining("/api/auth/device/"),
+    expect.anything(),
+  );
 });
 
-it("whoami stays on the network chosen at login", async () => {
+it.each([
+  { stored: "no wallet", write: async () => undefined, keys: [42431] },
+  { stored: "a mainnet wallet", write: () => saveWalletState(walletState()), keys: [42431, 4217] },
+])("whoami stays on the network chosen at login over $stored", async ({ write, keys }) => {
   await useTempHome();
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => new Response("[]", { status: 200 })),
-  );
-  mocks.request.mockImplementation(async ({ params }) => {
-    await saveWalletState(
-      walletState({ chainId: Number(params[0].chainId), accessKeys: [testnetKey] }),
-    );
-    return { accounts: [{ address: testWallet }] };
-  });
+  await write();
+  const host = deviceCodeHost(() => "approve");
+  vi.stubGlobal("fetch", vi.fn(host.fetch));
 
-  await loginHandler({ network: "testnet" });
+  await loginHandler({ network: "testnet", browser: false, wait: true });
 
+  const key = host.registrations[0]!.message.payload[0]!.params[0];
+  expect(key.chainId).toBe("0xa5bf");
+  const state = await loadWalletState();
+  expect(state.chainId).toBe(42431);
+  expect(state.accessKeys.map((accessKey) => accessKey.chainId)).toEqual(keys);
   expect(await whoamiHandler({})).toMatchObject({
     ready: true,
     ...testnet,
-    key: { address: testAccessKey2.toLowerCase(), ...testnet },
+    key: { address: key.capabilities.authorizeAccessKey.address.toLowerCase(), ...testnet },
   });
 });
 

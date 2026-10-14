@@ -48,6 +48,10 @@ tempo wallet login
 # Remote-host login when your browser is on another device
 tempo wallet login --no-browser
 
+# Agent login in two steps: get the code and URL, then wait for approval
+tempo wallet login --no-browser --format json
+tempo wallet login status --interval 5 --format json
+
 # Check wallet status
 tempo wallet whoami
 
@@ -63,6 +67,8 @@ tempo wallet fund
 # Discover available paid services
 tempo wallet services --search ai
 ```
+
+`tempo wallet login` uses the wallet app's device code. In a terminal it prints the code and URL to stderr and waits for approval until the code expires. An agent run (MCP, `--format`, or output that is not a terminal) returns at once with `status: "pending"`, `verification_url`, `user_code`, `expires_at`, and a `_next` naming `tempo wallet login status`; `--wait` and `--no-wait` choose either behavior. The pending login, including the access key it asks the wallet to authorize, is kept in `~/.tempo/wallet/pending-login.json` (mode 0600) so `login status` can finish it from another process, and a new `login` replaces it. `login status` checks every `--interval` seconds (default: the wallet's interval) until the wallet approves, then stores the account and key and returns what a blocking `login` returns. A denied or expired code fails with `E_LOGIN_DENIED` or `E_LOGIN_EXPIRED` (exit 4) and a `cta` naming `tempo wallet login`; `--max-attempts` checks that all come back pending fail with retryable `E_POLL_TIMEOUT`, and an unreachable or failing wallet (a transport error or an HTTP status other than 200 or 400) with retryable `E_NETWORK`, each with the same `login status` as its `cta` and the login kept. Without a pending login, `login status` fails with `E_USAGE` naming `tempo wallet login`. `tempo wallet logout` cancels a pending login, and a `login status` already waiting when a new `login` or `logout` replaces its code stops with `E_USAGE` and discards any late approval, leaving the newer login in place.
 
 Token arguments (`swap`, `transfer`, `--fee-token`, `keys update --token`, and `tempo request --payment-token`) take a full 0x address or a symbol that viem lists for the selected network, matched case-insensitively; a bridged token also answers to its symbol without `.e` (`USDC` is `USDC.e`). An unknown symbol fails with `E_USAGE` and lists the network's symbols. Output and `_next` continuations always carry the resolved address.
 
@@ -145,7 +151,7 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 
 `tempo wallet sessions close` requests the close on-chain; the deposit is withdrawn by rerunning it, or with `--finalize`, once the grace period ends, and `--cooperative` closes at once through the session's server. It preserves its per-session result summary and exits with status 1 if any close failed. A pending close awaiting the grace period is successful initiation, so pending-only results still exit 0; dry runs also exit 0. A local record is removed only once the session's chain shows the close. A channel the escrow does not hold is reported as `not_found` (unless it is a v2 session whose close was requested, which the cleared channel shows closed), and a cooperative close the chain does not show yet as `requested`; both keep the record, and a `requested` session is not reused for new payments. A target whose sessions are on another network is refused with `E_USAGE` and the command to rerun with that `--network`, after the `tempo wallet login` for that network when the wallet is logged in on another one. Close transactions are sent only on the chain the wallet is logged in on, and a reverted one keeps the record.
 
-Results with a follow-up step include `instruction` and `_next`. `swap`, `transfer`, and `revoke` dry runs point at the command that submits them, and the swap command pins the reviewed `--min-amount-out` (or `--max-amount-in` with `--exact-out`); a pending `sessions close` points at the withdrawal and sets `poll_interval_seconds` to the remaining grace period; `keys update` and a fresh `login` point at the command that confirms the result. `_next.argv` is authoritative and always ends with `--network` set to the network the command resolved, so it targets the same chain wherever it runs; `_next.command` is the same argv quoted for a POSIX shell.
+Results with a follow-up step include `instruction` and `_next`. `swap`, `transfer`, and `revoke` dry runs point at the command that submits them, and the swap command pins the reviewed `--min-amount-out` (or `--max-amount-in` with `--exact-out`); a pending `sessions close` points at the withdrawal and sets `poll_interval_seconds` to the remaining grace period; a pending agent `login` points at `login status` with `until: '.status != "pending"'` and `poll_interval_seconds`; `keys update` and a finished `login` or `login status` point at the command that confirms the result. `_next.argv` is authoritative and always ends with `--network` set to the network the command resolved, so it targets the same chain wherever it runs; `_next.command` is the same argv quoted for a POSIX shell.
 
 `transfer` (token and `--mach` payments), `swap`, `keys update`, `revoke`, and `sessions close`, dry runs included, first check for a logged-in wallet on the resolved network; without one they exit 4 with `E_NOT_AUTHENTICATED` and a `cta` naming `tempo wallet login` with that `--network`. `transfer --mach`, and `transfer` and `swap` run by an agent (MCP, `--format`, or output that is not a terminal), also need a usable access key; otherwise they exit 4 with `E_KEY_EXPIRED` or `E_AUTH_REFRESH_REQUIRED` and a `cta` naming `tempo wallet refresh` with that `--network`. An interactive `transfer` or `swap` without one asks for approval in the wallet app instead. `keys update`, `revoke`, and `sessions close` need only the login, not a usable key. Without an access key argument, `keys update` updates the only key stored for the wallet and network, and fails with `E_USAGE` listing the keys when there are several. `transfer --credits` and `transfer --mach` paid by `TEMPO_PRIVATE_KEY` skip the check.
 
@@ -159,7 +165,7 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 
 `tempo wallet` includes:
 
-- `login`, `logout`, `refresh`, `whoami`, `keys`
+- `login`, `login status`, `logout`, `refresh`, `whoami`, `keys`
 - `fund`
 - `transfer`
 - `swap`

@@ -23,7 +23,8 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
   createProvider: vi.fn(() => ({ request: mocks.request })),
 }));
 
-import { loginHandler, revokeHandler, updateAccessKeyHandler } from "../src/commands/identity.js";
+import { revokeHandler, updateAccessKeyHandler } from "../src/commands/identity.js";
+import { loginHandler } from "../src/commands/login.js";
 import { closeSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";
 import { transferMach, transferTokens } from "../src/commands/transfer.js";
@@ -46,6 +47,7 @@ import {
   walletState,
   writeWalletState,
 } from "./helpers.js";
+import { deviceCodeHost } from "./device-code-host.js";
 
 const execFileAsync = promisify(execFile);
 const recipient = "0x1111111111111111111111111111111111111111";
@@ -58,6 +60,7 @@ const closeRequestedAt = { [channelId]: now - 100, [otherChannelId]: now - 300 }
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   mocks.readContract.mockReset();
   mocks.request.mockReset();
 });
@@ -257,11 +260,22 @@ const continuations: {
     argv: ["wallet", "keys", "list"],
   },
   {
+    name: "a pending agent login waits for approval with login status",
+    run: async ({ option, chain }) => {
+      await writeWalletState(stateFor(chain, { accessKeys: [] }));
+      vi.stubGlobal("fetch", deviceCodeHost(() => "approve", { interval: 5 }).fetch);
+      return loginHandler({ network: option, browser: false, wait: false });
+    },
+    argv: ["wallet", "login", "status", "--interval", "5"],
+    until: '.status != "pending"',
+    poll_interval_seconds: 5,
+  },
+  {
     name: "fresh login confirms readiness with whoami",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain, { accessKeys: [] }));
-      mocks.request.mockResolvedValue({ accounts: [{ address: testWallet }] });
-      return loginHandler({ network: option });
+      vi.stubGlobal("fetch", deviceCodeHost(() => "approve").fetch);
+      return loginHandler({ network: option, browser: false, wait: true });
     },
     argv: ["wallet", "whoami"],
   },

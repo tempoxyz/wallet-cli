@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cliBundle } from "./cli-bundle.js";
+import { deviceCodeHost } from "./device-code-host.js";
 import { testWallet, usdc, useTempHome, walletState, writeWalletState } from "./helpers.js";
 
 const root = resolve(import.meta.dirname, "..");
@@ -80,12 +81,49 @@ describe("MCP tools", () => {
     );
   });
 
+  it("returns the login code and URL as the tool result, then finishes in a later call", async () => {
+    const host = deviceCodeHost((poll) => (poll < 2 ? "pending" : "approve"));
+    const server = await host.listen();
+    vi.stubEnv("TEMPO_AUTH_URL", server.url);
+    try {
+      const login = await mcpCall({
+        name: "login",
+        arguments: { network: "testnet", browser: false },
+      });
+      expect(login.result.isError).not.toBe(true);
+      expect(JSON.parse(firstToolText(login))).toMatchObject({
+        status: "pending",
+        verification_url: `${server.url}/api/auth/device/verify?user_code=ABCDEFG1`,
+        user_code: "ABCD-EFG1",
+        _next: { command: "tempo wallet login status --interval 1 --network testnet" },
+      });
+      expect(host.polls).toEqual([]);
+
+      const status = await mcpCall({ name: "login_status", arguments: { network: "testnet" } });
+      expect(status.result.structuredContent).toMatchObject({
+        accounts: [testWallet],
+        chainId: 42431,
+      });
+      expect(host.polls).toHaveLength(2);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("exposes access key commands as nested tools", async () => {
     const response = await mcpRequest<{ tools: { name: string }[] }>("tools/list", {});
 
     expect(response.error).toBeUndefined();
     const names = response.result.tools.map((tool) => tool.name);
-    expect(names).toEqual(expect.arrayContaining(["keys_list", "keys_update", "sessions_list"]));
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "keys_list",
+        "keys_update",
+        "login",
+        "login_status",
+        "sessions_list",
+      ]),
+    );
     expect(names).not.toContain("keys");
     expect(names).not.toContain("sessions");
   });

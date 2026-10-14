@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+
+import { z } from "incur";
 
 import { getArray, getRecord } from "../shared/utils.js";
 
@@ -186,6 +188,77 @@ export function walletStorePath() {
   return join(homedir(), ".tempo", "wallet", "store.json");
 }
 
+const pendingLoginSchema = z.object({
+  network: z.enum(["mainnet", "testnet"]),
+  /** The wallet's device-code `/register` response. */
+  registration: z.object({
+    device_code: z.string(),
+    user_code: z.string(),
+    verification_uri: z.string(),
+    verification_uri_complete: z.string().optional(),
+    interval: z.number().optional(),
+  }),
+  /** PKCE verifier that `/token` polls for the device code must present. */
+  codeVerifier: z.string(),
+  /** Keystore handle and public key of the access key the wallet is asked to authorize. */
+  accessKey: z.object({
+    handle: z.looseObject({ kind: z.string() }),
+    publicKey: z.templateLiteral(["0x", z.string()]),
+  }),
+  /** Unix time in seconds when the device code expires. */
+  expiresAt: z.number(),
+});
+
+/** A device-code login that `tempo wallet login` started and `login status` can finish. */
+export type PendingLogin = z.infer<typeof pendingLoginSchema>;
+
+/** Validates a pending login, keeping only the fields `login status` uses. */
+export function parsePendingLogin(value: unknown): PendingLogin {
+  return pendingLoginSchema.parse(value);
+}
+
+export function pendingLoginPath() {
+  return join(homedir(), ".tempo", "wallet", "pending-login.json");
+}
+
+/** The pending login, or `undefined` when there is none or the file is not a valid one. */
+export async function loadPendingLogin(): Promise<PendingLogin | undefined> {
+  let text: string;
+  try {
+    text = await readFile(pendingLoginPath(), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  try {
+    return parsePendingLogin(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Replaces any pending login. The file holds the access key, so only the owner can read it. */
+export async function savePendingLogin(pending: PendingLogin) {
+  const path = pendingLoginPath();
+  await ensurePrivateWalletDirectory(path);
+  await writePrivateFile(path, JSON.stringify(pending, null, 2));
+}
+
+/**
+ * Removes the pending login. With `deviceCode`, removes it only while it is still that login,
+ * so a process finishing an older login leaves a newer one in place.
+ */
+export async function clearPendingLogin(deviceCode?: string | undefined) {
+  if (
+    deviceCode !== undefined &&
+    (await loadPendingLogin())?.registration.device_code !== deviceCode
+  )
+    return;
+  await unlink(pendingLoginPath()).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+}
+
 export function emptyWalletState(): WalletState {
   return {
     accounts: [],
@@ -336,7 +409,7 @@ async function ensurePrivateWalletDirectory(path: string) {
 async function writePrivateFile(path: string, contents: string) {
   const tempPath = join(
     dirname(path),
-    `.store.json.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
+    `.${basename(path)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
   try {
     await writeFile(tempPath, contents, { mode: privateFileMode });

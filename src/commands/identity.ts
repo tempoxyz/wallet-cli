@@ -38,6 +38,7 @@ import {
 import { supportedShells } from "../completions.js";
 import { connect, createProvider, settleWalletStore } from "../provider.js";
 import {
+  clearPendingLogin,
   emptyWalletState,
   loadWalletState,
   saveWalletState,
@@ -50,27 +51,6 @@ import {
 } from "../wallet/access-key.js";
 import { queryMachBalance } from "../shared/mach.js";
 import { queryCreditBalance, warnCreditsDeprecated } from "./credits.js";
-
-export async function loginHandler(options: {
-  network?: string | undefined;
-  browser?: boolean | undefined;
-}) {
-  const state = await loadWalletState();
-  const network = await resolveNetwork(options.network, state);
-  const cached = await cachedLoginOutput(state, network);
-  if (cached) return cached;
-
-  const provider = createProvider({ network, noBrowser: options.browser === false });
-  const result = await connect(provider, network);
-
-  return {
-    accounts: result.accounts.map((account) => account.address),
-    chainId: network.chainId,
-    ...nextStep("Run the next command to confirm the wallet is ready.", ["wallet", "whoami"], {
-      network,
-    }),
-  };
-}
 
 /** Whoami output when the active wallet already has a usable access key on `network`. */
 export async function cachedLoginOutput(state: WalletState, network: Network) {
@@ -118,6 +98,8 @@ export async function logoutHandler() {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   await saveWalletState(emptyWalletState());
+  // A pending login must not bring the wallet back after logout.
+  await clearPendingLogin();
   return {
     logged_in: Boolean(activeAccount),
     disconnected: Boolean(activeAccount),
