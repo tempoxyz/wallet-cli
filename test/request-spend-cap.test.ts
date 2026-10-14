@@ -5,7 +5,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { Channel as TempoChannel } from "viem/tempo";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { runRequest } from "../src/commands/request.js";
+import { MaxSpendExceededError, runRequest } from "../src/commands/request.js";
 import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
 import { testPrivateKey, useTempHome } from "./helpers.js";
 
@@ -275,6 +275,15 @@ it.each([
   },
 );
 
+const topUpProblem = (requiredTopUp: string) =>
+  JSON.stringify({ title: "Insufficient deposit", requiredTopUp });
+
+const topUpRefused = (deposit: string, max: string) => ({
+  code: "E_LIMIT_EXCEEDED",
+  exitCode: 4,
+  message: `Session top-up refused: the deposit would reach ${deposit}, above the spending cap (max=${max}). The voucher for this request was already sent; check the session with 'tempo wallet sessions list --network mainnet' before retrying.`,
+});
+
 it.each([
   {
     name: "a voucher reaching the default cap",
@@ -293,20 +302,42 @@ it.each([
     args: ["--max-spend", "11"],
     signed: [{ action: "voucher", cumulativeAmountRaw: "10500000" }],
   },
+  // The voucher is signed before the server asks for more deposit; the top-up never is, and the
+  // refusal suggests no rerun, which would pay for the call again.
   {
     name: "a top-up past the default cap",
     deposit: 5_000_000n,
     cumulative: 4_500_000n,
     paidStatus: 402,
-    paidBody: JSON.stringify({ title: "Insufficient deposit", requiredTopUp: "6000000" }),
-    refused: refused("11"),
-    // The voucher is signed before the server asks for more deposit; the top-up never is.
+    paidBody: topUpProblem("6000000"),
+    refused: topUpRefused("11", "10 (default)"),
+    signed: [{ action: "voucher", cumulativeAmountRaw: "5500000" }],
+  },
+  {
+    name: "a top-up past the default cap from a stale stored deposit",
+    deposit: 1_000_000n,
+    onChainDeposit: 5_000_000n,
+    cumulative: 900_000n,
+    paidStatus: 402,
+    paidBody: topUpProblem("6000000"),
+    refused: topUpRefused("11", "10 (default)"),
+    signed: [{ action: "voucher", cumulativeAmountRaw: "1900000" }],
+  },
+  {
+    name: "a top-up past --max-spend",
+    deposit: 5_000_000n,
+    cumulative: 4_500_000n,
+    args: ["--max-spend", "8"],
+    paidStatus: 402,
+    paidBody: topUpProblem("4000000"),
+    refused: topUpRefused("9", "8"),
     signed: [{ action: "voucher", cumulativeAmountRaw: "5500000" }],
   },
 ])(
   "caps $name on a reused session",
   async ({
     deposit = 10_000_000n,
+    onChainDeposit = deposit,
     cumulative,
     args = [],
     paidStatus,
@@ -315,7 +346,7 @@ it.each([
     signed,
   }) => {
     await useTempHome();
-    onChain.deposit = deposit;
+    onChain.deposit = onChainDeposit;
     const { origin } = await service({
       intent: "session",
       amount: "1000000",
@@ -349,8 +380,12 @@ it.each([
     });
     const request = run(args, `${origin}/paid`);
 
-    if (refused) await expect(request).rejects.toMatchObject(refused);
-    else await expect(request).resolves.toBe("paid");
+    if (refused) {
+      const error = await request.catch((caught: unknown) => caught);
+      expect(error).toMatchObject(refused);
+      // Only a refusal before the voucher is sent suggests a rerun with a higher cap.
+      expect(error instanceof MaxSpendExceededError).toBe(signed.length === 0);
+    } else await expect(request).resolves.toBe("paid");
     expect(credentialOptions).toMatchObject(signed);
     expect(credentialOptions).toHaveLength(signed.length);
     if (signed.length === 0)

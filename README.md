@@ -91,7 +91,9 @@ either, the cap is 10 (about $10 in stablecoins). An offer above the cap is refu
 credentials (`--private-key`, `--bearer`, `--user`, proxy credentials, and headers such as
 `Authorization` or `Cookie`) as `<redacted>`. A session deposit suggested
 above the cap is lowered to the cap. For reusable sessions, execution also checks cumulative
-spending and top-ups against the cap. Invalid amounts fail before the HTTP request. The cap
+spending and top-ups against the cap. A top-up is refused after the request's voucher was sent,
+so instead of a rerun it points at `tempo wallet sessions list`. Invalid amounts fail before
+the HTTP request. The cap
 cannot be disabled; pass a larger `--max-spend` instead.
 Capped recurring subscriptions are rejected because a per-period authorization cannot enforce
 a cumulative cap, so the default cap does not apply to them.

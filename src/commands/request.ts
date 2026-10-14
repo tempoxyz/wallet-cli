@@ -64,6 +64,7 @@ import {
   rpcUrl,
   type Network,
 } from "../shared/network.js";
+import { continuationCommand } from "../shared/next.js";
 import { listedSymbol, resolveTokenAddress } from "../shared/tokens.js";
 import {
   escapeInvisible,
@@ -1319,7 +1320,8 @@ async function reusableSessionRecord(
     await deleteSessionRecord(record.channel_id);
     return undefined;
   }
-  return record;
+  // The stored deposit can lag the chain, e.g. when a top-up landed but its record update failed.
+  return { ...record, deposit: onChain.deposit };
 }
 
 export async function isSessionInvalidationResponse(response: Response) {
@@ -1360,7 +1362,14 @@ async function tryTopUpAndRetry(options: {
     .catch(() => "");
   const additionalDeposit = topUpAmountFromProblem(body, options.record, options.signedCumulative);
   if (additionalDeposit <= 0n) return undefined;
-  assertWithinMaxSpend(options.record.deposit + additionalDeposit, options.options);
+  const deposit = options.record.deposit + additionalDeposit;
+  // This request's voucher was already sent, so a rerun with a higher cap would pay for the call
+  // again; the refusal points at the session instead of suggesting one.
+  if (deposit > parseUnits(spendCap(options.options), 6))
+    throw walletError({
+      code: "E_LIMIT_EXCEEDED",
+      message: `Session top-up refused: the deposit would reach ${formatTokenAmount(deposit)}, above the spending cap (max=${spendCapLabel(options.options)}). The voucher for this request was already sent; check the session with '${continuationCommand(["wallet", "sessions", "list"], requestNetwork(options.options))}' before retrying.`,
+    });
 
   const transaction = await buildTopUpTransaction({
     additionalDeposit,
@@ -2124,6 +2133,10 @@ function spendCap(options: RequestOptions) {
   return options.maxSpend ?? defaultMaxSpend;
 }
 
+function spendCapLabel(options: RequestOptions) {
+  return options.maxSpend ?? `${defaultMaxSpend} (default)`;
+}
+
 /** Refuses an amount, deposit, or cumulative voucher (raw token units) above the spending cap. */
 function assertWithinMaxSpend(required: bigint, options: RequestOptions) {
   if (required > parseUnits(spendCap(options), 6))
@@ -2131,7 +2144,7 @@ function assertWithinMaxSpend(required: bigint, options: RequestOptions) {
 }
 
 /**
- * A charge, deposit, top-up, or voucher over the spending cap, refused before it is signed. The
+ * A charge, deposit, or voucher over the spending cap, refused before it is signed. The
  * request CLI suggests rerunning the command with `--max-spend <required>`.
  */
 export class MaxSpendExceededError extends Errors.IncurError {
@@ -2141,13 +2154,12 @@ export class MaxSpendExceededError extends Errors.IncurError {
   readonly network: Network;
 
   constructor(required: bigint, options: RequestOptions) {
-    const max = options.maxSpend ?? `${defaultMaxSpend} (default)`;
     const { exitCode, retryable } = errorCodes.E_LIMIT_EXCEEDED;
     super({
       code: "E_LIMIT_EXCEEDED",
       exitCode,
       retryable,
-      message: `Payment max spend exceeded: max=${max} required=${formatTokenAmount(required)}`,
+      message: `Payment max spend exceeded: max=${spendCapLabel(options)} required=${formatTokenAmount(required)}`,
     });
     this.required = formatTokenAmount(required);
     this.network = requestNetwork(options);
