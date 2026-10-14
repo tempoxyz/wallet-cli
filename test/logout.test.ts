@@ -368,6 +368,7 @@ describe("logout with sessions holding deposits", () => {
 
   it.each<{
     name: string;
+    state?: WalletState;
     record: Partial<PersistedSessionRecord>;
     options?: { network?: string };
     close?: string;
@@ -411,30 +412,43 @@ describe("logout with sessions holding deposits", () => {
     { name: "a finalized session", record: { state: "finalized" } },
     { name: "another wallet's session", record: { payer: testWallet2 } },
     {
-      name: "a testnet session on a mainnet logout",
+      name: "a testnet session on a mainnet logout that removes the wallet",
+      record: { chain_id: testnet.chainId },
+      options: { network: "mainnet" },
+      close: "tempo wallet sessions close --all --network testnet",
+    },
+    {
+      name: "a testnet session on a mainnet logout that keeps the wallet on testnet",
+      state: bothNetworks,
       record: { chain_id: testnet.chainId },
       options: { network: "mainnet" },
     },
-  ])("counts $name", async ({ record, options = {}, close, remaining = "0.008000" }) => {
-    await setup(walletState(), [session(record)]);
-    const context = runContext(true);
+  ])(
+    "counts $name",
+    async ({ state = walletState(), record, options = {}, close, remaining = "0.008000" }) => {
+      await setup(state, [session(record)]);
+      const context = runContext(true);
 
-    const output = await logoutHandler(options, context);
+      const output = await logoutHandler(options, context);
 
-    if (close) {
-      expect(output).toMatchObject({
-        code: "E_USAGE",
-        message: expect.stringMatching(
-          new RegExp(`stored session: ${remaining} .*close them first with '${close}'`),
-        ),
-      });
-      expect((await loadWalletState()).accounts).toEqual([{ address: testWallet }]);
-    } else {
-      expect(context.error).not.toHaveBeenCalled();
-      expect(logoutOutput.parse(output)).toMatchObject({ was_logged_in: true, sessions: [] });
-      expect((await loadWalletState()).accounts).toEqual([]);
-    }
-  });
+      if (close) {
+        expect(output).toMatchObject({
+          code: "E_USAGE",
+          message: expect.stringMatching(
+            new RegExp(`stored session: ${remaining} .*close them first with '${close}'`),
+          ),
+        });
+        expect((await loadWalletState()).accounts).toEqual([{ address: testWallet }]);
+      } else {
+        expect(context.error).not.toHaveBeenCalled();
+        const result = logoutOutput.parse(output);
+        expect(result).toMatchObject({ was_logged_in: true, sessions: [] });
+        expect((await loadWalletState()).accounts).toEqual(
+          result.disconnected ? [] : [{ address: testWallet }],
+        );
+      }
+    },
+  );
 
   it("names each network's close when sessions on several networks hold deposits", async () => {
     await setup(bothNetworks, [

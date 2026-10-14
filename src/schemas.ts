@@ -462,7 +462,9 @@ export const logoutOutput = z.object({
     .describe("Access keys removed from this machine"),
   sessions: z
     .array(sessionOutput)
-    .describe("Stored sessions on the networks logged out that still hold unspent deposits"),
+    .describe(
+      "Stored sessions that still hold unspent deposits, on the networks logged out or, when the wallet is removed, on every network",
+    ),
   message: z.string(),
   ...nextOutputShape,
 });

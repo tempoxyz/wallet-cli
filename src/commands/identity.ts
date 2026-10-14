@@ -184,11 +184,14 @@ export async function logoutHandler(
     );
   }
 
+  const next = loggedOutState(state, network);
+  const disconnected = next.accounts.length === 0;
   // Without sqlite3 the session store cannot be read, which is safe only when there is none.
   const unreadable = `stored sessions in ${channelsDbPath()} could not be checked for unspent deposits because sqlite3 is not installed`;
   const lookup = await fundedSessions({
     payers: [...state.accounts.map((account) => account.address), ...keys.map((key) => key.access)],
-    chainId: network?.chainId,
+    // A logout that removes the wallet leaves its sessions on every network without a login.
+    chainId: disconnected ? undefined : network?.chainId,
   }).catch(async (error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
     return (await access(channelsDbPath()).then(
@@ -268,8 +271,6 @@ export async function logoutHandler(
     await settleWalletStore();
   }
 
-  const next = loggedOutState(state, network);
-  const disconnected = next.accounts.length === 0;
   const message = [
     `logged out of ${where}`,
     disconnected
