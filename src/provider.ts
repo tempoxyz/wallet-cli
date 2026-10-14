@@ -72,3 +72,11 @@ export async function connect(provider: Pick<CoreProvider.Provider, "request">, 
     ],
   });
 }
+
+/**
+ * Waits for the SDK's queued writes to the wallet store. `Storage.filesystem()` runs a file's
+ * reads and writes in order, so this read settles after every write queued before it.
+ */
+export async function settleWalletStore() {
+  await Promise.resolve(Storage.filesystem().getItem("store")).catch(() => undefined);
+}
