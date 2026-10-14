@@ -346,16 +346,21 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
   return result;
 }
 
+export function resolveMaxSpend(value?: string) {
+  const maxSpend = value ?? (process.env.TEMPO_MAX_SPEND?.trim() || undefined);
+  if (maxSpend !== undefined && !/^\d+(?:\.\d{1,6})?$/.test(maxSpend))
+    throw usageError(
+      "--max-spend (or TEMPO_MAX_SPEND) must be a non-negative amount with at most 6 decimal places",
+    );
+  return maxSpend;
+}
+
 function validateRequestOptions(options: RequestOptions) {
   validateUrl(options.url);
   options.network = normalizeNetwork(
     options.network ?? process.env.TEMPO_WALLET_NETWORK ?? "mainnet",
   );
-  options.maxSpend ??= process.env.TEMPO_MAX_SPEND?.trim() || undefined;
-  if (options.maxSpend !== undefined && !/^\d+(?:\.\d{1,6})?$/.test(options.maxSpend))
-    throw usageError(
-      "--max-spend (or TEMPO_MAX_SPEND) must be a non-negative amount with at most 6 decimal places",
-    );
+  options.maxSpend = resolveMaxSpend(options.maxSpend);
   privateKeySigner(options);
   if (options.mach) {
     if (options.paymentToken !== undefined && !isMachPaymentToken(options.paymentToken))
