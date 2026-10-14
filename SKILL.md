@@ -88,11 +88,11 @@ tempo request -t --dry-run -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPO
 tempo request -t --dry-run -X GET <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
-Present the dry-run price and any session `deposit`, and wait for explicit approval before making a paid request, unless the user already supplied a budget that covers it. Pass that budget as `--max-spend` on the dry run too, since the cap changes the deposit a session locks. Then run the matching request without `--dry-run`, with `--max-spend` set to the approved amount or budget, `--payment-intent` to the quote's `intent`, and `--payment-token` to the quote's `token` address (keep `--mach` instead when the quote used it). These refuse a fresh challenge for more, in another token, or with another intent; they do not pin the recipient.
+Present the dry-run price and any session `deposit`, and wait for explicit approval before making a paid request, unless the user already supplied a budget that covers it. Pass that budget as `--max-spend` on the dry run too, since the cap changes the deposit a session locks. Then run the matching request without `--dry-run`, with `--max-spend` set to the approved amount or budget, `--network` to the quote's network (`mainnet` for `chain_id` `4217`, `testnet` for `42431`), `--payment-intent` to the quote's `intent`, and `--payment-token` to the quote's `token` address (keep `--mach` instead when the quote used it). These refuse a fresh challenge for more, on another chain, in another token, or with another intent; they do not pin the recipient.
 
 ```bash
-tempo request -t -X POST --max-spend <APPROVED_AMOUNT> --payment-intent <QUOTED_INTENT> --payment-token <QUOTED_TOKEN> --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
-tempo request -t -X GET --max-spend <APPROVED_AMOUNT> --payment-intent <QUOTED_INTENT> --payment-token <QUOTED_TOKEN> <SERVICE_URL>/<ENDPOINT_PATH>
+tempo request -t -X POST --max-spend <APPROVED_AMOUNT> --network <QUOTED_NETWORK> --payment-intent <QUOTED_INTENT> --payment-token <QUOTED_TOKEN> --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
+tempo request -t -X GET --max-spend <APPROVED_AMOUNT> --network <QUOTED_NETWORK> --payment-intent <QUOTED_INTENT> --payment-token <QUOTED_TOKEN> <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
 - `recurring: true` marks a subscription. The quote does not show its renewal terms and `--max-spend` refuses it, so do not run it; report it to the user, and quote again with `--payment-intent charge` or `session` to look for a one-time or session offer.
