@@ -466,7 +466,7 @@ it.each<{
   expect(JSON.parse(await readFile(meta, "utf8"))).not.toHaveProperty("payment");
 });
 
-it("keeps the receipt in --write-meta when the paid body fails to arrive", async () => {
+it("marks the --write-meta receipt unconfirmed when the paid body fails to arrive", async () => {
   const home = await useTempHome();
   await writeWalletState(walletState());
   const origin = await listen((req, res) => {
@@ -489,6 +489,7 @@ it("keeps the receipt in --write-meta when the paid body fails to arrive", async
   expect(JSON.parse(await readFile(meta, "utf8")).payment).toEqual({
     ...charged,
     tx_hash: txHash,
+    outcome: "unknown",
   });
 });
 

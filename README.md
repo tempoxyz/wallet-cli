@@ -95,8 +95,9 @@ voucher, `null` for a charge; the `payer`; and `chain_id` and `network`. A newly
 also names the `tempo wallet sessions close <channel_id> --network <network>` command that
 withdraws its unspent deposit, on stderr and as `instruction` and `_next`. Structured output
 (`-j`, `--format`) keeps stderr free of the summary, so pass `--write-meta` to get the receipt.
-The summary follows the delivered body, while `--write-meta` is written first, so a paid
-response whose body then fails to arrive keeps its receipt there for recovery. Unpaid requests,
+The summary follows the delivered body. When a paid response's body then fails to arrive, the
+command exits with `E_PAYMENT_OUTCOME_UNKNOWN` and `--write-meta` keeps the receipt for recovery,
+marked `outcome: "unknown"`; a delivered receipt has no `outcome`. Unpaid requests,
 zero-amount proofs, paid requests answered with an HTTP error, and sessions whose server receipt
 cannot be stored report no receipt.
 

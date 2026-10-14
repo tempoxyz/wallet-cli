@@ -604,6 +604,12 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
       );
     if (response.status >= 400) throw httpError(response.status);
   } catch (error) {
+    // The body never fully arrived, so the receipt stays for recovery but is marked unconfirmed.
+    if (receipt && options.writeMeta)
+      await writeMetaFile(options.writeMeta, response, started, privateKeySigner(options), {
+        ...receipt,
+        outcome: "unknown",
+      }).catch(() => undefined);
     if (
       paid &&
       !(
@@ -2307,7 +2313,7 @@ async function writeMetaFile(
   response: Response,
   started: number,
   signer?: ReturnType<typeof privateKeySigner>,
-  payment?: PaymentReceipt,
+  payment?: PaymentReceipt & { outcome?: "unknown" },
 ) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(
