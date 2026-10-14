@@ -753,10 +753,16 @@ export async function revokeHandler(
     network,
     noBrowser: options.browser === false,
   });
-  if (!(await revokeThroughWallet({ provider, readKey, stored, target })))
+  const revoked = await revokeThroughWallet({ provider, readKey, stored, target });
+  // The SDK drops the key from the store once the wallet app returns, even when the chain does
+  // not show it revoked; let that write land, then restore the key from the snapshot.
+  await settleWalletStore();
+  if (!revoked) {
+    if (stored) await saveWalletState(state);
     throw networkError(
       `The wallet app returned, but access key ${output.access_key} is not revoked on ${network.name}, so nothing was removed locally. Rerun the command to retry.`,
     );
+  }
 
   const accessKeys = state.accessKeys.filter((candidate) => !isRevoked(candidate));
   const localKeyRemoved = accessKeys.length !== state.accessKeys.length;

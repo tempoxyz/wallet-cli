@@ -730,7 +730,7 @@ describe("logout --revoke", () => {
     }) => {
       await setup(state);
       await savePendingLogin(pendingLogin("mainnet"));
-      const app = walletApp(chainId);
+      const app = walletApp(chainId, { dropsRevokedKey: true });
       if (request)
         app.request.mockImplementation(async ({ method }: { method: string }) =>
           method === "eth_chainId" ? "0x1079" : await request(),

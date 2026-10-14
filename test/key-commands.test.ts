@@ -47,6 +47,39 @@ const mainnet = { name: "mainnet", chainId: 4217 } as const;
 const testnet = { name: "testnet", chainId: 42431 } as const;
 
 describe("revoke", () => {
+  it.each([
+    {
+      name: "keeps the key when the chain does not show it revoked",
+      status: "published" as const,
+      error: `The wallet app returned, but access key ${testAccessKey} is not revoked on mainnet, so nothing was removed locally. Rerun the command to retry.`,
+      kept: [key],
+    },
+    {
+      name: "removes the key once the chain shows it revoked",
+      status: "revoked" as const,
+      kept: [],
+    },
+  ])("$name, after the SDK drops it from the store", async ({ status, error, kept }) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const app = walletApp(mainnet.chainId, { dropsRevokedKey: true });
+
+    const result = await revokeHandler(
+      await readyWallet(undefined, false),
+      { accessKey: testAccessKey },
+      { yes: true },
+      runContext(true),
+      { createProvider: app.createProvider, readKey: keychain(status) },
+    ).catch((value: unknown) => value);
+
+    expect(app.request).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "wallet_revokeAccessKey" }),
+    );
+    if (error) expect(result).toMatchObject({ code: "E_NETWORK", exitCode: 3, message: error });
+    else expect(result).toMatchObject({ status: "success", local_key_removed: true });
+    expect((await loadWalletState()).accessKeys).toEqual(kept);
+  });
+
   it.each([mainnet, testnet])(
     "revokes a $name key through the wallet app without signing locally",
     async (network) => {
