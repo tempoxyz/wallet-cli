@@ -65,7 +65,7 @@ describe("closing a session from another network", () => {
       network: undefined,
       wallet: mainnet,
       target: channelId,
-      message: `No session for ${channelId} on tempo; it is on tempo-moderato. Rerun with 'tempo wallet sessions close ${channelId} --network testnet'.`,
+      message: `No session for ${channelId} on tempo; it is on tempo-moderato. Rerun with 'tempo wallet sessions close ${channelId}{flags} --network testnet'.`,
     },
     {
       name: "a channel id from --network",
@@ -73,7 +73,7 @@ describe("closing a session from another network", () => {
       network: "testnet",
       wallet: mainnet,
       target: channelId,
-      message: `No session for ${channelId} on tempo-moderato; it is on tempo. Rerun with 'tempo wallet sessions close ${channelId} --network mainnet'.`,
+      message: `No session for ${channelId} on tempo-moderato; it is on tempo. Rerun with 'tempo wallet sessions close ${channelId}{flags} --network mainnet'.`,
     },
     {
       name: "a URL",
@@ -81,7 +81,7 @@ describe("closing a session from another network", () => {
       network: "mainnet",
       wallet: testnet,
       target: `${origin}/v1/chat`,
-      message: `No session for ${origin}/v1/chat on tempo; it is on tempo-moderato. Rerun with 'tempo wallet sessions close ${origin}/v1/chat --network testnet'.`,
+      message: `No session for ${origin}/v1/chat on tempo; it is on tempo-moderato. Rerun with 'tempo wallet sessions close ${origin}/v1/chat{flags} --network testnet'.`,
     },
     {
       name: "a channel id with --finalize",
@@ -90,20 +90,36 @@ describe("closing a session from another network", () => {
       wallet: testnet,
       target: channelId,
       finalize: true,
-      message: `No session for ${channelId} on tempo; it is on tempo-moderato. Rerun with 'tempo wallet sessions close ${channelId} --network testnet'.`,
+      message: `No session for ${channelId} on tempo; it is on tempo-moderato. Rerun with 'tempo wallet sessions close ${channelId}{flags} --network testnet'.`,
+    },
+    {
+      name: "a channel id with --cooperative",
+      chain: testnet,
+      network: "mainnet",
+      wallet: testnet,
+      target: channelId,
+      cooperative: true,
+      message: `No session for ${channelId} on tempo; it is on tempo-moderato. Rerun with 'tempo wallet sessions close ${channelId}{flags} --network testnet'.`,
     },
   ])(
     "refuses $name before any on-chain call and keeps the record",
-    async ({ chain, network, wallet, target, finalize, message }) => {
+    async ({ chain, network, wallet, target, finalize, cooperative, message }) => {
       await writeWalletState(stateFor(wallet));
       await saveSession(channelId, chain);
 
-      for (const close of [closeSessions, dryRunCloseSessions])
-        await expect(close({ finalize, network, target })).rejects.toMatchObject({
+      // The rerun keeps the requested mode, so it performs the same operation on the right network.
+      for (const close of [closeSessions, dryRunCloseSessions]) {
+        const flags = [
+          ...(finalize ? [" --finalize"] : []),
+          ...(cooperative ? [" --cooperative"] : []),
+          ...(close === dryRunCloseSessions ? [" --dry-run"] : []),
+        ].join("");
+        await expect(close({ cooperative, finalize, network, target })).rejects.toMatchObject({
           code: "E_USAGE",
           exitCode: 2,
-          message,
+          message: message.replace("{flags}", flags),
         });
+      }
 
       expect(mocks.readContract).not.toHaveBeenCalled();
       expect(mocks.request).not.toHaveBeenCalled();

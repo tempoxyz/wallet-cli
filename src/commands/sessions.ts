@@ -184,7 +184,7 @@ export async function syncSessions(options: {
 export async function dryRunCloseSessions(options: CloseOptions) {
   validateCloseOptions(options);
   const network = await resolveNetwork(options.network);
-  const targets = await closeTargets(options, network);
+  const targets = await closeTargets(options, network, { dryRun: true });
   return {
     targets: targets.map((record) => {
       if (!record.virtual) return closeTarget(record);
@@ -278,9 +278,17 @@ function validateCloseOptions(options: CloseOptions) {
  * so each one reports why it was or was not withdrawn. Otherwise the selected network is scanned,
  * and `--finalize` keeps only channels whose grace period has ended.
  */
-async function closeTargets(options: CloseOptions, network: Network) {
+async function closeTargets(
+  options: CloseOptions,
+  network: Network,
+  { dryRun = false }: { dryRun?: boolean } = {},
+) {
   if (options.target && !options.all && !options.orphaned)
-    return targetRecords(options.target, await readChannelRecords(), network);
+    return targetRecords(options.target, await readChannelRecords(), network, [
+      ...(options.finalize ? ["--finalize"] : []),
+      ...(options.cooperative ? ["--cooperative"] : []),
+      ...(dryRun ? ["--dry-run"] : []),
+    ]);
 
   const local = (await discoverAndPersistOrphanedChannels(network)).filter(
     (record) => record.chain_id === network.chainId,
@@ -299,7 +307,12 @@ async function closeTargets(options: CloseOptions, network: Network) {
  * another network is refused before any on-chain read, since the selected chain says nothing
  * about a channel whose deposit is locked on another one.
  */
-function targetRecords(target: string, records: ChannelRecord[], network: Network) {
+function targetRecords(
+  target: string,
+  records: ChannelRecord[],
+  network: Network,
+  modeFlags: readonly string[],
+) {
   const channelId = isChannelId(target) ? target.toLowerCase() : undefined;
   const origin = normalizeOrigin(target);
   const matches = records.filter((record) =>
@@ -311,7 +324,8 @@ function targetRecords(target: string, records: ChannelRecord[], network: Networ
   const elsewhere = matches[0];
   if (elsewhere) {
     const rerun = continuationCommand(
-      ["wallet", "sessions", "close", target],
+      // Keep the requested mode so the rerun performs the same operation on the right network.
+      ["wallet", "sessions", "close", target, ...modeFlags],
       parseNetwork(elsewhere.network),
     );
     throw usageError(
