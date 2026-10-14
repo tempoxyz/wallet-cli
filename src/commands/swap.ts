@@ -267,7 +267,7 @@ function defaultDependencies(network: Network): SwapDependencies {
       return Actions.dex.getSellQuote(client, options);
     },
     async submit(options) {
-      const provider = createProvider({ network: options.network });
+      const provider = await createProvider({ network: options.network });
       const receipt = await provider.request({
         method: "eth_sendTransactionSync",
         params: [{ calls: options.calls, feeToken: options.feeToken }],

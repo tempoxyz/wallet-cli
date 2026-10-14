@@ -24,12 +24,14 @@ vi.mock("../src/provider.js", async (importOriginal) => {
   return {
     ...actual,
     createProvider: (options: { network?: string }) =>
-      Provider.create({
-        adapter,
-        storage: Storage.filesystem(),
-        testnet: options.network === "testnet",
-        mpp: { mode: "pull" },
-      }),
+      actual.providerReady(
+        Provider.create({
+          adapter,
+          storage: Storage.filesystem(),
+          testnet: options.network === "testnet",
+          mpp: { mode: "pull" },
+        }),
+      ),
   };
 });
 

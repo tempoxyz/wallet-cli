@@ -55,7 +55,7 @@ vi.mock("viem/tempo", async (importOriginal) => {
 
 vi.mock("../src/provider.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/provider.js")>()),
-  createProvider: vi.fn(() => ({ request: mocks.request })),
+  createProvider: vi.fn(async () => ({ request: mocks.request })),
 }));
 
 import { runRequest } from "../src/commands/request.js";

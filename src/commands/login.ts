@@ -84,7 +84,7 @@ async function startLogin(network: Network) {
     registeredAt?: number;
     codeVerifier?: unknown;
   } = {};
-  const provider = createLoginProvider({
+  const provider = await createLoginProvider({
     network,
     keystore: {
       ...keystore,
@@ -202,7 +202,7 @@ async function pollLogin(pending: PendingLogin, network: Network, options: PollO
     stopped = reason;
     return new StopExchange();
   };
-  const provider = createLoginProvider({
+  const provider = await createLoginProvider({
     network,
     keystore: { ...keystore, createKey: async () => pending.accessKey },
     pollingInterval: options.interval === undefined ? undefined : options.interval * 1000,

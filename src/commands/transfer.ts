@@ -106,7 +106,7 @@ export async function transferTokens(
     };
   }
 
-  const provider = createProvider({ network });
+  const provider = await createProvider({ network });
   const call = Actions.token.transfer.call(provider.getClient() as never, {
     amount,
     token: token.address,
@@ -332,7 +332,7 @@ export async function transferCredits(options: {
     throw usageError("MPP Credits challenge payments require --amount-cents or TEMPO_MAX_SPEND");
 
   const redemption = { wallet, subtotal: { cents: amountCents, currency: "USD" }, transactionData };
-  const provider = createProvider({ network });
+  const provider = await createProvider({ network });
   const auth = (await postCredits("auth-msg", redemption)) as CreditsAuthorization;
   const typedData = validateCreditPermit(auth, {
     wallet,

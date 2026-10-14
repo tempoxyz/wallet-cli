@@ -52,7 +52,7 @@ function walletApp(chainId: number = mainnet.chainId) {
     if (method === "wallet_connect") return { accounts: [] };
     return undefined;
   });
-  return { request, createProvider: vi.fn(() => ({ request })) };
+  return { request, createProvider: vi.fn(async () => ({ request })) };
 }
 
 type KeyStatus = "published" | "revoked" | "missing";
@@ -144,7 +144,7 @@ describe("revoke", () => {
       await useTempHome();
       await writeWalletState(walletState({ chainId: network.chainId }));
 
-      const chainId = await createProvider({ network }).request({ method: "eth_chainId" });
+      const chainId = await (await createProvider({ network })).request({ method: "eth_chainId" });
       await Storage.filesystem().getItem("store");
 
       expect(Number(chainId)).toBe(network.chainId);

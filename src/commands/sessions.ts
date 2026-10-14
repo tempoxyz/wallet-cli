@@ -674,7 +674,7 @@ async function sendSessionManagementTransaction(options: {
       `wallet is logged in on ${networkName(walletChainId)}, not ${networkName(options.record.chain_id)}; log in with '${continuationCommand(["wallet", "login"], options.network)}', then rerun the close`,
     );
 
-  const provider = createProvider({ network: options.network });
+  const provider = await createProvider({ network: options.network });
   const request = buildSessionManagementTransactionRequest(options);
   const receipt = await provider.request({
     method: "eth_sendTransactionSync",

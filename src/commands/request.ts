@@ -1167,7 +1167,7 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
     );
   }
 
-  const provider = createProvider({ network });
+  const provider = await createProvider({ network });
   const providerState = provider as unknown as {
     store: { getState(): { accounts: { address: string }[]; activeAccount: number } };
   };

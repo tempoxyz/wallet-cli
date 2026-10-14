@@ -8,11 +8,14 @@ import { appUrl, type Network } from "./shared/network.js";
 
 export const accessKeyAuthorizationSeconds = 30 * 86_400;
 
-/** The `accounts/cli` provider, with wallet-app requests sent once (see `withoutRetries`). */
-export function createProvider(options: {
+/**
+ * The `accounts/cli` provider, with its wallet store loaded (see `providerReady`) and wallet-app
+ * requests sent once (see `withoutRetries`).
+ */
+export async function createProvider(options: {
   network: Network;
   noBrowser?: boolean | undefined;
-}): CoreProvider.Provider {
+}): Promise<CoreProvider.Provider> {
   const adapter = cli({
     host: deviceCodeUrl(),
     open(url, prompt) {
@@ -22,13 +25,41 @@ export function createProvider(options: {
       if (!options.noBrowser) openExternal(url);
     },
   });
-  return CoreProvider.create({
+  const provider = CoreProvider.create({
     adapter: withoutRetries(adapter),
     // Pull mode is the local-account-friendly MPP path for a CLI.
     mpp: { mode: "pull" },
     storage: Storage.filesystem(),
     testnet: options.network.name === "testnet",
   });
+  return await providerReady(provider);
+}
+
+/**
+ * The provider store's persistence API. `accounts` types its store with zustand middleware types it
+ * does not import, so `CoreProvider.Provider["store"]` is `never` here.
+ */
+type HydratingProvider = {
+  store: { persist: { hasHydrated(): boolean; rehydrate(): Promise<void> | void } };
+};
+
+/**
+ * Resolves with `provider` once its store holds the persisted wallet state.
+ *
+ * The SDK loads its store asynchronously and waits at most 100ms for it before a request, and
+ * `getAccount` reads it without waiting. On a slow machine the provider then has no accounts: it
+ * fails with "No accounts connected." or `Account "0x…" not found.`, `eth_accounts` returns none,
+ * and `wallet_connect` saves the empty store over the stored accounts and keys. Call this on every
+ * provider before using it.
+ *
+ * It starts a fresh read instead of waiting on the first: the store drops a failed read without
+ * finishing hydration, so that wait would never settle, while `rehydrate` settles either way.
+ */
+export async function providerReady<provider extends HydratingProvider>(
+  provider: provider,
+): Promise<provider> {
+  if (!provider.store.persist.hasHydrated()) await provider.store.persist.rehydrate();
+  return provider;
 }
 
 /**
@@ -36,7 +67,7 @@ export function createProvider(options: {
  * device-code transport's `fetch` and the p256 access-key keystore, so a login can register a
  * device code in one process and finish polling it in another. The caller shows the prompt.
  */
-export function createLoginProvider(options: {
+export async function createLoginProvider(options: {
   network: Network;
   fetch: typeof globalThis.fetch;
   keystore: Keystore.Keystore;
@@ -44,7 +75,7 @@ export function createLoginProvider(options: {
   pollingInterval?: number | undefined;
   /** Milliseconds to wait for approval; defaults to the SDK's five minutes. */
   timeout?: number | undefined;
-}): CoreProvider.Provider {
+}): Promise<CoreProvider.Provider> {
   const adapter = deviceCode({
     fetch: options.fetch,
     // The same keystores `accounts/cli` uses: keys must survive the JSON wallet store.
@@ -57,12 +88,14 @@ export function createLoginProvider(options: {
     ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
     url: deviceCodeUrl(),
   });
-  return CoreProvider.create({
-    adapter: withoutRetries(adapter),
-    mpp: { mode: "pull" },
-    storage: Storage.filesystem(),
-    testnet: options.network.name === "testnet",
-  });
+  return await providerReady(
+    CoreProvider.create({
+      adapter: withoutRetries(adapter),
+      mpp: { mode: "pull" },
+      storage: Storage.filesystem(),
+      testnet: options.network.name === "testnet",
+    }),
+  );
 }
 
 function deviceCodeUrl() {
@@ -113,7 +146,7 @@ export async function connect(provider: Pick<CoreProvider.Provider, "request">, 
     });
   } finally {
     // Wait for the SDK to save the wallet store, so later reads in this process see the result.
-    await Promise.resolve(Storage.filesystem().getItem("store")).catch(() => undefined);
+    await settleWalletStore();
   }
 }
 

@@ -1149,7 +1149,7 @@ limit = "100000000"
     await useTempHome();
     await writeWalletState(walletState());
     const request = vi.fn().mockResolvedValue(undefined);
-    const createProvider = vi.fn(() => ({ request }));
+    const createProvider = vi.fn(async () => ({ request }));
 
     const result = await updateAccessKeyHandler(
       await readyWallet(),
@@ -1204,7 +1204,7 @@ limit = "100000000"
       }),
     );
     const request = vi.fn().mockResolvedValue(undefined);
-    await updateAccessKeyHandler(await readyWallet(), { limit: "250", token: usdc }, () => ({
+    await updateAccessKeyHandler(await readyWallet(), { limit: "250", token: usdc }, async () => ({
       request,
     }));
     const state = await loadWalletState();
@@ -1228,7 +1228,7 @@ limit = "100000000"
     };
     await writeWalletState(walletState({ accessKeys: [key], chainId: 42431 }));
     const request = vi.fn().mockResolvedValue(undefined);
-    const createProvider = vi.fn(() => ({ request }));
+    const createProvider = vi.fn(async () => ({ request }));
 
     await updateAccessKeyHandler(await readyWallet(), { limit: "250" }, createProvider);
 
@@ -1244,7 +1244,7 @@ limit = "100000000"
     const request = vi.fn().mockRejectedValue(new Error("rejected"));
 
     await expect(
-      updateAccessKeyHandler(await readyWallet(), { limit: "250" }, () => ({ request })),
+      updateAccessKeyHandler(await readyWallet(), { limit: "250" }, async () => ({ request })),
     ).rejects.toThrow("rejected");
     expect((await loadWalletState()).accessKeys[0]?.limits).toEqual([
       { token: usdc, limit: "100000000#__bigint" },
@@ -1264,7 +1264,7 @@ limit = "100000000"
     const result = await updateAccessKeyHandler(
       await readyWallet(undefined, false),
       { accessKey, limit: "250" },
-      () => ({ request }),
+      async () => ({ request }),
     );
 
     expect(request).toHaveBeenCalledWith({
@@ -1296,7 +1296,7 @@ limit = "100000000"
     const result = await updateAccessKeyHandler(
       await readyWallet(undefined, false),
       { limit: "0" },
-      () => ({ request }),
+      async () => ({ request }),
     );
 
     expect(request).toHaveBeenCalledWith({
@@ -1396,7 +1396,7 @@ limit = "100000000"
       const result = await updateAccessKeyHandler(
         await readyWallet(),
         { limit, token },
-        () => ({ request: vi.fn() }),
+        async () => ({ request: vi.fn() }),
         updateAccessKey,
       );
 
@@ -1422,7 +1422,7 @@ limit = "100000000"
       const result = await updateAccessKeyHandler(
         await readyWallet(network),
         { limit: "5", token: input },
-        () => ({ request: vi.fn() }),
+        async () => ({ request: vi.fn() }),
         updateAccessKey,
       );
 
