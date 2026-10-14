@@ -43,8 +43,18 @@ describe("generated CLI metadata", () => {
     expect(output).toContain("Usage: tempo wallet swap <amount> <tokenIn> <tokenOut> [options]");
     expect(output).toContain("--exact-out");
     expect(output).toContain("--slippage-bps <number>");
+    expect(output).toContain("--min-amount-out <string>");
+    expect(output).toContain("--max-amount-in <string>");
     expect(output).toContain("--dry-run");
     expect(output).toContain("--yes");
+
+    const description = JSON.parse(await walletCli(["--describe"])) as {
+      subcommands: { name: string; args?: { long?: string | undefined }[] | undefined }[];
+    };
+    const swap = description.subcommands.find((command) => command.name === "swap");
+    expect(swap?.args?.map((arg) => arg.long)).toEqual(
+      expect.arrayContaining(["--min-amount-out", "--max-amount-in"]),
+    );
   });
 
   it("documents request payment intent selection", async () => {
@@ -121,6 +131,20 @@ describe("generated CLI metadata", () => {
     expect(schema.options.properties).toHaveProperty("amount");
     expect(schema.options.properties).toHaveProperty("wait");
     expect(schema.output.properties.status.enum).toEqual(["success", "pending"]);
+  });
+
+  it.each([
+    { command: ["swap"] },
+    { command: ["transfer"] },
+    { command: ["revoke"] },
+    { command: ["keys", "update"] },
+    { command: ["login"] },
+    { command: ["sessions", "close"] },
+  ])("advertises next-step fields in the $command output schema", async ({ command }) => {
+    const schema = JSON.parse(await walletCli([...command, "--schema", "--format", "json"])) as {
+      output: unknown;
+    };
+    expect(hasNextStep(schema.output)).toBe(true);
   });
 
   it("returns schema for the direct services command", async () => {
@@ -271,6 +295,15 @@ describe("generated CLI metadata", () => {
     expect(schema.output.properties.sessions.items.properties.status.type).toBe("string");
   });
 });
+
+function hasNextStep(schema: unknown): boolean {
+  const { anyOf, properties } = schema as {
+    anyOf?: unknown[] | undefined;
+    properties?: Record<string, { properties?: Record<string, unknown> }> | undefined;
+  };
+  if (properties?.instruction && properties._next?.properties?.argv) return true;
+  return (anyOf ?? []).some(hasNextStep);
+}
 
 async function walletCli(args: string[]) {
   return bundledCli(cliBundle("wallet"), args);

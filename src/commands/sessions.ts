@@ -44,6 +44,7 @@ import {
   sanitizeText,
   stringValue,
 } from "../shared/utils.js";
+import { continuationCommand, nextStep } from "../shared/next.js";
 import { createProvider } from "../provider.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -255,7 +256,7 @@ export async function closeSessions(options: {
         closeOneSession(target, { finalize: true, network: options.network }),
         target,
       );
-    return summary;
+    return withPendingCloseNextStep(summary, options.network);
   }
 
   for (const target of targets)
@@ -264,7 +265,46 @@ export async function closeSessions(options: {
       closeOneSession(target, { cooperative: options.cooperative, network: options.network }),
       target,
     );
-  return summary;
+  return withPendingCloseNextStep(summary, options.network);
+}
+
+/**
+ * Points pending closes at a rerun of the same scope, which reports them as pending without a
+ * transaction until the grace period ends and then withdraws exactly those channels.
+ */
+function withPendingCloseNextStep(summary: CloseSummaryOutput, network: string | undefined) {
+  const pending = summary.results.filter((result) => result.status === "pending");
+  if (pending.length === 0) return summary;
+  const waitSecs = Math.max(...pending.map((result) => result.remaining_secs ?? 0));
+  const readyAt = formatUnixTimestamp(nowSeconds() + waitSecs);
+  const single = pending.length === 1 ? pending[0] : undefined;
+  const status = single
+    ? `Close pending for channel ${single.channel_id}; its deposit can be withdrawn after ${readyAt} (in ${waitSecs}s).`
+    : `${pending.length} session closes are pending; their deposits can be withdrawn after ${readyAt} (in ${waitSecs}s).`;
+  // Rerunning a broad scope (--all, an origin, or a state filter) could pick up channels opened
+  // or closed since, so several pending channels are named one by one instead.
+  if (!single)
+    return {
+      ...summary,
+      instruction: `${status} Then withdraw each with ${pending
+        .map(
+          (result) =>
+            `'${continuationCommand(["wallet", "sessions", "close", result.channel_id], network)}'`,
+        )
+        .join(", ")}.`,
+    };
+  return {
+    ...summary,
+    ...nextStep(
+      `${status} Then run the next command; until then it reports the close as pending without sending a transaction.`,
+      ["wallet", "sessions", "close", single.channel_id],
+      {
+        network,
+        pollIntervalSeconds: waitSecs,
+        until: ".pending == 0 and .failed == 0",
+      },
+    ),
+  };
 }
 
 function validateCooperativeCloseOptions(options: {

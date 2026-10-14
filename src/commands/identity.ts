@@ -14,6 +14,7 @@ import {
   tokenSymbol,
 } from "../shared/network.js";
 import { usageError } from "../shared/errors.js";
+import { nextStep } from "../shared/next.js";
 import { channelsDbPath, runProcess } from "../shared/process.js";
 import {
   cleanStoredScalar,
@@ -70,6 +71,9 @@ export async function loginHandler(options: {
   return {
     accounts: result.accounts.map((account) => account.address),
     chainId: selectedChainId,
+    ...nextStep("Run the next command to confirm the wallet is ready.", ["wallet", "whoami"], {
+      network: options.network,
+    }),
   };
 }
 
@@ -229,6 +233,9 @@ export async function updateAccessKeyHandler(
     chain_id: selectedChainId,
     token: tokenAddress_resolved.toLowerCase(),
     limit: formatUnits(limit, tokenDecimals()),
+    ...nextStep("Run the next command to confirm the new limit.", ["wallet", "keys", "list"], {
+      network: networkName(selectedChainId) ?? undefined,
+    }),
   };
 }
 
@@ -301,6 +308,11 @@ export async function revokeHandler(
       ...output,
       status: "dry_run" as const,
       local_key_removed: false,
+      ...nextStep(
+        `Run the next command to revoke access key ${output.access_key} on-chain. Revocation cannot be undone.`,
+        ["wallet", "revoke", output.access_key],
+        { network: networkName(selectedChainId) ?? undefined },
+      ),
     };
 
   const provider = createRevokeProvider({ network: options.network });

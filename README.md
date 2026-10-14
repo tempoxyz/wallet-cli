@@ -54,8 +54,8 @@ tempo wallet whoami
 # Quote a swap without submitting it
 tempo wallet swap 10 <TOKEN_IN> <TOKEN_OUT> --dry-run
 
-# Submit the reviewed swap
-tempo wallet swap 10 <TOKEN_IN> <TOKEN_OUT> --yes
+# Submit the reviewed swap, refusing less output than the reviewed min_amount_out
+tempo wallet swap 10 <TOKEN_IN> <TOKEN_OUT> --min-amount-out <MIN_AMOUNT_OUT> --yes
 
 # Fund your wallet
 tempo wallet fund
@@ -119,6 +119,8 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 ```
 
 `tempo wallet sessions close` preserves its per-session result summary and exits with status 1 if any close failed. A pending close awaiting the grace period is successful initiation, so pending-only results still exit 0; dry runs also exit 0.
+
+Results with a follow-up step include `instruction` and `_next`. `swap`, `transfer`, and `revoke` dry runs point at the command that submits them, and the swap command pins the reviewed `--min-amount-out` (or `--max-amount-in` with `--exact-out`); a pending `sessions close` points at the withdrawal and sets `poll_interval_seconds` to the remaining grace period; `keys update` and a fresh `login` point at the command that confirms the result. `_next.argv` is authoritative and repeats `--network` when one was selected by flag or `TEMPO_WALLET_NETWORK`; `_next.command` is the same argv quoted for a POSIX shell.
 
 ## Commands
 
