@@ -88,11 +88,11 @@ tempo request -t --dry-run -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPO
 tempo request -t --dry-run -X GET <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
-Present the dry-run price and wait for explicit approval before making a paid request, unless the user already supplied a budget that covers it. Then run the matching request without `--dry-run`, binding it to the approved quote: `--max-spend` set to the approved amount or budget, and `--payment-token` set to the quote's `token` address (keep `--mach` instead when the quote used it), so a fresh challenge for more or in another token is refused:
+Present the dry-run price and wait for explicit approval before making a paid request, unless the user already supplied a budget that covers it. Then run the matching request without `--dry-run`, bound to the approved quote so a fresh challenge that differs is refused: `--max-spend` is the approved amount or budget, `--payment-intent` is the quote's `intent`, and `--payment-token` is the quote's `token` address (keep `--mach` instead when the quote used it):
 
 ```bash
-tempo request -t -X POST --max-spend <APPROVED_AMOUNT> --payment-token <QUOTED_TOKEN> --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
-tempo request -t -X GET --max-spend <APPROVED_AMOUNT> --payment-token <QUOTED_TOKEN> <SERVICE_URL>/<ENDPOINT_PATH>
+tempo request -t -X POST --max-spend <APPROVED_AMOUNT> --payment-intent <QUOTED_INTENT> --payment-token <QUOTED_TOKEN> --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
+tempo request -t -X GET --max-spend <APPROVED_AMOUNT> --payment-intent <QUOTED_INTENT> --payment-token <QUOTED_TOKEN> <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
 - `recurring: true` marks a subscription. The quote does not show its renewal terms and `--max-spend` refuses it, so do not run it; report it to the user, and quote again with `--payment-intent charge` or `session` to look for a one-time or session offer.
