@@ -1,5 +1,0 @@
----
-tempo-request: minor
----
-
-`--dry-run` on a 402 now reports what the payment would spend: `session` (`open` or `reuse`) and the `deposit` a session payment would lock, chosen by the same code the payment runs, including the top-up a reused session's voucher needs beyond its on-chain deposit; the token's `decimals`, and its `symbol` only when viem lists the token; the payer's `balance` and the access key's stored `access_key_limit` for the debited token, in that token's decimals, with `0` when the key's exact stored limits leave the token out; `max_spend`, the cap the payment applies (`--max-spend`, `TEMPO_MAX_SPEND`, or the default 10); and `within_budget`, computed against that cap instead of always `true` when a cap is set. A subscription offer has no cap, so both are `null`, and `within_budget` is also `null` when a session's payer or reuse check is unknown. Balance, token and session reads use a 3-second timeout and report `null` when they fail. The dry run still signs nothing, opens no session, and leaves stored sessions in place.
