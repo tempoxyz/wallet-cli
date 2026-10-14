@@ -93,7 +93,7 @@ describe("sessions", () => {
 
     expect(stdout).toContain("Usage: tempo wallet sessions [options] | <command>");
     expect(stdout).toContain("--orphaned");
-    expect(stdout).toMatch(/close\s+Close a payment session/);
+    expect(stdout).toMatch(/close\s+Request a session close/);
   });
 });
 

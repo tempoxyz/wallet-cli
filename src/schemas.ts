@@ -512,8 +512,11 @@ export const sessionsCloseOptions = z.object({
   ...globalOptionShape,
   all: z.boolean().optional().describe("Close all active sessions and on-chain channels"),
   orphaned: z.boolean().optional().describe("Close only orphaned on-chain channels"),
-  finalize: z.boolean().optional().describe("Finalize channels pending close"),
-  cooperative: z.boolean().optional().describe("Use cooperative close only"),
+  finalize: z.boolean().optional().describe("Withdraw channels whose close grace period has ended"),
+  cooperative: z
+    .boolean()
+    .optional()
+    .describe("Close now through the session's server instead of waiting out the grace period"),
   "dry-run": z.boolean().optional().describe("Show what would be closed without executing"),
 });
 

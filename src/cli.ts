@@ -268,7 +268,7 @@ sessions.command("list", {
 });
 
 sessions.command("close", {
-  description: "Close a payment session and remove it locally",
+  description: "Request a session close, then withdraw after the grace period with --finalize",
   args: sessionsCloseArgs,
   options: sessionsCloseOptions,
   alias: globalAlias,
@@ -879,13 +879,21 @@ function describeCli() {
           },
           {
             name: "close",
-            about: "Close a payment session and remove it locally",
+            about: "Request a session close, then withdraw after the grace period with --finalize",
             args: [
               positional("url", "URL, origin, or channel ID (0x...) to close"),
               flag("all", "--all", "Close all active sessions and on-chain channels"),
               flag("orphaned", "--orphaned", "Close only orphaned on-chain channels"),
-              flag("finalize", "--finalize", "Finalize channels pending close"),
-              flag("cooperative", "--cooperative", "Use cooperative close only"),
+              flag(
+                "finalize",
+                "--finalize",
+                "Withdraw channels whose close grace period has ended",
+              ),
+              flag(
+                "cooperative",
+                "--cooperative",
+                "Close now through the session's server instead of waiting out the grace period",
+              ),
               flag("dry_run", "--dry-run", "Show what would be closed without executing"),
             ],
           },

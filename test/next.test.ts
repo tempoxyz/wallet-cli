@@ -359,14 +359,14 @@ it.each([
       await writeWalletState(stateFor(4217));
       await saveSession(channelId, 4217);
       mocks.readContract.mockResolvedValue([
-        false,
+        true,
         0n,
         testWallet,
         testWallet2,
         usdcToken,
         testAccessKey,
-        0n,
-        0n,
+        10_000n,
+        2_000n,
       ]);
       return closeSessions({ target: channelId });
     },
