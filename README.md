@@ -131,7 +131,7 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 
 `tempo wallet sessions close` preserves its per-session result summary and exits with status 1 if any close failed. A pending close awaiting the grace period is successful initiation, so pending-only results still exit 0; dry runs also exit 0.
 
-Results with a follow-up step include `instruction` and `_next`. `swap`, `transfer`, and `revoke` dry runs point at the command that submits them, and the swap command pins the reviewed `--min-amount-out` (or `--max-amount-in` with `--exact-out`); a pending `sessions close` points at the withdrawal and sets `poll_interval_seconds` to the remaining grace period; `keys update` and a fresh `login` point at the command that confirms the result. `_next.argv` is authoritative and always ends with `--network` set to the network the command resolved, so it targets the same chain wherever it runs; `_next.command` is the same argv quoted for a POSIX shell.
+Results with a follow-up step include `instruction` and `_next`. `swap`, `transfer`, and `revoke` dry runs point at the command that submits them, and the swap command pins the reviewed `--min-amount-out` (or `--max-amount-in` with `--exact-out`); a pending `sessions close` points at the withdrawal and sets `poll_interval_seconds` to the remaining grace period; a pending or timed-out `fund` points at its balance status check with `until`; `keys update` and a fresh `login` point at the command that confirms the result. `_next.argv` is authoritative and always ends with `--network` set to the network the command resolved, so it targets the same chain wherever it runs; `_next.command` is the same argv quoted for a POSIX shell.
 
 ## Commands
 
@@ -165,12 +165,13 @@ For funding from another device or an automated host:
 
 ```bash
 tempo wallet fund --mach --amount 10 --no-browser --no-wait --format json
-tempo wallet whoami --mach
+# Then run the handoff's _next until it reports success, e.g.:
+tempo wallet fund --mach --address 0x... --amount 10 --baseline 10000000 --no-wait --network mainnet --format json
 ```
 
-The JSON handoff includes `status: "pending"`, the destination wallet, chain, token, amount, and a URL under `https://wallet.tempo.xyz/agent?action=fund&intent=mach`. Open that URL on any device to complete the wallet's available funding flow. `--address` can specify a destination without a local login. Hosted checkout accepts $5–$100 USD with at most two decimal places. MACH funding currently supports mainnet (4217), with token `0x20c000000000000000000000f37de3740adec032` and six decimals.
+The JSON handoff includes `status: "pending"`, the destination wallet, chain, token, amount, the current balance, and a URL under `https://wallet.tempo.xyz/agent?action=fund&intent=mach` (the host follows `TEMPO_AUTH_URL`). Open that URL on any device to complete the wallet's available funding flow. Its `_next` is a status check that reads the balance once against the raw `--baseline` recorded at the handoff; rerun it every `poll_interval_seconds` until `status` is `success`. If the balance cannot be read, the handoff still returns the URL, without `_next`. `--address` can specify a destination without a local login. Hosted checkout accepts $5–$100 USD with at most two decimal places. MACH funding currently supports mainnet (4217), with token `0x20c000000000000000000000f37de3740adec032` and six decimals.
 
-Omit `--no-wait` to poll the destination's MACH balance. A requested amount is complete only after the balance increases by that full amount. Without an amount, any positive increase completes the wait. The default timeout is 600 seconds; use `--timeout <seconds>` to change it, or Ctrl-C to cancel. A balance delta is observational evidence, not a checkout receipt. Concurrent spending can delay detection. No-wait returns the handoff without requiring RPC access.
+Without `--no-wait`, `fund` prints the URL, records the balance, and polls it until the funds arrive. A referral claim (`--claim`/`--referral-code`) pays a token and amount the CLI cannot know, so it always returns the pending handoff without waiting. A requested amount is complete only after the balance increases by that full amount; without an amount, any positive increase completes the wait, and `received` reports the observed increase so callers can judge whether it is the expected deposit. The default timeout is 600 seconds; use `--timeout <seconds>` to change it, or Ctrl-C to cancel. On timeout, `fund` exits 3 (`E_POLL_TIMEOUT`) with `status: "timeout"`, the URL, and the same `_next` status check. A balance delta is observational evidence, not a checkout receipt. Concurrent spending can delay detection.
 
 Use `tempo request --mach --max-spend 0.05 <url>` to require MACH for a one-time charge. The exact challenge must advertise `machineTokenEnabled: true`; the installed `mppx` SDK settles into the merchant's advertised currency. An explicit MACH selection never silently falls back to stablecoins. `--payment-token MACH` is equivalent. `--dry-run` inspects an offer without spending. MACH is not supported for sessions. Funding MACH does not convert old Coinflow credits.
 

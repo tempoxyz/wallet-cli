@@ -2,7 +2,7 @@ import { cachedLoginOutput } from "./commands/identity.js";
 import { loadWalletState } from "./wallet/store.js";
 import { fundAction, runFundingFlow } from "./commands/fund.js";
 import { listSessions } from "./commands/sessions.js";
-import { usageError } from "./shared/errors.js";
+import { errorCodes, usageError } from "./shared/errors.js";
 import { resolveNetwork } from "./shared/network.js";
 
 export async function handleCompatCommand(args: readonly string[]) {
@@ -60,10 +60,12 @@ async function runFundCompat(args: readonly string[]) {
     noBrowser: args.includes("--no-browser"),
     noWait: args.includes("--no-wait"),
     amount: stringArg(args, "--amount"),
+    baseline: stringArg(args, "--baseline"),
     timeout:
       stringArg(args, "--timeout") === undefined ? undefined : Number(stringArg(args, "--timeout")),
   });
   printCompatOutput(result, args);
+  if (result.status === "timeout") process.exit(errorCodes.E_POLL_TIMEOUT.exitCode);
 }
 
 const fundCompatFlags = new Set([
@@ -91,6 +93,7 @@ const fundCompatFlags = new Set([
 const fundCompatValueOptions = new Set([
   "--address",
   "--amount",
+  "--baseline",
   "--timeout",
   "--claim",
   "--filter-output",

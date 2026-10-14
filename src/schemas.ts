@@ -349,16 +349,21 @@ export const logoutOutput = z.object({
 });
 
 export const fundOutput = z.object({
-  status: z.enum(["success", "pending"]),
+  status: z
+    .enum(["success", "pending", "timeout"])
+    .describe("timeout: stopped waiting before the funds arrived (exit code 3)"),
   wallet: z.string().nullable(),
   action: z.string(),
-  url: z.string(),
+  url: z.string().describe("Funding link to open on any device"),
   ...networkOutputShape,
-  token: z.string(),
+  token: z.string().nullable().describe("Token the CLI watches; null for referral claims"),
   symbol: z.string().optional(),
   amount: z.string().nullable(),
   balance: z.string().nullable(),
   raw_balance: z.string().nullable(),
+  received: z.string().nullable().describe("Increase over the balance before funding"),
+  raw_received: z.string().nullable(),
+  ...nextOutputShape,
 });
 
 export const loginOptions = z.object({
@@ -490,8 +495,17 @@ export const fundOptions = z.object({
     .string()
     .optional()
     .describe("Requested USD amount; MACH: 5–100, up to 2 decimal places"),
-  wait: z.boolean().default(true).describe("Wait for funds; use --no-wait for a JSON handoff"),
+  wait: z
+    .boolean()
+    .default(true)
+    .describe("Wait for the funds to arrive; --no-wait returns the link and a status check"),
   timeout: z.coerce.number().optional().describe("Funding wait timeout in seconds (default: 600)"),
+  baseline: z
+    .string()
+    .optional()
+    .describe(
+      "Raw balance recorded by a pending result's _next; checks for funds received since then without reopening the link",
+    ),
   "referral-code": z.string().optional().describe("Open referral-code redeem flow"),
   claim: z.string().optional().describe("Alias for --referral-code"),
 });

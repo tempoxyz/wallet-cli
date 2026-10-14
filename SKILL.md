@@ -86,7 +86,7 @@ tempo wallet whoami --mach
 tempo wallet fund --mach --amount 10 --no-browser --no-wait --format json
 ```
 
-Hosted MACH checkout accepts $5–$100 USD with at most two decimal places. The funding handoff identifies the exact destination wallet, chain, and requested USD amount. Pending means the checkout has not been verified. Recheck the MACH balance after checkout. To wait locally, omit `--no-wait`; the default timeout is ten minutes and `--timeout` accepts seconds. Never interpret a small unrelated deposit as fulfillment of the requested funding amount.
+Hosted MACH checkout accepts $5–$100 USD with at most two decimal places. The funding handoff identifies the exact destination wallet, chain, and requested USD amount. Pending means the checkout has not been verified. After checkout, run the handoff's `_next` status check every `poll_interval_seconds` until `status` is `success`. To wait locally, omit `--no-wait`; the default timeout is ten minutes and `--timeout` accepts seconds. A timeout exits 3 with `status: "timeout"` and the same `_next`. Never interpret a small unrelated deposit as fulfillment of the requested funding amount; without `--amount`, check `received`.
 
 Use `tempo request --mach --max-spend <USD> <URL>` (or `--payment-token MACH`) to require MACH settlement for a one-time charge. The challenge must explicitly enable machine tokens. Missing MACH funds, liquidity, or permissions fail without stablecoin fallback. Sessions are unsupported; use `--dry-run` to inspect an offer without spending.
 

@@ -82,8 +82,9 @@ describe("MACH funding", () => {
       `https://wallet.tempo.xyz/agent?action=fund&intent=mach&address=${wallet}&chainId=4217&amount=12.34`,
     );
   });
-  it("returns a machine handoff without RPC, browser, or login", async () => {
+  it("returns a machine handoff without a balance, browser, or login", async () => {
     mocks.state.mockResolvedValue({ accounts: [] });
+    mocks.readContract.mockRejectedValue(new Error("RPC down"));
     expect(
       await runFundingFlow({
         action: "mach",
@@ -100,7 +101,6 @@ describe("MACH funding", () => {
       amount: "5",
       balance: null,
     });
-    expect(mocks.readContract).not.toHaveBeenCalled();
     expect(mocks.open).not.toHaveBeenCalled();
   });
   it.each(["invalid", `0x${"0".repeat(40)}`])(

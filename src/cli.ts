@@ -3,7 +3,7 @@ import { Cli, Mcp, type z } from "incur";
 
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
-import { usageError } from "./shared/errors.js";
+import { errorCodes, usageError } from "./shared/errors.js";
 import {
   completionsHandler,
   debugHandler,
@@ -69,6 +69,7 @@ import {
 } from "./schemas.js";
 
 let closeCommandFailed = false;
+let fundTimedOut = false;
 
 const cli = Cli.create("tempo wallet", {
   version,
@@ -222,12 +223,12 @@ cli.command("swap", {
 });
 
 cli.command("fund", {
-  description: "Open add-funds flows in the wallet app",
+  description: "Open add-funds flows in the wallet app and wait for the funds to arrive",
   options: fundOptions,
   alias: globalAlias,
   output: fundOutput,
   async run({ globals, options }) {
-    return runFundingFlow({
+    const result = await runFundingFlow({
       action: fundAction({
         credits: options.credits,
         mach: options.mach,
@@ -239,9 +240,12 @@ cli.command("fund", {
       noBrowser: options.browser === false,
       noWait: options.wait === false,
       amount: options.amount,
+      baseline: options.baseline,
       timeout: options.timeout,
       network: globals.network,
     });
+    fundTimedOut = result.status === "timeout";
+    return result;
   },
 });
 
@@ -398,6 +402,7 @@ async function main() {
   await cli.serve(args);
   // Preserve the summary on stdout; only a one-shot CLI invocation changes exit status.
   if (closeCommandFailed) process.exitCode = 1;
+  if (fundTimedOut) process.exitCode = errorCodes.E_POLL_TIMEOUT.exitCode;
 }
 
 /** MCP tool calls carry no CLI globals, so accept `network` as a tool option and pass it on. */
@@ -792,7 +797,7 @@ function describeCli() {
       },
       {
         name: "fund",
-        about: "Open add-funds flows in the wallet app",
+        about: "Open add-funds flows in the wallet app and wait for the funds to arrive",
         args: [
           option("address", "--address", "Wallet address to fund (defaults to current wallet)", {
             valueName: "ADDRESS",
@@ -806,10 +811,16 @@ function describeCli() {
           flag("mach", "--mach", "Open MACH funding"),
           flag("credits", "--credits", "Unavailable; use --mach to buy MACH"),
           option("amount", "--amount", "Requested USD amount", { valueName: "AMOUNT" }),
-          flag("no_wait", "--no-wait", "Return the funding handoff immediately"),
+          flag("no_wait", "--no-wait", "Return the funding link and a status check immediately"),
           option("timeout", "--timeout", "Funding timeout in seconds (default: 600)", {
             valueName: "SECONDS",
           }),
+          option(
+            "baseline",
+            "--baseline",
+            "Raw balance from a pending result's _next; check for funds received since then",
+            { valueName: "RAW_BALANCE" },
+          ),
           option("referral_code", "--referral-code", "Referral code to claim while funding", {
             valueName: "CODE",
           }),
