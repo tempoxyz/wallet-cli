@@ -85,8 +85,9 @@ describe("MCP tools", () => {
 
     expect(response.error).toBeUndefined();
     const names = response.result.tools.map((tool) => tool.name);
-    expect(names).toEqual(expect.arrayContaining(["keys_list", "keys_update"]));
+    expect(names).toEqual(expect.arrayContaining(["keys_list", "keys_update", "sessions_list"]));
     expect(names).not.toContain("keys");
+    expect(names).not.toContain("sessions");
   });
 
   it("accepts the network global as a tool option on every command", async () => {

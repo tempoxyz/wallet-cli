@@ -40,9 +40,8 @@ vi.mock("../src/shared/network.js", async (importOriginal) => ({
 
 import { loginHandler } from "../src/commands/identity.js";
 import { parseRequestArgs, resolvePaymentIdentity, runRequest } from "../src/commands/request.js";
-import { handleCompatCommand } from "../src/compat.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
-import { useTempHome, walletState } from "./helpers.js";
+import { testWallet, useTempHome, walletState } from "./helpers.js";
 
 afterEach(() => {
   mocks.loadAccounts.mockReset();
@@ -66,6 +65,24 @@ it("request-triggered authorization selects Moderato despite the persisted mainn
   }
 });
 
+it.each([true, false])(
+  "login with browser=%s reuses a payment-capable key without authorizing",
+  async (browser) => {
+    await useTempHome();
+    await saveWalletState(walletState());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("[]", { status: 200 })),
+    );
+
+    expect(await loginHandler({ network: "mainnet", browser })).toMatchObject({
+      wallet: testWallet.toLowerCase(),
+      key: { chain_id: 4217 },
+    });
+    expect(mocks.loadAccounts).not.toHaveBeenCalled();
+  },
+);
+
 it.each([
   { failure: "User denied the device-code request.", browser: true },
   { failure: "Device code expired before authorization completed.", browser: true },
@@ -81,13 +98,7 @@ it.each([
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   mocks.loadAccounts.mockRejectedValue(new Error(failure));
 
-  const login = async () => {
-    if (!browser) {
-      const handled = await handleCompatCommand(["login", "--network", "testnet", "--no-browser"]);
-      expect(handled).toBe(false);
-    }
-    return await loginHandler({ network: "testnet", browser });
-  };
+  const login = () => loginHandler({ network: "testnet", browser });
 
   await expect(login()).rejects.toThrow(failure);
   // Drain the SDK's filesystem write queue before reading its persisted selection.

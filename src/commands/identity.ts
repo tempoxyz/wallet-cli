@@ -29,6 +29,7 @@ import {
   getRecord,
   parseStoredBigInt,
 } from "../shared/utils.js";
+import { supportedShells } from "../completions.js";
 import { connect, createProvider } from "../provider.js";
 import {
   emptyWalletState,
@@ -384,7 +385,7 @@ export async function debugHandler(options: { network?: string | undefined }) {
 
 export function completionsHandler() {
   return {
-    supported_shells: ["bash", "zsh", "fish", "powershell", "elvish"],
+    supported_shells: [...supportedShells],
   };
 }
 

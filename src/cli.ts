@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Cli, Mcp, type z } from "incur";
+import { Cli, Completions, Mcp, type z } from "incur";
 
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
@@ -26,7 +26,7 @@ import {
   syncSessions,
 } from "./commands/sessions.js";
 import { fetchServiceList, fetchServices, staleListFetchedAt } from "./commands/services.js";
-import { handleCompatCommand } from "./compat.js";
+import { completionScript } from "./completions.js";
 import {
   cliGlobalAlias,
   cliGlobals,
@@ -245,9 +245,16 @@ cli.command("fund", {
   },
 });
 
+// Bare `tempo wallet sessions` lists sessions.
 const sessions = Cli.create("sessions", {
   description: "Manage payment sessions",
   globals: cliGlobals,
+  options: sessionsListOptions,
+  alias: globalAlias,
+  output: sessionsListOutput,
+  async run({ globals, options }) {
+    return listSessions({ all: options.all, network: globals.network, orphaned: options.orphaned });
+  },
 });
 
 sessions.command("list", {
@@ -344,6 +351,12 @@ function walletCommands() {
 
 function createMcpCommands() {
   const mcpCommands = withMcpGlobals(walletCommands());
+  const sessionsGroup = mcpCommands.get("sessions");
+  if (isCommandGroup(sessionsGroup)) {
+    // Bare `sessions` is CLI shorthand; MCP already exposes `sessions_list`.
+    const { root: _root, ...group } = sessionsGroup;
+    mcpCommands.set("sessions", group);
+  }
   const servicesCommand = mcpCommands.get("services");
   if (isRunnableCommand(servicesCommand)) {
     mcpCommands.set("services", {
@@ -371,7 +384,7 @@ async function main() {
     process.exit(0);
   }
 
-  const args = normalizeServicesOutputAliases(bindCommandOptions(rawArgs));
+  const args = expandHelp(normalizeServicesOutputAliases(bindCommandOptions(rawArgs)));
 
   if (handleBuiltinSchema(args)) process.exit(0);
 
@@ -385,11 +398,44 @@ async function main() {
     return;
   }
 
-  if (await handleCompatCommand(args)) process.exit(0);
+  const script = walletCompletions(args);
+  if (script !== undefined) {
+    process.stdout.write(`${script}\n`);
+    return;
+  }
 
   await cli.serve(args);
   // Preserve the summary on stdout; only a one-shot CLI invocation changes exit status.
   if (closeCommandFailed) process.exitCode = 1;
+}
+
+// `help [command...]` is shorthand for `[command...] --help`.
+function expandHelp(args: string[]) {
+  const index = firstCommandIndex(args);
+  if (index === undefined || args[index] !== "help") return args;
+  return [...args.slice(0, index), ...args.slice(index + 1), "--help"];
+}
+
+// Wallet-owned `completions` output; see completions.ts for which shells stay with incur.
+function walletCompletions(args: readonly string[]) {
+  const index = firstCommandIndex(args);
+  if (index === undefined || args[index] !== "completions") return undefined;
+  if (args.includes("--help") || args.includes("-h")) return undefined;
+  // The first positional after `completions`, skipping flags and their values.
+  const [shell] = commandTokens(args.slice(index + 1));
+  return completionScript(shell, () => {
+    const commands = walletCommands() as Parameters<typeof Completions.complete>[0];
+    return [
+      ...Completions.complete(commands, undefined, [""], 0),
+      { value: "mcp", description: "Register as MCP server" },
+      { value: "skills", description: "Sync skill files to agents" },
+      { value: "help", description: "Show help for a command" },
+      ...Completions.complete(commands, undefined, ["-"], 0, {
+        schema: cliGlobals,
+        alias: cliGlobalAlias,
+      }),
+    ];
+  });
 }
 
 /** MCP tool calls carry no CLI globals, so accept `network` as a tool option and pass it on. */
@@ -414,7 +460,9 @@ function withMcpGlobals(commands: Map<string, unknown>): Map<string, unknown> {
   );
 }
 
-function isCommandGroup(value: unknown): value is { commands: Map<string, unknown> } {
+function isCommandGroup(
+  value: unknown,
+): value is { commands: Map<string, unknown>; root?: unknown } {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -428,8 +476,10 @@ function isCommandGroup(value: unknown): value is { commands: Map<string, unknow
 function bindCommandOptions(args: readonly string[]) {
   const [name, subcommand] = commandTokens(args);
   const entry = name === undefined ? undefined : walletCommands().get(name);
-  const command =
-    isCommandGroup(entry) && subcommand !== undefined ? entry.commands.get(subcommand) : entry;
+  // A group without a known subcommand runs its root command (bare `sessions`).
+  const command = isCommandGroup(entry)
+    ? ((subcommand === undefined ? undefined : entry.commands.get(subcommand)) ?? entry.root)
+    : entry;
   return bindOptionValues(args, [
     ...(isRunnableCommand(command) ? [command] : []),
     { options: cliGlobals, alias: cliGlobalAlias },
