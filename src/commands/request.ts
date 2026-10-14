@@ -40,6 +40,12 @@ import {
   KeyAuthorizationManager,
 } from "viem/tempo";
 
+import {
+  paymentReceipt,
+  type PaymentReceipt,
+  receiptSummary,
+  receiptTxHash,
+} from "../payment/receipt.js";
 import { withSessionLock } from "../payment/session-lock.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import {
@@ -517,6 +523,7 @@ export function preparePaymentChallenge(
 export async function executeRequest(options: RequestOptions, io: RequestRunOptions = {}) {
   validateRequestOptions(options);
   const stdout = io.stdout ?? process.stdout;
+  const stderr = io.stderr ?? process.stderr;
   const started = Date.now();
   const plan = await buildFetchRequest(options);
   const method = plan.init.method ?? "GET";
@@ -560,10 +567,15 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
       throw paymentError(
         "Refusing to pay over a connection with TLS certificate verification disabled (--insecure); pass --allow-insecure-payment to override",
       );
-    response = await payAndRetryRequest(response, request, options, io.stderr ?? process.stderr);
+    response = await payAndRetryRequest(response, request, options, stderr);
     paid = true;
   }
 
+  // A failed paid response leaves the payment's outcome unknown, so it reports no receipt.
+  const receipt =
+    response.status < 400 && !paidResponseFailures.has(response)
+      ? paymentReceipts.get(response)
+      : undefined;
   try {
     if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
     if (options.writeMeta)
@@ -572,6 +584,7 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
         response,
         started,
         paid ? privateKeySigner(options) : undefined,
+        receipt,
       );
     if (response.status >= 400 && options.sseJson) {
       const body = await response.text().catch(responseBodyNetworkError(method));
@@ -603,6 +616,7 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
       );
     throw error;
   }
+  if (receipt) stderr.write(receiptSummary(receipt));
 }
 
 type RequestDryRunOutput = z.infer<typeof requestDryRunOutput>;
@@ -843,6 +857,8 @@ export async function fetchPaidRequest(
 
 const paymentReferences = new WeakMap<Response, string>();
 const paidResponseFailures = new WeakSet<Response>();
+/** What the payment behind each paid response spent; reported once the response succeeds. */
+const paymentReceipts = new WeakMap<Response, PaymentReceipt>();
 
 function paymentRecoveryReference(credential: string) {
   let reference = "";
@@ -996,7 +1012,13 @@ async function payAndRetryRequest(
 
     const credential = await payment.createCredential(challengeResponse);
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
-    return await fetchPaidRequest({ init: paidInit, url: request.url }, options, credential);
+    const response = await fetchPaidRequest(
+      { init: paidInit, url: request.url },
+      options,
+      credential,
+    );
+    recordChargeReceipt(response, selectedChallenge, identity.address, options);
+    return response;
   } catch (error) {
     if (error instanceof Errors.IncurError) throw error;
     const diagnostic = spendingLimitDiagnostic(error, header, options);
@@ -1104,6 +1126,23 @@ async function paySessionAndRetryRequest(
     } catch {
       paidResponseFailures.add(response);
     }
+    paymentReceipts.set(
+      response,
+      paymentReceipt({
+        intent: challenge.intent,
+        amount: details.amount,
+        token: details.token,
+        network: requestNetwork(options),
+        payer: identity.address,
+        txHash: receiptTxHash(response, challenge.intent),
+        session: {
+          channelId: record.channel_id,
+          deposit: record.deposit,
+          cumulative: signedCumulative,
+          reused: reusable !== undefined,
+        },
+      }),
+    );
     return response;
   } catch (error) {
     if (error instanceof Errors.IncurError) throw error;
@@ -1561,6 +1600,24 @@ async function tryTopUpAndRetry(options: {
   } catch {
     paidResponseFailures.add(retried);
   }
+  paymentReceipts.set(
+    retried,
+    paymentReceipt({
+      intent: "session",
+      amount: options.details.amount,
+      token: options.details.token,
+      network: requestNetwork(options.options),
+      payer: options.identity.address,
+      // The top-up sent the transaction; the retried voucher sends none.
+      txHash: receiptTxHash(topUpResponse, "session"),
+      session: {
+        channelId: options.record.channel_id,
+        deposit,
+        cumulative: options.signedCumulative,
+        reused: true,
+      },
+    }),
+  );
   return retried;
 }
 
@@ -1792,6 +1849,35 @@ async function persistSessionReceipt(
     serverSpent,
     signedCumulative,
   });
+}
+
+/**
+ * Records the receipt of a paid charge. A zero-amount charge is a signed proof of the payer, not
+ * a payment, so it has none. A MACH settlement debits MACH from the wallet.
+ */
+function recordChargeReceipt(
+  response: Response,
+  challenge: Challenge.Challenge,
+  payer: string,
+  options: RequestOptions,
+) {
+  const amount = challengeAmount(challenge);
+  if (amount === 0n) return;
+  const network = requestNetwork(options);
+  const mach = isMachPaymentToken(options.paymentToken)
+    ? machineTokenDeployments[network.chainId as keyof typeof machineTokenDeployments]?.token
+    : undefined;
+  paymentReceipts.set(
+    response,
+    paymentReceipt({
+      intent: challenge.intent,
+      amount,
+      token: mach ?? stringValue(challenge.request.currency),
+      network,
+      payer,
+      txHash: receiptTxHash(response, challenge.intent),
+    }),
+  );
 }
 
 async function readOnChainChannel(record: PersistedSessionRecord, rpc: RpcOptions = {}) {
@@ -2182,6 +2268,7 @@ async function writeMetaFile(
   response: Response,
   started: number,
   signer?: ReturnType<typeof privateKeySigner>,
+  payment?: PaymentReceipt,
 ) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(
@@ -2201,6 +2288,7 @@ async function writeMetaFile(
               },
             }
           : {}),
+        ...(payment ? { payment } : {}),
       },
       null,
       2,

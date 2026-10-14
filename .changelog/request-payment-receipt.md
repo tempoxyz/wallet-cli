@@ -1,0 +1,5 @@
+---
+tempo-request: minor
+---
+
+`tempo request` now reports what a successful paid request spent. A short receipt goes to stderr, such as `Paid 0.01 USDC.e · tx 0x…`, and `--write-meta` adds it as a `payment` object: `intent`; `amount` in token units with `token`, plus `symbol` and `decimals` for a listed token (MACH for a MACH settlement); `tx_hash` when the server's Payment-Receipt names a transaction; `session` (`open` or `reuse`), `channel_id`, `deposit_locked` and `cumulative` for a session payment, including a top-up, or `null` for a charge; `payer`; and `chain_id` and `network`. A newly opened session also names `tempo wallet sessions close <channel_id> --network <network>` on stderr and as `instruction` and `_next`, so its locked deposit is not forgotten. Structured output (`-j`, `--format`) keeps stderr empty, so its receipt is read from `--write-meta`. Unpaid requests, zero-amount proofs, and paid requests that end in an HTTP error or an unknown outcome report no receipt, and the response body on stdout is unchanged.

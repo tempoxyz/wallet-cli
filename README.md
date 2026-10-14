@@ -86,6 +86,18 @@ tempo request --dry-run https://example.mpp.tempo.xyz/v1/resource
 tempo request https://example.mpp.tempo.xyz/v1/resource
 ```
 
+Once a paid request succeeds, it prints a short receipt on stderr (`Paid 0.01 USDC.e · tx 0x…`)
+and `--write-meta` adds it as `payment`: the `intent`; the `amount` in token units and its
+`token`, with `symbol` and `decimals` when viem lists the token (a MACH settlement reports the
+MACH it debits); `tx_hash` when the server's Payment-Receipt names a transaction; for a session,
+`session` (`open` or `reuse`), `channel_id`, `deposit_locked` and the channel's `cumulative`
+voucher, `null` for a charge; the `payer`; and `chain_id` and `network`. A newly opened session
+also names the `tempo wallet sessions close <channel_id> --network <network>` command that
+withdraws its unspent deposit, on stderr and as `instruction` and `_next`. Structured output
+(`-j`, `--format`) keeps stderr free of the summary, so pass `--write-meta` to get the receipt.
+Unpaid requests, zero-amount proofs, and paid requests that end in an HTTP error or an unknown
+outcome report no receipt.
+
 On HTTP 402, `--dry-run` prints a JSON quote of what paying would spend, without signing,
 opening a session, or paying. It reports the per-call `amount`; for a session offer, whether the
 payment would `open` a session or `reuse` a stored one (`session`) and the `deposit` it would

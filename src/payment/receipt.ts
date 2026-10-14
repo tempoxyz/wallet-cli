@@ -1,0 +1,87 @@
+import { formatUnits } from "viem";
+
+import { networkFields, type Network } from "../shared/network.js";
+import { nextStep } from "../shared/next.js";
+import { knownToken } from "../shared/tokens.js";
+import { decodeBase64UrlJson, escapeInvisible, stringValue } from "../shared/utils.js";
+
+/** What a paid request spent, as `--write-meta` reports it under `payment`. */
+export type PaymentReceipt = ReturnType<typeof paymentReceipt>;
+
+/**
+ * The receipt of a paid request, built from what its payment already holds. Amounts are in token
+ * units, as `--max-spend` counts them; `symbol` and `decimals` are known only for listed tokens.
+ * The session fields are `null` for a charge. A newly opened session adds `instruction` and
+ * `_next` naming the close that withdraws its unspent deposit. Strings the server chose are shown
+ * with visible escapes.
+ */
+export function paymentReceipt(payment: {
+  intent: string;
+  /** Raw amount of `token` this request paid. */
+  amount: bigint;
+  /** The token the payment debits: MACH for a MACH settlement. */
+  token: string;
+  network: Network;
+  payer: string;
+  txHash: string | null;
+  /** The channel a session payment used, its raw deposit, and its raw cumulative voucher. */
+  session?: { channelId: string; deposit: bigint; cumulative: bigint; reused: boolean } | undefined;
+}) {
+  const { network, session } = payment;
+  const listed = knownToken(payment.token, network.chainId);
+  const token = escapeInvisible(payment.token.toLowerCase());
+  const channelId = session ? escapeInvisible(session.channelId) : null;
+  const deposit = session ? tokenUnits(session.deposit) : null;
+  return {
+    intent: escapeInvisible(payment.intent),
+    amount: tokenUnits(payment.amount),
+    token,
+    symbol: listed?.symbol ?? null,
+    decimals: listed?.decimals ?? null,
+    tx_hash: payment.txHash,
+    session: session ? (session.reused ? ("reuse" as const) : ("open" as const)) : null,
+    channel_id: channelId,
+    deposit_locked: deposit,
+    cumulative: session ? tokenUnits(session.cumulative) : null,
+    payer: payment.payer,
+    ...networkFields(network.chainId),
+    ...(session && !session.reused && channelId
+      ? nextStep(
+          `Session ${channelId} keeps ${deposit} ${listed?.symbol ?? token} locked until it is closed. When you are done with this service, run the next command to close it and withdraw the unspent deposit.`,
+          ["wallet", "sessions", "close", channelId],
+          { network },
+        )
+      : {}),
+  };
+}
+
+/** The stderr summary of `receipt`: one line, plus the close command for a new session. */
+export function receiptSummary(receipt: PaymentReceipt) {
+  const label = receipt.symbol ?? receipt.token;
+  const paid = `Paid ${receipt.amount} ${label}`;
+  if (receipt._next)
+    return `${paid} · opened a session with ${receipt.deposit_locked} ${label} locked\nWhen done, close it to withdraw the unspent deposit: ${receipt._next.command}\n`;
+  if (receipt.session === "reuse")
+    return `${paid} · session ${receipt.channel_id} (${receipt.cumulative} of ${receipt.deposit_locked} ${label} deposit used)\n`;
+  return `${paid}${receipt.tx_hash ? ` · tx ${receipt.tx_hash}` : ""}\n`;
+}
+
+/**
+ * The transaction hash in a paid response's Payment-Receipt: a charge's `reference`, or a session
+ * receipt's `txHash` (its `reference` names the channel). Only a 32-byte hex hash is kept.
+ */
+export function receiptTxHash(response: Response, intent: string) {
+  const header = response.headers.get("payment-receipt");
+  if (!header) return null;
+  try {
+    const receipt = decodeBase64UrlJson(header);
+    const hash = stringValue(intent === "session" ? receipt.txHash : receipt.reference);
+    return /^0x[0-9a-fA-F]{64}$/.test(hash) ? hash : null;
+  } catch {
+    return null;
+  }
+}
+
+function tokenUnits(value: bigint) {
+  return formatUnits(value, 6);
+}
