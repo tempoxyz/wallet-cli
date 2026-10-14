@@ -6,7 +6,13 @@ import { resolve } from "node:path";
 import { Parser } from "incur";
 import { describe, expect, it } from "vitest";
 
-import { fundOptions, loginOptions, updateAccessKeyOptions } from "../src/schemas.js";
+import {
+  fundOptions,
+  loginOptions,
+  refreshOptions,
+  revokeOptions,
+  updateAccessKeyOptions,
+} from "../src/schemas.js";
 import { cliBundle } from "./cli-bundle.js";
 
 const execFileAsync = promisify(execFile);
@@ -303,16 +309,35 @@ describe("generated CLI metadata", () => {
     expect(skillsList.output.items.properties.installed.type).toBe("boolean");
   }, 30_000);
 
-  it("accepts --no-browser for browser-backed wallet commands", () => {
-    expect(Parser.parse(["--no-browser"], { options: loginOptions }).options).toMatchObject({
+  it.each([
+    { command: "login", options: loginOptions, argv: [] },
+    { command: "refresh", options: refreshOptions, argv: [] },
+    { command: "fund", options: fundOptions, argv: [] },
+    { command: "keys update", options: updateAccessKeyOptions, argv: ["--limit", "250"] },
+    { command: "revoke", options: revokeOptions, argv: ["--yes"] },
+  ])("accepts --no-browser for $command", ({ options, argv }) => {
+    expect(Parser.parse(argv, { options }).options).toMatchObject({ browser: true });
+    expect(Parser.parse([...argv, "--no-browser"], { options }).options).toMatchObject({
       browser: false,
     });
-    expect(Parser.parse(["--no-browser"], { options: fundOptions }).options).toMatchObject({
-      browser: false,
-    });
-    expect(
-      Parser.parse(["--limit", "250", "--no-browser"], { options: updateAccessKeyOptions }).options,
-    ).toMatchObject({ browser: false, limit: "250" });
+  });
+
+  it.each([
+    { command: ["refresh"], flags: ["--no-browser"] },
+    { command: ["keys", "update"], flags: ["--no-browser"] },
+    { command: ["revoke"], flags: ["--dry-run", "--yes", "--no-browser"] },
+  ])("describes $flags for $command", async ({ command, flags }) => {
+    type Command = {
+      name: string;
+      args?: { long?: string | undefined }[] | undefined;
+      subcommands?: Command[] | undefined;
+    };
+    const description = JSON.parse(await walletCli(["--describe"])) as Command;
+    const described = command.reduce<Command | undefined>(
+      (parent, name) => parent?.subcommands?.find((child) => child.name === name),
+      description,
+    );
+    expect(described?.args?.map((arg) => arg.long)).toEqual(expect.arrayContaining(flags));
   });
 
   it("returns strongly typed schema properties for sessions list output", async () => {

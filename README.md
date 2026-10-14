@@ -137,6 +137,10 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 
 `transfer` (token and `--mach` payments), `swap`, `keys update`, `revoke`, and `sessions close`, dry runs included, first check for a logged-in wallet on the resolved network; without one they exit 4 with `E_NOT_AUTHENTICATED` and a `cta` naming `tempo wallet login` with that `--network`. `transfer --mach`, and `transfer` and `swap` run by an agent (MCP, `--format`, or output that is not a terminal), also need a usable access key; otherwise they exit 4 with `E_KEY_EXPIRED` or `E_AUTH_REFRESH_REQUIRED` and a `cta` naming `tempo wallet refresh` with that `--network`. An interactive `transfer` or `swap` without one asks for approval in the wallet app instead. `keys update`, `revoke`, and `sessions close` need only the login, not a usable key. Without an access key argument, `keys update` updates the only key stored for the wallet and network, and fails with `E_USAGE` listing the keys when there are several. `transfer --credits` and `transfer --mach` paid by `TEMPO_PRIVATE_KEY` skip the check.
 
+`tempo wallet revoke <ACCESS_KEY>` revokes one of the logged-in wallet's stored keys on the resolved network; any other key fails with `E_USAGE` listing the wallet's keys on that network. The wallet app signs the revocation, so it needs no local signer for the wallet itself. Revocation cannot be undone, so an interactive run asks `[y/N]` first and an agent run needs `--yes`; without it, it exits 2 with `E_USAGE` and a `cta` that adds `--yes`. `--dry-run` shows the key, wallet, network, limits, and expiry, and its `_next` adds `--yes`.
+
+`login`, `refresh`, `keys update`, and `revoke` ask the wallet app for approval; `--no-browser` prints the URL and confirmation code instead of opening a browser. `refresh` and `keys update` keep the stored key until the wallet app approves the change, so a declined or failed approval leaves the current key usable.
+
 ## Commands
 
 ### Wallet

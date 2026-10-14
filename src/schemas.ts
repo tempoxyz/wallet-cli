@@ -28,6 +28,12 @@ export const globalAlias = {
   "toon-output": "t",
 };
 
+/** Wallet-app flows open a browser unless `--no-browser` asks them to print the URL and code. */
+const browserOption = z
+  .boolean()
+  .default(true)
+  .describe("Open a browser; use --no-browser to disable");
+
 /** Matches `networkFields`: the chain a command ran against and its network label. */
 const networkOutputShape = {
   chain_id: z.number(),
@@ -150,49 +156,50 @@ export const whoamiOutput = z.union([
   creditsOutput,
 ]);
 
-export const keysOutput = z.object({
-  keys: z.array(
+/** One access key as `keys list` reports it. */
+const accessKeyOutput = z.object({
+  address: z.string(),
+  ...networkOutputShape,
+  wallet_address: z.string(),
+  symbol: z.string().nullable(),
+  token: z.string(),
+  balance: z.string().nullable(),
+  balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
+  spending_limit: z.object({
+    mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
+    unlimited: z.boolean().nullable(),
+    limit: z.string().nullable(),
+    raw_limit: z.string().nullable(),
+    period_seconds: z.number().nullable(),
+    remaining: z.string().nullable(),
+    spent: z.string().nullable(),
+  }),
+  spending_limits: z.array(
     z.object({
-      address: z.string(),
-      ...networkOutputShape,
-      wallet_address: z.string(),
+      unlimited: z.boolean(),
       symbol: z.string().nullable(),
       token: z.string(),
-      balance: z.string().nullable(),
-      balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
-      spending_limit: z.object({
-        mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
-        unlimited: z.boolean().nullable(),
-        limit: z.string().nullable(),
-        raw_limit: z.string().nullable(),
-        period_seconds: z.number().nullable(),
-        remaining: z.string().nullable(),
-        spent: z.string().nullable(),
-      }),
-      spending_limits: z.array(
-        z.object({
-          unlimited: z.boolean(),
-          symbol: z.string().nullable(),
-          token: z.string(),
-          limit: z.string().nullable(),
-          raw_limit: z.string(),
-          period_seconds: z.number().nullable(),
-          remaining: z.string().nullable(),
-          spent: z.string().nullable(),
-        }),
-      ),
-      call_permissions: z.enum(["unknown", "unrestricted", "none", "restricted"]),
-      scopes: z.array(
-        z.object({
-          address: z.string(),
-          selector: z.string().nullable(),
-          recipients: z.array(z.string()),
-        }),
-      ),
-      status: z.string().nullable(),
-      expires_at: z.string().nullable(),
+      limit: z.string().nullable(),
+      raw_limit: z.string(),
+      period_seconds: z.number().nullable(),
+      remaining: z.string().nullable(),
+      spent: z.string().nullable(),
     }),
   ),
+  call_permissions: z.enum(["unknown", "unrestricted", "none", "restricted"]),
+  scopes: z.array(
+    z.object({
+      address: z.string(),
+      selector: z.string().nullable(),
+      recipients: z.array(z.string()),
+    }),
+  ),
+  status: z.string().nullable(),
+  expires_at: z.string().nullable(),
+});
+
+export const keysOutput = z.object({
+  keys: z.array(accessKeyOutput),
   total: z.number(),
 });
 
@@ -202,17 +209,30 @@ export const revokeArgs = z.object({
 
 export const revokeOptions = z.object({
   ...globalOptionShape,
-  "dry-run": z.boolean().optional().describe("Show the revoke request without submitting it"),
+  "dry-run": z
+    .boolean()
+    .optional()
+    .describe("Show the key that would be revoked without revoking it"),
+  yes: z.boolean().optional().describe("Revoke without a confirmation prompt"),
+  browser: browserOption,
 });
 
-export const revokeOutput = z.object({
-  status: z.union([z.literal("success"), z.literal("dry_run")]),
+const revokeOutputShape = {
   wallet: z.string(),
   access_key: z.string(),
   ...networkOutputShape,
   local_key_removed: z.boolean(),
-  ...nextOutputShape,
-});
+};
+
+export const revokeOutput = z.union([
+  z.object({
+    status: z.literal("dry_run"),
+    ...revokeOutputShape,
+    key: accessKeyOutput,
+    ...nextOutputShape,
+  }),
+  z.object({ status: z.literal("success"), ...revokeOutputShape }),
+]);
 
 export const updateAccessKeyOutput = z.object({
   status: z.literal("success"),
@@ -231,7 +251,7 @@ export const updateAccessKeyOptions = z.object({
     .string()
     .optional()
     .describe("Token address or symbol (e.g. USDC.e); defaults to the current limit token"),
-  browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
+  browser: browserOption,
 });
 
 export const updateAccessKeyArgs = z.object({
@@ -375,7 +395,7 @@ export const fundOutput = z.object({
 
 export const loginOptions = z.object({
   ...globalOptionShape,
-  browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
+  browser: browserOption,
 });
 
 export const globalOptions = z.object(globalOptionShape);
@@ -388,6 +408,11 @@ export const loginOutput = z.union([
     ...nextOutputShape,
   }),
 ]);
+
+export const refreshOptions = z.object({
+  ...globalOptionShape,
+  browser: browserOption,
+});
 
 export const refreshOutput = z.object({
   accounts: z.array(z.string()),
@@ -497,7 +522,7 @@ export const swapOutput = z.union([
 export const fundOptions = z.object({
   ...globalOptionShape,
   address: z.string().optional().describe("Wallet address to fund (defaults to current wallet)"),
-  browser: z.boolean().default(true).describe("Open a browser; use --no-browser to disable"),
+  browser: browserOption,
   crypto: z.boolean().optional().describe("Open the direct crypto funding flow"),
   mach: z.boolean().optional().describe("Open the MACH funding flow"),
   credits: z.boolean().optional().describe("Unavailable; use --mach to buy MACH"),

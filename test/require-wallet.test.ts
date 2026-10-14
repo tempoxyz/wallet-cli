@@ -249,9 +249,16 @@ const walletAppCommands = [
     ran: { code: 1, request: "POST /api/auth/device/register" },
   },
   {
-    command: "revoke",
+    command: "revoke --dry-run",
     argv: ["revoke", testAccessKey, "--dry-run"],
     ran: { code: 0, stdout: { status: "dry_run", access_key: testAccessKey.toLowerCase() } },
+  },
+  // The store holds only the wallet address, so a revocation the CLI signed itself would fail
+  // before asking the wallet app.
+  {
+    command: "revoke --yes",
+    argv: ["revoke", testAccessKey, "--yes", "--no-browser"],
+    ran: { code: 1, request: "POST /api/auth/device/register" },
   },
   {
     command: "sessions close",
@@ -447,17 +454,91 @@ describe("wallet CLI login and access key checks", () => {
       expect(requests).toEqual([]);
     },
   );
+
+  it("revoke run by an agent without --yes returns E_USAGE with a --yes cta", async () => {
+    const home = await useTempHome();
+    await writeWalletState(walletState());
+    requests.length = 0;
+
+    const result = await wallet(["revoke", testAccessKey], {
+      HOME: home,
+      TEMPO_AUTH_URL: origin,
+      TEMPO_RPC_URL: origin,
+    });
+
+    const command = `tempo wallet revoke ${testAccessKey.toLowerCase()} --yes --network mainnet`;
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stdout)).toEqual({
+      code: "E_USAGE",
+      message: `Revocation cannot be undone, so it needs confirmation. Review the key with --dry-run, then run '${command}'.`,
+      retryable: false,
+      cta: { description: "Suggested command:", commands: [{ command }] },
+    });
+    expect(requests).toEqual([]);
+  });
+
+  it.each([
+    { answer: "y", code: 1, asked: true },
+    { answer: "n", code: 2, asked: false },
+    { answer: "", code: 2, asked: false },
+  ])(
+    "interactive revoke answered '$answer' asks the wallet app: $asked",
+    async ({ answer, code, asked }) => {
+      const home = await useTempHome();
+      await writeWalletState(walletState());
+      requests.length = 0;
+
+      const result = await wallet(
+        ["revoke", testAccessKey, "--no-browser"],
+        { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
+        { interactive: true, input: answer ? `${answer}\n` : "" },
+      );
+
+      expect(result.code).toBe(code);
+      expect(result.stderr).toContain(
+        `Revoke access key ${testAccessKey.toLowerCase()} for wallet ${testWallet.toLowerCase()} on mainnet? This cannot be undone. [y/N]`,
+      );
+      // The SDK retries a failed revocation request, so it may register more than once.
+      expect([...new Set(requests)]).toEqual(asked ? ["POST /api/auth/device/register"] : []);
+    },
+  );
+
+  it.each([
+    { command: "refresh", argv: ["refresh", "--no-browser"] },
+    { command: "keys update", argv: ["keys", "update", "--limit", "1", "--no-browser"] },
+    { command: "revoke", argv: ["revoke", testAccessKey, "--yes", "--no-browser"] },
+  ])("$command accepts --no-browser and asks the wallet app", async ({ argv }) => {
+    const home = await useTempHome();
+    await writeWalletState(walletState());
+    requests.length = 0;
+
+    const result = await wallet(argv, {
+      HOME: home,
+      TEMPO_AUTH_URL: origin,
+      TEMPO_RPC_URL: origin,
+    });
+
+    expect(result.code).toBe(1);
+    expect([...new Set(requests)]).toEqual(["POST /api/auth/device/register"]);
+  });
 });
 
 const interactiveStdout = join(import.meta.dirname, "fixtures", "interactive-stdout.mjs");
 
-/** Runs the wallet CLI as an agent (`--format json`), or with `interactive` as a terminal user. */
-function wallet(args: string[], env: Record<string, string>, { interactive = false } = {}) {
+/**
+ * Runs the wallet CLI as an agent (`--format json`), or with `interactive` as a terminal user;
+ * `input` is written to its stdin.
+ */
+function wallet(
+  args: string[],
+  env: Record<string, string>,
+  { interactive = false, input }: { interactive?: boolean; input?: string } = {},
+) {
   const childEnv: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1", ...env };
   for (const name of ["TEMPO_PRIVATE_KEY", "TEMPO_WALLET_NETWORK"])
     if (!(name in env)) delete childEnv[name];
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-    execFile(
+    const child = execFile(
       process.execPath,
       interactive
         ? ["--import", interactiveStdout, cliBundle("wallet"), ...args]
@@ -468,5 +549,6 @@ function wallet(args: string[], env: Record<string, string>, { interactive = fal
         resolve({ code: typeof error?.code === "number" ? error.code : 0, stdout, stderr });
       },
     );
+    if (input !== undefined) child.stdin?.end(input);
   });
 }

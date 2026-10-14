@@ -1,7 +1,6 @@
 import { arch, platform } from "node:process";
 import type { Provider as CoreProvider } from "accounts";
 import { erc20Abi, formatUnits, isAddress, parseUnits, toHex, type Address } from "viem";
-import { Actions } from "viem/tempo";
 
 import { version } from "../shared/constants.js";
 import {
@@ -14,10 +13,10 @@ import {
   tokenAddress,
   type Network,
 } from "../shared/network.js";
-import { usageError } from "../shared/errors.js";
-import { nextStep } from "../shared/next.js";
+import { errorCodes, usageError } from "../shared/errors.js";
+import { continuationCommand, nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
-import { channelsDbPath, runProcess } from "../shared/process.js";
+import { channelsDbPath, confirm as confirmPrompt, runProcess } from "../shared/process.js";
 import {
   knownToken,
   readTokenMetadata,
@@ -90,9 +89,22 @@ export async function cachedLoginOutput(state: WalletState, network: Network) {
   });
 }
 
-export async function refreshHandler(options: { network?: string | undefined }) {
+/**
+ * Authorizes a new access key. The stored keys stay in place, so the current one remains usable
+ * until the wallet app approves the new one.
+ */
+export async function refreshHandler(
+  options: { network?: string | undefined; browser?: boolean | undefined },
+  createRefreshProvider: (options: {
+    network: Network;
+    noBrowser?: boolean | undefined;
+  }) => Pick<CoreProvider.Provider, "request"> = createProvider,
+) {
   const network = await resolveNetwork(options.network);
-  const result = await connect(createProvider({ network }), network);
+  const result = await connect(
+    createRefreshProvider({ network, noBrowser: options.browser === false }),
+    network,
+  );
 
   return {
     accounts: result.accounts.map((account) => account.address),
@@ -284,21 +296,40 @@ function parseLimit(value: string, decimals: number) {
   return parseUnits(value, decimals);
 }
 
-type RevokeProvider = Pick<CoreProvider.Provider, "getAccount" | "getClient">;
+type RevokeProvider = Pick<CoreProvider.Provider, "request">;
 
-type AccessKeyRevoker = (options: {
-  provider: RevokeProvider;
-  walletAddress: Address;
-  accessKeyAddress: Address;
-  chainId: number;
-}) => Promise<unknown>;
+/** What `revoke` uses of incur's run context; `error` keeps the `cta` that thrown errors lose. */
+type RevokeContext = {
+  agent: boolean;
+  error: (error: {
+    code: "E_USAGE";
+    message: string;
+    exitCode: number;
+    retryable: boolean;
+    cta: { commands: { command: string }[] };
+  }) => never;
+};
 
+/**
+ * Revokes one of the logged-in wallet's stored keys on its network through the wallet app,
+ * after confirmation: a prompt on interactive runs, `--yes` on agent runs.
+ */
 export async function revokeHandler(
   wallet: Wallet,
   args: { accessKey: string },
-  options: { "dry-run"?: boolean | undefined },
-  createRevokeProvider: (options: { network: Network }) => RevokeProvider = createProvider,
-  revokeAccessKey: AccessKeyRevoker = revokeAccessKeyOnChain,
+  options: {
+    browser?: boolean | undefined;
+    "dry-run"?: boolean | undefined;
+    yes?: boolean | undefined;
+  },
+  context: RevokeContext,
+  dependencies: {
+    confirm?: (question: string) => Promise<boolean>;
+    createProvider?: (options: {
+      network: Network;
+      noBrowser?: boolean | undefined;
+    }) => RevokeProvider;
+  } = {},
 ) {
   if (!isAddress(args.accessKey))
     throw usageError("Invalid access key address: expected a 0x address");
@@ -314,36 +345,73 @@ export async function revokeHandler(
     wallet: walletAddress.toLowerCase(),
     ...networkFields(selectedChainId),
   };
+  const walletKeys = state.accessKeys.filter((candidate) =>
+    accessKeyMatches(candidate, { chainId: selectedChainId, walletAddress }),
+  );
+  const isRevoked = (candidate: WalletState["accessKeys"][number]) =>
+    walletKeys.includes(candidate) && candidate.address.toLowerCase() === output.access_key;
+  // Only a key the wallet holds on this network is revoked, so a mistyped address is caught.
+  const key = walletKeys.find(isRevoked);
+  if (!key)
+    throw usageError(
+      `Access key ${output.access_key} is not configured for wallet ${output.wallet} on ${network.name}. ${
+        walletKeys.length
+          ? `Its keys on ${network.name}: ${walletKeys.map((candidate) => candidate.address.toLowerCase()).join(", ")}.`
+          : `It has no keys on ${network.name}.`
+      }`,
+    );
 
+  const argv = [
+    "wallet",
+    "revoke",
+    output.access_key,
+    "--yes",
+    ...(options.browser === false ? ["--no-browser"] : []),
+  ];
   if (options["dry-run"])
     return {
       ...output,
       status: "dry_run" as const,
       local_key_removed: false,
+      key: currentKeyOutput(key, undefined, await tokenDetails(keyTokens(key))),
       ...nextStep(
-        `Run the next command to revoke access key ${output.access_key} on-chain. Revocation cannot be undone.`,
-        ["wallet", "revoke", output.access_key],
+        "Review the key, then run the next command to revoke it on-chain. Revocation cannot be undone.",
+        argv,
         { network },
       ),
     };
 
-  const provider = createRevokeProvider({ network });
-  await revokeAccessKey({
+  if (!options.yes) {
+    const command = continuationCommand(argv, network);
+    if (context.agent)
+      return context.error({
+        code: "E_USAGE",
+        message: `Revocation cannot be undone, so it needs confirmation. Review the key with --dry-run, then run '${command}'.`,
+        exitCode: errorCodes.E_USAGE.exitCode,
+        retryable: errorCodes.E_USAGE.retryable,
+        cta: { commands: [{ command }] },
+      });
+    const confirm = dependencies.confirm ?? confirmPrompt;
+    if (
+      !(await confirm(
+        `Revoke access key ${output.access_key} for wallet ${output.wallet} on ${network.name}? This cannot be undone.`,
+      ))
+    )
+      throw usageError("Access key not revoked.");
+  }
+
+  const provider = (dependencies.createProvider ?? createProvider)({
+    network,
+    noBrowser: options.browser === false,
+  });
+  await revokeAccessKeyThroughWallet({
     provider,
     walletAddress,
     accessKeyAddress,
     chainId: selectedChainId,
   });
 
-  const accessKeys = state.accessKeys.filter(
-    (key) =>
-      !localKeyMatchesRevoke({
-        key,
-        accessKeyAddress,
-        walletAddress,
-        chainId: selectedChainId,
-      }),
-  );
+  const accessKeys = state.accessKeys.filter((candidate) => !isRevoked(candidate));
   const localKeyRemoved = accessKeys.length !== state.accessKeys.length;
   if (localKeyRemoved) await saveWalletState({ ...state, accessKeys });
 
@@ -354,35 +422,26 @@ export async function revokeHandler(
   };
 }
 
-async function revokeAccessKeyOnChain(options: {
+/**
+ * The wallet app signs the revocation, so the root account needs no local signer.
+ * `wallet_revokeAccessKey` takes no chain: the wallet revokes on the provider's active chain,
+ * which must be the key's.
+ */
+async function revokeAccessKeyThroughWallet(options: {
   provider: RevokeProvider;
   walletAddress: Address;
   accessKeyAddress: Address;
   chainId: number;
 }) {
-  const account = options.provider.getAccount({
-    address: options.walletAddress,
-    signable: true,
+  const activeChainId = Number(await options.provider.request({ method: "eth_chainId" }));
+  if (activeChainId !== options.chainId)
+    throw usageError(
+      "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
+    );
+  await options.provider.request({
+    method: "wallet_revokeAccessKey",
+    params: [{ address: options.walletAddress, accessKeyAddress: options.accessKeyAddress }],
   });
-  const client = options.provider.getClient({ chainId: options.chainId });
-  await Actions.accessKey.revoke(client, {
-    account,
-    accessKey: options.accessKeyAddress,
-    chain: client.chain,
-  });
-}
-
-function localKeyMatchesRevoke(options: {
-  key: WalletState["accessKeys"][number];
-  accessKeyAddress: Address;
-  walletAddress: Address;
-  chainId: number;
-}) {
-  return (
-    options.key.address.toLowerCase() === options.accessKeyAddress.toLowerCase() &&
-    options.key.access.toLowerCase() === options.walletAddress.toLowerCase() &&
-    options.key.chainId === options.chainId
-  );
 }
 
 export async function debugHandler(options: { network?: string | undefined }) {

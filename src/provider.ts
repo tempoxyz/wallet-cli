@@ -26,7 +26,7 @@ export function createProvider(options: {
   });
 }
 
-export async function connect(provider: CoreProvider.Provider, network: Network) {
+export async function connect(provider: Pick<CoreProvider.Provider, "request">, network: Network) {
   return provider.request({
     method: "wallet_connect",
     params: [

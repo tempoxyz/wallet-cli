@@ -37,8 +37,8 @@ import {
 import { shellQuote } from "../src/shared/next.js";
 import {
   readyWallet,
+  runContext,
   testAccessKey,
-  testAccessKey2,
   testWallet,
   testWallet2,
   unlistedToken,
@@ -231,16 +231,17 @@ const continuations: {
     ],
   },
   {
-    name: "revoke --dry-run reruns without --dry-run",
+    name: "revoke --dry-run reruns with --yes",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return revokeHandler(
         await readyWallet(option),
-        { accessKey: testAccessKey2 },
+        { accessKey: testAccessKey },
         { "dry-run": true },
+        runContext(),
       );
     },
-    argv: ["wallet", "revoke", testAccessKey2.toLowerCase()],
+    argv: ["wallet", "revoke", testAccessKey.toLowerCase(), "--yes"],
   },
   {
     name: "keys update confirms the new limit with keys list",
