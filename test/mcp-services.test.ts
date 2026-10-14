@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { cliBundle } from "./cli-bundle.js";
-import { useTempHome, walletState, writeWalletState } from "./helpers.js";
+import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
 
 const root = resolve(import.meta.dirname, "..");
 const mockFetchModule = resolve(root, "test", "fixtures", "mock-services-fetch.mjs");
@@ -20,6 +20,44 @@ afterEach(() => {
 });
 
 describe("MCP tools", () => {
+  it("accepts a direct credits recipient through MCP", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const response = await mcpCall({
+      name: "transfer",
+      arguments: {
+        credits: true,
+        "amount-cents": 1,
+        to: testWallet,
+        "dry-run": true,
+      },
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result.isError).not.toBe(true);
+    expect(JSON.parse(firstToolText(response))).toMatchObject({
+      wallet: testWallet.toLowerCase(),
+      amount_cents: 1,
+      to: testWallet.toLowerCase(),
+      dry_run: true,
+    });
+  });
+
+  it.each([{ amount: "1" }, { token: "0x1111111111111111111111111111111111111111" }])(
+    "rejects token transfer arguments with credits through MCP: %j",
+    async (args) => {
+      await useTempHome();
+      const response = await mcpCall({
+        name: "transfer",
+        arguments: { credits: true, "amount-cents": 1, to: testWallet, "dry-run": true, ...args },
+      });
+
+      expect(response.error).toBeUndefined();
+      expect(response.result.isError).toBe(true);
+      expect(firstToolText(response)).toContain("Positional amount, token, and recipient");
+    },
+  );
+
   it("exposes access key commands as nested tools", async () => {
     const response = await mcpRequest<{ tools: { name: string }[] }>("tools/list", {});
 
@@ -101,6 +139,7 @@ async function walletCli(args: string[]) {
 async function mcpCall(params: Record<string, unknown>) {
   return mcpRequest<{
     content: { text: string }[];
+    isError?: boolean;
     structuredContent?: unknown;
   }>("tools/call", params);
 }
