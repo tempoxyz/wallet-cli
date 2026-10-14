@@ -154,13 +154,17 @@ const cli = Cli.create("tempo request", {
     } catch (caught) {
       if (!(caught instanceof MaxSpendExceededError)) throw caught;
       // incur drops the cta of thrown errors, so return the refusal through `error`.
+      const rerun = rerunArgs(argv);
       const command = continuationCommand(
-        ["request", ...rerunArgs(argv), "--max-spend", caught.required],
+        ["request", ...rerun, "--max-spend", caught.required],
         caught.network,
       );
+      const replace = rerun.some((arg) => arg.includes(redacted))
+        ? ` with each ${redacted} replaced by its original value`
+        : "";
       return error({
         code: caught.code,
-        message: `${caught.message}. To allow it, rerun: ${command}`,
+        message: `${caught.message}. To allow it, rerun${replace}: ${command}`,
         exitCode: caught.exitCode,
         retryable: caught.retryable,
         cta: { commands: [{ command }] },
@@ -279,15 +283,31 @@ function normalizeIncurArgv(argv: readonly string[]) {
   return out;
 }
 
+const redacted = "<redacted>";
+const credentialOptions = new Set(["private-key", "bearer", "user"]);
+const credentialHeader = /auth|cookie|key|secret|token|pass|session/i;
+
 /**
  * The invocation's arguments for a rerun that sets its own `--max-spend` and `--network`. Values
  * are bound to their options as incur parses them, so `-n` in a stack such as `-sn testnet` is
- * dropped while a value that looks like an option (`-d -n`) is kept.
+ * dropped while a value that looks like an option (`-d -n`) is kept. Credentials are replaced by
+ * `<redacted>` so the suggestion never echoes them.
  */
 function rerunArgs(argv: readonly string[]) {
-  return bindOptionValues(argv, optionSpecs).filter(
-    (arg) => !/^--(?:max-spend|network)(?:=|$)/.test(arg),
-  );
+  return bindOptionValues(argv, optionSpecs)
+    .filter((arg) => !/^--(?:max-spend|network)(?:=|$)/.test(arg))
+    .map(redactCredential);
+}
+
+/** Redacts `--private-key`, `--bearer`, `--user`, proxy credentials and credential-like headers. */
+function redactCredential(arg: string) {
+  const [, name, value = ""] = /^--([^=]+)=(.*)$/s.exec(arg) ?? [];
+  if (!name) return arg;
+  if (credentialOptions.has(name) || (name === "proxy" && value.includes("@")))
+    return `--${name}=${redacted}`;
+  const header = name === "header" ? /^([^:]+):/.exec(value)?.[1] : undefined;
+  if (header && credentialHeader.test(header)) return `--header=${header}: ${redacted}`;
+  return arg;
 }
 
 function describeRequestCli() {

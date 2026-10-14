@@ -87,7 +87,9 @@ sent, so methods other than GET, HEAD and OPTIONS also report a side-effect `war
 `--max-spend <amount>` (or `TEMPO_MAX_SPEND`) caps spending in payment token units; without
 either, the cap is 10 (about $10 in stablecoins). An offer above the cap is refused with
 `E_LIMIT_EXCEEDED` in both preview and execution, before anything is signed, and the error's
-`cta` reruns the same command with the `--max-spend` it needs. A session deposit suggested
+`cta` reruns the same command with the `--max-spend` it needs. That command shows
+credentials (`--private-key`, `--bearer`, `--user`, proxy credentials, and headers such as
+`Authorization` or `Cookie`) as `<redacted>`. A session deposit suggested
 above the cap is lowered to the cap. For reusable sessions, execution also checks cumulative
 spending and top-ups against the cap. Invalid amounts fail before the HTTP request. The cap
 cannot be disabled; pass a larger `--max-spend` instead.

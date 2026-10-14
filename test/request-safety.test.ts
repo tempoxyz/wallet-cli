@@ -48,7 +48,8 @@ async function fixture(
       return;
     }
     requests++;
-    if (req.headers.authorization) {
+    // Only a payment credential counts; --bearer and -u send other Authorization schemes.
+    if (req.headers.authorization?.startsWith("Payment ")) {
       authenticated++;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify(Credential.deserialize(req.headers.authorization).payload));
@@ -123,7 +124,9 @@ it("applies TEMPO_MAX_SPEND when --max-spend is omitted", async () => {
 });
 
 // `{url}` stands for the fixture URL. The rerun keeps every other argument, bound to its option
-// as incur parses it, and sets --max-spend and --network itself.
+// as incur parses it, sets --max-spend and --network itself, and redacts credentials, all of
+// which contain `s3cr3t` here.
+const key = `0x5${"2".repeat(63)}`;
 it.each([
   {
     name: "the URL alone",
@@ -160,20 +163,52 @@ it.each([
     argv: ["--dry-run", "{url}"],
     cta: "tempo request -j --dry-run {url} --max-spend 25 --network mainnet",
   },
+  {
+    name: "credentials",
+    argv: [
+      "--private-key",
+      key,
+      "--bearer",
+      "s3cr3t-bearer",
+      "-u",
+      "alice:s3cr3t-pw",
+      "-H",
+      "Authorization: Bearer s3cr3t-header",
+      "-H",
+      "Cookie: sid=s3cr3t-cookie",
+      "-H",
+      "X-Api-Key: s3cr3t-key",
+      "-H",
+      "Accept: text/plain",
+      "--proxy",
+      "http://bob:s3cr3t-proxy@127.0.0.1:9",
+      "--no-proxy",
+      "{url}",
+    ],
+    cta: "tempo request -j '--private-key=<redacted>' '--bearer=<redacted>' '--user=<redacted>' '--header=Authorization: <redacted>' '--header=Cookie: <redacted>' '--header=X-Api-Key: <redacted>' '--header=Accept: text/plain' '--proxy=<redacted>' --no-proxy {url} --max-spend 25 --network mainnet",
+    redacts: true,
+  },
+  {
+    name: "a proxy without credentials",
+    argv: ["--proxy", "http://127.0.0.1:9", "--no-proxy", "{url}"],
+    cta: "tempo request -j --proxy=http://127.0.0.1:9 --no-proxy {url} --max-spend 25 --network mainnet",
+  },
 ])(
   "refuses a charge over the cap with a rerun of $name",
-  async ({ argv, env = {}, chain = 4217, max = "10 (default)", cta }) => {
+  async ({ argv, env = {}, chain = 4217, max = "10 (default)", cta, redacts = false }) => {
     const server = await fixture("charge", chain, { amount: "25000000" });
     const withUrl = (value: string) => value.replaceAll("{url}", server.url);
     const result = await server.cli(["-j", ...argv.map(withUrl)], { TEMPO_MAX_SPEND: "", ...env });
     const command = withUrl(cta);
     expect(result.code).toBe(4);
+    const replace = redacts ? " with each <redacted> replaced by its original value" : "";
     expect(JSON.parse(result.stderr)).toEqual({
       code: "E_LIMIT_EXCEEDED",
-      message: `Payment max spend exceeded: max=${max} required=25. To allow it, rerun: ${command}`,
+      message: `Payment max spend exceeded: max=${max} required=25. To allow it, rerun${replace}: ${command}`,
       retryable: false,
       cta: { description: "Suggested command:", commands: [{ command }] },
     });
+    expect(`${result.stdout}${result.stderr}`).not.toMatch(/s3cr3t|52{63}/);
     expect(server.counts()).toEqual({ requests: 1, authenticated: 0, rpc: 0 });
   },
 );
