@@ -152,6 +152,62 @@ describe("revoke", () => {
     expect((await loadWalletState()).accessKeys).toEqual([key]);
   });
 
+  it.each([mainnet, testnet])(
+    "a timed-out $name revoke asks the wallet app once",
+    async (network) => {
+      await useTempHome();
+      await writeWalletState(
+        walletState({
+          chainId: network.chainId,
+          accessKeys: [{ ...key, chainId: network.chainId }],
+        }),
+      );
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const registered: unknown[] = [];
+      // The wallet app issues a device code that expires before the user approves it.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init: { body: string }) => {
+          if (!url.endsWith("/register"))
+            return Response.json({ error: "expired_token" }, { status: 400 });
+          registered.push(JSON.parse(init.body));
+          return Response.json({
+            device_code: "device",
+            user_code: "ABCDEFGH",
+            verification_uri: "https://wallet.tempo.xyz/device",
+            verification_uri_complete: "https://wallet.tempo.xyz/device?user_code=ABCDEFGH",
+          });
+        }),
+      );
+
+      const error = await revokeHandler(
+        await readyWallet(network.name),
+        { accessKey: testAccessKey },
+        { yes: true, browser: false },
+        runContext(true),
+      ).catch((value: unknown) => value);
+      await Storage.filesystem().getItem("store");
+
+      expect(error).toMatchObject({ message: expect.stringContaining("Device code expired") });
+      // One approval request, which carries the key's chain since the RPC has no chain parameter.
+      expect(registered).toEqual([
+        expect.objectContaining({
+          message: {
+            type: "rpc-requests",
+            payload: [
+              expect.objectContaining({
+                method: "wallet_revokeAccessKey",
+                params: [{ address: testWallet, accessKeyAddress: testAccessKey }],
+                context: { account: testWallet, chainId: network.chainId },
+              }),
+            ],
+          },
+        }),
+      ]);
+      expect((await loadWalletState()).accessKeys).toEqual([{ ...key, chainId: network.chainId }]);
+    },
+  );
+
   const listed = `Its keys on mainnet: ${testAccessKey.toLowerCase()}.`;
   it.each(
     [

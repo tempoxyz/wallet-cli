@@ -498,8 +498,7 @@ describe("wallet CLI login and access key checks", () => {
       expect(result.stderr).toContain(
         `Revoke access key ${testAccessKey.toLowerCase()} for wallet ${testWallet.toLowerCase()} on mainnet? This cannot be undone. [y/N]`,
       );
-      // The SDK retries a failed revocation request, so it may register more than once.
-      expect([...new Set(requests)]).toEqual(asked ? ["POST /api/auth/device/register"] : []);
+      expect(requests).toEqual(asked ? ["POST /api/auth/device/register"] : []);
     },
   );
 
@@ -519,7 +518,8 @@ describe("wallet CLI login and access key checks", () => {
     });
 
     expect(result.code).toBe(1);
-    expect([...new Set(requests)]).toEqual(["POST /api/auth/device/register"]);
+    // Each wallet-app request is sent once, even when it fails.
+    expect(requests).toEqual(["POST /api/auth/device/register"]);
   });
 });
 

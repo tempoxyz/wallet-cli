@@ -139,7 +139,7 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 
 `tempo wallet revoke <ACCESS_KEY>` revokes one of the logged-in wallet's stored keys on the resolved network; any other key fails with `E_USAGE` listing the wallet's keys on that network. The wallet app signs the revocation, so it needs no local signer for the wallet itself. Revocation cannot be undone, so an interactive run asks `[y/N]` first and an agent run needs `--yes`; without it, it exits 2 with `E_USAGE` and a `cta` that adds `--yes`. `--dry-run` shows the key, wallet, network, limits, and expiry, and its `_next` adds `--yes`.
 
-`login`, `refresh`, `keys update`, and `revoke` ask the wallet app for approval; `--no-browser` prints the URL and confirmation code instead of opening a browser. `refresh` and `keys update` keep the stored key until the wallet app approves the change, so a declined or failed approval leaves the current key usable.
+`login`, `refresh`, `keys update`, and `revoke` ask the wallet app for approval; `--no-browser` prints the URL and confirmation code instead of opening a browser. `refresh` and `keys update` keep the stored key until the wallet app approves the change, so a declined or failed approval leaves the current key usable. A wallet-app request that fails or whose code expires is not resent, so each approval shows one confirmation code; rerun the command to try again.
 
 ## Commands
 
