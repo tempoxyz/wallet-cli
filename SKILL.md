@@ -16,9 +16,12 @@ Run these commands in order. Do not skip steps. Do not search for other install 
 
 **Step 1 — Install:** `curl -fsSL https://tempo.xyz/install | bash`
 
-**Step 2 — Login:** `"$HOME/.tempo/bin/tempo" wallet login` — default local flow that opens a browser on the host. Prompt user, wait for confirmation, then continue. Do not loop login attempts without user confirmation. When run by agents, use a long command timeout (at least 16 minutes).
+**Step 2 — Login:** `"$HOME/.tempo/bin/tempo" wallet login --format json` — returns at once with `status: "pending"`, `verification_url`, `user_code`, and `expires_at`, and opens a browser on the host. Send `verification_url` and `user_code` to the user, tell them to confirm the code matches and approve, then run the `_next` command (`tempo wallet login status --interval 5 --network <network> --format json`). It waits for the approval and returns the logged-in `accounts`. Do not loop login attempts without user confirmation.
 
-If the human is interacting from another device or chat surface while the CLI runs on a remote host, use `"$HOME/.tempo/bin/tempo" wallet login --no-browser` instead. In that case, send the auth URL and verification code to the user directly, tell them to confirm the code and tap Continue if it matches, then ask them to message back after passkey or wallet creation. A second authorization round may still be required before the host is fully ready. `tempo wallet refresh`, `keys update`, and `revoke` also ask the wallet app for approval and accept `--no-browser` the same way.
+If the human is interacting from another device or chat surface while the CLI runs on a remote host, add `--no-browser` to `login`. `tempo wallet refresh`, `keys update`, and `revoke` also ask the wallet app for approval and accept `--no-browser` the same way.
+
+- `login status` waits until the code expires (about 10 minutes). With a short command timeout, add `--max-attempts <n>`; it then fails with retryable `E_POLL_TIMEOUT` while the code is still pending, so run its `cta` command again. Rerun the `cta` command on retryable `E_NETWORK` too.
+- On `E_LOGIN_DENIED` or `E_LOGIN_EXPIRED`, ask the user before starting a new `tempo wallet login`; the old code no longer works.
 
 **Step 3 — Confirm readiness:** `"$HOME/.tempo/bin/tempo" wallet whoami`
 
@@ -102,7 +105,7 @@ For credit payments, use `--amount-cents` as the direct payment amount or the ma
 
 - Return result payload to user directly when request succeeds.
 - If response contains a file URL (e.g., image generation), download it locally: `curl -fsSL "<url>" -o <filename>`.
-- If response is a usage/auth readiness error, run `tempo wallet login` and retry once. When a wallet command returns `E_NOT_AUTHENTICATED`, `E_KEY_EXPIRED`, or `E_AUTH_REFRESH_REQUIRED`, run the `tempo wallet login` or `tempo wallet refresh` command in its `cta` instead; it keeps the command's `--network`. `transfer` and `swap` need a usable access key; `keys update`, `revoke`, and `sessions close` need only the login.
+- If response is a usage/auth readiness error, run `tempo wallet login`, finish it with its `_next` `login status` as in Setup, and retry once. When a wallet command returns `E_NOT_AUTHENTICATED`, `E_KEY_EXPIRED`, or `E_AUTH_REFRESH_REQUIRED`, run the `tempo wallet login` or `tempo wallet refresh` command in its `cta` instead; it keeps the command's `--network`. `transfer` and `swap` need a usable access key; `keys update`, `revoke`, and `sessions close` need only the login.
 - If response indicates payment/funding limit issues, report clearly and stop. Check `tempo wallet whoami --mach` and offer `tempo wallet fund --mach --no-browser --format json` to fund from another device. Review token-specific access-key limits before retrying.
 - After multi-request workflows, check remaining balance with `tempo wallet whoami`.
 - Wallet results with a follow-up step include `instruction` and `_next`. Run `_next.argv` as given (`_next.command` is the shell-quoted form), but only after the user approves any spend, transfer, or revocation it performs.

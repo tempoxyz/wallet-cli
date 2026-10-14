@@ -51,27 +51,6 @@ import {
 import { queryMachBalance } from "../shared/mach.js";
 import { queryCreditBalance, warnCreditsDeprecated } from "./credits.js";
 
-export async function loginHandler(options: {
-  network?: string | undefined;
-  browser?: boolean | undefined;
-}) {
-  const state = await loadWalletState();
-  const network = await resolveNetwork(options.network, state);
-  const cached = await cachedLoginOutput(state, network);
-  if (cached) return cached;
-
-  const provider = createProvider({ network, noBrowser: options.browser === false });
-  const result = await connect(provider, network);
-
-  return {
-    accounts: result.accounts.map((account) => account.address),
-    chainId: network.chainId,
-    ...nextStep("Run the next command to confirm the wallet is ready.", ["wallet", "whoami"], {
-      network,
-    }),
-  };
-}
-
 /** Whoami output when the active wallet already has a usable access key on `network`. */
 export async function cachedLoginOutput(state: WalletState, network: Network) {
   const activeAccount = state.accounts[state.activeAccount ?? 0];

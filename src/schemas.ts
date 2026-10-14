@@ -396,15 +396,46 @@ export const fundOutput = z.object({
 export const loginOptions = z.object({
   ...globalOptionShape,
   browser: browserOption,
+  wait: z
+    .boolean()
+    .optional()
+    .describe(
+      "Wait for approval (default in a terminal); --no-wait returns the code for 'login status'",
+    ),
+});
+
+export const loginStatusOptions = z.object({
+  ...globalOptionShape,
+  interval: z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Seconds between checks (default: the wallet's interval)"),
+  "max-attempts": z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Checks before giving up with E_POLL_TIMEOUT (default: until the code expires)"),
 });
 
 export const globalOptions = z.object(globalOptionShape);
 
+export const loginStatusOutput = z.object({
+  accounts: z.array(z.string()),
+  chainId: z.number(),
+  ...nextOutputShape,
+});
+
 export const loginOutput = z.union([
   whoamiOutput,
+  loginStatusOutput,
   z.object({
-    accounts: z.array(z.string()),
-    chainId: z.number(),
+    status: z.literal("pending"),
+    verification_url: z.string().describe("URL where the user approves the login"),
+    user_code: z.string().describe("Code the user checks against the one the wallet shows"),
+    expires_at: z.string().describe("When the code expires (ISO 8601)"),
     ...nextOutputShape,
   }),
 ]);

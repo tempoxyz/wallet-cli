@@ -1,5 +1,6 @@
-import { Adapter, Provider as CoreProvider } from "accounts";
+import { Adapter, Keystore, Provider as CoreProvider } from "accounts";
 import { cli, Storage } from "accounts/cli";
+import { deviceCode } from "accounts/deviceCode";
 import { toHex, type Transport } from "viem";
 
 import { openExternal } from "./shared/process.js";
@@ -13,7 +14,7 @@ export function createProvider(options: {
   noBrowser?: boolean | undefined;
 }): CoreProvider.Provider {
   const adapter = cli({
-    host: new URL("/api/auth/device", appUrl).toString(),
+    host: deviceCodeUrl(),
     open(url, prompt) {
       const code = prompt.userCode.replace(/^(.{4})(.{4})$/, "$1-$2");
       console.error(`Device confirmation code: ${code}`);
@@ -28,6 +29,44 @@ export function createProvider(options: {
     storage: Storage.filesystem(),
     testnet: options.network.name === "testnet",
   });
+}
+
+/**
+ * A `wallet_connect` provider set up like `createProvider`, except that the caller supplies the
+ * device-code transport's `fetch` and the p256 access-key keystore, so a login can register a
+ * device code in one process and finish polling it in another. The caller shows the prompt.
+ */
+export function createLoginProvider(options: {
+  network: Network;
+  fetch: typeof globalThis.fetch;
+  keystore: Keystore.Keystore;
+  /** Milliseconds between `/token` polls; defaults to the interval the wallet advertises. */
+  pollingInterval?: number | undefined;
+  /** Milliseconds to wait for approval; defaults to the SDK's five minutes. */
+  timeout?: number | undefined;
+}): CoreProvider.Provider {
+  const adapter = deviceCode({
+    fetch: options.fetch,
+    // The same keystores `accounts/cli` uses: keys must survive the JSON wallet store.
+    keystores: { p256: options.keystore, secp256k1: Keystore.secp256k1() },
+    meta: { name: "Tempo CLI" },
+    name: "Tempo CLI",
+    onPrompt: () => undefined,
+    ...(options.pollingInterval !== undefined ? { pollingInterval: options.pollingInterval } : {}),
+    rdns: "xyz.tempo.cli",
+    ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+    url: deviceCodeUrl(),
+  });
+  return CoreProvider.create({
+    adapter: withoutRetries(adapter),
+    mpp: { mode: "pull" },
+    storage: Storage.filesystem(),
+    testnet: options.network.name === "testnet",
+  });
+}
+
+function deviceCodeUrl() {
+  return new URL("/api/auth/device", appUrl).toString();
 }
 
 /**
@@ -56,19 +95,24 @@ function withoutRetries(adapter: Adapter.Adapter): Adapter.Adapter {
 }
 
 export async function connect(provider: Pick<CoreProvider.Provider, "request">, network: Network) {
-  return provider.request({
-    method: "wallet_connect",
-    params: [
-      {
-        // Persisted SDK state can override the provider's testnet default.
-        chainId: toHex(network.chainId),
-        capabilities: {
-          authorizeAccessKey: {
-            expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
+  try {
+    return await provider.request({
+      method: "wallet_connect",
+      params: [
+        {
+          // Persisted SDK state can override the provider's testnet default.
+          chainId: toHex(network.chainId),
+          capabilities: {
+            authorizeAccessKey: {
+              expiry: Math.floor(Date.now() / 1000) + accessKeyAuthorizationSeconds,
+            },
+            showDeposit: true,
           },
-          showDeposit: true,
         },
-      },
-    ],
-  });
+      ],
+    });
+  } finally {
+    // Wait for the SDK to save the wallet store, so later reads in this process see the result.
+    await Promise.resolve(Storage.filesystem().getItem("store")).catch(() => undefined);
+  }
 }

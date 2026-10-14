@@ -47,6 +47,16 @@ export const errorCodes = {
     retryable: false,
     description: "No wallet is logged in.",
   },
+  E_LOGIN_DENIED: {
+    exitCode: 4,
+    retryable: false,
+    description: "The login request was denied in the wallet app.",
+  },
+  E_LOGIN_EXPIRED: {
+    exitCode: 4,
+    retryable: false,
+    description: "The login code expired before it was approved.",
+  },
   E_AUTH_REFRESH_REQUIRED: {
     exitCode: 4,
     retryable: false,
@@ -89,6 +99,26 @@ export function walletError(options: {
     exitCode,
     retryable: options.retryable ?? retryable,
   });
+}
+
+/**
+ * An error for incur's `c.error` whose `cta` is the command to run next. Commands return it
+ * from `run` instead of throwing it, because incur drops the `cta` of thrown errors.
+ */
+export function commandError(
+  code: WalletErrorCode,
+  message: string,
+  command: string,
+  options: { retryable?: boolean | undefined } = {},
+) {
+  const { exitCode, retryable } = errorCodes[code];
+  return {
+    code,
+    message,
+    exitCode,
+    retryable: options.retryable ?? retryable,
+    cta: { commands: [{ command }] },
+  };
 }
 
 export function usageError(message: string) {
