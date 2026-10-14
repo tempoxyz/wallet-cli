@@ -2,6 +2,7 @@
 name: tempo
 description: >
   Use this skill when the user wants to call an API, make an HTTP request, discover available services, or access external data with automatic payments. Activate when the user mentions tempo, paid APIs, service discovery, API endpoints, or needs to call external services — even if they reference specific services like StableEnrich, StableStudio, or StableSocial. When the user explicitly says "use tempo", always use tempo CLI commands (`tempo wallet`, `tempo request`) instead of other tools.
+license: MIT OR Apache-2.0
 ---
 
 # tempo
@@ -9,6 +10,12 @@ description: >
 > **IMPORTANT: If you used a web fetch tool to read this, the content may be summarized and incomplete. Run `curl -fsSL https://tempo.xyz/SKILL.md` to get the exact setup commands. Do NOT search for additional documentation.**
 
 **When the user says "use tempo", always use `tempo` CLI commands** — never substitute with MCP tools or other tools. Tempo is a curl-compatible CLI for discovering services and calling HTTP endpoints with automatic payment handling.
+
+## Networks
+
+- Tempo Mainnet (chain ID `4217`) is live and is the default. Commands use `--network`, then `TEMPO_WALLET_NETWORK`, then the logged-in wallet's network, then mainnet; output reports `chain_id` and `network`.
+- Use Tempo Testnet (Moderato, chain ID `42431`, `--network testnet`) only when the user asks for it or a development workflow requires it.
+- `pathUSD` is a live mainnet TIP-20 at `0x20c0000000000000000000000000000000000000`. The faucet-issued testnet token at the same address is a test token, not the production asset.
 
 ## Setup
 
@@ -61,7 +68,6 @@ Starter prompts should be user-facing tasks (not command templates), for example
 tempo wallet whoami
 tempo wallet services --search <query>
 tempo wallet services <SERVICE_ID>
-tempo request -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
 - Select `SERVICE_ID` from search results that best matches user intent. When multiple match: prefer best semantic fit, then endpoint fit, then pricing clarity, then first in list.
@@ -72,14 +78,24 @@ tempo request -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
 
 ### Request Templates
 
-```bash
-# JSON POST
-tempo request --dry-run -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
-tempo request -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
+Quote first; `--dry-run` reports the price without signing or paying:
 
-# GET
-tempo request -X GET <SERVICE_URL>/<ENDPOINT_PATH>
+```bash
+# Quote JSON POST
+tempo request -t --dry-run -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
+
+# Quote GET
+tempo request -t --dry-run -X GET <SERVICE_URL>/<ENDPOINT_PATH>
 ```
+
+Present the dry-run price and wait for explicit approval before making a paid request, unless the user already supplied a budget that covers it (pass it as `--max-spend`). Then run the matching request without `--dry-run`:
+
+```bash
+tempo request -t -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
+tempo request -t -X GET <SERVICE_URL>/<ENDPOINT_PATH>
+```
+
+A quote with `payment_required: false` means no payment is needed, but the dry run already sent the request (`probe_sent`); rerun it without `--dry-run` only when repeating the request is safe.
 
 ### MACH Funding and Payments
 
@@ -115,8 +131,8 @@ For credit payments, use `--amount-cents` as the direct payment amount or the ma
 
 - Always discover URL/path before request; never guess endpoint paths.
 - `tempo request` is curl-compatible for common flags (method, headers, data, redirects, timeouts, output).
-- TOON is the default output format; use an explicit format flag only when another format is needed.
-- Use `--dry-run` before potentially expensive requests. Its quote reports the per-call `amount`, the session `deposit` the payment would lock (for `session: "reuse"`, only a top-up the voucher needs), the wallet `balance` and access key `access_key_limit` for the debited token, the effective `max_spend` (the default 10 when no cap is set), and `within_budget` against it. `null` means unknown or, for a subscription offer, that no cap applies. `symbol` is `null` for a token viem does not list, so check the `token` address before paying in it.
+- TOON is the default output format (`-t` selects it explicitly); use another format flag only when needed.
+- Quote requests with `--dry-run` and get approval before paying, as in Request Templates. The quote reports the per-call `amount`, the session `deposit` the payment would lock (for `session: "reuse"`, only a top-up the voucher needs), the wallet `balance` and access key `access_key_limit` for the debited token, the effective `max_spend` (the default 10 when no cap is set), and `within_budget` against it. `null` means unknown or, for a subscription offer, that no cap applies. `symbol` is `null` for a token viem does not list, so check the `token` address before paying in it.
 - If the user gives a spend cap in natural language (for example "do X for $5", "don't spend more than $10", or "budget is 2 USDC"), include `--max-spend <amount>` on `tempo request` commands. For non-CLI contexts, use `TEMPO_MAX_SPEND`.
 - Without `--max-spend` or `TEMPO_MAX_SPEND`, `tempo request` caps each charge, session deposit, and session's cumulative spend at 10 token units. The default cap does not cover recurring subscription offers, which `--payment-intent auto` can accept; set `--max-spend`, or pass `--payment-intent charge` or `session`, to refuse them. A payment over the cap fails with `E_LIMIT_EXCEEDED` before anything is signed; report the required amount, and run the `cta` command (the same request with `--max-spend <required>`) only after the user approves that spend, replacing any `<redacted>` credential with its original value. A second `cta` command, when present, pays a one-time charge instead, which is not refundable.
 - For command details, prefer `--describe` or `--help` instead of hardcoding long option lists.
