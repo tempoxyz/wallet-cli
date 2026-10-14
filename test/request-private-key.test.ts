@@ -87,6 +87,8 @@ it.each([
   const home = await useTempHome();
   await writeWalletState(walletState());
   vi.stubEnv("TEMPO_PRIVATE_KEY", row.env);
+  // The quote's balance read fails fast instead of reaching a public RPC.
+  vi.stubEnv("TEMPO_RPC_URL", "http://127.0.0.1:9");
   const server = await fixture();
   const args = row.flag === undefined ? [] : ["--private-key", row.flag];
 

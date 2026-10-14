@@ -6,7 +6,7 @@ import { Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { Errors } from "incur";
+import { Errors, type z } from "incur";
 import { Challenge, Constants, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession, tempo } from "mppx/client";
 import { Keystore } from "accounts";
@@ -19,7 +19,16 @@ import {
   FormData as UndiciFormData,
   ProxyAgent,
 } from "undici";
-import { createWalletClient, encodeFunctionData, http, isAddress, parseUnits } from "viem";
+import {
+  createWalletClient,
+  encodeFunctionData,
+  erc20Abi,
+  formatUnits,
+  http,
+  isAddress,
+  parseUnits,
+  type Address,
+} from "viem";
 import { prepareTransactionRequest, signTransaction } from "viem/actions";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -35,7 +44,7 @@ import { withSessionLock } from "../payment/session-lock.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import {
   deleteSessionRecord,
-  findReusableSession,
+  findReusableSessions,
   originFromUrl,
   type PersistedSessionRecord,
   preserveSessionCumulative,
@@ -43,6 +52,7 @@ import {
   upsertSessionRecord,
 } from "../payment/session-store.js";
 import { connect, createProvider } from "../provider.js";
+import type { requestDryRunOutput } from "../schemas.js";
 import { escrowAbi, version } from "../shared/constants.js";
 import {
   authRefreshRequiredError,
@@ -65,8 +75,15 @@ import {
   type Network,
 } from "../shared/network.js";
 import { continuationCommand } from "../shared/next.js";
-import { listedSymbol, resolveTokenAddress } from "../shared/tokens.js";
 import {
+  knownToken,
+  listedSymbol,
+  readTokenMetadata,
+  resolveTokenAddress,
+  tokenMetadata,
+} from "../shared/tokens.js";
+import {
+  cleanStoredScalar,
   escapeInvisible,
   getRecord,
   nowSeconds,
@@ -512,24 +529,17 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
     const probeMethod = method.toUpperCase();
     if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
     if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
-    await writeOutput(
-      options.output,
-      `${JSON.stringify(
-        {
-          payment_required: false,
-          status: response.status,
-          probe_sent: true,
-          ...(replaySafeMethods.has(probeMethod)
-            ? {}
-            : {
-                warning: `The ${probeMethod} request was sent to the server and may have had side effects`,
-              }),
-        },
-        null,
-        2,
-      )}\n`,
-      stdout,
-    );
+    const probe: RequestDryRunOutput = {
+      payment_required: false,
+      status: response.status,
+      probe_sent: true,
+      ...(replaySafeMethods.has(probeMethod)
+        ? {}
+        : {
+            warning: `The ${probeMethod} request was sent to the server and may have had side effects`,
+          }),
+    };
+    await writeOutput(options.output, `${JSON.stringify(probe, null, 2)}\n`, stdout);
     return;
   }
 
@@ -539,38 +549,10 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
     options.paymentToken = paymentTokenValue(options);
     if (options.dryRun) {
       const { challenge } = preparePaymentChallenge(response, options, request.url);
-      const signer = privateKeySigner(options);
+      const quote = await paymentQuote(challenge, options, request.url);
       if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
       if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
-      await writeOutput(
-        options.output,
-        `${JSON.stringify(
-          {
-            payment_required: true,
-            method: challenge.method,
-            intent: challenge.intent,
-            recurring: challenge.intent === "subscription",
-            amount: formatTokenAmount(challengeAmount(challenge)),
-            amount_raw: challenge.request.amount,
-            token: challenge.request.currency,
-            machine_token_enabled:
-              getRecord(challenge.request.methodDetails).machineTokenEnabled === true,
-            payment_token: options.paymentToken ?? null,
-            chain_id: normalizedChallengeChainId(
-              getRecord(challenge.request.methodDetails),
-              options,
-            ),
-            max_spend: options.maxSpend ?? null,
-            within_budget: options.maxSpend ? true : null,
-            signer: signer
-              ? { address: signer.account.address, source: signer.source }
-              : { address: null, source: "wallet" },
-          },
-          null,
-          2,
-        )}\n`,
-        stdout,
-      );
+      await writeOutput(options.output, `${JSON.stringify(quote, null, 2)}\n`, stdout);
       return;
     }
 
@@ -621,6 +603,113 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
       );
     throw error;
   }
+}
+
+type RequestDryRunOutput = z.infer<typeof requestDryRunOutput>;
+
+type RpcOptions = Parameters<typeof createTempoPublicClient>[1];
+
+// Dry-run reads only inform the quote, so a stalled RPC must not hold it up.
+const dryRunRpc = { timeout: 3_000, retryCount: 0 };
+
+/**
+ * The 402 `--dry-run` quote. Session reuse and the deposit come from `planSessionPayment`, as for
+ * a payment; nothing is signed, opened, or written. A payer, balance, token metadata, or session
+ * read that fails is reported as `null`.
+ */
+async function paymentQuote(
+  challenge: Challenge.Challenge,
+  options: RequestOptions,
+  requestUrl: string,
+): Promise<RequestDryRunOutput> {
+  const signer = privateKeySigner(options);
+  const chainId = normalizedChallengeChainId(getRecord(challenge.request.methodDetails), options);
+  const amount = challengeAmount(challenge);
+  const token = stringValue(challenge.request.currency);
+  // MACH settles in the offered currency but debits MACH from the wallet.
+  const debited = isMachPaymentToken(options.paymentToken)
+    ? machineTokenDeployments[chainId as keyof typeof machineTokenDeployments]?.token
+    : token;
+  const payer =
+    privateKeyIdentity(options) ??
+    (await loadWalletState()
+      .then((state) => storedAccessKeyIdentity(state, options))
+      .catch(() => undefined));
+  const [metadata, balance, plan] = await Promise.all([
+    tokenMetadata(token.toLowerCase() as Address, chainId, (address) =>
+      readTokenMetadata(address, chainId, dryRunRpc),
+    ).catch(() => undefined),
+    payer && debited ? dryRunBalance(payer.address, debited, chainId) : null,
+    challenge.intent === "session" && payer
+      ? planSessionPayment(sessionDetails(challenge, requestUrl, options), payer, options, {
+          dryRun: true,
+        }).catch((error: unknown) => {
+          // An offer the payment would refuse still fails; a failed read is unknown.
+          if (error instanceof Errors.IncurError) throw error;
+          return undefined;
+        })
+      : undefined,
+  ]);
+  // MACH is listed, so its decimals need no read.
+  const debitedToken =
+    debited === token ? metadata : debited === undefined ? undefined : knownToken(debited, chainId);
+  const decimals = debitedToken?.decimals;
+  const limit = storedAccessKeyLimit(payer && "key" in payer ? payer.key : undefined, debited);
+  // No cap bounds a subscription: an explicit one refuses it before this, and the default skips it.
+  const cap = challenge.intent === "subscription" ? undefined : spendCap(options);
+  const spend = challenge.intent === "session" ? plan?.signedCumulative : amount;
+  return {
+    payment_required: true,
+    method: challenge.method,
+    intent: challenge.intent,
+    recurring: challenge.intent === "subscription",
+    amount: formatTokenAmount(amount),
+    amount_raw: amount.toString(),
+    session: plan ? (plan.reusable ? "reuse" : "open") : null,
+    deposit: plan ? formatTokenAmount(plan.depositRaw) : null,
+    deposit_raw: plan ? plan.depositRaw.toString() : null,
+    token,
+    // The server picks the currency, so an unlisted token's self-declared ticker is not shown.
+    symbol: knownToken(token, chainId)?.symbol ?? null,
+    decimals: metadata?.decimals ?? null,
+    balance: balance === null || decimals === undefined ? null : formatUnits(balance, decimals),
+    access_key_limit:
+      limit === null || decimals === undefined ? null : formatUnits(limit, decimals),
+    machine_token_enabled: getRecord(challenge.request.methodDetails).machineTokenEnabled === true,
+    payment_token: options.paymentToken ?? null,
+    chain_id: chainId,
+    max_spend: cap ?? null,
+    within_budget: cap === undefined || spend === undefined ? null : spend <= parseUnits(cap, 6),
+    signer: signer
+      ? { address: signer.account.address, source: signer.source }
+      : { address: null, source: "wallet" },
+  };
+}
+
+/**
+ * The key's stored raw limit for `token`. Exact stored limits (`permissionSemantics: 1`) that
+ * leave the token out allow it no spending; otherwise a missing limit is unknown or unrestricted.
+ */
+function storedAccessKeyLimit(
+  key: WalletState["accessKeys"][number] | undefined,
+  token: string | undefined,
+) {
+  const stored = key?.limits?.find((entry) => entry.token.toLowerCase() === token?.toLowerCase());
+  if (!stored) return key?.permissionSemantics === 1 && key.limits !== undefined ? 0n : null;
+  const raw = cleanStoredScalar(stored.limit);
+  return /^\d+$/.test(raw) ? BigInt(raw) : null;
+}
+
+/** The payer's raw balance of `token`, or `null` when the read fails. */
+function dryRunBalance(payer: string, token: string, chainId: number) {
+  return createTempoPublicClient(chainId, dryRunRpc)
+    .readContract({
+      address: token as Address,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [payer as Address],
+    })
+    .catch(() => null);
 }
 
 async function buildFetchRequest(options: RequestOptions) {
@@ -926,7 +1015,12 @@ async function paySessionAndRetryRequest(
   try {
     const details = sessionDetails(challenge, request.url, options);
     const identity = await resolvePaymentIdentity(options);
-    const reusable = await reusableSessionRecord(details, identity, skipChannelId);
+    const { reusable, depositRaw, signedCumulative } = await planSessionPayment(
+      details,
+      identity,
+      options,
+      { skipChannelId },
+    );
     const challengeResponse = tempoPaymentChallengeResponse(paymentRequiredResponse);
     const payment = Mppx.create({
       methods: [
@@ -939,14 +1033,10 @@ async function paySessionAndRetryRequest(
       polyfill: false,
     });
 
-    let signedCumulative: bigint;
     let credential: string;
     let record: PersistedSessionRecord | undefined;
 
     if (reusable) {
-      signedCumulative =
-        maxBigInt(reusable.cumulative_amount, reusable.accepted_cumulative, reusable.server_spent) +
-        details.amount;
       assertWithinMaxSpend(signedCumulative, options);
       await preserveSessionCumulative(reusable.channel_id, signedCumulative);
       credential = await payment.createCredential(challengeResponse, {
@@ -957,9 +1047,7 @@ async function paySessionAndRetryRequest(
       });
       record = reusable;
     } else {
-      const depositRaw = sessionDepositRaw(details, options);
       await assertSufficientSessionBalance(identity.address, details, depositRaw);
-      signedCumulative = details.amount;
       assertWithinMaxSpend(signedCumulative, options);
       credential = await payment.createCredential(challengeResponse, {
         depositRaw: depositRaw.toString(),
@@ -1056,25 +1144,8 @@ function writePrivateKeyNotice(stderr: Pick<NodeJS.WriteStream, "write">, option
 }
 
 export async function resolvePaymentIdentity(options: RequestOptions) {
-  const signer = privateKeySigner(options);
-  if (signer) {
-    const { account } = signer;
-    const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) =>
-      createWalletClient({
-        account,
-        chain:
-          (requestedChainId ?? requestNetwork(options).chainId) === 42431
-            ? Chain.tempoModerato
-            : Chain.tempo,
-        transport: http(rpcUrl(requestedChainId ?? requestNetwork(options).chainId)),
-      });
-    return {
-      address: account.address,
-      getClient,
-      methodOptions: { account, mode: "pull" as const },
-      signerAddress: account.address,
-    };
-  }
+  const privateKeyPayer = privateKeyIdentity(options);
+  if (privateKeyPayer) return privateKeyPayer;
 
   const walletState = await loadWalletState();
   const storedIdentity = await storedAccessKeyIdentity(walletState, options);
@@ -1134,6 +1205,28 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
       getClient,
       maxDeposit: spendCap(options),
     },
+  };
+}
+
+/** The payer when a private key replaces the logged-in wallet; it signs for itself. */
+function privateKeyIdentity(options: RequestOptions) {
+  const signer = privateKeySigner(options);
+  if (!signer) return undefined;
+  const { account } = signer;
+  const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) =>
+    createWalletClient({
+      account,
+      chain:
+        (requestedChainId ?? requestNetwork(options).chainId) === 42431
+          ? Chain.tempoModerato
+          : Chain.tempo,
+      transport: http(rpcUrl(requestedChainId ?? requestNetwork(options).chainId)),
+    });
+  return {
+    address: account.address,
+    getClient,
+    methodOptions: { account, mode: "pull" as const },
+    signerAddress: account.address,
   };
 }
 
@@ -1221,6 +1314,7 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
       account,
       address: account.address,
       getClient,
+      key,
       methodOptions: { account, getClient, mode: "pull" as const },
       signerAddress: account.accessKeyAddress,
     };
@@ -1280,12 +1374,54 @@ function sessionDetails(
 
 type SessionDetails = ReturnType<typeof sessionDetails>;
 
+type SessionPayer = Pick<PaymentIdentity, "address" | "signerAddress">;
+
+type SessionPlanOptions = {
+  /** Decide as a payment does, but keep stale records for the payment to delete and bound RPC reads. */
+  dryRun?: boolean | undefined;
+  /** A channel the server just invalidated. */
+  skipChannelId?: string | undefined;
+};
+
+/**
+ * How a session payment proceeds, shared by payments and dry runs: a voucher on a reusable stored
+ * channel, or a new channel locking `depositRaw`. On reuse, `depositRaw` is the top-up the
+ * payment sends if the server rejects a voucher beyond the on-chain deposit. `signedCumulative`
+ * is the voucher amount the spending cap bounds.
+ */
+async function planSessionPayment(
+  details: SessionDetails,
+  identity: SessionPayer,
+  options: RequestOptions,
+  plan: SessionPlanOptions = {},
+) {
+  const reusable = await reusableSessionRecord(details, identity, plan);
+  if (reusable) {
+    const signedCumulative =
+      maxBigInt(reusable.cumulative_amount, reusable.accepted_cumulative, reusable.server_spent) +
+      details.amount;
+    return {
+      reusable,
+      depositRaw: sessionShortfall(reusable, signedCumulative),
+      signedCumulative,
+    };
+  }
+  return {
+    reusable: undefined,
+    depositRaw: sessionDepositRaw(details, options),
+    signedCumulative: details.amount,
+  };
+}
+
 async function reusableSessionRecord(
   details: SessionDetails,
-  identity: PaymentIdentity,
-  skipChannelId?: string | undefined,
+  identity: SessionPayer,
+  plan: SessionPlanOptions,
 ): Promise<PersistedSessionRecord | undefined> {
-  const record = await findReusableSession({
+  const discard = async (record: PersistedSessionRecord) => {
+    if (!plan.dryRun) await deleteSessionRecord(record.channel_id);
+  };
+  const records = await findReusableSessions({
     authorizedSigner: identity.signerAddress,
     chainId: details.chainId,
     escrowContract: details.escrowContract,
@@ -1294,37 +1430,35 @@ async function reusableSessionRecord(
     payer: identity.address,
     token: details.token,
   });
-  if (!record) return undefined;
-  if (skipChannelId && record.channel_id.toLowerCase() === skipChannelId.toLowerCase())
-    return undefined;
-  if (
-    record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase() &&
-    !record.descriptor_json
-  ) {
-    await deleteSessionRecord(record.channel_id);
-    return await reusableSessionRecord(details, identity, skipChannelId);
-  }
+  for (const record of records) {
+    if (plan.skipChannelId && record.channel_id.toLowerCase() === plan.skipChannelId.toLowerCase())
+      return undefined;
+    // A v2 record without its descriptor can never sign a voucher; try the next one.
+    if (
+      record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase() &&
+      !record.descriptor_json
+    ) {
+      await discard(record);
+      continue;
+    }
 
-  const onChain = await readOnChainChannel(record);
-  if (!onChain) {
-    await deleteSessionRecord(record.channel_id);
-    return undefined;
+    const onChain = await readOnChainChannel(record, plan.dryRun ? dryRunRpc : {});
+    if (
+      !onChain ||
+      onChain.closeRequestedAt !== 0n ||
+      onChain.deposit <= onChain.settled ||
+      onChain.payer.toLowerCase() !== identity.address.toLowerCase() ||
+      onChain.payee.toLowerCase() !== details.payee ||
+      onChain.token.toLowerCase() !== details.token ||
+      onChain.authorizedSigner.toLowerCase() !== identity.signerAddress.toLowerCase()
+    ) {
+      await discard(record);
+      return undefined;
+    }
+    // The stored deposit can lag the chain, e.g. when a top-up landed but its record update failed.
+    return { ...record, deposit: onChain.deposit };
   }
-  if (onChain.closeRequestedAt !== 0n || onChain.deposit <= onChain.settled) {
-    await deleteSessionRecord(record.channel_id);
-    return undefined;
-  }
-  if (
-    onChain.payer.toLowerCase() !== identity.address.toLowerCase() ||
-    onChain.payee.toLowerCase() !== details.payee ||
-    onChain.token.toLowerCase() !== details.token ||
-    onChain.authorizedSigner.toLowerCase() !== identity.signerAddress.toLowerCase()
-  ) {
-    await deleteSessionRecord(record.channel_id);
-    return undefined;
-  }
-  // The stored deposit can lag the chain, e.g. when a top-up landed but its record update failed.
-  return { ...record, deposit: onChain.deposit };
+  return undefined;
 }
 
 export async function isSessionInvalidationResponse(response: Response) {
@@ -1521,6 +1655,18 @@ function topUpAmountFromProblem(
     return 0n;
   const requiredTopUp = stringValue(problem.requiredTopUp ?? problem.required_top_up);
   if (/^\d+$/.test(requiredTopUp)) return BigInt(requiredTopUp);
+  return sessionShortfall(record, signedCumulative);
+}
+
+/**
+ * How far a voucher for `signedCumulative` exceeds the session's deposit (read from chain for a
+ * reused session): the default top-up. The deposit it leads to is `signedCumulative`, so the
+ * cumulative cap check also bounds it.
+ */
+function sessionShortfall(
+  record: Pick<PersistedSessionRecord, "deposit">,
+  signedCumulative: bigint,
+) {
   return signedCumulative > record.deposit ? signedCumulative - record.deposit : 0n;
 }
 
@@ -1648,9 +1794,10 @@ async function persistSessionReceipt(
   });
 }
 
-async function readOnChainChannel(record: PersistedSessionRecord) {
+async function readOnChainChannel(record: PersistedSessionRecord, rpc: RpcOptions = {}) {
+  const client = createTempoPublicClient(record.chain_id, rpc);
   if (record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase()) {
-    const state = (await createTempoPublicClient(record.chain_id).readContract({
+    const state = (await client.readContract({
       address: TempoChannel.address,
       abi: TempoAbis.tip20ChannelReserve,
       functionName: "getChannelState",
@@ -1673,7 +1820,7 @@ async function readOnChainChannel(record: PersistedSessionRecord) {
     };
   }
 
-  const value = (await createTempoPublicClient(record.chain_id).readContract({
+  const value = (await client.readContract({
     address: record.escrow_contract as `0x${string}`,
     abi: escrowAbi,
     functionName: "getChannel",

@@ -80,8 +80,20 @@ tempo request --dry-run https://example.mpp.tempo.xyz/v1/resource
 tempo request https://example.mpp.tempo.xyz/v1/resource
 ```
 
-On HTTP 402, `--dry-run` prints a JSON quote with the selected amount, token, chain and
-budget assessment, without opening the wallet or paying. Any other status prints
+On HTTP 402, `--dry-run` prints a JSON quote of what paying would spend, without signing,
+opening a session, or paying. It reports the per-call `amount`; for a session offer, whether the
+payment would `open` a session or `reuse` a stored one (`session`) and the `deposit` it would
+lock, decided as the payment decides them (for a reused session, the top-up its voucher needs
+beyond the on-chain deposit, usually `0`); the offered `token` with its `decimals`, and its
+`symbol` only when viem lists the token, since the server chooses it; the payer's `balance` and
+the access key's stored `access_key_limit` for the token the payment debits (MACH with
+`--mach`), in that token's decimals, with a limit of `0` when the key's exact stored limits
+leave the token out; `max_spend`, the spending cap the payment applies (`--max-spend`,
+`TEMPO_MAX_SPEND`, or the default `10`); and `within_budget`, whether the amount, or a reused
+session's cumulative spend and top-up, fits that cap. A subscription offer has no cap, so both
+are `null`; `within_budget` is also `null` for a session whose payer or reuse check is unknown.
+Balance, token and session reads time out after 3 seconds, and a read that fails, or a payer
+that is not configured, reports `null`. Any other status prints
 `payment_required: false` with the status instead of the body. The probe request is still
 sent, so methods other than GET, HEAD and OPTIONS also report a side-effect `warning`.
 `--max-spend <amount>` (or `TEMPO_MAX_SPEND`) caps spending in payment token units; without

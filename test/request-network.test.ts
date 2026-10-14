@@ -344,7 +344,13 @@ it.each<{ source: string; env?: string; privateKey?: string; args: string[]; cha
         process.execPath,
         [cliBundle("request"), "--dry-run", "--payment-intent", "charge", endpoint.url, ...args],
         {
-          env: { ...process.env, TEMPO_WALLET_NETWORK: env, TEMPO_PRIVATE_KEY: privateKey },
+          env: {
+            ...process.env,
+            TEMPO_WALLET_NETWORK: env,
+            TEMPO_PRIVATE_KEY: privateKey,
+            // The quote's balance read fails fast instead of reaching a public RPC.
+            TEMPO_RPC_URL: "http://127.0.0.1:9",
+          },
           timeout: 30_000,
         },
         (error, stdout, stderr) => {
