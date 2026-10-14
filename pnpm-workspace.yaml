@@ -13,8 +13,6 @@ trustPolicy: no-downgrade
 
 minimumReleaseAgeExclude:
   - accounts@0.19.0
+  - incur@0.7.1
   - mppx@0.12.0
   - viem@2.57.1
-
-patchedDependencies:
-  incur@0.7.0: patches/incur@0.7.0.patch
