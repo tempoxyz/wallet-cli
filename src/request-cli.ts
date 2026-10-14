@@ -2,6 +2,8 @@
 import { Cli, z } from "incur";
 
 import { executeRequest, type RequestOptions } from "./commands/request.js";
+import { cliGlobalAlias, cliGlobals } from "./schemas.js";
+import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
 
 const args = z.object({
@@ -29,10 +31,6 @@ const options = z.object({
     .describe(
       "Sign payments with an ephemeral private key (or TEMPO_PRIVATE_KEY); structured output reports the signer via --dry-run and --write-meta",
     ),
-  network: z
-    .string()
-    .optional()
-    .describe("Network to use (tempo/mainnet or tempo-moderato/testnet)"),
   silent: z.boolean().optional().describe("Compatibility flag; suppresses non-essential output"),
   verbose: z.boolean().optional().describe("Compatibility flag; increases verbosity"),
   "json-output": z.boolean().optional().describe("Emit structured JSON errors"),
@@ -86,34 +84,37 @@ const options = z.object({
   form: z.array(z.string()).default([]).describe("Multipart form field (name=value, name=@file)"),
 });
 
+const alias = {
+  silent: "s",
+  verbose: "v",
+  "json-output": "j",
+  "toon-output": "t",
+  request: "X",
+  include: "i",
+  output: "o",
+  head: "I",
+  header: "H",
+  location: "L",
+  get: "G",
+  timeout: "m",
+  data: "d",
+  insecure: "k",
+  "user-agent": "A",
+  "dump-header": "D",
+  user: "u",
+  referer: "e",
+  "remote-name": "O",
+  form: "F",
+};
+
 const cli = Cli.create("tempo request", {
   version,
   description: "Make HTTP requests with automatic MPP payment",
   args,
   options,
-  alias: {
-    network: "n",
-    silent: "s",
-    verbose: "v",
-    "json-output": "j",
-    "toon-output": "t",
-    request: "X",
-    include: "i",
-    output: "o",
-    head: "I",
-    header: "H",
-    location: "L",
-    get: "G",
-    timeout: "m",
-    data: "d",
-    insecure: "k",
-    "user-agent": "A",
-    "dump-header": "D",
-    user: "u",
-    referer: "e",
-    "remote-name": "O",
-    form: "F",
-  },
+  alias,
+  globals: cliGlobals,
+  globalAlias: cliGlobalAlias,
   // The Tempo launcher manages updates, so skip incur npm update checks.
   update: false,
   usage: [{ args: { url: true } }],
@@ -130,10 +131,10 @@ const cli = Cli.create("tempo request", {
       description: "Set a header and write output to a file",
     },
   ],
-  async run({ args, formatExplicit, options }) {
+  async run({ args, formatExplicit, globals, options }) {
     // Structured output (-j, --format) keeps stderr parseable; --dry-run JSON reports the signer.
     await executeRequest(
-      toRequestOptions(args.url, options),
+      { ...toRequestOptions(args.url, options), network: globals.network },
       formatExplicit ? { stderr: { write: () => true } } : {},
     );
     return undefined;
@@ -202,7 +203,6 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
     mach: options.mach,
     paymentIntent: options["payment-intent"],
     paymentToken: options["payment-token"],
-    network: options.network,
     noProxy: options.noProxy,
     output: options.output,
     privateKey: options["private-key"],
@@ -228,22 +228,14 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
 }
 
 function normalizeIncurArgv(argv: readonly string[]) {
+  // Binding also turns `--json <body>` into `--json=<body>`: incur reserves exact `--json` as an
+  // output-format flag, and `tempo request` keeps curl's `--json <body>`.
+  const bound = bindOptionValues(argv, [
+    { options, alias },
+    { options: cliGlobals, alias: cliGlobalAlias },
+  ]);
   const out: string[] = [];
-  for (let index = 0; index < argv.length; index++) {
-    const arg = argv[index];
-    if (arg === undefined) continue;
-    if (arg === "--json") {
-      const value = argv[index + 1];
-      if (value !== undefined) {
-        // incur reserves exact `--json` as an output-format flag. `tempo request`
-        // already uses `--json <body>` for curl/Rust parity, so pass the same
-        // option through in `--json=<body>` form, which incur leaves available
-        // for the command schema.
-        out.push(`--json=${value}`);
-        index++;
-        continue;
-      }
-    }
+  for (const arg of bound) {
     if (arg === "--no-proxy") {
       // Incur treats --no-foo as boolean negation of --foo. `tempo request`
       // intentionally supports curl's separate --proxy <url> and --no-proxy

@@ -1,7 +1,18 @@
 import { z } from "incur";
 
+/** CLI-level options incur parses anywhere in argv; commands and middleware read `c.globals`. */
+export const cliGlobals = z.object({
+  network: z
+    .string()
+    .optional()
+    .describe(
+      "Network to use: mainnet or testnet (default: TEMPO_WALLET_NETWORK, then the logged-in wallet's network)",
+    ),
+});
+
+export const cliGlobalAlias = { network: "n" };
+
 export const globalOptionShape = {
-  network: z.string().optional().describe('Network to use (e.g. "testnet")'),
   verbose: z.boolean().optional().describe("Increase verbosity"),
   silent: z.boolean().optional().describe("Silent mode: suppress non-essential output"),
   "json-output": z.boolean().optional().describe("Quick switch for JSON output format"),
@@ -9,11 +20,16 @@ export const globalOptionShape = {
 };
 
 export const globalAlias = {
-  network: "n",
   verbose: "v",
   silent: "s",
   "json-output": "j",
   "toon-output": "t",
+};
+
+/** Matches `networkFields`: the chain a command ran against and its network label. */
+const networkOutputShape = {
+  chain_id: z.number(),
+  network: z.string(),
 };
 
 /** Continuation fields on results with a follow-up command; built by `nextStep`. */
@@ -52,7 +68,7 @@ export const creditsOutput = z.object({
 export const machOutput = z.object({
   mach: z.object({
     wallet: z.string(),
-    chain_id: z.number(),
+    ...networkOutputShape,
     token: z.string(),
     symbol: z.literal("MACH"),
     decimals: z.number(),
@@ -66,6 +82,7 @@ export const whoamiOutput = z.union([
   z.object({
     ready: z.boolean(),
     wallet: z.string().nullable(),
+    ...networkOutputShape,
     balance: z.object({
       total: z.string().nullable(),
       locked: z.string(),
@@ -88,8 +105,7 @@ export const whoamiOutput = z.union([
     key: z
       .object({
         address: z.string(),
-        chain_id: z.number(),
-        network: z.string(),
+        ...networkOutputShape,
         symbol: z.string(),
         token: z.string(),
         balance: z.string().nullable(),
@@ -134,9 +150,8 @@ export const keysOutput = z.object({
   keys: z.array(
     z.object({
       address: z.string(),
-      chain_id: z.number(),
-      network: z.string(),
-      wallet_address: z.string().nullable(),
+      ...networkOutputShape,
+      wallet_address: z.string(),
       symbol: z.string(),
       token: z.string(),
       balance: z.string().nullable(),
@@ -188,6 +203,7 @@ export const revokeOutput = z.object({
   status: z.union([z.literal("success"), z.literal("dry_run")]),
   wallet: z.string(),
   access_key: z.string(),
+  ...networkOutputShape,
   local_key_removed: z.boolean(),
   ...nextOutputShape,
 });
@@ -196,7 +212,7 @@ export const updateAccessKeyOutput = z.object({
   status: z.literal("success"),
   wallet: z.string(),
   access_key: z.string(),
-  chain_id: z.number(),
+  ...networkOutputShape,
   token: z.string(),
   limit: z.string(),
   ...nextOutputShape,
@@ -215,7 +231,7 @@ export const updateAccessKeyArgs = z.object({
 
 export const transferDryRunOutput = z.object({
   status: z.literal("dry_run"),
-  chain_id: z.number(),
+  ...networkOutputShape,
   amount: z.string(),
   symbol: z.string(),
   token: z.string(),
@@ -227,7 +243,7 @@ export const transferDryRunOutput = z.object({
 export const transferSuccessOutput = z.object({
   status: z.literal("success"),
   tx_hash: z.string(),
-  chain_id: z.number(),
+  ...networkOutputShape,
   amount: z.string(),
   symbol: z.string(),
   token: z.string(),
@@ -238,9 +254,9 @@ export const transferSuccessOutput = z.object({
 export const spendCreditsOutput = z.object({
   wallet: z.string(),
   amount_cents: z.number(),
+  ...networkOutputShape,
   to: z.string(),
   token: z.string().optional(),
-  chain_id: z.number().optional(),
   challenge_id: z.string().optional(),
   transaction_data: z.union([
     z.object({ type: z.literal("token"), destination: z.string() }),
@@ -256,7 +272,7 @@ export const spendMachOutput = z.object({
   amount_raw: z.string(),
   token: z.literal("MACH"),
   settlement_currency: z.string(),
-  chain_id: z.number(),
+  ...networkOutputShape,
   challenge_id: z.string(),
   max_spend: z.string().nullable(),
   tx_hash: z.string().optional(),
@@ -279,6 +295,7 @@ export const sessionOutput = z.object({
 });
 
 export const sessionsListOutput = z.object({
+  ...networkOutputShape,
   sessions: z.array(sessionOutput),
   total: z.number(),
 });
@@ -318,7 +335,7 @@ export const debugOutput = z.object({
   request_version: z.string(),
   os: z.string(),
   arch: z.string(),
-  network: z.string(),
+  ...networkOutputShape,
   wallet: z.string().nullable(),
   wallet_type: z.string(),
   logged_in: z.boolean(),
@@ -336,7 +353,7 @@ export const fundOutput = z.object({
   wallet: z.string().nullable(),
   action: z.string(),
   url: z.string(),
-  chain_id: z.number(),
+  ...networkOutputShape,
   token: z.string(),
   symbol: z.string().optional(),
   amount: z.string().nullable(),
@@ -438,7 +455,7 @@ export const swapOptions = z.object({
 });
 
 const swapBaseOutputShape = {
-  chain_id: z.number(),
+  ...networkOutputShape,
   mode: z.union([z.literal("exact_in"), z.literal("exact_out")]),
   from: z.string(),
   dex: z.string(),

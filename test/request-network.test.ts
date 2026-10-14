@@ -20,6 +20,7 @@ import {
   testWallet,
   useTempHome,
   walletState,
+  writeRawWalletStore,
   writeWalletState,
 } from "./helpers.js";
 import { cliBundle } from "./cli-bundle.js";
@@ -206,6 +207,79 @@ it.each(["-n", "--network", "--network=testnet"])(
       chain_id: 42431,
       token: moderatoToken,
     });
+    expect(endpoint.paid).toEqual([]);
+  },
+  30_000,
+);
+
+it("leaves the wallet store unread for requests that need no payment", async () => {
+  await useTempHome();
+  vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+  await writeRawWalletStore("{not-json");
+  const server = createServer((_request, response) => response.end("free"));
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected listening address");
+  let output = "";
+
+  await runRequest([`http://127.0.0.1:${address.port}`], {
+    stdout: {
+      write: ((chunk: string | Uint8Array) => {
+        output += chunk.toString();
+        return true;
+      }) as NodeJS.WriteStream["write"],
+    },
+  });
+
+  expect(output).toBe("free");
+});
+
+// The wallet is logged in on testnet; a private key pays on its own, unrelated to that login.
+it.each<{ source: string; env?: string; privateKey?: string; args: string[]; chain: number }>([
+  { source: "the logged-in chain", args: [], chain: 42431 },
+  { source: "TEMPO_WALLET_NETWORK", env: "mainnet", args: [], chain: 4217 },
+  { source: "a -n flag after the URL", env: "mainnet", args: ["-n", "testnet"], chain: 42431 },
+  { source: "a stacked -sn flag", env: "mainnet", args: ["-sn", "testnet"], chain: 42431 },
+  {
+    source: "the logged-in chain when -d carries --network=mainnet",
+    args: ["-d", "--network=mainnet"],
+    chain: 42431,
+  },
+  { source: "the default for --private-key", args: ["--private-key", testPrivateKey], chain: 4217 },
+  {
+    source: "the default for TEMPO_PRIVATE_KEY",
+    privateKey: testPrivateKey,
+    args: [],
+    chain: 4217,
+  },
+  {
+    source: "-n with TEMPO_PRIVATE_KEY",
+    privateKey: testPrivateKey,
+    args: ["-n", "testnet"],
+    chain: 42431,
+  },
+])(
+  "selects chain $chain from $source through the actual request CLI",
+  async ({ env, privateKey, args, chain }) => {
+    await useTempHome();
+    await writeWalletState(walletState({ chainId: 42431 }));
+    const endpoint = await service([offer(4217), offer(42431)]);
+    const output = await new Promise<string>((resolve, reject) => {
+      execFile(
+        process.execPath,
+        [cliBundle("request"), "--dry-run", "--payment-intent", "charge", endpoint.url, ...args],
+        {
+          env: { ...process.env, TEMPO_WALLET_NETWORK: env, TEMPO_PRIVATE_KEY: privateKey },
+          timeout: 30_000,
+        },
+        (error, stdout, stderr) => {
+          if (error) reject(new Error(`${error.message}: ${stderr}`));
+          else resolve(stdout);
+        },
+      );
+    });
+    expect(JSON.parse(output)).toMatchObject({ payment_required: true, chain_id: chain });
     expect(endpoint.paid).toEqual([]);
   },
   30_000,

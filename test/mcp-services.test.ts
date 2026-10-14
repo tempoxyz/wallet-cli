@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cliBundle } from "./cli-bundle.js";
 import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
@@ -14,6 +14,10 @@ const initParams = {
   capabilities: {},
   clientInfo: { name: "test-client", version: "1.0.0" },
 };
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("MCP tools", () => {
   // Subprocesses inherit HOME, so the service directory cache stays out of the real wallet dir.
@@ -68,6 +72,33 @@ describe("MCP tools", () => {
     expect(names).not.toContain("keys");
   });
 
+  it("accepts the network global as a tool option on every command", async () => {
+    const response = await mcpRequest<{
+      tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[];
+    }>("tools/list", {});
+
+    expect(response.error).toBeUndefined();
+    for (const tool of response.result.tools)
+      expect(tool.inputSchema.properties, tool.name).toHaveProperty("network");
+  });
+
+  it.each([
+    { source: "a tool option", stored: 4217, arguments: { network: "testnet" } },
+    { source: "the logged-in chain", stored: 42431, arguments: {} },
+  ])("resolves the tool network from $source", async ({ stored, arguments: args }) => {
+    await useTempHome();
+    vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+    await writeWalletState(walletState({ chainId: stored }));
+
+    const response = await mcpCall({ name: "debug", arguments: args });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result.structuredContent).toMatchObject({
+      chain_id: 42431,
+      network: "tempo-moderato",
+    });
+  });
+
   it("keeps normal CLI list JSON as a top-level array", async () => {
     const output = await walletCli([
       "services",
@@ -81,10 +112,14 @@ describe("MCP tools", () => {
     expect(JSON.parse(output)).toEqual([]);
   });
 
-  it("wraps MCP list results in a top-level services object", async () => {
+  it.each([
+    { name: "a search", options: {} },
+    // No network applies to services; the injected network option must pass through harmlessly.
+    { name: "refresh and network options", options: { refresh: true, network: "testnet" } },
+  ])("wraps MCP list results in a top-level services object for $name", async ({ options }) => {
     const response = await mcpCall({
       name: "services",
-      arguments: { serviceId: "list", search: "__no_match__" },
+      arguments: { serviceId: "list", search: "__no_match__", ...options },
     });
 
     expect(response.error).toBeUndefined();

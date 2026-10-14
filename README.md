@@ -85,9 +85,17 @@ For reusable sessions, execution also checks cumulative spending against the cap
 Capped recurring subscriptions are rejected because a per-period authorization cannot enforce
 a cumulative cap.
 
-`--network` overrides `TEMPO_WALLET_NETWORK`; the default is mainnet. `tempo`/`mainnet`
-and `tempo-moderato`/`moderato`/`testnet` are aliases. Unknown networks and payment
-challenges for a different chain are rejected before payment.
+Every `tempo wallet` and `tempo request` command selects its network the same way:
+`--network`/`-n` (anywhere on the command line), then `TEMPO_WALLET_NETWORK`, then the
+network of the logged-in wallet, then mainnet. After `tempo wallet login -n testnet`, later
+commands stay on testnet without repeating the flag. `tempo`/`mainnet` and
+`tempo-moderato`/`moderato`/`testnet` are aliases. Unknown networks and payment challenges for
+a different chain are rejected before payment. Network-scoped JSON output reports `chain_id`
+and `network`. `tempo wallet keys list` shows keys on every network, each labeled with its own
+chain and wallet, unless `--network` or `TEMPO_WALLET_NETWORK` selects one; balances are queried
+only for the logged-in wallet's keys, so other stored wallets are never sent to an RPC endpoint.
+When `--private-key` or `TEMPO_PRIVATE_KEY` pays, the logged-in wallet's network does not apply:
+the network is `--network`, then `TEMPO_WALLET_NETWORK`, then mainnet.
 
 When a server offers both reusable sessions and one-time charges, choose an intent explicitly:
 
@@ -120,7 +128,7 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 
 `tempo wallet sessions close` preserves its per-session result summary and exits with status 1 if any close failed. A pending close awaiting the grace period is successful initiation, so pending-only results still exit 0; dry runs also exit 0.
 
-Results with a follow-up step include `instruction` and `_next`. `swap`, `transfer`, and `revoke` dry runs point at the command that submits them, and the swap command pins the reviewed `--min-amount-out` (or `--max-amount-in` with `--exact-out`); a pending `sessions close` points at the withdrawal and sets `poll_interval_seconds` to the remaining grace period; `keys update` and a fresh `login` point at the command that confirms the result. `_next.argv` is authoritative and repeats `--network` when one was selected by flag or `TEMPO_WALLET_NETWORK`; `_next.command` is the same argv quoted for a POSIX shell.
+Results with a follow-up step include `instruction` and `_next`. `swap`, `transfer`, and `revoke` dry runs point at the command that submits them, and the swap command pins the reviewed `--min-amount-out` (or `--max-amount-in` with `--exact-out`); a pending `sessions close` points at the withdrawal and sets `poll_interval_seconds` to the remaining grace period; `keys update` and a fresh `login` point at the command that confirms the result. `_next.argv` is authoritative and always ends with `--network` set to the network the command resolved, so it targets the same chain wherever it runs; `_next.command` is the same argv quoted for a POSIX shell.
 
 ## Commands
 

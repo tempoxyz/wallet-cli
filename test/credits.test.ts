@@ -246,7 +246,7 @@ describe("legacy credit spending", () => {
       },
       {
         wallet: typed.message.customerWallet,
-        network: "testnet",
+        chainId: 42431,
         amountCents: 100,
         maxSpend: "1.03",
       },

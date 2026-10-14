@@ -1,39 +1,98 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { chainId, isTestnet } from "../src/shared/network.js";
+import {
+  explicitNetwork,
+  parseNetwork,
+  resolveNetwork,
+  storedChainId,
+} from "../src/shared/network.js";
+import { saveWalletState, type WalletState } from "../src/wallet/store.js";
+import { useTempHome, walletState } from "./helpers.js";
+
+const mainnet = { name: "mainnet", chainId: 4217 };
+const testnet = { name: "testnet", chainId: 42431 };
+
+beforeEach(() => {
+  vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+});
 
 afterEach(() => {
-  delete process.env.TEMPO_WALLET_NETWORK;
+  vi.unstubAllEnvs();
 });
 
-describe("network selection", () => {
-  it("uses mainnet by default", () => {
-    expect(isTestnet(undefined)).toBe(false);
-    expect(chainId(undefined)).toBe(4217);
+it.each([
+  ["mainnet", mainnet],
+  ["tempo", mainnet],
+  ["testnet", testnet],
+  ["tempo-moderato", testnet],
+  ["moderato", testnet],
+])("parses %s", (value, network) => {
+  expect(parseNetwork(value)).toEqual(network);
+});
+
+it.each([
+  { source: "--network", flag: "typo", env: undefined },
+  { source: "TEMPO_WALLET_NETWORK", flag: undefined, env: "typo" },
+])("rejects an unknown network from $source", async ({ flag, env }) => {
+  await useTempHome();
+  vi.stubEnv("TEMPO_WALLET_NETWORK", env);
+
+  await expect(resolveNetwork(flag)).rejects.toMatchObject({
+    code: "E_USAGE",
+    exitCode: 2,
+    message: "Unsupported network: typo",
   });
-
-  it("uses testnet from the command option", () => {
-    expect(isTestnet("testnet")).toBe(true);
-    expect(chainId("testnet")).toBe(42431);
-  });
-
-  it("uses testnet from TEMPO_WALLET_NETWORK", () => {
-    process.env.TEMPO_WALLET_NETWORK = "testnet";
-
-    expect(isTestnet(undefined)).toBe(true);
-    expect(chainId(undefined)).toBe(42431);
-  });
 });
 
-it.each(["mainnet", "tempo"])("explicit %s overrides testnet environment", (network) => {
-  process.env.TEMPO_WALLET_NETWORK = "testnet";
-  expect(chainId(network)).toBe(4217);
+it.each<{
+  name: string;
+  flag?: string;
+  env?: string;
+  state?: WalletState;
+  expected: typeof mainnet;
+}>([
+  { name: "defaults to mainnet", expected: mainnet },
+  { name: "uses the logged-in chain", state: walletState({ chainId: 42431 }), expected: testnet },
+  {
+    name: "prefers TEMPO_WALLET_NETWORK over the logged-in chain",
+    env: "mainnet",
+    state: walletState({ chainId: 42431 }),
+    expected: mainnet,
+  },
+  {
+    name: "prefers --network over TEMPO_WALLET_NETWORK",
+    flag: "tempo-moderato",
+    env: "mainnet",
+    state: walletState(),
+    expected: testnet,
+  },
+  {
+    name: "ignores the stored chain when logged out",
+    state: { accounts: [], accessKeys: [], chainId: 42431 },
+    expected: mainnet,
+  },
+])("resolveNetwork $name", async ({ flag, env, state, expected }) => {
+  await useTempHome();
+  vi.stubEnv("TEMPO_WALLET_NETWORK", env);
+  if (state) await saveWalletState(state);
+
+  expect(await resolveNetwork(flag)).toEqual(expected);
 });
-it.each(["testnet", "tempo-moderato", "moderato"])("resolves %s consistently", (network) => {
-  expect(chainId(network)).toBe(42431);
-  process.env.TEMPO_WALLET_NETWORK = network;
-  expect(chainId(undefined)).toBe(42431);
+
+it.each([
+  { flag: undefined, env: undefined, expected: undefined },
+  { flag: undefined, env: "testnet", expected: testnet },
+  { flag: "mainnet", env: "testnet", expected: mainnet },
+])("explicitNetwork($flag) with TEMPO_WALLET_NETWORK=$env", ({ flag, env, expected }) => {
+  vi.stubEnv("TEMPO_WALLET_NETWORK", env);
+
+  expect(explicitNetwork(flag)).toEqual(expected);
 });
-it("rejects unknown networks", () => {
-  expect(() => chainId("typo")).toThrow("Unsupported network");
+
+it.each([
+  { chainId: undefined, expected: 4217 },
+  { chainId: 4217, expected: 4217 },
+  { chainId: 42431, expected: 42431 },
+])("storedChainId reads $chainId as $expected", ({ chainId, expected }) => {
+  expect(storedChainId(walletState({ chainId }))).toBe(expected);
 });

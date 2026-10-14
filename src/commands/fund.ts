@@ -2,7 +2,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { erc20Abi, formatUnits } from "viem";
 
 import { usageError, walletError } from "../shared/errors.js";
-import { chainId, createTempoPublicClient, tokenAddress } from "../shared/network.js";
+import {
+  createTempoPublicClient,
+  networkFields,
+  resolveNetwork,
+  tokenAddress,
+} from "../shared/network.js";
 import {
   fundingAmount,
   machFundingAmount,
@@ -27,7 +32,8 @@ export async function runFundingFlow(options: {
 }) {
   if (options.action === "credits") throw creditsFundingError();
   const action = options.action;
-  const chain = chainId(options.network);
+  const state = await loadWalletState();
+  const chain = (await resolveNetwork(options.network, state)).chainId;
   const token = action === "mach" ? machFundingToken(chain) : tokenAddress(chain);
   const requested =
     action === "mach" ? machFundingAmount(options.amount) : fundingAmount(options.amount);
@@ -41,7 +47,6 @@ export async function runFundingFlow(options: {
     Number(process.env.TEMPO_WALLET_FUND_POLL_MS ?? 2_000),
     "Funding poll interval",
   );
-  const state = await loadWalletState();
   const address = options.address ?? state.accounts[state.activeAccount ?? 0]?.address;
   if (!address && action !== "claim")
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
@@ -56,7 +61,7 @@ export async function runFundingFlow(options: {
     wallet,
     action,
     url,
-    chain_id: chain,
+    ...networkFields(chain),
     token,
     symbol: action === "mach" ? "MACH" : undefined,
     amount: options.amount ?? null,
@@ -76,7 +81,7 @@ export async function runFundingFlow(options: {
     ...(options.signal ? [options.signal] : []),
   ]);
   try {
-    const client = createTempoPublicClient(options.network, {
+    const client = createTempoPublicClient(chain, {
       timeout: Math.min(10_000, Math.max(1, timeoutMs)),
       retryCount: 0,
     });

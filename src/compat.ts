@@ -1,10 +1,9 @@
+import { cachedLoginOutput } from "./commands/identity.js";
 import { loadWalletState } from "./wallet/store.js";
-import { currentWhoamiOutput } from "./commands/identity.js";
 import { fundAction, runFundingFlow } from "./commands/fund.js";
 import { listSessions } from "./commands/sessions.js";
 import { usageError } from "./shared/errors.js";
-import { chainId } from "./shared/network.js";
-import { selectPaymentCapableAccessKey } from "./wallet/access-key.js";
+import { resolveNetwork } from "./shared/network.js";
 
 export async function handleCompatCommand(args: readonly string[]) {
   if (args[0] === "help") {
@@ -13,32 +12,16 @@ export async function handleCompatCommand(args: readonly string[]) {
   }
   if (args.includes("--help") || args.includes("-h") || args.includes("--schema")) return false;
 
-  const command = args.find((arg) => !arg.startsWith("-"));
+  const command = args.find(
+    (arg, index) => !arg.startsWith("-") && !isNetworkFlag(args[index - 1]),
+  );
   if (command === "completions" && printCompletions(args)) return true;
 
   if (command === "login" && args.includes("--no-browser")) {
     const state = await loadWalletState();
-    const activeAccount = state.accounts[state.activeAccount ?? 0];
-    const network = stringArg(args, "--network") ?? stringArg(args, "-n");
-    const selectedChainId = chainId(network);
-    if (
-      !activeAccount ||
-      state.chainId !== selectedChainId ||
-      !selectPaymentCapableAccessKey(state.accessKeys, {
-        chainId: selectedChainId,
-        walletAddress: activeAccount.address,
-      })
-    )
-      return false;
-    printCompatOutput(
-      await currentWhoamiOutput({
-        walletAddress: activeAccount.address,
-        chain: state.chainId ?? null,
-        accessKeys: state.accessKeys,
-        network,
-      }),
-      args,
-    );
+    const output = await cachedLoginOutput(state, await resolveNetwork(networkArg(args), state));
+    if (!output) return false;
+    printCompatOutput(output, args);
     return true;
   }
 
@@ -58,10 +41,7 @@ export async function handleCompatCommand(args: readonly string[]) {
   const subcommand = rest.find((arg) => !arg.startsWith("-") && isSessionSubcommand(arg));
   if (subcommand) return false;
 
-  printCompatOutput(
-    await listSessions({ network: stringArg(args, "--network") ?? stringArg(args, "-n") }),
-    args,
-  );
+  printCompatOutput(await listSessions({ network: networkArg(args) }), args);
   return true;
 }
 
@@ -76,7 +56,7 @@ async function runFundCompat(args: readonly string[]) {
     }),
     address: stringArg(args, "--address"),
     code: stringArg(args, "--referral-code") ?? stringArg(args, "--claim"),
-    network: stringArg(args, "--network") ?? stringArg(args, "-n"),
+    network: networkArg(args),
     noBrowser: args.includes("--no-browser"),
     noWait: args.includes("--no-wait"),
     amount: stringArg(args, "--amount"),
@@ -143,6 +123,14 @@ export function validateFundCompatArgs(args: readonly string[]) {
     }
     throw usageError(`Unknown option: ${arg}`);
   }
+}
+
+function networkArg(args: readonly string[]) {
+  return stringArg(args, "--network") ?? stringArg(args, "-n");
+}
+
+function isNetworkFlag(arg: string | undefined) {
+  return arg === "--network" || arg === "-n";
 }
 
 function stringArg(args: readonly string[], name: string) {

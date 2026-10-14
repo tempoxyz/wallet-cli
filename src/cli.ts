@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { Cli, Mcp } from "incur";
+import { Cli, Mcp, type z } from "incur";
 
+import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
 import { usageError } from "./shared/errors.js";
 import {
@@ -26,6 +27,8 @@ import {
 import { fetchServiceList, fetchServices, staleListFetchedAt } from "./commands/services.js";
 import { handleCompatCommand } from "./compat.js";
 import {
+  cliGlobalAlias,
+  cliGlobals,
   completionsArgs,
   completionsOutput,
   debugOutput,
@@ -77,6 +80,8 @@ const cli = Cli.create("tempo wallet", {
       "transfer tokens with the Tempo wallet CLI",
     ],
   },
+  globals: cliGlobals,
+  globalAlias: cliGlobalAlias,
   // The Tempo launcher manages updates, so skip incur npm update checks.
   update: false,
 });
@@ -86,8 +91,8 @@ cli.command("login", {
   options: loginOptions,
   alias: globalAlias,
   output: loginOutput,
-  async run({ options }) {
-    return loginHandler(options);
+  async run({ globals, options }) {
+    return loginHandler({ ...options, network: globals.network });
   },
 });
 
@@ -96,8 +101,8 @@ cli.command("refresh", {
   options: globalOptions,
   alias: globalAlias,
   output: refreshOutput,
-  async run({ options }) {
-    return refreshHandler(options);
+  async run({ globals }) {
+    return refreshHandler(globals);
   },
 });
 
@@ -116,13 +121,15 @@ cli.command("whoami", {
   options: whoamiOptions,
   alias: globalAlias,
   output: whoamiOutput,
-  async run({ options }) {
-    return whoamiHandler(options);
+  async run({ globals, options }) {
+    return whoamiHandler({ ...options, network: globals.network });
   },
 });
 
+// Mounted groups share the root globals; declaring them types `globals` in their commands.
 const keys = Cli.create("keys", {
   description: "Manage access keys",
+  globals: cliGlobals,
 });
 
 keys.command("list", {
@@ -130,8 +137,8 @@ keys.command("list", {
   options: globalOptions,
   alias: globalAlias,
   output: keysOutput,
-  async run() {
-    return keysHandler();
+  async run({ globals }) {
+    return keysHandler(globals);
   },
 });
 
@@ -141,8 +148,12 @@ keys.command("update", {
   options: updateAccessKeyOptions,
   alias: globalAlias,
   output: updateAccessKeyOutput,
-  async run({ args, options }) {
-    return updateAccessKeyHandler({ ...options, accessKey: args.accessKey });
+  async run({ args, globals, options }) {
+    return updateAccessKeyHandler({
+      ...options,
+      accessKey: args.accessKey,
+      network: globals.network,
+    });
   },
 });
 
@@ -154,8 +165,8 @@ cli.command("revoke", {
   options: revokeOptions,
   alias: globalAlias,
   output: revokeOutput,
-  async run({ args, options }) {
-    return revokeHandler(args, options);
+  async run({ args, globals, options }) {
+    return revokeHandler(args, { ...options, network: globals.network });
   },
 });
 
@@ -173,7 +184,8 @@ cli.command("transfer", {
     },
     { options: { mach: true, "max-spend": "5", "mpp-challenge": "<WWW_AUTHENTICATE>" } },
   ],
-  async run({ args, options }) {
+  async run({ args, globals, options }) {
+    const flags = { ...options, network: globals.network };
     if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
     if (options.credits) {
       // MCP puts the shared `to` field in args; a CLI positional recipient needs amount and token.
@@ -181,10 +193,10 @@ cli.command("transfer", {
         throw usageError(
           "Positional amount, token, and recipient arguments cannot be used with --credits; use --amount-cents and --to, or an MPP challenge",
         );
-      return transferCredits({ options: { ...options, to: options.to ?? args.to } });
+      return transferCredits({ options: { ...flags, to: options.to ?? args.to } });
     }
-    if (options.mach) return transferMach({ options });
-    return transferTokens({ args, options });
+    if (options.mach) return transferMach({ options: flags });
+    return transferTokens({ args, options: flags });
   },
 });
 
@@ -204,8 +216,8 @@ cli.command("swap", {
       options: { "dry-run": true },
     },
   ],
-  async run({ args, options }) {
-    return swapTokens({ args, options });
+  async run({ args, globals, options }) {
+    return swapTokens({ args, options: { ...options, network: globals.network } });
   },
 });
 
@@ -214,7 +226,7 @@ cli.command("fund", {
   options: fundOptions,
   alias: globalAlias,
   output: fundOutput,
-  async run({ options }) {
+  async run({ globals, options }) {
     return runFundingFlow({
       action: fundAction({
         credits: options.credits,
@@ -228,13 +240,14 @@ cli.command("fund", {
       noWait: options.wait === false,
       amount: options.amount,
       timeout: options.timeout,
-      network: options.network,
+      network: globals.network,
     });
   },
 });
 
 const sessions = Cli.create("sessions", {
   description: "Manage payment sessions",
+  globals: cliGlobals,
 });
 
 sessions.command("list", {
@@ -242,8 +255,8 @@ sessions.command("list", {
   options: sessionsListOptions,
   alias: globalAlias,
   output: sessionsListOutput,
-  async run({ options }) {
-    return listSessions({ all: options.all, network: options.network, orphaned: options.orphaned });
+  async run({ globals, options }) {
+    return listSessions({ all: options.all, network: globals.network, orphaned: options.orphaned });
   },
 });
 
@@ -253,13 +266,13 @@ sessions.command("close", {
   options: sessionsCloseOptions,
   alias: globalAlias,
   output: sessionsCloseCommandOutput,
-  async run({ args, options }) {
+  async run({ args, globals, options }) {
     if (options["dry-run"])
       return dryRunCloseSessions({
         all: options.all,
         cooperative: options.cooperative,
         finalize: options.finalize,
-        network: options.network,
+        network: globals.network,
         orphaned: options.orphaned,
         target: args.url,
       });
@@ -267,7 +280,7 @@ sessions.command("close", {
       all: options.all,
       cooperative: options.cooperative,
       finalize: options.finalize,
-      network: options.network,
+      network: globals.network,
       orphaned: options.orphaned,
       target: args.url,
     });
@@ -281,8 +294,8 @@ sessions.command("sync", {
   options: sessionsSyncOptions,
   alias: globalAlias,
   output: sessionsListOutput,
-  async run({ options }) {
-    return syncSessions({ network: options.network, origin: options.origin });
+  async run({ globals, options }) {
+    return syncSessions({ network: globals.network, origin: options.origin });
   },
 });
 
@@ -310,8 +323,8 @@ cli.command("debug", {
   options: globalOptions,
   alias: globalAlias,
   output: debugOutput,
-  async run({ options }) {
-    return debugHandler(options);
+  async run({ globals }) {
+    return debugHandler(globals);
   },
 });
 
@@ -330,11 +343,15 @@ void main();
 
 export default cli;
 
-function createMcpCommands() {
-  const commands = Cli.toCommands.get(cli);
-  if (!commands) throw new Error("Unable to access wallet commands for MCP server");
+function walletCommands() {
+  // incur keys this map by the default Cli type; the globals generic does not change the entry.
+  const commands = Cli.toCommands.get(cli as never);
+  if (!commands) throw new Error("Unable to access wallet commands");
+  return commands as Map<string, unknown>;
+}
 
-  const mcpCommands = new Map<string, unknown>(commands);
+function createMcpCommands() {
+  const mcpCommands = withMcpGlobals(walletCommands());
   const servicesCommand = mcpCommands.get("services");
   if (isRunnableCommand(servicesCommand)) {
     mcpCommands.set("services", {
@@ -362,7 +379,7 @@ async function main() {
     process.exit(0);
   }
 
-  const args = normalizeServicesOutputAliases(rawArgs);
+  const args = normalizeServicesOutputAliases(bindCommandOptions(rawArgs));
 
   if (handleBuiltinSchema(args)) process.exit(0);
 
@@ -383,7 +400,53 @@ async function main() {
   if (closeCommandFailed) process.exitCode = 1;
 }
 
+/** MCP tool calls carry no CLI globals, so accept `network` as a tool option and pass it on. */
+function withMcpGlobals(commands: Map<string, unknown>): Map<string, unknown> {
+  return new Map(
+    [...commands].map(([name, entry]) => {
+      if (isCommandGroup(entry))
+        return [name, { ...entry, commands: withMcpGlobals(entry.commands) }];
+      if (!isRunnableCommand(entry)) return [name, entry];
+      return [
+        name,
+        {
+          ...entry,
+          options: entry.options ? entry.options.extend(cliGlobals.shape) : cliGlobals,
+          run(context: { options: Record<string, unknown> }) {
+            const { network, ...options } = context.options;
+            return entry.run({ ...context, globals: { network }, options });
+          },
+        },
+      ];
+    }),
+  );
+}
+
+function isCommandGroup(value: unknown): value is { commands: Map<string, unknown> } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "_group" in value &&
+    "commands" in value &&
+    value.commands instanceof Map
+  );
+}
+
+/** Binds the target command's option values before incur extracts globals; see bindOptionValues. */
+function bindCommandOptions(args: readonly string[]) {
+  const [name, subcommand] = commandTokens(args);
+  const entry = name === undefined ? undefined : walletCommands().get(name);
+  const command =
+    isCommandGroup(entry) && subcommand !== undefined ? entry.commands.get(subcommand) : entry;
+  return bindOptionValues(args, [
+    ...(isRunnableCommand(command) ? [command] : []),
+    { options: cliGlobals, alias: cliGlobalAlias },
+  ]);
+}
+
 function isRunnableCommand(value: unknown): value is {
+  alias?: Record<string, string | undefined> | undefined;
+  options?: z.ZodObject | undefined;
   output?: unknown;
   run: (context: unknown) => unknown | Promise<unknown>;
 } {
@@ -429,7 +492,7 @@ function firstCommandIndex(args: readonly string[]) {
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (!arg) continue;
-    if (arg === "--format" || arg === "--token-limit" || arg === "--token-offset") {
+    if (takesValue(arg)) {
       index++;
       continue;
     }
@@ -438,6 +501,11 @@ function firstCommandIndex(args: readonly string[]) {
     return index;
   }
   return undefined;
+}
+
+/** Flags whose next token is their value rather than a command name. */
+function takesValue(arg: string) {
+  return ["--format", "--token-limit", "--token-offset", "--network", "-n"].includes(arg);
 }
 
 function hasFormat(args: readonly string[]) {
@@ -507,7 +575,7 @@ function commandTokens(args: readonly string[]) {
     const arg = args[index];
     if (!arg || arg === "--schema" || arg === "--help" || arg === "--llms" || arg === "--llms-full")
       continue;
-    if (arg === "--format" || arg === "--token-limit" || arg === "--token-offset") {
+    if (takesValue(arg)) {
       index++;
       continue;
     }

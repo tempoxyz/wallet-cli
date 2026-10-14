@@ -20,13 +20,15 @@ import {
   walletError,
 } from "../shared/errors.js";
 import {
-  chainId,
   createTempoPublicClient,
   escrowContract,
+  networkFields,
   networkName,
+  resolveNetwork,
   tokenAddress,
   tokenDecimals,
   tokenSymbol,
+  type Network,
 } from "../shared/network.js";
 import { channelsDbPath, runProcess, runSql, sqlString } from "../shared/process.js";
 import {
@@ -106,18 +108,25 @@ export async function listSessions(
     orphaned?: boolean | undefined;
   } = {},
 ) {
-  const network = networkName(chainId(options.network)) ?? "tempo";
+  return sessionList(await resolveNetwork(options.network), options);
+}
+
+async function sessionList(
+  network: Network,
+  options: { all?: boolean | undefined; orphaned?: boolean | undefined },
+) {
   const records =
     options.all || options.orphaned
-      ? await discoverAndPersistOrphanedChannels({ network: options.network })
+      ? await discoverAndPersistOrphanedChannels(network)
       : await readChannelRecords();
   const sessions = records
-    .filter((record) => record.network === network)
+    .filter((record) => record.chain_id === network.chainId)
     .map(sessionItem)
     .filter((record) => record.status !== "finalized")
     .filter((record) => (options.orphaned && !options.all ? record.status === "orphaned" : true));
 
   return {
+    ...networkFields(network.chainId),
     sessions,
     total: sessions.length,
   };
@@ -127,9 +136,9 @@ export async function syncSessions(options: {
   network?: string | undefined;
   origin?: string | undefined;
 }) {
-  const chain = chainId(options.network);
-  const network = networkName(chain) ?? "tempo";
-  const records = (await readChannelRecords()).filter((record) => record.network === network);
+  const network = await resolveNetwork(options.network);
+  const chain = network.chainId;
+  const records = (await readChannelRecords()).filter((record) => record.chain_id === chain);
   const selected = options.origin
     ? records.filter((record) => record.origin === normalizeOrigin(options.origin ?? ""))
     : records;
@@ -138,7 +147,7 @@ export async function syncSessions(options: {
     const onChain = await getOnChainChannel({
       channelId: record.channel_id as Hex,
       escrowContract: (record.escrow_contract || escrowContract(chain)) as Address,
-      network: options.network,
+      network,
     });
     if (!onChain) {
       await deleteChannelRecord(record.channel_id);
@@ -148,7 +157,7 @@ export async function syncSessions(options: {
     if (onChain.closeRequestedAt > 0n) {
       const gracePeriod = await readGracePeriod({
         escrowContract: (record.escrow_contract || escrowContract(chain)) as Address,
-        network: options.network,
+        network,
       });
       await updateChannelCloseState({
         channelId: record.channel_id,
@@ -159,7 +168,7 @@ export async function syncSessions(options: {
     }
   }
 
-  return listSessions({ network: options.network });
+  return sessionList(network, {});
 }
 
 export async function dryRunCloseSessions(options: {
@@ -171,12 +180,12 @@ export async function dryRunCloseSessions(options: {
   target?: string | undefined;
 }) {
   validateCooperativeCloseOptions(options);
+  const network = await resolveNetwork(options.network);
   const records =
     options.all || options.orphaned
-      ? await discoverAndPersistOrphanedChannels({ network: options.network })
+      ? await discoverAndPersistOrphanedChannels(network)
       : await readChannelRecords();
-  const network = networkName(chainId(options.network)) ?? "tempo";
-  const local = records.filter((record) => record.network === network);
+  const local = records.filter((record) => record.chain_id === network.chainId);
 
   if (options.all) {
     return {
@@ -246,33 +255,34 @@ export async function closeSessions(options: {
       "Specify a URL, channel ID (0x...), or use --all/--orphaned/--finalize to close sessions",
     );
 
+  const network = await resolveNetwork(options.network, state);
   const summary = closeSummary();
-  const targets = await closeTargets(options);
+  const targets = await closeTargets(options, network);
 
   if (options.finalize) {
     for (const target of targets.filter((target) => closeTargetState(target) === "finalizable"))
       await recordCloseResult(
         summary,
-        closeOneSession(target, { finalize: true, network: options.network }),
+        closeOneSession(target, { finalize: true, network }),
         target,
       );
-    return withPendingCloseNextStep(summary, options.network);
+    return withPendingCloseNextStep(summary, network);
   }
 
   for (const target of targets)
     await recordCloseResult(
       summary,
-      closeOneSession(target, { cooperative: options.cooperative, network: options.network }),
+      closeOneSession(target, { cooperative: options.cooperative, network }),
       target,
     );
-  return withPendingCloseNextStep(summary, options.network);
+  return withPendingCloseNextStep(summary, network);
 }
 
 /**
  * Points pending closes at a rerun of the same scope, which reports them as pending without a
  * transaction until the grace period ends and then withdraws exactly those channels.
  */
-function withPendingCloseNextStep(summary: CloseSummaryOutput, network: string | undefined) {
+function withPendingCloseNextStep(summary: CloseSummaryOutput, network: Network) {
   const pending = summary.results.filter((result) => result.status === "pending");
   if (pending.length === 0) return summary;
   const waitSecs = Math.max(...pending.map((result) => result.remaining_secs ?? 0));
@@ -317,20 +327,21 @@ function validateCooperativeCloseOptions(options: {
     throw usageError("--cooperative cannot be combined with --all, --orphaned, or --finalize");
 }
 
-async function closeTargets(options: {
-  all?: boolean | undefined;
-  finalize?: boolean | undefined;
-  network?: string | undefined;
-  orphaned?: boolean | undefined;
-  target?: string | undefined;
-}) {
-  const chain = chainId(options.network);
-  const network = networkName(chain) ?? "tempo";
+async function closeTargets(
+  options: {
+    all?: boolean | undefined;
+    finalize?: boolean | undefined;
+    orphaned?: boolean | undefined;
+    target?: string | undefined;
+  },
+  network: Network,
+) {
+  const chain = network.chainId;
   const records =
     options.all || options.orphaned || options.finalize
-      ? await discoverAndPersistOrphanedChannels({ network: options.network })
+      ? await discoverAndPersistOrphanedChannels(network)
       : await readChannelRecords();
-  const local = records.filter((record) => record.network === network);
+  const local = records.filter((record) => record.chain_id === chain);
 
   if (options.all) return local;
   if (options.orphaned) return local.filter((record) => sessionStatus(record) === "orphaned");
@@ -359,7 +370,7 @@ async function closeOneSession(
   options: {
     cooperative?: boolean | undefined;
     finalize?: boolean | undefined;
-    network?: string | undefined;
+    network: Network;
   },
 ): Promise<CloseResultRecord> {
   if (!isChannelId(record.channel_id))
@@ -370,8 +381,7 @@ async function closeOneSession(
       error: "no active session",
     };
 
-  const chain = chainId(options.network);
-  const escrow = (record.escrow_contract || escrowContract(chain)) as Address;
+  const escrow = (record.escrow_contract || escrowContract(options.network.chainId)) as Address;
   const channelId = record.channel_id as Hex;
   const onChain = await getOnChainChannel({
     channelId,
@@ -440,7 +450,7 @@ async function closeOneSession(
 async function closeSessionCooperatively(options: {
   channelId: Hex;
   escrowContract: Address;
-  network?: string | undefined;
+  network: Network;
   record: ChannelRecord;
 }) {
   const closeUrl = options.record.request_url || options.record.origin;
@@ -450,7 +460,7 @@ async function closeSessionCooperatively(options: {
       message: "cooperative close requires the original session request URL",
     });
 
-  const chain = chainId(options.network);
+  const chain = options.network.chainId;
   const challenge =
     (await refreshSessionChallenge(closeUrl)) ?? storedSessionChallenge(options.record);
   if (!challenge)
@@ -590,7 +600,7 @@ async function sendSessionManagementTransaction(options: {
   channelId: Hex;
   escrowContract: Address;
   functionName: "requestClose" | "withdraw";
-  network?: string | undefined;
+  network: Network;
   record: ChannelRecord;
 }) {
   const provider = createProvider({ network: options.network });
@@ -677,7 +687,7 @@ function closeTargetState(record: ChannelRecord) {
 function virtualChannelRecord(options: { channelId: string; chain: number }): ChannelRecord {
   return {
     channel_id: options.channelId,
-    network: networkName(options.chain) ?? `chain-${options.chain}`,
+    network: networkName(options.chain),
     origin: "",
     request_url: "",
     chain_id: options.chain,
@@ -770,7 +780,7 @@ async function readChannelRecords(): Promise<ChannelRecord[]> {
     return [
       {
         channel_id: channelId,
-        network: networkName(chain) ?? `chain-${chain}`,
+        network: networkName(chain),
         origin: stringValue(item.origin),
         request_url: stringValue(item.request_url),
         chain_id: chain,
@@ -794,32 +804,29 @@ async function readChannelRecords(): Promise<ChannelRecord[]> {
   });
 }
 
-async function discoverAndPersistOrphanedChannels(options: { network?: string | undefined }) {
+async function discoverAndPersistOrphanedChannels(network: Network) {
   const records = await readChannelRecords();
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   const wallet = activeAccount?.address;
   if (!wallet) return records;
 
-  const chain = chainId(options.network);
-  const network = networkName(chain) ?? "tempo";
   const localIds = new Set(
-    records.filter((record) => record.network === network).map((record) => record.channel_id),
+    records
+      .filter((record) => record.chain_id === network.chainId)
+      .map((record) => record.channel_id),
   );
-  const discovered = await findAllChannelsForPayer({
-    network: options.network,
-    payer: wallet as Address,
-  });
+  const discovered = await findAllChannelsForPayer({ network, payer: wallet as Address });
 
   for (const channel of discovered) {
     if (localIds.has(channel.channelId.toLowerCase())) continue;
     const gracePeriod = await readGracePeriod({
       escrowContract: channel.escrowContract,
-      network: options.network,
+      network,
     });
     await saveDiscoveredChannel({
       channel,
-      chainId: chain,
+      chainId: network.chainId,
       gracePeriod,
       payer: wallet,
       state: sessionStateFromCloseTiming(Number(channel.closeRequestedAt), gracePeriod),
@@ -829,9 +836,9 @@ async function discoverAndPersistOrphanedChannels(options: { network?: string | 
   return readChannelRecords();
 }
 
-async function findAllChannelsForPayer(options: { network?: string | undefined; payer: Address }) {
-  const chain = chainId(options.network);
-  const publicClient = createTempoPublicClient(options.network);
+async function findAllChannelsForPayer(options: { network: Network; payer: Address }) {
+  const chain = options.network.chainId;
+  const publicClient = createTempoPublicClient(chain);
   const latest = (await publicClient.getBlockNumber()).valueOf() - logHeadMargin;
   const earliest = latest > logScanDepth ? latest - logScanDepth : 0n;
   const escrow = escrowContract(chain);
@@ -880,10 +887,10 @@ async function findAllChannelsForPayer(options: { network?: string | undefined; 
 async function getOnChainChannel(options: {
   channelId: Hex;
   escrowContract: Address;
-  network?: string | undefined;
+  network: Network;
 }) {
   if (options.escrowContract.toLowerCase() === TempoChannel.address.toLowerCase()) {
-    const state = (await createTempoPublicClient(options.network).readContract({
+    const state = (await createTempoPublicClient(options.network.chainId).readContract({
       address: TempoChannel.address,
       abi: TempoAbis.tip20ChannelReserve,
       functionName: "getChannelState",
@@ -895,10 +902,10 @@ async function getOnChainChannel(options: {
     const settled = parseOnChainBigInt(record.settled ?? tuple[0]);
     const closeRequestedAt = parseOnChainBigInt(record.closeRequestedAt ?? tuple[2]);
     if (deposit === 0n) return null;
-    return { token: tokenAddress(chainId(options.network)), deposit, settled, closeRequestedAt };
+    return { token: tokenAddress(options.network.chainId), deposit, settled, closeRequestedAt };
   }
 
-  const value = (await createTempoPublicClient(options.network).readContract({
+  const value = (await createTempoPublicClient(options.network.chainId).readContract({
     address: options.escrowContract,
     abi: escrowAbi,
     functionName: "getChannel",
@@ -915,9 +922,9 @@ async function getOnChainChannel(options: {
   return { token, deposit, settled, closeRequestedAt };
 }
 
-async function readGracePeriod(options: { escrowContract: Address; network?: string | undefined }) {
+async function readGracePeriod(options: { escrowContract: Address; network: Network }) {
   try {
-    const value = (await createTempoPublicClient(options.network).readContract({
+    const value = (await createTempoPublicClient(options.network.chainId).readContract({
       address: options.escrowContract,
       abi: escrowAbi,
       functionName: "CLOSE_GRACE_PERIOD",

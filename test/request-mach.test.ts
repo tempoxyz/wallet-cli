@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseRequestArgs, preparePaymentChallenge, runRequest } from "../src/commands/request.js";
 import { transferMach } from "../src/commands/transfer.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
+import { useTempHome, walletState, writeWalletState } from "./helpers.js";
 
 vi.mock("viem/actions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("viem/actions")>();
@@ -316,6 +317,25 @@ it.each([{ flags: [] }, { flags: ["--mach"] }])(
 );
 
 describe("transferMach", () => {
+  it.each([
+    { payer: "TEMPO_PRIVATE_KEY", privateKey: `0x${"1".repeat(64)}`, chain: 4217 },
+    { payer: "the logged-in wallet", privateKey: "", chain: 42431 },
+  ])("selects chain $chain on a testnet login when $payer pays", async ({ privateKey, chain }) => {
+    await useTempHome();
+    await writeWalletState(walletState({ chainId: 42431 }));
+    vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+    vi.stubEnv("TEMPO_PRIVATE_KEY", privateKey);
+    const challenge = offer({
+      currency: chain === 42431 ? moderatoToken : usdcToken,
+      methodDetails: { chainId: chain, machineTokenEnabled: true },
+    });
+
+    const result = await transferMach({
+      options: { "dry-run": true, "mpp-challenge": Challenge.serialize(challenge) },
+    });
+
+    expect(result).toMatchObject({ dry_run: true, chain_id: chain });
+  });
   it("inspects a standalone challenge without a budget or wallet access", async () => {
     const result = await transferMach({
       options: { "dry-run": true, "mpp-challenge": Challenge.serialize(offer()) },

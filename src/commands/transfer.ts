@@ -14,7 +14,15 @@ import { Mppx, tempo } from "mppx/client";
 import { Abis, Actions } from "viem/tempo";
 
 import { networkError, paymentOutcomeUnknownError, usageError } from "../shared/errors.js";
-import { appUrl, chainId, tokenAddress, tokenDecimals, tokenSymbol } from "../shared/network.js";
+import {
+  appUrl,
+  networkFields,
+  resolveNetwork,
+  tokenAddress,
+  tokenDecimals,
+  tokenSymbol,
+  type Network,
+} from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
 import { escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
 import { version } from "../shared/constants.js";
@@ -30,6 +38,7 @@ import {
   parseRequestArgs,
   preparePaymentChallenge,
   resolvePaymentIdentity,
+  resolvePaymentNetwork,
   resolveMaxSpend,
 } from "./request.js";
 
@@ -64,12 +73,12 @@ export async function transferTokens(options: {
   if (!from)
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
 
-  const chain = chainId(options.options.network);
+  const network = await resolveNetwork(options.options.network, state);
   const token = args.token.toLowerCase() as `0x${string}`;
   const to = args.to.toLowerCase() as `0x${string}`;
   const fromAddress = from.toLowerCase();
   const outputBase = {
-    chain_id: chain,
+    ...networkFields(network.chainId),
     amount: args.amount,
     symbol: tokenSymbol(args.token),
     token,
@@ -92,12 +101,12 @@ export async function transferTokens(options: {
           ...(options.options["fee-token"] ? ["--fee-token", options.options["fee-token"]] : []),
           ...(options.options.address ? ["--address", options.options.address] : []),
         ],
-        { network: options.options.network },
+        { network },
       ),
     };
   }
 
-  const provider = createProvider({ network: options.options.network });
+  const provider = createProvider({ network });
   const call = Actions.token.transfer.call(provider.getClient() as never, {
     amount,
     token,
@@ -184,6 +193,9 @@ export async function transferMach(options: {
     ...(flags["dry-run"] ? ["--dry-run"] : []),
     "https://mpp.invalid",
   ]);
+  // TEMPO_PRIVATE_KEY can pay here too, so resolve the network the way request payments do.
+  const network = await resolvePaymentNetwork(requestOptions);
+  requestOptions.network = network.name;
   if (requestOptions.maxSpend === undefined && !flags["dry-run"])
     throw usageError(
       "MACH transfer requires --max-spend (or TEMPO_MAX_SPEND); --amount-cents is a legacy spending-cap alias",
@@ -204,7 +216,7 @@ export async function transferMach(options: {
     amount_raw: String(challenge.request.amount),
     token: "MACH" as const,
     settlement_currency: String(challenge.request.currency),
-    chain_id: chainId(requestOptions.network),
+    ...networkFields(network.chainId),
     challenge_id: challenge.id,
     max_spend: requestOptions.maxSpend ?? null,
   };
@@ -226,7 +238,7 @@ export async function transferMach(options: {
               ...(flags["mpp-client-id"] ? ["--mpp-client-id", flags["mpp-client-id"]] : []),
               ...(flags.address ? ["--address", flags.address] : []),
             ],
-            { network: flags.network },
+            { network },
           )
         : {}),
     };
@@ -238,7 +250,7 @@ export async function transferMach(options: {
       tempo.charge({
         ...identity.methodOptions,
         getClient: identity.getClient,
-        expectedChainId: chainId(requestOptions.network),
+        expectedChainId: network.chainId,
         ...machChargeParameters(requestOptions),
         clientId: flags["mpp-client-id"],
         mode: "push",
@@ -300,13 +312,14 @@ export async function transferCredits(options: {
   const wallet = (options.options.address ?? activeAccount?.address)?.toLowerCase();
   if (!activeAccount || !wallet)
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
+  const network = await resolveNetwork(flags.network, state);
 
   const challenge = await mppChallengeInput(options.options);
   const creditsTransfer = challenge
     ? buildMppCreditsTransfer({
         challenge,
         clientId: options.options["mpp-client-id"],
-        network: options.options.network,
+        network,
       })
     : buildDirectCreditsTransfer(options.options);
 
@@ -314,6 +327,7 @@ export async function transferCredits(options: {
   const output = {
     wallet,
     amount_cents: amountCents,
+    ...networkFields(network.chainId),
     ...creditsTransfer.preview,
   };
   if (challenge && cents !== undefined && amountCents > cents)
@@ -332,11 +346,11 @@ export async function transferCredits(options: {
     throw usageError("MPP Credits challenge payments require --amount-cents or TEMPO_MAX_SPEND");
 
   const redemption = { wallet, subtotal: { cents: amountCents, currency: "USD" }, transactionData };
-  const provider = createProvider({ network: options.options.network });
+  const provider = createProvider({ network });
   const auth = (await postCredits("auth-msg", redemption)) as CreditsAuthorization;
   const typedData = validateCreditPermit(auth, {
     wallet,
-    network: options.options.network,
+    chainId: network.chainId,
     amountCents,
     maxSpend,
     capCents: challenge ? cents : undefined,
@@ -427,7 +441,7 @@ function buildDirectCreditsTransfer(options: {
 function buildMppCreditsTransfer(options: {
   challenge: string;
   clientId?: string | undefined;
-  network?: string | undefined;
+  network: Network;
 }) {
   const challenge = parseMppChallenge(options.challenge);
   if (challenge.method !== "tempo")
@@ -463,7 +477,7 @@ function buildMppCreditsTransfer(options: {
   const requestChainId = methodDetails.chainId;
   if (requestChainId !== undefined && !Number.isSafeInteger(requestChainId))
     throw usageError("MPP challenge has an invalid chain ID");
-  const selectedChainId = chainId(options.network);
+  const selectedChainId = options.network.chainId;
 
   if (requestChainId !== undefined && requestChainId !== selectedChainId)
     throw usageError(
@@ -505,7 +519,6 @@ function buildMppCreditsTransfer(options: {
     preview: {
       to: recipient.toLowerCase(),
       token,
-      chain_id: selectedChainId,
       challenge_id: challenge.id,
       transaction_data: transactionData,
     },

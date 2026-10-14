@@ -1,5 +1,5 @@
 import { version } from "../shared/constants.js";
-import { appUrl, chainId } from "../shared/network.js";
+import { appUrl } from "../shared/network.js";
 import { escapeInvisible, formatCreditBalance, getRecord, parseAmount } from "../shared/utils.js";
 import { isAddress, parseUnits, serializeTypedData, zeroAddress } from "viem";
 import { networkError, usageError } from "../shared/errors.js";
@@ -33,7 +33,7 @@ export function validateCreditPermit(
   auth: CreditsAuthorization,
   options: {
     wallet: string;
-    network?: string | undefined;
+    chainId: number;
     amountCents: number;
     maxSpend?: string | undefined;
     capCents?: number | undefined;
@@ -49,7 +49,7 @@ export function validateCreditPermit(
   const domain = getRecord(typedData.domain);
   const message = getRecord(typedData.message);
   const types = getRecord(typedData.types);
-  const chain = chainId(options.network);
+  const chain = options.chainId;
   const uint = (value: unknown) => {
     if (typeof value === "number" && !Number.isSafeInteger(value)) throw invalid();
     if ((typeof value !== "string" && typeof value !== "number") || !/^\d+$/.test(String(value)))

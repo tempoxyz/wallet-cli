@@ -93,6 +93,7 @@ describe("transferTokens", () => {
     expect(result).toEqual({
       status: "dry_run",
       chain_id: 4217,
+      network: "tempo",
       amount: "1.5",
       symbol: "USDC.e",
       token: usdcToken,
