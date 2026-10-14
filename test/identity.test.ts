@@ -812,6 +812,40 @@ describe("identity commands", () => {
     ]);
   });
 
+  it.each([
+    { name: "a listed token", token: usdc, metadata: undefined, symbol: "USDC.e", verified: true },
+    {
+      name: "an unlisted token with a listed-looking ticker",
+      token: unlistedToken,
+      metadata: { decimals: 6, symbol: "USDC" },
+      symbol: "USDC",
+      verified: false,
+    },
+  ])(
+    "marks the payment-token fallback balance verified only for $name",
+    async ({ token, metadata, symbol, verified }) => {
+      await useTempHome();
+      await writeWalletState(walletState());
+      mocks.readContract.mockResolvedValueOnce(5_000_000n);
+      mocks.fetch.mockRejectedValueOnce(new Error("offline"));
+      if (metadata) mocks.getMetadata.mockResolvedValue(metadata);
+      const key = {
+        ...walletState().accessKeys[0]!,
+        limits: [{ token, limit: "1000000#__bigint" }],
+      };
+
+      const whoami = await currentWhoamiOutput({
+        walletAddress: testWallet,
+        chain: 4217,
+        accessKeys: [key],
+      });
+
+      expect(whoami.balances).toEqual([
+        expect.objectContaining({ token: token.toLowerCase(), symbol, verified }),
+      ]);
+    },
+  );
+
   it("reports RPC failure as an unknown balance and recovers when the RPC returns", async () => {
     await useTempHome();
     await writeWalletState(walletState());
