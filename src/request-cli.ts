@@ -11,7 +11,10 @@ const args = z.object({
 });
 
 const options = z.object({
-  "dry-run": z.boolean().optional().describe("Show payment challenge without paying"),
+  "dry-run": z
+    .boolean()
+    .optional()
+    .describe("Send the request to discover the payment challenge without paying"),
   "max-spend": z
     .string()
     .optional()
@@ -258,7 +261,11 @@ function describeRequestCli() {
     about: "Make HTTP requests with automatic MPP payment",
     args: [
       { name: "url", positional: true, value_name: "URL", help: "URL to request" },
-      { name: "dry_run", long: "--dry-run", help: "Show payment challenge without paying" },
+      {
+        name: "dry_run",
+        long: "--dry-run",
+        help: "Send the request to discover the payment challenge without paying",
+      },
       {
         name: "max_spend",
         long: "--max-spend",

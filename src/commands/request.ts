@@ -498,6 +498,32 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
 
   let paid = false;
 
+  if (options.dryRun && response.status !== 402) {
+    await response.body?.cancel().catch(() => undefined);
+    const probeMethod = method.toUpperCase();
+    if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
+    if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
+    await writeOutput(
+      options.output,
+      `${JSON.stringify(
+        {
+          payment_required: false,
+          status: response.status,
+          probe_sent: true,
+          ...(replaySafeMethods.has(probeMethod)
+            ? {}
+            : {
+                warning: `The ${probeMethod} request was sent to the server and may have had side effects`,
+              }),
+        },
+        null,
+        2,
+      )}\n`,
+      stdout,
+    );
+    return;
+  }
+
   if (response.status === 402) {
     // Only payment depends on the network, so free requests never read the wallet store.
     options.network = (await resolvePaymentNetwork(options)).name;
