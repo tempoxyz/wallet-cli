@@ -36,7 +36,7 @@ import {
   parseStoredBigInt,
 } from "../shared/utils.js";
 import { supportedShells } from "../completions.js";
-import { connect, createProvider } from "../provider.js";
+import { connect, createProvider, settleWalletStore } from "../provider.js";
 import {
   emptyWalletState,
   loadWalletState,
@@ -239,8 +239,16 @@ export async function updateAccessKeyHandler(
     limit,
   });
 
-  const accessKeys = state.accessKeys.map((candidate) => {
-    if (candidate !== key) return candidate;
+  // For an unpublished key the SDK saves the wallet's replacement authorization in the
+  // background, so reload the store once it lands and change only the limit.
+  await settleWalletStore();
+  const current = await loadWalletState();
+  const accessKeys = current.accessKeys.map((candidate) => {
+    if (
+      candidate.address.toLowerCase() !== accessKeyAddress.toLowerCase() ||
+      !accessKeyMatches(candidate, { chainId: selectedChainId, walletAddress })
+    )
+      return candidate;
     const storedLimits = candidate.limits ?? [];
     const existing = storedLimits.findIndex((item) => item.token.toLowerCase() === token);
     const nextLimit = `${limit}#__bigint`;
@@ -252,7 +260,7 @@ export async function updateAccessKeyHandler(
           );
     return { ...candidate, limits };
   });
-  await saveWalletState({ ...state, accessKeys });
+  await saveWalletState({ ...current, accessKeys });
 
   return {
     status: "success" as const,
