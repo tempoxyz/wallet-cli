@@ -129,6 +129,39 @@ describe("help", () => {
 });
 
 describe("fund", () => {
+  it.each([{ flags: [] }, { flags: ["--no-wait"] }, { flags: ["--wait", "--no-wait"] }])(
+    "returns a handoff without balance RPC calls with $flags",
+    async ({ flags }) => {
+      await useTempHome();
+      await writeWalletState(walletState({ chainId: 42431 }));
+      const rpc = await balanceRpc([0n]);
+      try {
+        const result = await wallet(
+          ["fund", "--no-browser", "--amount", "17.43", ...flags, "--format", "json"],
+          {
+            TEMPO_RPC_URL: rpc.url,
+            TEMPO_WALLET_FUND_TIMEOUT_MS: "invalid",
+            TEMPO_WALLET_FUND_POLL_MS: "invalid",
+          },
+        );
+
+        expect(result.code).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          status: "pending",
+          chain_id: 42431,
+          network: "tempo-moderato",
+          amount: "17.43",
+          balance: null,
+          raw_balance: null,
+        });
+        expect(result.stderr).not.toContain("Waiting");
+        expect(rpc.calls()).toBe(0);
+      } finally {
+        await rpc.close();
+      }
+    },
+  );
+
   it.each(["--llms", "--llms-full", "--schema", "--help"])(
     "%s describes the command without starting a funding flow",
     async (flag) => {
@@ -176,7 +209,20 @@ describe("fund", () => {
     const rpc = await balanceRpc(balances);
     try {
       const result = await wallet(
-        ["-n", "testnet", "fund", "--no-browser", "--timeout", "1", "--format", "json"],
+        [
+          "-n",
+          "testnet",
+          "fund",
+          "--no-browser",
+          "--no-wait",
+          "--wait",
+          "--amount",
+          "17.43",
+          "--timeout",
+          "1",
+          "--format",
+          "json",
+        ],
         { TEMPO_RPC_URL: rpc.url, TEMPO_WALLET_FUND_POLL_MS: "50" },
       );
 

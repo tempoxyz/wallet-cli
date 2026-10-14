@@ -869,9 +869,10 @@ function describeCli() {
           ),
           flag("mach", "--mach", "Open MACH funding"),
           flag("credits", "--credits", "Unavailable; use --mach to buy MACH"),
-          option("amount", "--amount", "Requested USD amount", { valueName: "AMOUNT" }),
-          flag("no_wait", "--no-wait", "Return the funding handoff immediately"),
-          option("timeout", "--timeout", "Funding timeout in seconds (default: 600)", {
+          option("amount", "--amount", "USD amount to prefill", { valueName: "AMOUNT" }),
+          flag("wait", "--wait", "Wait for a balance increase; otherwise return immediately"),
+          flag("no_wait", "--no-wait", "Return the funding handoff immediately (default)"),
+          option("timeout", "--timeout", "Timeout in seconds with --wait (default: 600)", {
             valueName: "SECONDS",
           }),
           option("referral_code", "--referral-code", "Referral code to claim while funding", {

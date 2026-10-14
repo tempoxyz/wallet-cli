@@ -504,9 +504,12 @@ export const fundOptions = z.object({
   amount: z
     .string()
     .optional()
-    .describe("Requested USD amount; MACH: 5–100, up to 2 decimal places"),
-  wait: z.boolean().default(true).describe("Wait for funds; use --no-wait for a JSON handoff"),
-  timeout: z.coerce.number().optional().describe("Funding wait timeout in seconds (default: 600)"),
+    .describe("USD amount to prefill; MACH: 5–100, up to 2 decimal places"),
+  wait: z
+    .boolean()
+    .default(false)
+    .describe("Wait for a balance increase; otherwise return immediately"),
+  timeout: z.coerce.number().optional().describe("Timeout in seconds with --wait (default: 600)"),
   "referral-code": z.string().optional().describe("Open referral-code redeem flow"),
   claim: z.string().optional().describe("Alias for --referral-code"),
 });
