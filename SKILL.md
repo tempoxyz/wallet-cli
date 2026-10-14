@@ -114,6 +114,7 @@ For credit payments, use `--amount-cents` as the direct payment amount or the ma
 - TOON is the default output format; use an explicit format flag only when another format is needed.
 - Use `--dry-run` before potentially expensive requests.
 - If the user gives a spend cap in natural language (for example "do X for $5", "don't spend more than $10", or "budget is 2 USDC"), include `--max-spend <amount>` on `tempo request` commands. For non-CLI contexts, use `TEMPO_MAX_SPEND`.
+- Without `--max-spend` or `TEMPO_MAX_SPEND`, `tempo request` caps each payment, session deposit, and session's cumulative spend at 10 token units. A payment over the cap fails with `E_LIMIT_EXCEEDED` before anything is signed; report the required amount, and run the `cta` command (the same request with `--max-spend <required>`) only after the user approves that spend.
 - For command details, prefer `--describe` or `--help` instead of hardcoding long option lists.
 
 ## Swap Tokens
