@@ -19,12 +19,11 @@ import {
   networkFields,
   resolveNetwork,
   tokenAddress,
-  tokenDecimals,
-  tokenSymbol,
   type Network,
 } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
+import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { escapeInvisible, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { version } from "../shared/constants.js";
 import {
@@ -61,23 +60,28 @@ export async function transferTokens(
       `missing ${missing.map((name) => `<${name}>`).join(", ")}; usage: tempo wallet transfer <amount> <token> <to>`,
     );
   }
-  const amount = parseTokenAmount(args.amount, tokenDecimals());
-  if (!isAddress(args.token)) throw usageError("Invalid token address: expected a full 0x address");
   if (!isAddress(args.to))
     throw usageError("Invalid recipient address: expected a full 0x address");
   if (args.to.toLowerCase() === zeroAddress)
     throw usageError("Invalid recipient address: cannot transfer to the zero address");
 
   const { network } = wallet;
+  const requestedToken = resolveTokenAddress(args.token, network);
+  const feeToken = options.options["fee-token"]
+    ? resolveTokenAddress(options.options["fee-token"], network, "fee token")
+    : undefined;
   const from = options.options.address ?? wallet.account.address;
-  const token = args.token.toLowerCase() as `0x${string}`;
+  // An unlisted token's decimals are read on chain.
+  const token = await tokenMetadata(requestedToken, network.chainId);
+  const amount = parseTokenAmount(args.amount, token.decimals);
+
   const to = args.to.toLowerCase() as `0x${string}`;
   const fromAddress = from.toLowerCase();
   const outputBase = {
     ...networkFields(network.chainId),
     amount: args.amount,
-    symbol: tokenSymbol(args.token),
-    token,
+    symbol: token.symbol,
+    token: token.address,
     to,
     from: fromAddress,
   };
@@ -87,14 +91,14 @@ export async function transferTokens(
       status: "dry_run" as const,
       ...outputBase,
       ...nextStep(
-        `Run the next command to send ${args.amount} ${outputBase.symbol} to ${to}.`,
+        `Run the next command to send ${args.amount} ${tokenLabel(token)} to ${to}.`,
         [
           "wallet",
           "transfer",
           args.amount,
-          token,
+          token.address,
           to,
-          ...(options.options["fee-token"] ? ["--fee-token", options.options["fee-token"]] : []),
+          ...(feeToken ? ["--fee-token", feeToken] : []),
           ...(options.options.address ? ["--address", options.options.address] : []),
         ],
         { network },
@@ -105,7 +109,7 @@ export async function transferTokens(
   const provider = createProvider({ network });
   const call = Actions.token.transfer.call(provider.getClient() as never, {
     amount,
-    token,
+    token: token.address,
     to,
   });
   const receipt = await provider.request({
@@ -113,9 +117,7 @@ export async function transferTokens(
     params: [
       {
         calls: [call],
-        ...(options.options["fee-token"]
-          ? { feeToken: options.options["fee-token"] as `0x${string}` }
-          : {}),
+        ...(feeToken ? { feeToken } : {}),
       },
     ],
   });

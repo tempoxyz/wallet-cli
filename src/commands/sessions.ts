@@ -29,10 +29,10 @@ import {
   storedChainId,
   tokenAddress,
   tokenDecimals,
-  tokenSymbol,
   type Network,
 } from "../shared/network.js";
 import { channelsDbPath, runProcess, runSql, sqlString } from "../shared/process.js";
+import { tokenSymbol } from "../shared/tokens.js";
 import {
   decodeBase64UrlJson,
   formatTokenUnits,
@@ -807,7 +807,7 @@ function sessionItem(record: ChannelRecord) {
     channel_id: record.channel_id,
     network: record.network,
     origin: record.origin,
-    symbol: tokenSymbol(record.token),
+    symbol: tokenSymbol(record.token, record.chain_id) ?? null,
     deposit: formatTokenUnits(record.deposit, tokenDecimals()),
     spent: formatTokenUnits(spent, tokenDecimals()),
     remaining: formatTokenUnits(remaining, tokenDecimals()),

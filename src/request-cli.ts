@@ -27,7 +27,7 @@ const options = z.object({
   "payment-token": z
     .string()
     .optional()
-    .describe("Select a payment token address or MACH settlement"),
+    .describe("Select a payment token by address or symbol (e.g. USDC.e), or MACH settlement"),
   "private-key": z
     .string()
     .optional()
@@ -286,8 +286,8 @@ function describeRequestCli() {
       {
         name: "payment_token",
         long: "--payment-token",
-        value_name: "ADDRESS",
-        help: "Select a payment token address or MACH settlement",
+        value_name: "TOKEN",
+        help: "Select a payment token by address or symbol (e.g. USDC.e), or MACH settlement",
       },
       {
         name: "private_key",

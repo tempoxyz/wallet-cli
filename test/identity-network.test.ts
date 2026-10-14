@@ -244,7 +244,7 @@ const networkCommands = [
     command: "transfer --dry-run",
     run: async (network?: string) =>
       transferTokens(await readyWallet(network), {
-        args: { amount: "1", token: usdc, to: testWallet2 },
+        args: { amount: "1", token: moderatoToken, to: testWallet2 },
         options: { "dry-run": true },
       }),
   },
@@ -486,7 +486,11 @@ it.each([
 
 it("keys list caches balances per chain and token", async () => {
   await useTempHome();
-  const key = walletState().accessKeys[0]!;
+  // pathUSD has the same address on both networks.
+  const key = {
+    ...walletState().accessKeys[0]!,
+    limits: [{ token: moderatoToken, limit: "100000000#__bigint" }],
+  };
   await saveWalletState(
     walletState({
       accessKeys: [key, { ...key, address: testAccessKey2 }, { ...key, chainId: 42431 }],

@@ -41,6 +41,7 @@ import {
   testAccessKey2,
   testWallet,
   testWallet2,
+  unlistedToken,
   useTempHome,
   walletState,
   writeWalletState,
@@ -172,21 +173,21 @@ const continuations: {
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return transferTokens(await readyWallet(option), {
-        args: { amount: "1.5", token: usdcToken, to: recipient },
+        args: { amount: "1.5", token: "pathUSD", to: recipient },
         options: { "dry-run": true },
       });
     },
-    argv: ["wallet", "transfer", "1.5", usdcToken, recipient],
+    argv: ["wallet", "transfer", "1.5", moderatoToken, recipient],
   },
   {
     name: "transfer --dry-run keeps fee token and address",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return transferTokens(await readyWallet(option), {
-        args: { amount: "1.5", token: usdcToken, to: recipient },
+        args: { amount: "1.5", token: moderatoToken, to: recipient },
         options: {
           "dry-run": true,
-          "fee-token": moderatoToken,
+          "fee-token": usdcToken,
           address: testWallet,
         },
       });
@@ -195,10 +196,10 @@ const continuations: {
       "wallet",
       "transfer",
       "1.5",
-      usdcToken,
+      moderatoToken,
       recipient,
       "--fee-token",
-      moderatoToken,
+      usdcToken,
       "--address",
       testWallet,
     ],
@@ -245,9 +246,12 @@ const continuations: {
     name: "keys update confirms the new limit with keys list",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
-      return updateAccessKeyHandler(await readyWallet(option), { limit: "250" }, () => ({
-        request: vi.fn(),
-      }));
+      // pathUSD is listed on both networks, so its decimals need no RPC read.
+      return updateAccessKeyHandler(
+        await readyWallet(option),
+        { limit: "250", token: moderatoToken },
+        () => ({ request: vi.fn() }),
+      );
     },
     argv: ["wallet", "keys", "list"],
   },
@@ -407,31 +411,43 @@ it.each([
   },
 );
 
-it("omits a keys update command when the input token is not 6-decimal", async () => {
+it("points a limited key at keys update in a non-6-decimal input token's units", async () => {
   vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
   await useTempHome();
   await writeWalletState(stateFor(4217));
   const dependencies = swapDependencies();
-  dependencies.getMetadata.mockImplementation(async (token: string) => ({
-    decimals: token === moderatoToken ? 2 : 6,
-    symbol: token === usdcToken ? "USDC.e" : "pathUSD",
-  }));
+  // An unlisted token reports its decimals on chain; 10.15 TWO quoted, 10.21 TWO with slippage.
+  dependencies.getMetadata.mockImplementation(async () => ({ decimals: 2, symbol: "TWO" }));
+  dependencies.getBuyQuote.mockResolvedValue(1_015n);
 
   const result = await swapTokens(
     await readyWallet(),
     {
-      args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
-      options: { "dry-run": true, "slippage-bps": 50 },
+      args: { amount: "10", tokenIn: unlistedToken, tokenOut: usdcToken },
+      options: { "dry-run": true, "exact-out": true, "slippage-bps": 50 },
     },
     dependencies,
   );
 
-  // keys update reads --limit as 6-decimal units, so a generated limit would be wrong for this token.
   expect(result).toMatchObject({
     requires_access_key_update: true,
-    instruction: expect.stringContaining("in the wallet app"),
+    max_amount_in: "10.21",
+    _next: {
+      argv: [
+        "tempo",
+        "wallet",
+        "keys",
+        "update",
+        testAccessKey,
+        "--token",
+        unlistedToken,
+        "--limit",
+        "10.21",
+        "--network",
+        "mainnet",
+      ],
+    },
   });
-  expect(result).not.toHaveProperty("_next");
 });
 
 it("keeps the selected network on each per-channel close command", async () => {

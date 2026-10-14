@@ -1,16 +1,12 @@
-import { formatUnits, isAddress } from "viem";
+import { formatUnits } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
 import { paymentOutcomeUnknownError, usageError, walletError } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
-import {
-  createTempoPublicClient,
-  networkFields,
-  tokenDecimals,
-  type Network,
-} from "../shared/network.js";
+import { createTempoPublicClient, networkFields, type Network } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
+import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
 
@@ -53,9 +49,10 @@ export async function swapTokens(
   dependencies: Partial<SwapDependencies> = {},
 ) {
   const { account, key, network } = wallet;
-  if (!isAddress(input.args.tokenIn) || !isAddress(input.args.tokenOut))
-    throw usageError("Invalid token address: expected full 0x addresses for tokenIn and tokenOut");
-  if (input.args.tokenIn.toLowerCase() === input.args.tokenOut.toLowerCase())
+  const selectedChainId = network.chainId;
+  const tokenIn = resolveTokenAddress(input.args.tokenIn, network);
+  const tokenOut = resolveTokenAddress(input.args.tokenOut, network);
+  if (tokenIn === tokenOut)
     throw usageError("Invalid swap: tokenIn and tokenOut must be different");
   if (
     !Number.isSafeInteger(input.options["slippage-bps"]) ||
@@ -63,8 +60,9 @@ export async function swapTokens(
     input.options["slippage-bps"] > 10_000
   )
     throw usageError("Invalid slippage: --slippage-bps must be between 0 and 10000");
-  if (input.options["fee-token"] && !isAddress(input.options["fee-token"]))
-    throw usageError("Invalid fee token address: expected a full 0x address");
+  const feeToken = input.options["fee-token"]
+    ? resolveTokenAddress(input.options["fee-token"], network, "fee token")
+    : tokenIn;
   const exactOut = input.options["exact-out"] === true;
   if (exactOut && input.options["min-amount-out"] !== undefined)
     throw usageError(
@@ -73,9 +71,6 @@ export async function swapTokens(
   if (!exactOut && input.options["max-amount-in"] !== undefined)
     throw usageError("--max-amount-in applies to --exact-out swaps; use --min-amount-out instead");
 
-  const tokenIn = input.args.tokenIn.toLowerCase() as `0x${string}`;
-  const tokenOut = input.args.tokenOut.toLowerCase() as `0x${string}`;
-  const selectedChainId = network.chainId;
   const mach = machToken(selectedChainId).toLowerCase();
   if (tokenIn === mach || tokenOut === mach)
     throw usageError(
@@ -83,9 +78,11 @@ export async function swapTokens(
     );
   const runtime = { ...defaultDependencies(network), ...dependencies };
   const [metadataIn, metadataOut] = await Promise.all([
-    runtime.getMetadata(tokenIn),
-    runtime.getMetadata(tokenOut),
+    tokenMetadata(tokenIn, selectedChainId, runtime.getMetadata),
+    tokenMetadata(tokenOut, selectedChainId, runtime.getMetadata),
   ]);
+  const nameIn = tokenLabel(metadataIn);
+  const nameOut = tokenLabel(metadataOut);
   const amount = parseTokenAmount(
     input.args.amount,
     exactOut ? metadataOut.decimals : metadataIn.decimals,
@@ -106,12 +103,12 @@ export async function swapTokens(
   // A reviewed bound only tightens the slippage bound; a quote that cannot meet it is refused.
   if (reviewedMinOut !== undefined && quote < reviewedMinOut)
     throw quoteMovedError(
-      `${input.args.amount} ${metadataIn.symbol} now returns ${formatUnits(quote, metadataOut.decimals)} ${metadataOut.symbol}, below --min-amount-out ${formatUnits(reviewedMinOut, metadataOut.decimals)}`,
+      `${input.args.amount} ${nameIn} now returns ${formatUnits(quote, metadataOut.decimals)} ${nameOut}, below --min-amount-out ${formatUnits(reviewedMinOut, metadataOut.decimals)}`,
       "--min-amount-out",
     );
   if (reviewedMaxIn !== undefined && quote > reviewedMaxIn)
     throw quoteMovedError(
-      `${input.args.amount} ${metadataOut.symbol} now costs ${formatUnits(quote, metadataIn.decimals)} ${metadataIn.symbol}, above --max-amount-in ${formatUnits(reviewedMaxIn, metadataIn.decimals)}`,
+      `${input.args.amount} ${nameOut} now costs ${formatUnits(quote, metadataIn.decimals)} ${nameIn}, above --max-amount-in ${formatUnits(reviewedMaxIn, metadataIn.decimals)}`,
       "--max-amount-in",
     );
   const slippageBps = BigInt(input.options["slippage-bps"]);
@@ -135,7 +132,7 @@ export async function swapTokens(
   });
   if (maxAmountIn > balance)
     throw usageError(
-      `Insufficient ${metadataIn.symbol} balance: need up to ${formatUnits(maxAmountIn, metadataIn.decimals)}, have ${formatUnits(balance, metadataIn.decimals)}`,
+      `Insufficient ${nameIn} balance: need up to ${formatUnits(maxAmountIn, metadataIn.decimals)}, have ${formatUnits(balance, metadataIn.decimals)}`,
     );
 
   const approve = Actions.token.approve.call({
@@ -153,7 +150,6 @@ export async function swapTokens(
   // swap; only a limited key can fall short.
   const requiresAccessKeyUpdate =
     key?.limits !== undefined && (accessKeyLimitRaw === null || accessKeyLimitRaw < maxAmountIn);
-  const feeToken = (input.options["fee-token"]?.toLowerCase() ?? tokenIn) as `0x${string}`;
   const output = {
     ...networkFields(selectedChainId),
     mode: exactOut ? ("exact_out" as const) : ("exact_in" as const),
@@ -179,8 +175,8 @@ export async function swapTokens(
     const next = !requiresAccessKeyUpdate
       ? nextStep(
           exactOut
-            ? `Review the quote, then run the next command to submit it. Submission re-quotes and refuses to spend more than ${output.max_amount_in} ${metadataIn.symbol}.`
-            : `Review the quote, then run the next command to submit it. Submission re-quotes and refuses to receive less than ${output.min_amount_out} ${metadataOut.symbol}.`,
+            ? `Review the quote, then run the next command to submit it. Submission re-quotes and refuses to spend more than ${output.max_amount_in} ${nameIn}.`
+            : `Review the quote, then run the next command to submit it. Submission re-quotes and refuses to receive less than ${output.min_amount_out} ${nameOut}.`,
           [
             "wallet",
             "swap",
@@ -197,32 +193,27 @@ export async function swapTokens(
           ],
           { network },
         )
-      : metadataIn.decimals !== tokenDecimals()
-        ? // keys update reads --limit with a fixed decimal count, so a generated command would set the wrong raw limit.
-          {
-            instruction: `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to raise its ${metadataIn.symbol} limit to at least ${output.max_amount_in} in the wallet app, then rerun this dry run to review the swap.`,
-          }
-        : nextStep(
-            `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to run the next command, then rerun this dry run to review the swap.`,
-            [
-              "wallet",
-              "keys",
-              "update",
-              key.address,
-              "--token",
-              tokenIn,
-              "--limit",
-              output.max_amount_in,
-            ],
-            { network },
-          );
+      : nextStep(
+          `The active access key cannot spend ${output.max_amount_in} ${nameIn}. Ask the wallet owner to run the next command, then rerun this dry run to review the swap.`,
+          [
+            "wallet",
+            "keys",
+            "update",
+            key.address,
+            "--token",
+            tokenIn,
+            "--limit",
+            output.max_amount_in,
+          ],
+          { network },
+        );
     return { status: "dry_run" as const, ...output, ...next };
   }
   if (!input.options.yes)
     throw usageError("Swap not submitted: review the quote with --dry-run, then pass --yes");
   if (requiresAccessKeyUpdate)
     throw usageError(
-      `Active access key cannot spend ${formatUnits(maxAmountIn, metadataIn.decimals)} ${metadataIn.symbol}. Ask the wallet owner to run 'tempo wallet keys update --token ${tokenIn} --limit ${formatUnits(maxAmountIn, metadataIn.decimals)}' and retry.`,
+      `Active access key cannot spend ${formatUnits(maxAmountIn, metadataIn.decimals)} ${nameIn}. Ask the wallet owner to run 'tempo wallet keys update --token ${tokenIn} --limit ${formatUnits(maxAmountIn, metadataIn.decimals)}' and retry.`,
     );
 
   const txHash = await runtime.submit({ calls, feeToken, network });
@@ -267,8 +258,7 @@ function defaultDependencies(network: Network): SwapDependencies {
       return (await Actions.token.getBalance(client, options)).amount;
     },
     async getMetadata(token) {
-      const metadata = await Actions.token.getMetadata(client, { token });
-      return { decimals: metadata.decimals, symbol: metadata.symbol || token };
+      return Actions.token.getMetadata(client, { token });
     },
     async getBuyQuote(options) {
       return Actions.dex.getBuyQuote(client, options);

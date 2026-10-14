@@ -5,10 +5,17 @@ import { describe, expect, it, vi } from "vitest";
 import { swapTokens } from "../src/commands/swap.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { machToken } from "../src/shared/mach.js";
+import { parseNetwork } from "../src/shared/network.js";
 import {
+  containsSymbol,
+  expectTokenError,
   expectUsageError,
+  invalidTokenInputs,
   readyWallet,
   testWallet,
+  tokenInputs,
+  unlistedToken,
+  untrustedSymbols,
   useTempHome,
   walletState,
   writeWalletState,
@@ -28,14 +35,17 @@ function dependencies(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// tokenIn (USDC.e) and tokenOut (pathUSD) report different decimals.
+// Unlisted tokens, so their decimals come from the on-chain metadata read.
+const decimalIn = unlistedToken;
+const decimalOut = "0x20c000000000000000000000000000000000cafe";
+
 function decimalDependencies(decimalsIn: number, decimalsOut: number) {
   return dependencies({
     getBalance: vi.fn(async () => 10n ** 30n),
     getMetadata: vi.fn(async (token: string) =>
-      token === usdcToken
-        ? { decimals: decimalsIn, symbol: "USDC.e" }
-        : { decimals: decimalsOut, symbol: "pathUSD" },
+      token === decimalIn
+        ? { decimals: decimalsIn, symbol: "IN" }
+        : { decimals: decimalsOut, symbol: "OUT" },
     ),
   });
 }
@@ -71,7 +81,7 @@ describe("swapTokens", () => {
         const error = await swapTokens(
           await readyWallet(),
           {
-            args: { amount, tokenIn: usdcToken, tokenOut: moderatoToken },
+            args: { amount, tokenIn: decimalIn, tokenOut: decimalOut },
             options: { "dry-run": dryRun, "exact-out": exactOut, "slippage-bps": 50, yes: true },
           },
           runtime,
@@ -107,7 +117,7 @@ describe("swapTokens", () => {
       const result = await swapTokens(
         await readyWallet(),
         {
-          args: { amount, tokenIn: usdcToken, tokenOut: moderatoToken },
+          args: { amount, tokenIn: decimalIn, tokenOut: decimalOut },
           options: { "dry-run": true, "exact-out": exactOut, "slippage-bps": 50 },
         },
         runtime,
@@ -116,15 +126,15 @@ describe("swapTokens", () => {
       if (exactOut) {
         expect(runtime.getBuyQuote).toHaveBeenCalledWith({
           amountOut: raw,
-          tokenIn: usdcToken,
-          tokenOut: moderatoToken,
+          tokenIn: decimalIn,
+          tokenOut: decimalOut,
         });
         expect(result).toMatchObject({ amount_out: amount, min_amount_out: amount });
       } else {
         expect(runtime.getSellQuote).toHaveBeenCalledWith({
           amountIn: raw,
-          tokenIn: usdcToken,
-          tokenOut: moderatoToken,
+          tokenIn: decimalIn,
+          tokenOut: decimalOut,
         });
         expect(result).toMatchObject({ amount_in: amount, max_amount_in: amount });
       }
@@ -132,14 +142,16 @@ describe("swapTokens", () => {
   );
 
   it.each([
-    ["mainnet", 4217, "tokenIn"],
-    ["mainnet", 4217, "tokenOut"],
-    ["testnet", 42431, "tokenIn"],
-    ["testnet", 42431, "tokenOut"],
-  ] as const)("rejects MACH on %s (chain %i, %s)", async (network, chain, side) => {
+    ["mainnet", "tokenIn", machToken(4217)],
+    ["mainnet", "tokenOut", "MACH"],
+    ["testnet", "tokenIn", "mach"],
+    ["testnet", "tokenOut", machToken(42431).toLowerCase()],
+  ] as const)("rejects MACH on %s as %s (%s)", async (network, side, token) => {
     await useTempHome();
     await writeWalletState(
-      walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, chainId: chain }] }),
+      walletState({
+        accessKeys: [{ ...walletState().accessKeys[0]!, chainId: parseNetwork(network).chainId }],
+      }),
     );
     const runtime = dependencies();
     const error = await swapTokens(
@@ -149,7 +161,7 @@ describe("swapTokens", () => {
           amount: "10",
           tokenIn: usdcToken,
           tokenOut: moderatoToken,
-          [side]: machToken(chain),
+          [side]: token,
         },
         options: { "dry-run": true, "slippage-bps": 50 },
       },
@@ -453,4 +465,148 @@ describe("swapTokens", () => {
     expect(runtime.getBuyQuote).not.toHaveBeenCalled();
     expect(runtime.getSellQuote).not.toHaveBeenCalled();
   });
+  it.each(tokenInputs)(
+    "resolves $input on $network as tokenIn, tokenOut, and --fee-token",
+    async ({ input, network, address, symbol }) => {
+      await useTempHome();
+      const chainId = parseNetwork(network).chainId;
+      const key = { ...walletState().accessKeys[0]!, chainId, limits: undefined };
+      await writeWalletState(walletState({ chainId, accessKeys: [key] }));
+
+      for (const side of ["in", "out"] as const) {
+        const [tokenIn, tokenOut] = side === "in" ? [input, unlistedToken] : [unlistedToken, input];
+        const [resolvedIn, resolvedOut] =
+          side === "in" ? [address, unlistedToken] : [unlistedToken, address];
+        const runtime = dependencies();
+        const result = await swapTokens(
+          await readyWallet(network, false),
+          {
+            args: { amount: "10", tokenIn, tokenOut },
+            options: { "dry-run": true, "fee-token": input, "slippage-bps": 50 },
+          },
+          runtime,
+        );
+
+        expect(result).toMatchObject({
+          token_in: resolvedIn,
+          token_out: resolvedOut,
+          [`token_${side}_symbol`]: symbol,
+          fee_token: address,
+        });
+        // Continuations carry the resolved addresses rather than the typed symbol.
+        const argv = (result as { _next?: { argv: string[] } })._next?.argv ?? [];
+        expect(argv.slice(3, 6)).toEqual(["10", resolvedIn, resolvedOut]);
+        expect(argv[argv.indexOf("--fee-token") + 1]).toBe(address);
+        expect(runtime.getMetadata.mock.calls).toEqual([[unlistedToken]]);
+      }
+    },
+  );
+
+  it.each(
+    (["tokenIn", "tokenOut", "fee-token"] as const).flatMap((position) =>
+      invalidTokenInputs(position === "fee-token" ? "fee token" : "token").map((row) => ({
+        ...row,
+        position,
+      })),
+    ),
+  )(
+    "rejects $position $input on $network before quoting",
+    async ({ position, input, network, message }) => {
+      await useTempHome();
+      await writeWalletState(walletState());
+      const runtime = dependencies();
+      const args: { amount: string; tokenIn: string; tokenOut: string } = {
+        amount: "10",
+        tokenIn: usdcToken,
+        tokenOut: moderatoToken,
+      };
+      if (position !== "fee-token") args[position] = input;
+
+      const error = await swapTokens(
+        await readyWallet(network, false),
+        {
+          args,
+          options: {
+            "dry-run": true,
+            "slippage-bps": 50,
+            ...(position === "fee-token" ? { "fee-token": input } : {}),
+          },
+        },
+        runtime,
+      ).catch((value: unknown) => value);
+
+      expectTokenError(error, message);
+      expect(runtime.getMetadata).not.toHaveBeenCalled();
+      expect(runtime.getSellQuote).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["USDC", "USDC.e"],
+    ["pathUSD", moderatoToken],
+  ])("rejects %s and %s as the same token", async (tokenIn, tokenOut) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+
+    const error = await swapTokens(
+      await readyWallet(),
+      {
+        args: { amount: "10", tokenIn, tokenOut },
+        options: { "dry-run": true, "slippage-bps": 50 },
+      },
+      dependencies(),
+    ).catch((value: unknown) => value);
+
+    expectUsageError(error, "Invalid swap: tokenIn and tokenOut must be different");
+  });
+
+  it.each(untrustedSymbols)(
+    "names an unlisted token by its address, never its on-chain symbol %j",
+    async (symbol) => {
+      await useTempHome();
+      await writeWalletState(walletState());
+      const getMetadata = vi.fn(async () => ({ decimals: 6, symbol }));
+
+      // The key only covers USDC.e, so spending the unlisted token needs a keys update.
+      const dryRun = await swapTokens(
+        await readyWallet(),
+        {
+          args: { amount: "10", tokenIn: unlistedToken, tokenOut: moderatoToken },
+          options: { "dry-run": true, "slippage-bps": 50 },
+        },
+        dependencies({ getMetadata }),
+      );
+      const quoteMoved = await swapTokens(
+        await readyWallet(),
+        {
+          args: { amount: "10", tokenIn: usdcToken, tokenOut: unlistedToken },
+          options: { "dry-run": true, "slippage-bps": 50, "min-amount-out": "9.81" },
+        },
+        dependencies({ getMetadata }),
+      ).catch((value: unknown) => value);
+      const insufficient = await swapTokens(
+        await readyWallet(),
+        {
+          args: { amount: "10", tokenIn: unlistedToken, tokenOut: moderatoToken },
+          options: { "dry-run": true, "slippage-bps": 50 },
+        },
+        dependencies({ getMetadata, getBalance: vi.fn(async () => 0n) }),
+      ).catch((value: unknown) => value);
+
+      expect(dryRun).toMatchObject({
+        token_in: unlistedToken,
+        token_in_symbol: null,
+        requires_access_key_update: true,
+        instruction: expect.stringContaining(`cannot spend 10 ${unlistedToken}.`),
+      });
+      expect(quoteMoved).toMatchObject({
+        message: expect.stringContaining(`now returns 9.8 ${unlistedToken}, below`),
+      });
+      expect(insufficient).toMatchObject({
+        message: expect.stringContaining(`Insufficient ${unlistedToken} balance`),
+      });
+      for (const output of [dryRun, (quoteMoved as Error).message, (insufficient as Error).message])
+        expect(containsSymbol(output, symbol)).toBe(false);
+    },
+  );
 });

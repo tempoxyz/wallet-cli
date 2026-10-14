@@ -121,7 +121,7 @@ For credit payments, use `--amount-cents` as the direct payment amount or the ma
 Use the first-party wallet CLI for Tempo token swaps. Do not discover or sign in to third-party or legacy DEX websites.
 
 ```bash
-# Quote only. Use full token addresses from `tempo wallet whoami`.
+# Quote only. Tokens are symbols listed for the network (USDC.e, pathUSD) or full 0x addresses.
 tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --dry-run
 
 # Submit only after the user approves the quote, token addresses, and bounds.

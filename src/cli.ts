@@ -178,7 +178,7 @@ cli.command("transfer", {
   alias: globalAlias,
   output: transferOutput,
   examples: [
-    { args: { amount: "1.00", token: "0x20c0...b50", to: "0x70997...9C8" } },
+    { args: { amount: "1.00", token: "USDC.e", to: "0x70997...9C8" } },
     {
       args: { amount: "50", token: "0x20c0...b50", to: "0x70997...9C8" },
       options: { "dry-run": true },
@@ -220,11 +220,7 @@ cli.command("swap", {
   output: swapOutput,
   examples: [
     {
-      args: {
-        amount: "10",
-        tokenIn: "0x20c0000000000000000000000000000000000000",
-        tokenOut: "0x20c000000000000000000000b9537d11c60e8b50",
-      },
+      args: { amount: "10", tokenIn: "USDC.e", tokenOut: "pathUSD" },
       options: { "dry-run": true },
     },
   ],
@@ -751,9 +747,12 @@ function describeCli() {
               option("limit", "--limit", "New remaining limit in human token units", {
                 valueName: "AMOUNT",
               }),
-              option("token", "--token", "Token address (defaults to current limit token)", {
-                valueName: "TOKEN",
-              }),
+              option(
+                "token",
+                "--token",
+                "Token address or symbol (defaults to current limit token)",
+                { valueName: "TOKEN" },
+              ),
               flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
             ],
           },
@@ -775,12 +774,15 @@ function describeCli() {
             "amount",
             'Amount in human units ("1.00", "50") — required for token transfers',
           ),
-          positional("token", "Token contract address (0x...) — required for token transfers"),
+          positional(
+            "token",
+            "Token address (0x...) or symbol (e.g. USDC.e) — required for token transfers",
+          ),
           positional("to", "Recipient address (0x...)"),
           option(
             "fee_token",
             "--fee-token",
-            "Pay fees in a different token (default: same token)",
+            "Pay fees in a different token, by address or symbol (default: same token)",
             { valueName: "FEE_TOKEN" },
           ),
           flag("dry_run", "--dry-run", "Show plan + fee estimate, don't send"),
@@ -827,8 +829,8 @@ function describeCli() {
         about: "Swap TIP-20 tokens on the Tempo Stablecoin DEX",
         args: [
           positional("amount", "Exact input amount by default; exact output with --exact-out"),
-          positional("token_in", "Full input token address (0x...)"),
-          positional("token_out", "Full output token address (0x...)"),
+          positional("token_in", "Input token address (0x...) or symbol (e.g. USDC.e)"),
+          positional("token_out", "Output token address (0x...) or symbol (e.g. pathUSD)"),
           flag("exact_out", "--exact-out", "Treat amount as the exact output amount"),
           option("slippage_bps", "--slippage-bps", "Maximum slippage in basis points", {
             valueName: "BPS",
@@ -845,7 +847,7 @@ function describeCli() {
             "Exact output: refuse to spend more than this reviewed amount",
             { valueName: "AMOUNT" },
           ),
-          option("fee_token", "--fee-token", "Token used to pay fees", {
+          option("fee_token", "--fee-token", "Token address or symbol used to pay fees", {
             valueName: "FEE_TOKEN",
           }),
           flag("dry_run", "--dry-run", "Quote and show calls without submitting"),

@@ -38,8 +38,12 @@ import {
 } from "../src/payment/session-store.js";
 import { withSessionLock } from "../src/payment/session-lock.js";
 import {
+  expectTokenError,
+  invalidTokenInputs,
   testAccessKey,
   testWallet,
+  tokenInputs,
+  usdc,
   useTempHome,
   walletState,
   writeWalletState,
@@ -1214,15 +1218,66 @@ describe("request command", () => {
     );
   });
 
-  it("accepts an exact payment token address and rejects ambiguous names", () => {
-    const token = "0x1111111111111111111111111111111111111111";
-    expect(parseRequestArgs(["--payment-token", token, "https://example.com"]).paymentToken).toBe(
-      token,
-    );
-    expect(() => parseRequestArgs(["--payment-token", "USDC", "https://example.com"])).toThrow(
-      "--payment-token must be MACH or a 0x token address",
-    );
-  });
+  it.each(tokenInputs)(
+    "resolves --payment-token $input on $network to its address",
+    ({ input, network, address }) => {
+      const argv = ["-n", network, "--payment-token", input, "https://example.com"];
+      expect(parseRequestArgs(argv).paymentToken).toBe(address);
+    },
+  );
+
+  it.each(invalidTokenInputs("payment token"))(
+    "rejects --payment-token $input on $network",
+    ({ input, network, message }) => {
+      const argv = ["-n", network, "--payment-token", input, "https://example.com"];
+      let error: unknown;
+      try {
+        parseRequestArgs(argv);
+      } catch (value) {
+        error = value;
+      }
+      expectTokenError(error, message);
+    },
+  );
+
+  it.each([
+    { input: "usdc", paymentToken: "usdc" },
+    { input: "alphaUSD", paymentToken: "alphaUSD" },
+    { input: "OUSD", paymentToken: "OUSD" },
+    { input: usdc, paymentToken: usdc.toLowerCase() },
+  ])(
+    "keeps --payment-token $input as $paymentToken until a network is selected",
+    ({ input, paymentToken }) => {
+      vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+      try {
+        const argv = ["--payment-token", input, "https://example.com"];
+        expect(parseRequestArgs(argv).paymentToken).toBe(paymentToken);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it.each(["FOO", "USDCC", "0x1234"])(
+    "rejects --payment-token %s that no network lists before a network is selected",
+    (input) => {
+      vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+      try {
+        expect(() =>
+          parseRequestArgs(["--payment-token", input, "https://example.com"]),
+        ).toThrowError(
+          input.startsWith("0x")
+            ? "Invalid payment token address: expected a full 0x address"
+            : // Every network's symbols, testnet-only ones included.
+              new RegExp(
+                `^Unknown payment token "${input}"\\. Use a 0x address or one of: .*USDC\\.e.*MACH.*alphaUSD`,
+              ),
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("falls back to TEMPO_MAX_SPEND when --max-spend is omitted", () => {
     try {

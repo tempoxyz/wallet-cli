@@ -80,7 +80,7 @@ it.each(["-n", "--network", "--network=testnet"])(
     await useTempHome();
     await writeWalletState(walletState());
 
-    const result = await walletJson([
+    const error = await walletJson([
       "transfer",
       "--dry-run",
       "--fee-token",
@@ -88,12 +88,13 @@ it.each(["-n", "--network", "--network=testnet"])(
       "1",
       usdc,
       testWallet2,
-    ]);
+    ]).catch((reason: unknown) => reason);
 
-    expect(result).toMatchObject({ status: "dry_run", ...mainnet });
-    expect((result as { _next: { argv: string[] } })._next.argv).toEqual(
-      expect.arrayContaining(["--fee-token", value]),
-    );
+    expect(error).toMatchObject({ code: 2 });
+    expect(JSON.parse((error as { stdout: string }).stdout)).toMatchObject({
+      code: "E_USAGE",
+      message: expect.stringContaining(`Unknown fee token "${value}" on mainnet.`),
+    });
   },
   30_000,
 );
