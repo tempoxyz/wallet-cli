@@ -444,6 +444,7 @@ export async function currentWhoamiOutput(options: {
     accessKey: key,
     assets,
     fallback: balance,
+    fallbackVerified: knownToken(token, options.chain) !== undefined,
     symbol,
   });
   return {
@@ -655,6 +656,8 @@ function walletBalances(options: {
   accessKey: WalletState["accessKeys"][number] | undefined;
   assets: WalletAsset[];
   fallback: TokenBalance | null;
+  // Only a listed token is verified; an unlisted token's symbol is self-declared.
+  fallbackVerified: boolean;
   symbol: string | null;
 }) {
   const balances = options.assets.map((asset) => {
@@ -685,7 +688,7 @@ function walletBalances(options: {
       symbol: options.symbol,
       decimals: 6,
       balance: options.fallback.formatted,
-      verified: true,
+      verified: options.fallbackVerified,
       access_key_limit: formatAccessKeyLimit(limit?.limit, 6),
     });
   }
