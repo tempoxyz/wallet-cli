@@ -380,16 +380,16 @@ describe("logout with sessions holding deposits", () => {
   }>([
     { name: "an open session", record: {}, close: closeAll },
     {
-      name: "an open session by its latest voucher",
-      record: { cumulative_amount: 5_000n },
+      // A payment saves its cumulative before creating the voucher, which can then fail.
+      name: "an open session whose latest cumulative the server never acknowledged",
+      record: { cumulative_amount: 10_000n },
       close: closeAll,
-      remaining: "0.005000",
     },
     {
-      name: "an open session by its server-reported spend",
-      record: { server_spent: 6_000n },
+      name: "a session by the voucher the server acknowledged",
+      record: { accepted_cumulative: 5_000n, cumulative_amount: 5_000n },
       close: closeAll,
-      remaining: "0.004000",
+      remaining: "0.005000",
     },
     {
       name: "a session closing in its grace period",
@@ -408,11 +408,6 @@ describe("logout with sessions holding deposits", () => {
       close: "tempo wallet sessions close --all --network testnet",
     },
     { name: "a spent session", record: { accepted_cumulative: 10_000n } },
-    {
-      name: "a session whose latest voucher spends the deposit",
-      record: { cumulative_amount: 10_000n },
-    },
-    { name: "a session its server reports spent", record: { server_spent: 10_000n } },
     { name: "a finalized session", record: { state: "finalized" } },
     { name: "another wallet's session", record: { payer: testWallet2 } },
     {

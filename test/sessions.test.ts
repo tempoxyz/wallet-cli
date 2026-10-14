@@ -107,7 +107,6 @@ describe("sessions utilities", () => {
         origin: "https://rpc.mpp.tempo.xyz",
         payer: testWallet,
         request_url: "https://rpc.mpp.tempo.xyz/",
-        server_spent: 1_000n,
         session_protocol: "v2",
         state: "active",
         token: descriptor.token,

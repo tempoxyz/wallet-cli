@@ -8,6 +8,4 @@ wallet-cli: minor
 
 Logout now lists stored sessions on the networks it logs out of (on every network when it removes the wallet) that still hold unspent deposits, with an `instruction` and `_next` naming the `tempo wallet sessions close --all` (or `--finalize`) that withdraws them after logging in again. Such a logout, and any `--revoke`, needs confirmation: a `[y/N]` prompt in a terminal, or `--yes`, which until now did nothing. A session store that exists but cannot be read, because sqlite3 is not installed or the database is corrupt, needs the same confirmation, so `--yes` still logs out. An agent run, or one whose stdin is not a terminal, without `--yes` fails with `E_USAGE` and a `cta` that adds it. `--no-browser` is accepted for `--revoke`.
 
-`tempo wallet sessions list` (and logout's `sessions`) now count a session's `spent` as its highest signed, accepted, or server-reported amount, as `whoami` does, so `remaining` no longer overstates a session whose latest voucher was never acknowledged.
-
 **Output change:** logout's `logged_in` field, which meant "was logged in", is renamed `was_logged_in`. The output also adds `scope`, `keys`, and `sessions`.
