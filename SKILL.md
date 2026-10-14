@@ -95,7 +95,7 @@ tempo request -t -X POST --max-spend <APPROVED_AMOUNT> --json '{"input":"..."}' 
 tempo request -t -X GET --max-spend <APPROVED_AMOUNT> <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
-- `recurring: true` marks a subscription, which has no spending cap and which `--max-spend` refuses. Present it as a recurring payment, and run it without `--max-spend` only after the user explicitly approves the subscription.
+- `recurring: true` marks a subscription. The quote does not show its renewal terms and `--max-spend` refuses it, so do not run it; report it to the user, and quote again with `--payment-intent charge` or `session` to look for a one-time or session offer.
 - `payment_required: false` means no payment is needed, but the dry run already sent the request (`probe_sent`); rerun it without `--dry-run` only when repeating the request is safe.
 
 ### MACH Funding and Payments
