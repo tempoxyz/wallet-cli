@@ -240,6 +240,12 @@ it.each<{ source: string; env?: string; privateKey?: string; args: string[]; cha
   { source: "the logged-in chain", args: [], chain: 42431 },
   { source: "TEMPO_WALLET_NETWORK", env: "mainnet", args: [], chain: 4217 },
   { source: "a -n flag after the URL", env: "mainnet", args: ["-n", "testnet"], chain: 42431 },
+  { source: "a stacked -sn flag", env: "mainnet", args: ["-sn", "testnet"], chain: 42431 },
+  {
+    source: "the logged-in chain when -d carries --network=mainnet",
+    args: ["-d", "--network=mainnet"],
+    chain: 42431,
+  },
   { source: "the default for --private-key", args: ["--private-key", testPrivateKey], chain: 4217 },
   {
     source: "the default for TEMPO_PRIVATE_KEY",

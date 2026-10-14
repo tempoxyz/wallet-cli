@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Cli, Mcp, type z } from "incur";
 
+import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
 import { usageError } from "./shared/errors.js";
 import {
@@ -342,12 +343,15 @@ void main();
 
 export default cli;
 
-function createMcpCommands() {
+function walletCommands() {
   // incur keys this map by the default Cli type; the globals generic does not change the entry.
   const commands = Cli.toCommands.get(cli as never);
-  if (!commands) throw new Error("Unable to access wallet commands for MCP server");
+  if (!commands) throw new Error("Unable to access wallet commands");
+  return commands as Map<string, unknown>;
+}
 
-  const mcpCommands = withMcpGlobals(commands);
+function createMcpCommands() {
+  const mcpCommands = withMcpGlobals(walletCommands());
   const servicesCommand = mcpCommands.get("services");
   if (isRunnableCommand(servicesCommand)) {
     mcpCommands.set("services", {
@@ -375,7 +379,7 @@ async function main() {
     process.exit(0);
   }
 
-  const args = normalizeServicesOutputAliases(rawArgs);
+  const args = normalizeServicesOutputAliases(bindCommandOptions(rawArgs));
 
   if (handleBuiltinSchema(args)) process.exit(0);
 
@@ -428,7 +432,20 @@ function isCommandGroup(value: unknown): value is { commands: Map<string, unknow
   );
 }
 
+/** Binds the target command's option values before incur extracts globals; see bindOptionValues. */
+function bindCommandOptions(args: readonly string[]) {
+  const [name, subcommand] = commandTokens(args);
+  const entry = name === undefined ? undefined : walletCommands().get(name);
+  const command =
+    isCommandGroup(entry) && subcommand !== undefined ? entry.commands.get(subcommand) : entry;
+  return bindOptionValues(args, [
+    ...(isRunnableCommand(command) ? [command] : []),
+    { options: cliGlobals, alias: cliGlobalAlias },
+  ]);
+}
+
 function isRunnableCommand(value: unknown): value is {
+  alias?: Record<string, string | undefined> | undefined;
   options?: z.ZodObject | undefined;
   output?: unknown;
   run: (context: unknown) => unknown | Promise<unknown>;

@@ -3,6 +3,7 @@ import { Cli, z } from "incur";
 
 import { executeRequest, type RequestOptions } from "./commands/request.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas.js";
+import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
 
 const args = z.object({
@@ -83,33 +84,35 @@ const options = z.object({
   form: z.array(z.string()).default([]).describe("Multipart form field (name=value, name=@file)"),
 });
 
+const alias = {
+  silent: "s",
+  verbose: "v",
+  "json-output": "j",
+  "toon-output": "t",
+  request: "X",
+  include: "i",
+  output: "o",
+  head: "I",
+  header: "H",
+  location: "L",
+  get: "G",
+  timeout: "m",
+  data: "d",
+  insecure: "k",
+  "user-agent": "A",
+  "dump-header": "D",
+  user: "u",
+  referer: "e",
+  "remote-name": "O",
+  form: "F",
+};
+
 const cli = Cli.create("tempo request", {
   version,
   description: "Make HTTP requests with automatic MPP payment",
   args,
   options,
-  alias: {
-    silent: "s",
-    verbose: "v",
-    "json-output": "j",
-    "toon-output": "t",
-    request: "X",
-    include: "i",
-    output: "o",
-    head: "I",
-    header: "H",
-    location: "L",
-    get: "G",
-    timeout: "m",
-    data: "d",
-    insecure: "k",
-    "user-agent": "A",
-    "dump-header": "D",
-    user: "u",
-    referer: "e",
-    "remote-name": "O",
-    form: "F",
-  },
+  alias,
   globals: cliGlobals,
   globalAlias: cliGlobalAlias,
   // The Tempo launcher manages updates, so skip incur npm update checks.
@@ -225,22 +228,14 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
 }
 
 function normalizeIncurArgv(argv: readonly string[]) {
+  // Binding also turns `--json <body>` into `--json=<body>`: incur reserves exact `--json` as an
+  // output-format flag, and `tempo request` keeps curl's `--json <body>`.
+  const bound = bindOptionValues(argv, [
+    { options, alias },
+    { options: cliGlobals, alias: cliGlobalAlias },
+  ]);
   const out: string[] = [];
-  for (let index = 0; index < argv.length; index++) {
-    const arg = argv[index];
-    if (arg === undefined) continue;
-    if (arg === "--json") {
-      const value = argv[index + 1];
-      if (value !== undefined) {
-        // incur reserves exact `--json` as an output-format flag. `tempo request`
-        // already uses `--json <body>` for curl/Rust parity, so pass the same
-        // option through in `--json=<body>` form, which incur leaves available
-        // for the command schema.
-        out.push(`--json=${value}`);
-        index++;
-        continue;
-      }
-    }
+  for (const arg of bound) {
     if (arg === "--no-proxy") {
       // Incur treats --no-foo as boolean negation of --foo. `tempo request`
       // intentionally supports curl's separate --proxy <url> and --no-proxy
