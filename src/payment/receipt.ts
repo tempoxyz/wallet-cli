@@ -75,11 +75,16 @@ export function receiptTxHash(response: Response, intent: string) {
   if (!header) return null;
   try {
     const receipt = decodeBase64UrlJson(header);
-    const hash = stringValue(intent === "session" ? receipt.txHash : receipt.reference);
-    return /^0x[0-9a-fA-F]{64}$/.test(hash) ? hash : null;
+    return transactionHash(intent === "session" ? receipt.txHash : receipt.reference);
   } catch {
     return null;
   }
+}
+
+/** `value` when it is a 32-byte hex transaction hash, else `null`. */
+export function transactionHash(value: unknown) {
+  const hash = stringValue(value);
+  return /^0x[0-9a-fA-F]{64}$/.test(hash) ? hash : null;
 }
 
 function tokenUnits(value: bigint) {

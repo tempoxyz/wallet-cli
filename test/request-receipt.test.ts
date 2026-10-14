@@ -326,6 +326,14 @@ it.each<{
     stderr: `Paid 0.01 USDC.e · tx ${txHash}\n`,
   },
   {
+    name: "a pushed charge, keeping its own hash over the server's",
+    challenge: offer("charge"),
+    payload: { type: "hash", hash: txHash },
+    receipt: chargeReceipt(topUpHash),
+    payment: { ...charged, tx_hash: txHash },
+    stderr: `Paid 0.01 USDC.e · tx ${txHash}\n`,
+  },
+  {
     name: "a charge without a Payment-Receipt",
     challenge: offer("charge"),
     payment: charged,

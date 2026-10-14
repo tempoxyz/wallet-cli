@@ -46,6 +46,7 @@ import {
   type PaymentReceipt,
   receiptSummary,
   receiptTxHash,
+  transactionHash,
 } from "../payment/receipt.js";
 import { withSessionLock } from "../payment/session-lock.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
@@ -1855,7 +1856,9 @@ async function persistSessionReceipt(
 /**
  * Records the receipt of a paid charge. A zero-amount charge is a signed proof of the payer, not
  * a payment, so it has none. A MACH settlement debits MACH from the wallet, whether `--mach`
- * required it or the SDK chose it for a machine-enabled offer.
+ * required it or the SDK chose it for a machine-enabled offer. A pushed charge names the
+ * transaction the wallet sent; only a pulled one, which the server broadcasts, takes the hash
+ * from the server's receipt.
  */
 function recordChargeReceipt(
   response: Response,
@@ -1869,9 +1872,9 @@ function recordChargeReceipt(
   const network = requestNetwork(options);
   const deployment =
     machineTokenDeployments[network.chainId as keyof typeof machineTokenDeployments];
+  const payload = credentialPayload(credential);
   const mach =
-    deployment &&
-    (isMachPaymentToken(options.paymentToken) || runsMachRoute(credential, deployment));
+    deployment && (isMachPaymentToken(options.paymentToken) || runsMachRoute(payload, deployment));
   paymentReceipts.set(
     response,
     paymentReceipt({
@@ -1880,15 +1883,28 @@ function recordChargeReceipt(
       token: mach ? deployment.token : stringValue(challenge.request.currency),
       network,
       payer,
-      txHash: receiptTxHash(response, challenge.intent),
+      txHash:
+        payload.type === "hash"
+          ? transactionHash(payload.hash)
+          : receiptTxHash(response, challenge.intent),
     }),
   );
 }
 
-/** Whether a charge credential's signed transaction approves and swaps MACH, the MACH route. */
-function runsMachRoute(credential: string, deployment: { token: string; swap: string }) {
+function credentialPayload(credential: string) {
   try {
-    const { payload } = Credential.deserialize<Record<string, unknown>>(credential);
+    return getRecord(Credential.deserialize<Record<string, unknown>>(credential).payload);
+  } catch {
+    return {};
+  }
+}
+
+/** Whether a charge credential's signed transaction approves and swaps MACH, the MACH route. */
+function runsMachRoute(
+  payload: Record<string, unknown>,
+  deployment: { token: string; swap: string },
+) {
+  try {
     if (payload.type !== "transaction") return false;
     const { calls } = TempoTransaction.deserialize(
       stringValue(payload.signature) as `0x76${string}`,
