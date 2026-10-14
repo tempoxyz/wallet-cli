@@ -46,6 +46,7 @@ import { connect, createProvider } from "../provider.js";
 import { escrowAbi, version } from "../shared/constants.js";
 import {
   authRefreshRequiredError,
+  errorCodes,
   networkError,
   httpError,
   paymentOutcomeUnknownError,
@@ -63,6 +64,7 @@ import {
   rpcUrl,
   type Network,
 } from "../shared/network.js";
+import { continuationCommand } from "../shared/next.js";
 import { listedSymbol, resolveTokenAddress } from "../shared/tokens.js";
 import {
   escapeInvisible,
@@ -99,6 +101,7 @@ export type RequestOptions = {
   maxRedirs?: number | undefined;
   maxTime?: number | undefined;
   method?: string | undefined;
+  /** `--max-spend`, then `TEMPO_MAX_SPEND`; payments apply `defaultMaxSpend` when unset. */
   maxSpend?: string | undefined;
   mach?: boolean | undefined;
   network?: string | undefined;
@@ -144,6 +147,12 @@ type RequestInitWithDispatcher = RequestInit & {
 };
 
 const defaultRetryStatuses = new Set([408, 429, 500, 502, 503, 504]);
+
+/**
+ * Spending cap, in payment token units, when neither `--max-spend` nor `TEMPO_MAX_SPEND` is set.
+ * It bounds each charge, each session deposit, and a session's cumulative vouchers.
+ */
+export const defaultMaxSpend = "10";
 
 export async function runRequest(argv: readonly string[], io: RequestRunOptions = {}) {
   const options = parseRequestArgs(argv);
@@ -854,6 +863,9 @@ async function payAndRetryRequest(
         paySessionAndRetryRequest(selectedResponse, request, options, sessionChallenge),
       );
     } catch (error) {
+      // A session refused by the cap still names a one-time charge within it.
+      if (options.paymentIntent === "auto" && error instanceof MaxSpendExceededError)
+        error.charge = chargeWithinCap(header, sessionChallenge, options);
       // Only payment failures fall back to a charge offer; other typed errors keep their code.
       if (
         options.paymentIntent === "auto" &&
@@ -877,7 +889,7 @@ async function payAndRetryRequest(
       ...identity.methodOptions,
       expectedChainId: requestNetwork(options).chainId,
       getClient,
-      ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
+      maxDeposit: spendCap(options),
     };
     const payment = Mppx.create({
       methods: [
@@ -921,7 +933,7 @@ async function paySessionAndRetryRequest(
         tempoSession({
           ...identity.methodOptions,
           getClient: identity.getClient,
-          ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
+          maxDeposit: spendCap(options),
         }),
       ],
       polyfill: false,
@@ -935,7 +947,7 @@ async function paySessionAndRetryRequest(
       signedCumulative =
         maxBigInt(reusable.cumulative_amount, reusable.accepted_cumulative, reusable.server_spent) +
         details.amount;
-      enforceSessionMaxSpend(signedCumulative, options);
+      assertWithinMaxSpend(signedCumulative, options);
       await preserveSessionCumulative(reusable.channel_id, signedCumulative);
       credential = await payment.createCredential(challengeResponse, {
         action: "voucher",
@@ -948,7 +960,7 @@ async function paySessionAndRetryRequest(
       const depositRaw = sessionDepositRaw(details, options);
       await assertSufficientSessionBalance(identity.address, details, depositRaw);
       signedCumulative = details.amount;
-      enforceSessionMaxSpend(signedCumulative, options);
+      assertWithinMaxSpend(signedCumulative, options);
       credential = await payment.createCredential(challengeResponse, {
         depositRaw: depositRaw.toString(),
       });
@@ -1120,7 +1132,7 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
     signerAddress: account.address,
     methodOptions: {
       getClient,
-      ...(options.maxSpend ? { maxDeposit: options.maxSpend } : {}),
+      maxDeposit: spendCap(options),
     },
   };
 }
@@ -1311,7 +1323,8 @@ async function reusableSessionRecord(
     await deleteSessionRecord(record.channel_id);
     return undefined;
   }
-  return record;
+  // The stored deposit can lag the chain, e.g. when a top-up landed but its record update failed.
+  return { ...record, deposit: onChain.deposit };
 }
 
 export async function isSessionInvalidationResponse(response: Response) {
@@ -1352,10 +1365,14 @@ async function tryTopUpAndRetry(options: {
     .catch(() => "");
   const additionalDeposit = topUpAmountFromProblem(body, options.record, options.signedCumulative);
   if (additionalDeposit <= 0n) return undefined;
-  if (options.options.maxSpend) {
-    const maxSpend = parseUnits(options.options.maxSpend, 6);
-    if (options.record.deposit + additionalDeposit > maxSpend) return undefined;
-  }
+  const deposit = options.record.deposit + additionalDeposit;
+  // This request's voucher was already sent, so a rerun with a higher cap would pay for the call
+  // again; the refusal points at the session instead of suggesting one.
+  if (deposit > parseUnits(spendCap(options.options), 6))
+    throw walletError({
+      code: "E_LIMIT_EXCEEDED",
+      message: `Session top-up refused: the deposit would reach ${formatTokenAmount(deposit)}, above the spending cap (max=${spendCapLabel(options.options)}). The voucher for this request was already sent; check the session with '${continuationCommand(["wallet", "sessions", "list"], requestNetwork(options.options))}' before retrying.`,
+    });
 
   const transaction = await buildTopUpTransaction({
     additionalDeposit,
@@ -1528,10 +1545,16 @@ const tip20Abi = [
   },
 ] as const;
 
+/**
+ * The deposit a new session locks: the server's suggestion, else an explicit cap, else the
+ * per-call amount. Opening needs only a deposit that covers the per-call amount, so a deposit
+ * above the spending cap is lowered to the cap.
+ */
 function sessionDepositRaw(details: SessionDetails, options: RequestOptions) {
-  const maxSpend = options.maxSpend ? parseUnits(options.maxSpend, 6) : undefined;
-  const preferred = details.suggestedDeposit ?? maxSpend ?? details.amount;
-  const deposit = maxSpend !== undefined && preferred > maxSpend ? maxSpend : preferred;
+  const maxSpend = parseUnits(spendCap(options), 6);
+  const preferred =
+    details.suggestedDeposit ?? (options.maxSpend === undefined ? details.amount : maxSpend);
+  const deposit = preferred > maxSpend ? maxSpend : preferred;
   if (deposit < details.amount) throw paymentError("Session payment exceeds --max-spend");
   return deposit;
 }
@@ -1753,6 +1776,23 @@ export function chargeFallbackError(
   );
 }
 
+/** The cheapest matching one-time charge the server offered, when it fits the spending cap. */
+function chargeWithinCap(
+  header: string | null,
+  sessionChallenge: Challenge.Challenge,
+  options: RequestOptions,
+) {
+  const challenge = chargeChallengeFromHeader(header, sessionChallenge, options);
+  try {
+    const amount = challenge ? challengeAmount(challenge) : undefined;
+    if (amount !== undefined && amount <= parseUnits(spendCap(options), 6))
+      return formatTokenAmount(amount);
+  } catch {
+    // A malformed charge offer is no alternative.
+  }
+  return undefined;
+}
+
 function challengeAmount(challenge: Challenge.Challenge) {
   const amount = (challenge.request as Record<string, unknown>).amount;
   if (typeof amount === "string" && /^\d+$/.test(amount)) return BigInt(amount);
@@ -1770,15 +1810,6 @@ function challengeEchoJson(challenge: Challenge.Challenge) {
     ...(challenge.digest ? { digest: challenge.digest } : {}),
     ...(challenge.opaque ? { opaque: challenge.opaque } : {}),
   });
-}
-
-function enforceSessionMaxSpend(cumulativeAmount: bigint, options: RequestOptions) {
-  if (!options.maxSpend) return;
-  const maxSpend = parseUnits(options.maxSpend, 6);
-  if (cumulativeAmount <= maxSpend) return;
-  throw paymentError(
-    `Payment max spend exceeded: max=${options.maxSpend} required=${formatTokenAmount(cumulativeAmount)}`,
-  );
 }
 
 function bigintField(value: unknown, name: string) {
@@ -2104,17 +2135,57 @@ function paymentContext(challenge: { intent: string }, options: RequestOptions) 
   return { depositRaw: parseUnits(options.maxSpend, 6).toString() };
 }
 
-function enforceMaxSpend(challenge: { request: Record<string, unknown> }, options: RequestOptions) {
+function enforceMaxSpend(
+  challenge: { intent: string; request: Record<string, unknown> },
+  options: RequestOptions,
+) {
   const amount = challenge.request.amount;
   if (typeof amount !== "string" || !/^\d+$/.test(amount))
     throw paymentError("Payment challenge is missing a valid amount");
-  if (!options.maxSpend) return;
-  const maxSpend = parseUnits(options.maxSpend, 6);
-  const required = BigInt(amount);
-  if (required <= maxSpend) return;
-  throw paymentError(
-    `Payment max spend exceeded: max=${options.maxSpend} required=${formatTokenAmount(required)}`,
-  );
+  // An explicit cap already refused the subscription, and the default cap leaves recurring
+  // offers to the per-period limit the wallet signs.
+  if (challenge.intent === "subscription") return;
+  assertWithinMaxSpend(BigInt(amount), options);
+}
+
+/** `--max-spend`, then `TEMPO_MAX_SPEND`, then `defaultMaxSpend`, in payment token units. */
+function spendCap(options: RequestOptions) {
+  return options.maxSpend ?? defaultMaxSpend;
+}
+
+function spendCapLabel(options: RequestOptions) {
+  return options.maxSpend ?? `${defaultMaxSpend} (default)`;
+}
+
+/** Refuses an amount, deposit, or cumulative voucher (raw token units) above the spending cap. */
+function assertWithinMaxSpend(required: bigint, options: RequestOptions) {
+  if (required > parseUnits(spendCap(options), 6))
+    throw new MaxSpendExceededError(required, options);
+}
+
+/**
+ * A charge, deposit, or voucher over the spending cap, refused before it is signed. The
+ * request CLI suggests rerunning the command with `--max-spend <required>`.
+ */
+export class MaxSpendExceededError extends Errors.IncurError {
+  /** The smallest `--max-spend` that allows the payment. */
+  readonly required: string;
+  /** The network the payment would use. */
+  readonly network: Network;
+  /** A one-time charge within the cap that the server also offered, when a session is refused. */
+  charge: string | undefined = undefined;
+
+  constructor(required: bigint, options: RequestOptions) {
+    const { exitCode, retryable } = errorCodes.E_LIMIT_EXCEEDED;
+    super({
+      code: "E_LIMIT_EXCEEDED",
+      exitCode,
+      retryable,
+      message: `Payment max spend exceeded: max=${spendCapLabel(options)} required=${formatTokenAmount(required)}`,
+    });
+    this.required = formatTokenAmount(required);
+    this.network = requestNetwork(options);
+  }
 }
 
 function validatePaymentAddresses(challenge: Challenge.Challenge) {

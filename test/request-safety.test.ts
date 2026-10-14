@@ -48,7 +48,8 @@ async function fixture(
       return;
     }
     requests++;
-    if (req.headers.authorization) {
+    // Only a payment credential counts; --bearer and -u send other Authorization schemes.
+    if (req.headers.authorization?.startsWith("Payment ")) {
       authenticated++;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify(Credential.deserialize(req.headers.authorization).payload));
@@ -62,15 +63,16 @@ async function fixture(
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("No address");
   const url = `http://127.0.0.1:${address.port}`;
-  const run = async (...args: string[]) => {
+  const cli = async (argv: string[], env: Record<string, string> = {}) => {
     try {
       return {
-        ...(await exec(process.execPath, [cliBundle("request"), url, ...args], {
+        ...(await exec(process.execPath, [cliBundle("request"), ...argv], {
           env: {
             ...process.env,
             TEMPO_RPC_URL: `${url}/rpc`,
             TEMPO_WALLET_NETWORK: "mainnet",
             TEMPO_PRIVATE_KEY: `0x${"1".repeat(64)}`,
+            ...env,
           },
         })),
         code: 0,
@@ -79,7 +81,8 @@ async function fixture(
       return error as { stdout: string; stderr: string; code: number };
     }
   };
-  return { run, counts: () => ({ requests, authenticated, rpc }) };
+  const run = (...args: string[]) => cli([url, ...args]);
+  return { cli, run, url, counts: () => ({ requests, authenticated, rpc }) };
 }
 
 it.each([
@@ -119,6 +122,96 @@ it("applies TEMPO_MAX_SPEND when --max-spend is omitted", async () => {
     vi.unstubAllEnvs();
   }
 });
+
+// `{url}` stands for the fixture URL. The rerun keeps every other argument, bound to its option
+// as incur parses it, sets --max-spend and --network itself, and redacts credentials, all of
+// which contain `s3cr3t` here.
+const key = `0x5${"2".repeat(63)}`;
+it.each([
+  {
+    name: "the URL alone",
+    argv: ["{url}"],
+    cta: "tempo request -j {url} --max-spend 25 --network mainnet",
+  },
+  {
+    name: "request options and a lower --max-spend",
+    argv: ["-X", "POST", "--json", '{"a":1}', "-H", "x-a: b", "--max-spend", "5", "{url}"],
+    max: "5",
+    cta: `tempo request -j --request=POST '--json={"a":1}' '--header=x-a: b' {url} --max-spend 25 --network mainnet`,
+  },
+  {
+    name: "a network in a flag stack",
+    argv: ["-sn", "testnet", "{url}"],
+    chain: 42431,
+    cta: "tempo request -j -s {url} --max-spend 25 --network testnet",
+  },
+  {
+    name: "an option value that looks like a network flag",
+    argv: ["-d", "-n", "--network=mainnet", "{url}"],
+    cta: "tempo request -j --data=-n {url} --max-spend 25 --network mainnet",
+  },
+  {
+    name: "TEMPO_MAX_SPEND and TEMPO_WALLET_NETWORK",
+    argv: ["{url}"],
+    env: { TEMPO_MAX_SPEND: "5", TEMPO_WALLET_NETWORK: "testnet" },
+    chain: 42431,
+    max: "5",
+    cta: "tempo request -j {url} --max-spend 25 --network testnet",
+  },
+  {
+    name: "a dry run",
+    argv: ["--dry-run", "{url}"],
+    cta: "tempo request -j --dry-run {url} --max-spend 25 --network mainnet",
+  },
+  {
+    name: "credentials",
+    argv: [
+      "--private-key",
+      key,
+      "--bearer",
+      "s3cr3t-bearer",
+      "-u",
+      "alice:s3cr3t-pw",
+      "-H",
+      "Authorization: Bearer s3cr3t-header",
+      "-H",
+      "Cookie: sid=s3cr3t-cookie",
+      "-H",
+      "X-Api-Key: s3cr3t-key",
+      "-H",
+      "Accept: text/plain",
+      "--proxy",
+      "http://bob:s3cr3t-proxy@127.0.0.1:9",
+      "--no-proxy",
+      "{url}",
+    ],
+    cta: "tempo request -j '--private-key=<redacted>' '--bearer=<redacted>' '--user=<redacted>' '--header=Authorization: <redacted>' '--header=Cookie: <redacted>' '--header=X-Api-Key: <redacted>' '--header=Accept: text/plain' '--proxy=<redacted>' --no-proxy {url} --max-spend 25 --network mainnet",
+    redacts: true,
+  },
+  {
+    name: "a proxy without credentials",
+    argv: ["--proxy", "http://127.0.0.1:9", "--no-proxy", "{url}"],
+    cta: "tempo request -j --proxy=http://127.0.0.1:9 --no-proxy {url} --max-spend 25 --network mainnet",
+  },
+])(
+  "refuses a charge over the cap with a rerun of $name",
+  async ({ argv, env = {}, chain = 4217, max = "10 (default)", cta, redacts = false }) => {
+    const server = await fixture("charge", chain, { amount: "25000000" });
+    const withUrl = (value: string) => value.replaceAll("{url}", server.url);
+    const result = await server.cli(["-j", ...argv.map(withUrl)], { TEMPO_MAX_SPEND: "", ...env });
+    const command = withUrl(cta);
+    expect(result.code).toBe(4);
+    const replace = redacts ? " with each <redacted> replaced by its original value" : "";
+    expect(JSON.parse(result.stderr)).toEqual({
+      code: "E_LIMIT_EXCEEDED",
+      message: `Payment max spend exceeded: max=${max} required=25. To allow it, rerun${replace}: ${command}`,
+      retryable: false,
+      cta: { description: "Suggested command:", commands: [{ command }] },
+    });
+    expect(`${result.stdout}${result.stderr}`).not.toMatch(/s3cr3t|52{63}/);
+    expect(server.counts()).toEqual({ requests: 1, authenticated: 0, rpc: 0 });
+  },
+);
 
 it("dry-run decodes and validates a quote without accessing the wallet", async () => {
   const server = await fixture();

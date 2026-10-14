@@ -1,10 +1,18 @@
 #!/usr/bin/env node
 import { Cli, z } from "incur";
 
-import { executeRequest, type RequestOptions } from "./commands/request.js";
+import {
+  defaultMaxSpend,
+  executeRequest,
+  MaxSpendExceededError,
+  type RequestOptions,
+} from "./commands/request.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas.js";
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
+import { continuationCommand } from "./shared/next.js";
+
+const maxSpendHelp = `Hard cap for cumulative payment spend in token units (or TEMPO_MAX_SPEND; default ${defaultMaxSpend})`;
 
 const args = z.object({
   url: z.string().describe("URL to request"),
@@ -15,10 +23,7 @@ const options = z.object({
     .boolean()
     .optional()
     .describe("Send the request to discover the payment challenge without paying"),
-  "max-spend": z
-    .string()
-    .optional()
-    .describe("Hard cap for cumulative payment spend (or TEMPO_MAX_SPEND)"),
+  "max-spend": z.string().optional().describe(maxSpendHelp),
   "payment-intent": z
     .enum(["auto", "session", "charge"])
     .default("auto")
@@ -110,6 +115,11 @@ const alias = {
   form: "F",
 };
 
+const optionSpecs = [
+  { options, alias },
+  { options: cliGlobals, alias: cliGlobalAlias },
+];
+
 const cli = Cli.create("tempo request", {
   version,
   description: "Make HTTP requests with automatic MPP payment",
@@ -134,22 +144,60 @@ const cli = Cli.create("tempo request", {
       description: "Set a header and write output to a file",
     },
   ],
-  async run({ args, formatExplicit, globals, options }) {
-    // Structured output (-j, --format) keeps stderr parseable; --dry-run JSON reports the signer.
-    await executeRequest(
-      { ...toRequestOptions(args.url, options), network: globals.network },
-      formatExplicit ? { stderr: { write: () => true } } : {},
-    );
+  async run({ args, error, formatExplicit, globals, options }) {
+    try {
+      // Structured output (-j, --format) keeps stderr parseable; --dry-run JSON reports the signer.
+      await executeRequest(
+        { ...toRequestOptions(args.url, options), network: globals.network },
+        formatExplicit ? { stderr: { write: () => true } } : {},
+      );
+    } catch (caught) {
+      if (!(caught instanceof MaxSpendExceededError)) throw caught;
+      // incur drops the cta of thrown errors, so return the refusal through `error`.
+      const rerun = rerunArgs(argv, ["max-spend", "network"]);
+      const command = continuationCommand(
+        ["request", ...rerun, "--max-spend", caught.required],
+        caught.network,
+      );
+      const replace = rerun.some((arg) => arg.includes(redacted))
+        ? ` with each ${redacted} replaced by its original value`
+        : "";
+      const commands: { command: string; description?: string }[] = [{ command }];
+      let message = `${caught.message}. To allow it, rerun${replace}: ${command}`;
+      if (caught.charge) {
+        const charge = continuationCommand(
+          [
+            "request",
+            ...rerunArgs(argv, ["max-spend", "network", "payment-intent"]),
+            "--max-spend",
+            caught.charge,
+            "--payment-intent",
+            "charge",
+          ],
+          caught.network,
+        );
+        commands.push({ command: charge, description: "one-time charge, not refundable" });
+        message += `. The server also offers a one-time charge of ${caught.charge}, which is not refundable: ${charge}`;
+      }
+      return error({
+        code: caught.code,
+        message,
+        exitCode: caught.exitCode,
+        retryable: caught.retryable,
+        cta: { commands },
+      });
+    }
     return undefined;
   },
 });
+
+const argv = process.argv.slice(2);
 
 void main();
 
 export default cli;
 
 async function main() {
-  const argv = process.argv.slice(2);
   if (argv.includes("--describe")) {
     process.stdout.write(`${JSON.stringify(describeRequestCli())}\n`);
     return;
@@ -233,10 +281,7 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
 function normalizeIncurArgv(argv: readonly string[]) {
   // Binding also turns `--json <body>` into `--json=<body>`: incur reserves exact `--json` as an
   // output-format flag, and `tempo request` keeps curl's `--json <body>`.
-  const bound = bindOptionValues(argv, [
-    { options, alias },
-    { options: cliGlobals, alias: cliGlobalAlias },
-  ]);
+  const bound = bindOptionValues(argv, optionSpecs);
   const out: string[] = [];
   for (const arg of bound) {
     if (arg === "--no-proxy") {
@@ -255,6 +300,33 @@ function normalizeIncurArgv(argv: readonly string[]) {
   return out;
 }
 
+const redacted = "<redacted>";
+const credentialOptions = new Set(["private-key", "bearer", "user"]);
+const credentialHeader = /auth|cookie|key|secret|token|pass|session/i;
+
+/**
+ * The invocation's arguments for a rerun that sets the `replaced` options itself. Values are
+ * bound to their options as incur parses them, so `-n` in a stack such as `-sn testnet` is
+ * dropped while a value that looks like an option (`-d -n`) is kept. Credentials are replaced by
+ * `<redacted>` so the suggestion never echoes them.
+ */
+function rerunArgs(argv: readonly string[], replaced: readonly string[]) {
+  return bindOptionValues(argv, optionSpecs)
+    .filter((arg) => !replaced.some((name) => arg === `--${name}` || arg.startsWith(`--${name}=`)))
+    .map(redactCredential);
+}
+
+/** Redacts `--private-key`, `--bearer`, `--user`, proxy credentials and credential-like headers. */
+function redactCredential(arg: string) {
+  const [, name, value = ""] = /^--([^=]+)=(.*)$/s.exec(arg) ?? [];
+  if (!name) return arg;
+  if (credentialOptions.has(name) || (name === "proxy" && value.includes("@")))
+    return `--${name}=${redacted}`;
+  const header = name === "header" ? /^([^:]+):/.exec(value)?.[1] : undefined;
+  if (header && credentialHeader.test(header)) return `--header=${header}: ${redacted}`;
+  return arg;
+}
+
 function describeRequestCli() {
   return {
     name: "tempo request",
@@ -270,7 +342,7 @@ function describeRequestCli() {
         name: "max_spend",
         long: "--max-spend",
         value_name: "AMOUNT",
-        help: "Hard cap for cumulative payment spend (or TEMPO_MAX_SPEND)",
+        help: maxSpendHelp,
       },
       {
         name: "payment_intent",

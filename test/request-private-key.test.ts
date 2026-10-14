@@ -168,13 +168,14 @@ it.each([
     name: "over max spend",
     header: charge({ amount: "6000", recipient: "0x0000000000000000000000000000000000000001" }),
     args: ["--max-spend", "0.001"],
+    code: "E_LIMIT_EXCEEDED",
   },
 ])("announces no signer for an unusable 402 ($name)", async (row) => {
   const server = await fixture(row.header);
   const io = { stdout: capture(), stderr: capture() };
   await expect(
     runRequest(["--private-key", testPrivateKey2, ...row.args, server.url], io),
-  ).rejects.toMatchObject({ code: "E_PAYMENT" });
+  ).rejects.toMatchObject({ code: row.code ?? "E_PAYMENT" });
   expect(io.stderr.text()).toBe("");
   expect(server.requests()).toBe(1);
 });

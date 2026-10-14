@@ -84,11 +84,23 @@ On HTTP 402, `--dry-run` prints a JSON quote with the selected amount, token, ch
 budget assessment, without opening the wallet or paying. Any other status prints
 `payment_required: false` with the status instead of the body. The probe request is still
 sent, so methods other than GET, HEAD and OPTIONS also report a side-effect `warning`.
-`--max-spend` rejects an offer above the cap in both preview and execution; invalid amounts
-fail before the HTTP request.
-For reusable sessions, execution also checks cumulative spending against the cap.
+`--max-spend <amount>` (or `TEMPO_MAX_SPEND`) caps spending in payment token units; without
+either, the cap is 10 (about $10 in stablecoins). An offer above the cap is refused with
+`E_LIMIT_EXCEEDED` in both preview and execution, before anything is signed, and the error's
+`cta` reruns the same command with the `--max-spend` it needs. That command shows
+credentials (`--private-key`, `--bearer`, `--user`, proxy credentials, and headers such as
+`Authorization` or `Cookie`) as `<redacted>`. When a reused session is refused under
+`--payment-intent auto` and the server also offers a one-time charge within the cap, the
+`cta` suggests that charge as well. A session deposit suggested
+above the cap is lowered to the cap. For reusable sessions, execution also checks cumulative
+spending and top-ups against the cap. A top-up is refused after the request's voucher was sent,
+so instead of a rerun it points at `tempo wallet sessions list`. Invalid amounts fail before
+the HTTP request. The cap
+cannot be disabled; pass a larger `--max-spend` instead.
 Capped recurring subscriptions are rejected because a per-period authorization cannot enforce
-a cumulative cap.
+a cumulative cap, so the default cap does not apply to them: `--payment-intent auto` can still
+accept a subscription offer. Set `--max-spend`, or pass `--payment-intent charge` or `session`,
+to refuse subscriptions.
 
 Every `tempo wallet` and `tempo request` command selects its network the same way:
 `--network`/`-n` (anywhere on the command line), then `TEMPO_WALLET_NETWORK`, then the
