@@ -1,8 +1,9 @@
 import { Adapter, Keystore, Provider as CoreProvider } from "accounts";
 import { cli, Storage } from "accounts/cli";
 import { deviceCode } from "accounts/deviceCode";
-import { toHex, type Transport } from "viem";
+import { toHex, type Address, type Transport } from "viem";
 
+import { walletError } from "./shared/errors.js";
 import { openExternal } from "./shared/process.js";
 import { appUrl, type Network } from "./shared/network.js";
 
@@ -43,8 +44,12 @@ type HydratingProvider = {
   store: { persist: { hasHydrated(): boolean; rehydrate(): Promise<void> | void } };
 };
 
+/** How long `providerReady` waits for the wallet store to load. */
+const storeLoadTimeout = 10_000;
+
 /**
- * Resolves with `provider` once its store holds the persisted wallet state.
+ * Resolves with `provider` once its store holds the persisted wallet state, for a provider on the
+ * default `Storage.filesystem()` wallet store.
  *
  * The SDK loads its store asynchronously and waits at most 100ms for it before a request, and
  * `getAccount` reads it without waiting. On a slow machine the provider then has no accounts: it
@@ -52,14 +57,63 @@ type HydratingProvider = {
  * and `wallet_connect` saves the empty store over the stored accounts and keys. Call this on every
  * provider before using it.
  *
- * It starts a fresh read instead of waiting on the first: the store drops a failed read without
- * finishing hydration, so that wait would never settle, while `rehydrate` settles either way.
+ * The store's first read exposes no promise, and a failed one never finishes hydrating. Starting a
+ * second hydration while it runs would discard its result, so this waits for a read queued behind
+ * it instead: `Storage.filesystem()` runs a file's reads and writes in order. Only when the first
+ * read failed and that one succeeded does it hydrate again. A store that has not loaded within
+ * `storeLoadTimeout` fails with `E_RUNTIME`, so no command runs on an empty store.
  */
 export async function providerReady<provider extends HydratingProvider>(
   provider: provider,
 ): Promise<provider> {
-  if (!provider.store.persist.hasHydrated()) await provider.store.persist.rehydrate();
-  return provider;
+  const { persist } = provider.store;
+  if (persist.hasHydrated()) return provider;
+  const read = await beforeStoreTimeout(
+    Promise.resolve(Storage.filesystem().getItem("store")).then(
+      () => ({ error: undefined }),
+      (error: unknown) => ({ error }),
+    ),
+  );
+  if (read && read.error === undefined && !persist.hasHydrated())
+    await beforeStoreTimeout(Promise.resolve(persist.rehydrate()));
+  if (persist.hasHydrated()) return provider;
+  throw walletError({
+    code: "E_RUNTIME",
+    message: "The wallet store could not be loaded. Run the command again.",
+    retryable: true,
+    ...(read?.error instanceof Error ? { cause: read.error } : {}),
+  });
+}
+
+/** Resolves with `promise`'s value, or with `undefined` once `storeLoadTimeout` has passed. */
+async function beforeStoreTimeout<value>(promise: Promise<value>): Promise<value | undefined> {
+  const timeout = Promise.withResolvers<undefined>();
+  const timer = setTimeout(() => timeout.resolve(undefined), storeLoadTimeout);
+  try {
+    return await Promise.race([promise, timeout.promise]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Returns the address to send from: `address`, the wallet a command checked, as the provider
+ * stores it. A command checks a wallet's balance and limits before sending, and another process
+ * can log in a different wallet in between; a send without `from` would then go out from that
+ * wallet. This refuses with `E_NOT_AUTHENTICATED` when the provider no longer holds `address`.
+ */
+export function requireSender(
+  provider: Pick<CoreProvider.Provider, "getAccount">,
+  address: string,
+): Address {
+  try {
+    return provider.getAccount({ address: address as Address }).address;
+  } catch {
+    throw walletError({
+      code: "E_NOT_AUTHENTICATED",
+      message: `Wallet ${address.toLowerCase()} is no longer logged in, so nothing was sent. Check the login with 'tempo wallet whoami', then retry.`,
+    });
+  }
 }
 
 /**

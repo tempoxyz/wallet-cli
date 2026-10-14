@@ -31,7 +31,7 @@ import {
   validateCreditPermit,
   warnCreditsDeprecated,
 } from "./credits.js";
-import { createProvider } from "../provider.js";
+import { createProvider, requireSender } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
 import {
   machChargeParameters,
@@ -116,6 +116,7 @@ export async function transferTokens(
     method: "eth_sendTransactionSync",
     params: [
       {
+        from: requireSender(provider, from),
         calls: [call],
         ...(feeToken ? { feeToken } : {}),
       },
