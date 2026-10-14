@@ -1,5 +1,7 @@
 import { z } from "incur";
 
+import { supportedShells } from "./completions.js";
+
 /** CLI-level options incur parses anywhere in argv; commands and middleware read `c.globals`. */
 export const cliGlobals = z.object({
   network: z
@@ -556,5 +558,5 @@ export const servicesMcpOutput = z
   );
 
 export const completionsArgs = z.object({
-  shell: z.enum(["bash", "elvish", "fish", "powershell", "zsh"]).optional(),
+  shell: z.enum(supportedShells).optional(),
 });
