@@ -43,6 +43,7 @@ import { loadWalletState, saveWalletState, type WalletState } from "../src/walle
 import { moderatoToken } from "../src/shared/constants.js";
 import {
   readyWallet,
+  runContext,
   testAccessKey,
   testAccessKey2,
   testPrivateKey2,
@@ -333,7 +334,12 @@ const keyManagementCommands = [
   {
     command: "revoke --dry-run",
     run: async (network?: string) =>
-      revokeHandler(await readyWallet(network), { accessKey: testAccessKey2 }, { "dry-run": true }),
+      revokeHandler(
+        await readyWallet(network),
+        { accessKey: testAccessKey2 },
+        { "dry-run": true },
+        runContext(),
+      ),
   },
   {
     command: "keys update",
@@ -392,7 +398,8 @@ it.each(chainlessSelections.filter(({ accepted }) => accepted))(
   async ({ env, flag, run }) => {
     await useTempHome();
     vi.stubEnv("TEMPO_WALLET_NETWORK", env);
-    await writeStoreWithoutChain([walletState().accessKeys[0]!]);
+    // The mainnet key has the address `revoke` names.
+    await writeStoreWithoutChain([{ ...walletState().accessKeys[0]!, address: testAccessKey2 }]);
 
     expect(await run(flag)).toMatchObject(mainnet);
   },

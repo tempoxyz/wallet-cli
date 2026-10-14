@@ -7,17 +7,24 @@ const environment = vi.hoisted(() => {
 });
 
 const mocks = vi.hoisted(() => ({
-  create: vi.fn(
-    (_options: { open: (url: string, prompt: { userCode: string }) => Promise<void> | void }) => ({
-      request: vi.fn(),
-    }),
+  cli: vi.fn(
+    (_options: {
+      host: string;
+      open: (url: string, prompt: { userCode: string }) => Promise<void> | void;
+    }) => Object.assign(() => ({ actions: {} }), { rdns: "xyz.tempo.cli" }),
   ),
+  create: vi.fn((_options: Record<string, unknown>) => ({ request: vi.fn() })),
   filesystem: vi.fn(() => ({ key: "storage" })),
 }));
 
 vi.mock("accounts/cli", () => ({
-  Provider: { create: mocks.create },
+  cli: mocks.cli,
   Storage: { filesystem: mocks.filesystem },
+}));
+
+vi.mock("accounts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("accounts")>()),
+  Provider: { create: mocks.create },
 }));
 
 import { createProvider } from "../src/provider.js";
@@ -29,6 +36,7 @@ afterAll(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  mocks.cli.mockClear();
   mocks.create.mockClear();
   mocks.filesystem.mockClear();
 });
@@ -37,18 +45,23 @@ describe("provider", () => {
   it("targets the configured wallet device auth endpoint", () => {
     createProvider({ network: { name: "testnet", chainId: 42431 }, noBrowser: true });
 
-    expect(mocks.create).toHaveBeenCalledWith(
+    expect(mocks.cli).toHaveBeenCalledWith(
       expect.objectContaining({
         host: "https://wallet-jxom-update-access-key-l.tempo.local/api/auth/device",
-        testnet: true,
       }),
     );
+    expect(mocks.create).toHaveBeenCalledWith({
+      adapter: expect.objectContaining({ rdns: "xyz.tempo.cli" }),
+      mpp: { mode: "pull" },
+      storage: { key: "storage" },
+      testnet: true,
+    });
   });
 
   it("prints the device confirmation code", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     createProvider({ network: { name: "mainnet", chainId: 4217 }, noBrowser: true });
-    const options = mocks.create.mock.calls[0]![0];
+    const options = mocks.cli.mock.calls[0]![0];
 
     await options.open("https://wallet.tempo.xyz/api/auth/device/verify?user_code=ABCDEFGH", {
       userCode: "ABCDEFGH",

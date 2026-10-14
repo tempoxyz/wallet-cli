@@ -206,6 +206,11 @@ export async function readyWallet(network?: string, requireKey = true) {
   return wallet;
 }
 
+/** The incur run context a command reads; `error` returns the refusal so a test can inspect it. */
+export function runContext(agent = true) {
+  return { agent, error: vi.fn((error: unknown) => error as never) };
+}
+
 export function expectUsageError(error: unknown, message: string) {
   expect(error).toMatchObject({ code: "E_USAGE", exitCode: 2, message });
 }

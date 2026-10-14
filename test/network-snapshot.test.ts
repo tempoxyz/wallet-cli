@@ -12,7 +12,14 @@ import { syncSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";
 import { transferCredits, transferTokens } from "../src/commands/transfer.js";
 import { moderatoToken } from "../src/shared/constants.js";
-import { readyWallet, testAccessKey, testWallet2, useTempHome, walletState } from "./helpers.js";
+import {
+  readyWallet,
+  runContext,
+  testAccessKey,
+  testWallet2,
+  useTempHome,
+  walletState,
+} from "./helpers.js";
 
 const testnet = { chain_id: 42431, network: "tempo-moderato" };
 
@@ -48,7 +55,12 @@ it.each<{ command: string; run: () => Promise<unknown>; continues?: boolean }>([
   {
     command: "revoke --dry-run",
     run: async () =>
-      revokeHandler(await readyWallet(), { accessKey: testAccessKey }, { "dry-run": true }),
+      revokeHandler(
+        await readyWallet(),
+        { accessKey: testAccessKey },
+        { "dry-run": true },
+        runContext(),
+      ),
     continues: true,
   },
   {

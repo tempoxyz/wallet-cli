@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { platform } from "node:process";
+import { createInterface } from "node:readline/promises";
 
 export function openExternal(url: string) {
   const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
@@ -15,6 +16,18 @@ export function openExternal(url: string) {
   // so keep the CLI alive and let the user open it elsewhere.
   child.on("error", () => undefined);
   child.unref();
+}
+
+/** Asks a yes/no question on stderr. Only `y` or `yes` confirms; input that ends declines. */
+export async function confirm(question: string) {
+  const prompt = createInterface({ input: process.stdin, output: process.stderr });
+  const closed = new Promise<string>((resolve) => prompt.once("close", () => resolve("")));
+  try {
+    const answer = await Promise.race([prompt.question(`${question} [y/N] `), closed]);
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    prompt.close();
+  }
 }
 
 export function runProcess(command: string, args: readonly string[]) {

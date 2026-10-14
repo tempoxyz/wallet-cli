@@ -18,7 +18,7 @@ Run these commands in order. Do not skip steps. Do not search for other install 
 
 **Step 2 — Login:** `"$HOME/.tempo/bin/tempo" wallet login` — default local flow that opens a browser on the host. Prompt user, wait for confirmation, then continue. Do not loop login attempts without user confirmation. When run by agents, use a long command timeout (at least 16 minutes).
 
-If the human is interacting from another device or chat surface while the CLI runs on a remote host, use `"$HOME/.tempo/bin/tempo" wallet login --no-browser` instead. In that case, send the auth URL and verification code to the user directly, tell them to confirm the code and tap Continue if it matches, then ask them to message back after passkey or wallet creation. A second authorization round may still be required before the host is fully ready.
+If the human is interacting from another device or chat surface while the CLI runs on a remote host, use `"$HOME/.tempo/bin/tempo" wallet login --no-browser` instead. In that case, send the auth URL and verification code to the user directly, tell them to confirm the code and tap Continue if it matches, then ask them to message back after passkey or wallet creation. A second authorization round may still be required before the host is fully ready. `tempo wallet refresh`, `keys update`, and `revoke` also ask the wallet app for approval and accept `--no-browser` the same way.
 
 **Step 3 — Confirm readiness:** `"$HOME/.tempo/bin/tempo" wallet whoami`
 
@@ -106,6 +106,7 @@ For credit payments, use `--amount-cents` as the direct payment amount or the ma
 - If response indicates payment/funding limit issues, report clearly and stop. Check `tempo wallet whoami --mach` and offer `tempo wallet fund --mach --no-browser --format json` to fund from another device. Review token-specific access-key limits before retrying.
 - After multi-request workflows, check remaining balance with `tempo wallet whoami`.
 - Wallet results with a follow-up step include `instruction` and `_next`. Run `_next.argv` as given (`_next.command` is the shell-quoted form), but only after the user approves any spend, transfer, or revocation it performs.
+- Revocation cannot be undone. Run `tempo wallet revoke <ACCESS_KEY> --dry-run` to show the key, wallet, network, limits, and expiry, then run its `_next` (which adds `--yes`) only after the user approves. Without `--yes`, an agent run returns `E_USAGE` with that command as its `cta`. Only the logged-in wallet's keys on the selected network can be revoked: keys stored on this host, or keys from another device that the chain shows authorized for the wallet. Any other address returns `E_USAGE` listing the wallet's stored keys. If it returns `E_NETWORK` because the chain does not show the key revoked, the local key is kept; report it to the user before retrying.
 
 ### Rules
 

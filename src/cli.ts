@@ -42,6 +42,7 @@ import {
   loginOutput,
   logoutOptions,
   logoutOutput,
+  refreshOptions,
   refreshOutput,
   revokeArgs,
   revokeOptions,
@@ -99,11 +100,11 @@ cli.command("login", {
 
 cli.command("refresh", {
   description: "Refresh your access key without logging out",
-  options: globalOptions,
+  options: refreshOptions,
   alias: globalAlias,
   output: refreshOutput,
-  async run({ globals }) {
-    return refreshHandler(globals);
+  async run({ globals, options }) {
+    return refreshHandler({ ...options, network: globals.network });
   },
 });
 
@@ -165,10 +166,11 @@ cli.command("revoke", {
   options: revokeOptions,
   alias: globalAlias,
   output: revokeOutput,
-  // Revocation is signed by the wallet owner, not the local access key.
-  run: withWallet(({ args, options }, wallet) => revokeHandler(wallet, args, options), {
-    requireKey: "never",
-  }),
+  // The wallet app signs the revocation, so the local access key need not be usable.
+  run: withWallet(
+    (context, wallet) => revokeHandler(wallet, context.args, context.options, context),
+    { requireKey: "never" },
+  ),
 });
 
 cli.command("transfer", {
@@ -717,7 +719,11 @@ function describeCli() {
         about: "Sign up or log in to your Tempo wallet",
         args: [flag("no_browser", "--no-browser", "Do not attempt to open a browser")],
       },
-      { name: "refresh", about: "Refresh your access key without logging out" },
+      {
+        name: "refresh",
+        about: "Refresh your access key without logging out",
+        args: [flag("no_browser", "--no-browser", "Do not attempt to open a browser")],
+      },
       {
         name: "logout",
         about: "Log out and disconnect your wallet",
@@ -763,7 +769,9 @@ function describeCli() {
         about: "Revoke an access key",
         args: [
           positional("access_key", "Access key address to revoke (0x...)"),
-          flag("dry_run", "--dry-run", "Show the revoke request without submitting it"),
+          flag("dry_run", "--dry-run", "Show the key that would be revoked without revoking it"),
+          flag("yes", "--yes", "Revoke without a confirmation prompt"),
+          flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
         ],
       },
       {
