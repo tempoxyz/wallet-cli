@@ -67,6 +67,7 @@ export type ChannelRecord = {
   deposit: bigint;
   cumulative_amount: bigint;
   accepted_cumulative: bigint;
+  server_spent: bigint;
   challenge_echo: string;
   session_protocol: string;
   descriptor_json?: string | undefined;
@@ -796,6 +797,7 @@ function virtualChannelRecord(options: { channelId: string; chain: number }): Ch
     deposit: 0n,
     cumulative_amount: 0n,
     accepted_cumulative: 0n,
+    server_spent: 0n,
     challenge_echo: "{}",
     session_protocol: "v1",
     state: "orphaned",
@@ -822,8 +824,15 @@ function closeTarget(record: ChannelRecord) {
   };
 }
 
+/**
+ * The most the session's server can claim, as `whoami` counts it: a voucher saved before a request
+ * whose response was lost leaves the signed cumulative above the accepted one.
+ */
 function sessionSpent(record: ChannelRecord) {
-  return record.accepted_cumulative > 0n ? record.accepted_cumulative : record.cumulative_amount;
+  return [record.cumulative_amount, record.accepted_cumulative, record.server_spent].reduce(
+    (max, value) => (value > max ? value : max),
+    0n,
+  );
 }
 
 function unspentDeposit(record: ChannelRecord) {
@@ -895,6 +904,7 @@ async function readChannelRecords(): Promise<ChannelRecord[]> {
         deposit: parseStoredBigInt(item.deposit),
         cumulative_amount: parseStoredBigInt(item.cumulative_amount),
         accepted_cumulative: parseStoredBigInt(item.accepted_cumulative),
+        server_spent: parseStoredBigInt(item.server_spent),
         challenge_echo: stringValue(item.challenge_echo),
         session_protocol: stringValue(item.session_protocol) || "v1",
         descriptor_json: stringValue(item.descriptor_json) || undefined,

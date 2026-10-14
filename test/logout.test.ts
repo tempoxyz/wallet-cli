@@ -349,8 +349,21 @@ describe("logout with sessions holding deposits", () => {
     record: Partial<PersistedSessionRecord>;
     options?: { network?: string };
     close?: string;
+    remaining?: string;
   }>([
     { name: "an open session", record: {}, close: closeAll },
+    {
+      name: "an open session by its latest voucher",
+      record: { cumulative_amount: 5_000n },
+      close: closeAll,
+      remaining: "0.005000",
+    },
+    {
+      name: "an open session by its server-reported spend",
+      record: { server_spent: 6_000n },
+      close: closeAll,
+      remaining: "0.004000",
+    },
     {
       name: "a session closing in its grace period",
       record: { state: "closing", close_requested_at: 1, grace_ready_at: nowSeconds() + 900 },
@@ -368,6 +381,11 @@ describe("logout with sessions holding deposits", () => {
       close: "tempo wallet sessions close --all --network testnet",
     },
     { name: "a spent session", record: { accepted_cumulative: 10_000n } },
+    {
+      name: "a session whose latest voucher spends the deposit",
+      record: { cumulative_amount: 10_000n },
+    },
+    { name: "a session its server reports spent", record: { server_spent: 10_000n } },
     { name: "a finalized session", record: { state: "finalized" } },
     { name: "another wallet's session", record: { payer: testWallet2 } },
     {
@@ -375,7 +393,7 @@ describe("logout with sessions holding deposits", () => {
       record: { chain_id: testnet.chainId },
       options: { network: "mainnet" },
     },
-  ])("counts $name", async ({ record, options = {}, close }) => {
+  ])("counts $name", async ({ record, options = {}, close, remaining = "0.008000" }) => {
     await setup(walletState(), [session(record)]);
     const context = runContext(true);
 
@@ -384,7 +402,9 @@ describe("logout with sessions holding deposits", () => {
     if (close) {
       expect(output).toMatchObject({
         code: "E_USAGE",
-        message: expect.stringContaining(`close them first with '${close}'`),
+        message: expect.stringMatching(
+          new RegExp(`stored session: ${remaining} .*close them first with '${close}'`),
+        ),
       });
       expect((await loadWalletState()).accounts).toEqual([{ address: testWallet }]);
     } else {
