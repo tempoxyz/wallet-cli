@@ -8,7 +8,11 @@ import { Challenge, Credential, Receipt } from "mppx";
 import { machineTokenDeployments, Session as TempoSession } from "mppx/tempo";
 import { encodeFunctionResult, erc20Abi, toFunctionSelector, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
+import {
+  Abis as TempoAbis,
+  Channel as TempoChannel,
+  Transaction as TempoTransaction,
+} from "viem/tempo";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { runRequest } from "../src/commands/request.js";
@@ -29,9 +33,13 @@ import {
 
 const exec = promisify(execFile);
 
-const { onChain } = vi.hoisted(() => ({ onChain: { deposit: 0n } }));
+const { charge, onChain } = vi.hoisted(() => ({
+  charge: { payload: undefined as Record<string, unknown> | undefined },
+  onChain: { deposit: 0n },
+}));
 
-// Signing is replaced, so each credential names its action and the stored session's channel.
+// Signing is replaced, so each credential names its action and the stored session's channel,
+// or carries `charge.payload` when a test sets it.
 vi.mock("mppx/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("mppx/client")>();
   return {
@@ -43,7 +51,7 @@ vi.mock("mppx/client", async (importOriginal) => {
         createCredential: async (response: Response, options?: { action?: string }) =>
           Credential.serialize({
             challenge: Challenge.fromResponseList(response)[0]!,
-            payload: { action: options?.action ?? "open", channelId },
+            payload: charge.payload ?? { action: options?.action ?? "open", channelId },
           }),
         transport: {
           setCredential: (init: RequestInit, credential: string) => {
@@ -89,7 +97,26 @@ const mach = machineTokenDeployments[4217].token.toLowerCase();
 const balanceOf = toFunctionSelector("balanceOf(address)");
 const servers: ReturnType<typeof createServer>[] = [];
 
+/** A charge credential payload whose transaction calls each of `targets`. */
+async function signedCalls(...targets: string[]) {
+  const signature = await TempoTransaction.serialize({
+    type: "tempo",
+    chainId: 4217,
+    calls: targets.map((to) => ({ to: to as Hex, data: "0x" as Hex })),
+    gas: 1n,
+    maxFeePerGas: 1n,
+    maxPriorityFeePerGas: 1n,
+    nonce: 0,
+  } as never);
+  return { type: "transaction", signature };
+}
+
+// A machine-enabled charge the SDK settled through the MACH route, and one it paid directly.
+const machRoute = await signedCalls(mach, machineTokenDeployments[4217].swap);
+const directTransfer = await signedCalls(usdc);
+
 beforeEach(() => {
+  charge.payload = undefined;
   vi.stubEnv("TEMPO_MAX_SPEND", "");
   vi.stubEnv("TEMPO_PRIVATE_KEY", "");
   vi.stubEnv("TEMPO_WALLET_NETWORK", "mainnet");
@@ -287,6 +314,7 @@ it.each<{
   stored?: Partial<PersistedSessionRecord>;
   topUp?: { required: bigint; accepted: bigint };
   privateKey?: boolean;
+  payload?: Record<string, unknown>;
   payment: Record<string, unknown>;
   stderr: string;
 }>([
@@ -310,6 +338,20 @@ it.each<{
     receipt: chargeReceipt(txHash),
     payment: { ...charged, token: mach, symbol: "MACH", tx_hash: txHash },
     stderr: `Paid 0.01 MACH · tx ${txHash}\n`,
+  },
+  {
+    name: "a machine-enabled charge the SDK settled from MACH without --mach",
+    challenge: offer("charge", { methodDetails: { chainId: 4217, machineTokenEnabled: true } }),
+    payload: machRoute,
+    payment: { ...charged, token: mach, symbol: "MACH" },
+    stderr: "Paid 0.01 MACH\n",
+  },
+  {
+    name: "a machine-enabled charge the SDK paid in the offered token",
+    challenge: offer("charge", { methodDetails: { chainId: 4217, machineTokenEnabled: true } }),
+    payload: directTransfer,
+    payment: charged,
+    stderr: "Paid 0.01 USDC.e\n",
   },
   {
     name: "a private-key payer",
@@ -359,6 +401,7 @@ it.each<{
   const home = await useTempHome();
   await writeWalletState(walletState());
   if (row.privateKey) vi.stubEnv("TEMPO_PRIVATE_KEY", testPrivateKey);
+  charge.payload = row.payload;
   onChain.deposit = row.stored ? 1_000_000n : 0n;
   const origin = await service({
     challenge: row.challenge,

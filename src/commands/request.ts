@@ -38,6 +38,7 @@ import {
   Chain,
   Channel as TempoChannel,
   KeyAuthorizationManager,
+  Transaction as TempoTransaction,
 } from "viem/tempo";
 
 import {
@@ -1017,7 +1018,7 @@ async function payAndRetryRequest(
       options,
       credential,
     );
-    recordChargeReceipt(response, selectedChallenge, identity.address, options);
+    recordChargeReceipt(response, selectedChallenge, credential, identity.address, options);
     return response;
   } catch (error) {
     if (error instanceof Errors.IncurError) throw error;
@@ -1853,31 +1854,53 @@ async function persistSessionReceipt(
 
 /**
  * Records the receipt of a paid charge. A zero-amount charge is a signed proof of the payer, not
- * a payment, so it has none. A MACH settlement debits MACH from the wallet.
+ * a payment, so it has none. A MACH settlement debits MACH from the wallet, whether `--mach`
+ * required it or the SDK chose it for a machine-enabled offer.
  */
 function recordChargeReceipt(
   response: Response,
   challenge: Challenge.Challenge,
+  credential: string,
   payer: string,
   options: RequestOptions,
 ) {
   const amount = challengeAmount(challenge);
   if (amount === 0n) return;
   const network = requestNetwork(options);
-  const mach = isMachPaymentToken(options.paymentToken)
-    ? machineTokenDeployments[network.chainId as keyof typeof machineTokenDeployments]?.token
-    : undefined;
+  const deployment =
+    machineTokenDeployments[network.chainId as keyof typeof machineTokenDeployments];
+  const mach =
+    deployment &&
+    (isMachPaymentToken(options.paymentToken) || runsMachRoute(credential, deployment));
   paymentReceipts.set(
     response,
     paymentReceipt({
       intent: challenge.intent,
       amount,
-      token: mach ?? stringValue(challenge.request.currency),
+      token: mach ? deployment.token : stringValue(challenge.request.currency),
       network,
       payer,
       txHash: receiptTxHash(response, challenge.intent),
     }),
   );
+}
+
+/** Whether a charge credential's signed transaction approves and swaps MACH, the MACH route. */
+function runsMachRoute(credential: string, deployment: { token: string; swap: string }) {
+  try {
+    const { payload } = Credential.deserialize<Record<string, unknown>>(credential);
+    if (payload.type !== "transaction") return false;
+    const { calls } = TempoTransaction.deserialize(
+      stringValue(payload.signature) as `0x76${string}`,
+    );
+    return (
+      calls?.length === 2 &&
+      calls[0]?.to?.toLowerCase() === deployment.token.toLowerCase() &&
+      calls[1]?.to?.toLowerCase() === deployment.swap.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function readOnChainChannel(record: PersistedSessionRecord, rpc: RpcOptions = {}) {
