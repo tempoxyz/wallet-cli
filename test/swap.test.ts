@@ -1,11 +1,13 @@
-import { decodeFunctionData, erc20Abi, formatUnits, type Hex } from "viem";
-import { Abis } from "viem/tempo";
+import { decodeFunctionData, erc20Abi, formatUnits, toHex, type Hex } from "viem";
+import { Abis, Addresses } from "viem/tempo";
 import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   // The provider holds every wallet it is asked for unless a test says otherwise.
   getAccount: vi.fn(({ address }: { address: string }) => ({ address })),
-  request: vi.fn(async () => ({ transactionHash: `0x${"cd".repeat(32)}` })),
+  request: vi.fn(async (_request: { method: string; params: unknown[] }) => ({
+    transactionHash: `0x${"cd".repeat(32)}`,
+  })),
 }));
 
 vi.mock("../src/provider.js", async (importOriginal) => ({
@@ -23,6 +25,7 @@ import {
   expectUsageError,
   invalidTokenInputs,
   readyWallet,
+  testnetUsdc,
   testWallet,
   tokenInputs,
   unlistedToken,
@@ -221,6 +224,7 @@ describe("swapTokens", () => {
       access_key_limit: "100",
       requires_access_key_update: false,
     });
+    if ("code" in result) throw new Error(result.message);
     expect(result.calls).toHaveLength(2);
     expect(result.calls.every((call) => /^0x[0-9a-f]+$/i.test(call.data))).toBe(true);
     expect(runtime.submit).not.toHaveBeenCalled();
@@ -375,6 +379,123 @@ describe("swapTokens", () => {
     expect(mocks.getAccount).toHaveBeenCalledWith({ address: testWallet });
   });
 
+  // The provider sends on the wallet's saved chain unless the request names one.
+  it.each([
+    { name: "the saved chain", stored: 4217, network: "mainnet" },
+    { name: "--network testnet over a mainnet login", stored: 4217, network: "testnet" },
+    { name: "--network mainnet over a testnet login", stored: 42431, network: "mainnet" },
+  ] as const)("sends on the reviewed network with $name", async ({ stored, network }) => {
+    await useTempHome();
+    const key = { ...walletState().accessKeys[0]!, limits: undefined };
+    await writeWalletState(
+      walletState({ chainId: stored, accessKeys: [key, { ...key, chainId: 42431 }] }),
+    );
+    const { chainId } = parseNetwork(network);
+    const { submit: _submit, ...lookups } = dependencies();
+    mocks.request.mockClear();
+
+    const result = await swapTokens(
+      await readyWallet(network),
+      {
+        args: { amount: "10", tokenIn: "pathUSD", tokenOut: "USDC.e" },
+        options: { "slippage-bps": 50, yes: true },
+      },
+      lookups,
+    );
+
+    expect(result).toMatchObject({ status: "success", chain_id: chainId });
+    expect(mocks.request).toHaveBeenCalledExactlyOnceWith({
+      method: "eth_sendTransactionSync",
+      params: [
+        {
+          from: testWallet,
+          calls: [
+            expect.objectContaining({ to: moderatoToken }),
+            expect.objectContaining({ to: Addresses.stablecoinDex }),
+          ],
+          chainId: toHex(chainId),
+          feeToken: moderatoToken,
+        },
+      ],
+    });
+  });
+
+  // Without an access key for the selected network the wallet app signs, and only on the chain
+  // the wallet is logged in on. A dry run only reads the quote, so it is never refused.
+  const keyless = [
+    {
+      name: "--network testnet over a mainnet login",
+      stored: 4217,
+      network: "testnet",
+      refusal:
+        "wallet is logged in on tempo, not tempo-moderato, and has no access key for tempo-moderato",
+    },
+    {
+      name: "--network mainnet over a testnet login",
+      stored: 42431,
+      network: "mainnet",
+      refusal: "wallet is logged in on tempo-moderato, not tempo, and has no access key for tempo",
+    },
+    { name: "the logged-in mainnet chain", stored: 4217, network: "mainnet", refusal: undefined },
+    { name: "the logged-in testnet chain", stored: 42431, network: "testnet", refusal: undefined },
+  ] as const;
+
+  it.each(keyless)(
+    "a swap without an access key, on $name",
+    async ({ stored, network, refusal }) => {
+      await useTempHome();
+      const expired = { ...walletState().accessKeys[0]!, chainId: stored, expiry: 1 };
+      await writeWalletState(walletState({ chainId: stored, accessKeys: [expired] }));
+      const { chainId } = parseNetwork(network);
+      // Interactive runs reach the swap without a usable key.
+      const wallet = await readyWallet(network, false);
+      const { submit: _submit, ...lookups } = dependencies();
+      const args = {
+        amount: "10",
+        tokenIn: moderatoToken,
+        tokenOut: network === "testnet" ? testnetUsdc : usdcToken,
+      };
+      mocks.request.mockClear();
+
+      const dryRun = await swapTokens(
+        wallet,
+        { args, options: { "dry-run": true, "slippage-bps": 50 } },
+        lookups,
+      );
+      const result = await swapTokens(
+        wallet,
+        { args, options: { "slippage-bps": 50, yes: true } },
+        lookups,
+      );
+
+      const command = `tempo wallet login --network ${network}`;
+      expect(dryRun).toMatchObject({ status: "dry_run", chain_id: chainId });
+      expect(result).toEqual(
+        refusal
+          ? {
+              code: "E_USAGE",
+              message: `Swap not submitted: ${refusal}; log in with '${command}', then rerun the swap.`,
+              exitCode: 2,
+              retryable: false,
+              cta: { commands: [{ command }] },
+            }
+          : expect.objectContaining({ status: "success", chain_id: chainId }),
+      );
+      expect(mocks.request.mock.calls).toEqual(
+        refusal
+          ? []
+          : [
+              [
+                {
+                  method: "eth_sendTransactionSync",
+                  params: [expect.objectContaining({ chainId: toHex(chainId) })],
+                },
+              ],
+            ],
+      );
+    },
+  );
+
   it("rejects quotes that exceed the available input balance", async () => {
     await useTempHome();
     await writeWalletState(walletState());
@@ -429,6 +550,7 @@ describe("swapTokens", () => {
         },
         runtime,
       );
+      if ("code" in result) throw new Error(result.message);
       const [approve, swap] = result.calls;
       const { args } = decodeFunctionData({ abi: Abis.stablecoinDex, data: swap!.data as Hex });
 

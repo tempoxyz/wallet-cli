@@ -436,6 +436,36 @@ describe("wallet CLI login and access key checks", () => {
     if ("request" in ran) expect(requests).toContain(ran.request);
   });
 
+  // The wallet app approves on the chain the wallet is logged in on, so the swap needs a login on
+  // the selected network before it reads a quote or sends anything.
+  it.each([
+    { network: "testnet", state: walletState({ accessKeys: [expiredKey] }) },
+    {
+      network: "mainnet",
+      state: walletState({ chainId: 42431, accessKeys: [{ ...testnetKey, expiry: 1 }] }),
+    },
+  ])(
+    "interactive swap --network $network without a key there returns a login cta",
+    async ({ network, state }) => {
+      const home = await useTempHome();
+      await writeWalletState(state);
+      requests.length = 0;
+
+      const result = await wallet(
+        ["swap", "1", "pathUSD", "USDC.e", "--network", network, "--yes"],
+        { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
+        { interactive: true },
+      );
+
+      expect(result.code).toBe(2);
+      expect(result.stdout).toContain("E_USAGE");
+      expect(result.stdout).toContain(
+        `Suggested command:\n  tempo wallet login --network ${network}`,
+      );
+      expect(requests).toEqual([]);
+    },
+  );
+
   it.each(keyCommands)(
     "interactive $command with no account returns E_NOT_AUTHENTICATED",
     async ({ argv }) => {

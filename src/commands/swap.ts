@@ -1,10 +1,21 @@
-import { formatUnits } from "viem";
+import { formatUnits, toHex } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
-import { paymentOutcomeUnknownError, usageError, walletError } from "../shared/errors.js";
+import {
+  commandError,
+  paymentOutcomeUnknownError,
+  usageError,
+  walletError,
+} from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
-import { createTempoPublicClient, networkFields, type Network } from "../shared/network.js";
-import { nextStep } from "../shared/next.js";
+import {
+  createTempoPublicClient,
+  networkFields,
+  networkName,
+  storedChainId,
+  type Network,
+} from "../shared/network.js";
+import { continuationCommand, nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
@@ -49,7 +60,7 @@ export async function swapTokens(
   },
   dependencies: Partial<SwapDependencies> = {},
 ) {
-  const { account, key, network } = wallet;
+  const { account, key, network, state } = wallet;
   const selectedChainId = network.chainId;
   const tokenIn = resolveTokenAddress(input.args.tokenIn, network);
   const tokenOut = resolveTokenAddress(input.args.tokenOut, network);
@@ -77,6 +88,17 @@ export async function swapTokens(
     throw usageError(
       "MACH cannot be swapped. Use 'tempo request --mach' to pay for supported services.",
     );
+  // Without an access key for the selected network, the wallet app approves the swap, and it
+  // signs only on the chain the wallet is logged in on.
+  const walletChainId = storedChainId(state);
+  if (!input.options["dry-run"] && !key && walletChainId !== selectedChainId) {
+    const command = continuationCommand(["wallet", "login"], network);
+    return commandError(
+      "E_USAGE",
+      `Swap not submitted: wallet is logged in on ${networkName(walletChainId)}, not ${networkName(selectedChainId)}, and has no access key for ${networkName(selectedChainId)}; log in with '${command}', then rerun the swap.`,
+      command,
+    );
+  }
   const runtime = { ...defaultDependencies(network), ...dependencies };
   const [metadataIn, metadataOut] = await Promise.all([
     tokenMetadata(tokenIn, selectedChainId, runtime.getMetadata),
@@ -276,10 +298,12 @@ function defaultDependencies(network: Network): SwapDependencies {
       const provider = await createProvider({ network: options.network });
       const receipt = await provider.request({
         method: "eth_sendTransactionSync",
+        // Without a chain the provider sends on the one the wallet store last saved.
         params: [
           {
             from: requireSender(provider, options.from),
             calls: options.calls,
+            chainId: toHex(options.network.chainId),
             feeToken: options.feeToken,
           },
         ],
