@@ -103,7 +103,7 @@ withdraws the unspent deposit. Structured output
 The summary follows the delivered body. When a paid response's body then fails to arrive, the
 command exits with `E_PAYMENT_OUTCOME_UNKNOWN` and `--write-meta` keeps the receipt for recovery,
 marked `outcome: "unknown"`; a delivered receipt has no `outcome`. Unpaid requests,
-zero-amount proofs, paid requests answered with an HTTP error, and sessions whose server receipt
+zero-amount proofs, paid requests answered with an HTTP error or an unfollowed redirect, and sessions whose server receipt
 cannot be stored report no receipt.
 
 On HTTP 402, `--dry-run` prints a JSON quote of what paying would spend, without signing,

@@ -573,11 +573,10 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
     paid = true;
   }
 
-  // A failed paid response leaves the payment's outcome unknown, so it reports no receipt.
+  // Only a 2xx response confirms the paid request: an HTTP error, an unfollowed redirect, or a
+  // failed receipt update leaves the payment's outcome unknown, so it reports no receipt.
   const receipt =
-    response.status < 400 && !paidResponseFailures.has(response)
-      ? paymentReceipts.get(response)
-      : undefined;
+    response.ok && !paidResponseFailures.has(response) ? paymentReceipts.get(response) : undefined;
   try {
     if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
     if (options.writeMeta)
@@ -624,7 +623,13 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
       );
     throw error;
   }
-  if (receipt) stderr.write(receiptSummary(receipt));
+  if (receipt) {
+    try {
+      await write(stderr, receiptSummary(receipt));
+    } catch {
+      // The payment and its response already succeeded; the summary is best-effort.
+    }
+  }
 }
 
 type RequestDryRunOutput = z.infer<typeof requestDryRunOutput>;
@@ -1895,7 +1900,8 @@ function recordChargeReceipt(
       subscription:
         challenge.intent === "subscription"
           ? {
-              period: `${stringValue(request.periodCount)} ${stringValue(request.periodUnit)}`,
+              // mppx accepts a count given as a JSON number or a decimal string.
+              period: `${typeof request.periodCount === "number" ? request.periodCount : stringValue(request.periodCount)} ${stringValue(request.periodUnit)}`,
               expires: stringValue(request.subscriptionExpires),
             }
           : undefined,

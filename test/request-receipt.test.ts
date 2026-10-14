@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 import { promisify } from "node:util";
 
 import { Challenge, Credential, Receipt } from "mppx";
@@ -383,10 +384,10 @@ it.each<{
       "Authorized a subscription of up to 25 USDC.e every 1 week until 2027-01-01T00:00:00.000Z\n",
   },
   {
-    name: "a subscription whose activation paid the first period",
+    name: "a subscription whose activation paid the first period, with a numeric period count",
     challenge: offer("subscription", {
       amount: "25000000",
-      periodCount: "1",
+      periodCount: 1,
       periodUnit: "week",
       subscriptionExpires: "2027-01-01T00:00:00.000Z",
     }),
@@ -491,6 +492,11 @@ it.each<{
     code: "E_HTTP",
   },
   {
+    name: "a paid request answered with an unfollowed redirect",
+    challenge: offer("charge"),
+    status: 302,
+  },
+  {
     name: "a session whose server receipt cannot be stored",
     challenge: offer("session"),
     receipt: "not-a-valid-receipt",
@@ -539,6 +545,32 @@ it("marks the --write-meta receipt unconfirmed when the paid body fails to arriv
     tx_hash: txHash,
     outcome: "unknown",
   });
+});
+
+it.each([
+  {
+    name: "throws",
+    stderr: {
+      write: () => {
+        throw new Error("stderr closed");
+      },
+    },
+  },
+  {
+    name: "reports a write error",
+    stderr: new Writable({ write: (_c, _e, done) => done(new Error("ENOSPC")) }),
+  },
+])("completes a paid request when stderr $name", async ({ stderr }) => {
+  const home = await useTempHome();
+  await writeWalletState(walletState());
+  const origin = await service({ challenge: offer("charge"), receipt: chargeReceipt(txHash) });
+  const meta = join(home, "meta.json");
+  const stdout = capture();
+
+  await runRequest(["--write-meta", meta, `${origin}/paid`], { stdout, stderr });
+
+  expect(stdout.text()).toBe("paid");
+  expect(JSON.parse(await readFile(meta, "utf8")).payment).toEqual({ ...charged, tx_hash: txHash });
 });
 
 // The actual CLI signs a voucher for the stored session, so this runs without mocks.
