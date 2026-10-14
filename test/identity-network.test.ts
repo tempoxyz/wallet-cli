@@ -231,10 +231,18 @@ const networkCommands = [
   {
     command: "transfer --dry-run",
     run: async (network?: string) =>
-      transferTokens(await readyWallet(network), {
-        args: { amount: "1", token: moderatoToken, to: testWallet2 },
-        options: { "dry-run": true },
-      }),
+      transferTokens(
+        await readyWallet(network),
+        {
+          args: { amount: "1", token: moderatoToken, to: testWallet2 },
+          options: { "dry-run": true },
+        },
+        {
+          getBalance: async () => 1_000_000n,
+          estimateFee: async () => 175n,
+          getUserFeeToken: async () => null,
+        },
+      ),
   },
   {
     command: "transfer --credits --dry-run",

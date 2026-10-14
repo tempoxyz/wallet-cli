@@ -20,16 +20,29 @@ export function openExternal(url: string) {
   child.unref();
 }
 
-/** Asks a yes/no question on stderr. Only `y` or `yes` confirms; input that ends declines. */
+/**
+ * Asks a yes/no question on stderr. Only `y` or `yes` confirms; input that ends, or Ctrl-C,
+ * declines. Callers prompt only when `canPrompt` allows it.
+ */
 export async function confirm(question: string) {
   const prompt = createInterface({ input: process.stdin, output: process.stderr });
   const closed = new Promise<string>((resolve) => prompt.once("close", () => resolve("")));
+  // Without a listener, Ctrl-C only pauses the prompt and leaves the question unanswered.
+  prompt.once("SIGINT", () => prompt.close());
   try {
     const answer = await Promise.race([prompt.question(`${question} [y/N] `), closed]);
     return /^y(es)?$/i.test(answer.trim());
   } finally {
     prompt.close();
   }
+}
+
+/**
+ * Whether a person can answer a prompt: the run is not an agent's (incur's `agent`: MCP,
+ * `--format`, or stdout not a terminal), and stdin is a terminal too, so piped input cannot.
+ */
+export function canPrompt(agent: boolean) {
+  return !agent && process.stdin.isTTY === true;
 }
 
 /** The sqlite3 binary the session store runs, looked up on PATH. */

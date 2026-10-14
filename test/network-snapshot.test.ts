@@ -67,10 +67,18 @@ it.each<{ command: string; run: () => Promise<unknown>; continues?: boolean }>([
   {
     command: "transfer --dry-run",
     run: async () =>
-      transferTokens(await readyWallet(), {
-        args: { amount: "1", token: moderatoToken, to: testWallet2 },
-        options: { "dry-run": true },
-      }),
+      transferTokens(
+        await readyWallet(),
+        {
+          args: { amount: "1", token: moderatoToken, to: testWallet2 },
+          options: { "dry-run": true },
+        },
+        {
+          getBalance: async () => 1_000_000n,
+          estimateFee: async () => 175n,
+          getUserFeeToken: async () => null,
+        },
+      ),
     continues: true,
   },
   {

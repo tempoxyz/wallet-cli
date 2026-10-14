@@ -160,13 +160,28 @@ tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --min-amount-out <MIN_AMOUNT_O
 - A swap is sent only on the network the wallet is logged in on. On another `--network`, submission returns `E_USAGE` with a `tempo wallet login --network <NETWORK>` `cta`; run it, then rerun the swap.
 - Always run `--dry-run` first and preserve full token addresses in the approval request.
 
+## Transfer Tokens
+
+```bash
+# Review only: the fee estimate, the sender's balance, and whether it covers the transfer.
+tempo wallet transfer <AMOUNT> <TOKEN> <RECIPIENT> --dry-run
+
+# Send only after the user approves the amount, token address, recipient, and fee.
+tempo wallet transfer <AMOUNT> <TOKEN> <RECIPIENT> --yes
+```
+
+- Without `--yes`, an agent run sends nothing and returns `E_USAGE`; the dry run's `_next` already includes `--yes` and pins the reviewed `fee_token` with `--fee-token`.
+- `fee_estimate` is in `fee_token` units. `sufficient_balance` checks `balance` against the amount and `fee_token_balance` against the fee. `fee_token`, `fee_estimate`, `balance`, `fee_token_balance`, and `sufficient_balance` are `null` when unknown; treat `null` as unknown, not as sufficient.
+- If `sufficient_balance` is false, report the shortfall and stop; offer `tempo wallet fund`.
+- Always run `--dry-run` first and preserve full token and recipient addresses in the approval request.
+
 ## MCP Tools
 
 When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool's annotations say what it does:
 
 - `readOnlyHint: true` (`whoami`, `keys_list`, `services`, `doctor`) only reads.
 - `destructiveHint: true` (`transfer`, `swap`, `sessions_close`, `sessions_sync`, `keys_update`, `revoke`, `logout`, `login`, `login_status`, `refresh`) moves funds, changes or revokes a key, closes a session, deletes stored sessions, or replaces or deletes the stored wallet or its network. Get the user's approval before every call, after a `dry-run: true` call where the tool offers one.
-- `swap` and `revoke` refuse to submit without `yes: true`; pass it only after the user approves the reviewed dry run.
+- `transfer`, `swap`, and `revoke` refuse to submit without `yes: true`; pass it only after the user approves the reviewed dry run.
 
 ## Common Issues
 

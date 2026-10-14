@@ -64,6 +64,23 @@ describe("generated CLI metadata", () => {
     );
   });
 
+  it.each(["swap", "transfer"])(
+    "documents --dry-run review and --yes submission for %s",
+    async (name) => {
+      const help = await walletCli([name, "--help"]);
+      expect(help).toContain("--dry-run");
+      expect(help).toContain("--yes");
+
+      const description = JSON.parse(await walletCli(["--describe"])) as {
+        subcommands: { name: string; args?: { long?: string | undefined }[] | undefined }[];
+      };
+      const command = description.subcommands.find((subcommand) => subcommand.name === name);
+      expect(command?.args?.map((arg) => arg.long)).toEqual(
+        expect.arrayContaining(["--dry-run", "--yes"]),
+      );
+    },
+  );
+
   it.each([
     { name: "help", read: () => walletCli(["sessions", "close", "--help"]) },
     {

@@ -11,11 +11,32 @@ vi.mock("node:child_process", () => ({
   spawn: mocks.spawn,
 }));
 
-import { openExternal } from "../src/shared/process.js";
+import { canPrompt, openExternal } from "../src/shared/process.js";
 
 afterEach(() => {
   mocks.spawn.mockReset();
   vi.unstubAllEnvs();
+});
+
+describe("canPrompt", () => {
+  it.each([
+    { agent: false, stdinTTY: true, expected: true },
+    { agent: false, stdinTTY: undefined, expected: false },
+    { agent: true, stdinTTY: true, expected: false },
+    { agent: true, stdinTTY: undefined, expected: false },
+  ])(
+    "is $expected for agent $agent with stdin isTTY $stdinTTY",
+    ({ agent, stdinTTY, expected }) => {
+      const original = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      Object.defineProperty(process.stdin, "isTTY", { value: stdinTTY, configurable: true });
+      try {
+        expect(canPrompt(agent)).toBe(expected);
+      } finally {
+        if (original) Object.defineProperty(process.stdin, "isTTY", original);
+        else delete (process.stdin as { isTTY?: boolean }).isTTY;
+      }
+    },
+  );
 });
 
 describe("openExternal", () => {

@@ -172,28 +172,39 @@ const continuations: {
     argv: ["wallet", "keys", "update", testAccessKey, "--token", moderatoToken, "--limit", "10"],
   },
   {
-    name: "transfer --dry-run reruns without --dry-run",
+    name: "transfer --dry-run reruns with --yes",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
-      return transferTokens(await readyWallet(option), {
-        args: { amount: "1.5", token: "pathUSD", to: recipient },
-        options: { "dry-run": true },
-      });
+      return transferTokens(
+        await readyWallet(option),
+        { args: { amount: "1.5", token: "pathUSD", to: recipient }, options: { "dry-run": true } },
+        transferDependencies(),
+      );
     },
-    argv: ["wallet", "transfer", "1.5", moderatoToken, recipient],
+    // Without --fee-token, the reviewed fee token (here the transferred one) is pinned.
+    argv: [
+      "wallet",
+      "transfer",
+      "1.5",
+      moderatoToken,
+      recipient,
+      "--fee-token",
+      moderatoToken,
+      "--yes",
+    ],
   },
   {
     name: "transfer --dry-run keeps fee token and address",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
-      return transferTokens(await readyWallet(option), {
-        args: { amount: "1.5", token: moderatoToken, to: recipient },
-        options: {
-          "dry-run": true,
-          "fee-token": usdcToken,
-          address: testWallet,
+      return transferTokens(
+        await readyWallet(option),
+        {
+          args: { amount: "1.5", token: moderatoToken, to: recipient },
+          options: { "dry-run": true, "fee-token": usdcToken, address: testWallet },
         },
-      });
+        transferDependencies(),
+      );
     },
     argv: [
       "wallet",
@@ -205,6 +216,7 @@ const continuations: {
       usdcToken,
       "--address",
       testWallet,
+      "--yes",
     ],
   },
   {
@@ -503,6 +515,15 @@ function swapDependencies() {
     })),
     getBuyQuote: vi.fn(async () => 10_100_000n),
     getSellQuote: vi.fn(async () => 9_800_000n),
+    submit: vi.fn(async () => `0x${"ab".repeat(32)}`),
+  };
+}
+
+function transferDependencies() {
+  return {
+    getBalance: vi.fn(async () => 100_000_000n),
+    estimateFee: vi.fn(async () => 175n),
+    getUserFeeToken: vi.fn(async () => null),
     submit: vi.fn(async () => `0x${"ab".repeat(32)}`),
   };
 }

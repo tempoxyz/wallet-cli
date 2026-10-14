@@ -4,6 +4,7 @@ import { Cli, Completions, Mcp, type z } from "incur";
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
 import { usageError } from "./shared/errors.js";
+import { canPrompt } from "./shared/process.js";
 import { withWallet } from "./shared/require-wallet.js";
 import {
   completionsHandler,
@@ -194,8 +195,13 @@ cli.command("revoke", {
   alias: globalAlias,
   output: revokeOutput,
   // The wallet app signs the revocation, so the local access key need not be usable.
+  // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
   run: withWallet(
-    (context, wallet) => revokeHandler(wallet, context.args, context.options, context),
+    (context, wallet) =>
+      revokeHandler(wallet, context.args, context.options, {
+        ...context,
+        agent: !canPrompt(context.agent),
+      }),
     { requireKey: "never" },
   ),
 });
@@ -207,11 +213,11 @@ cli.command("transfer", {
   alias: globalAlias,
   output: transferOutput,
   examples: [
-    { args: { amount: "1.00", token: "USDC.e", to: "0x70997...9C8" } },
     {
       args: { amount: "50", token: "0x20c0...b50", to: "0x70997...9C8" },
       options: { "dry-run": true },
     },
+    { args: { amount: "1.00", token: "USDC.e", to: "0x70997...9C8" }, options: { yes: true } },
     { options: { mach: true, "max-spend": "5", "mpp-challenge": "<WWW_AUTHENTICATE>" } },
   ],
   async run(context) {
@@ -235,7 +241,11 @@ cli.command("transfer", {
       async (_, wallet) =>
         options.mach
           ? transferMach({ options: { ...flags, network: wallet.network.name } })
-          : transferTokens(wallet, { args, options }),
+          : transferTokens(wallet, {
+              args,
+              options,
+              interactive: canPrompt(context.agent),
+            }),
       { requireKey: options.mach ? "always" : "agent" },
     )(context);
   },
@@ -907,10 +917,11 @@ function describeCli() {
           option(
             "fee_token",
             "--fee-token",
-            "Pay fees in a different token, by address or symbol (default: same token)",
+            "Pay fees in a different token, by address or symbol (default: the account's fee token, else the same token)",
             { valueName: "FEE_TOKEN" },
           ),
-          flag("dry_run", "--dry-run", "Show plan + fee estimate, don't send"),
+          flag("dry_run", "--dry-run", "Show plan, fee estimate, and balance; don't send"),
+          flag("yes", "--yes", "Send without the confirmation prompt; required for agent runs"),
           flag("mach", "--mach", "Pay with on-chain MACH"),
           flag("credits", "--credits", "Spend existing MPP Credits (deprecated)"),
           option("max_spend", "--max-spend", "Maximum MACH spend in USD", { valueName: "AMOUNT" }),
