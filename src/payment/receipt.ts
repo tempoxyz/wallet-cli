@@ -74,7 +74,7 @@ export function receiptSummary(receipt: PaymentReceipt) {
   if (receipt._next)
     return `${paid} · opened a session with ${receipt.deposit_locked} ${label} locked\nWhen done, request its close, then rerun after the grace period to withdraw the unspent deposit: ${receipt._next.command}\n`;
   if (receipt.session === "reuse")
-    return `${paid} · session ${receipt.channel_id} (${receipt.cumulative} of ${receipt.deposit_locked} ${label} deposit used)\n`;
+    return `${paid} · session ${receipt.channel_id} (${receipt.cumulative} of ${receipt.deposit_locked} ${label} deposit in signed vouchers)\n`;
   return `${paid}${receipt.tx_hash ? ` · tx ${receipt.tx_hash}` : ""}\n`;
 }
 

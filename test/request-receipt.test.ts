@@ -406,12 +406,12 @@ it.each<{
     stderr: `Paid 0.01 USDC.e · opened a session with 1 USDC.e locked\nWhen done, request its close, then rerun after the grace period to withdraw the unspent deposit: ${close.join(" ")}\n`,
   },
   {
-    name: "a reused session's voucher",
+    name: "a reused session's voucher, as signed rather than as the server reports spent",
     challenge: offer("session"),
     stored: { cumulative_amount: 50_000n },
-    receipt: sessionReceipt(60_000n),
+    receipt: sessionReceipt(10_000n),
     payment: { ...session, session: "reuse", deposit_locked: "1", cumulative: "0.06" },
-    stderr: `Paid 0.01 USDC.e · session ${channelId} (0.06 of 1 USDC.e deposit used)\n`,
+    stderr: `Paid 0.01 USDC.e · session ${channelId} (0.06 of 1 USDC.e deposit in signed vouchers)\n`,
   },
   {
     name: "a reused session topped up for its voucher",
@@ -425,7 +425,7 @@ it.each<{
       deposit_locked: "1.5",
       cumulative: "1.005",
     },
-    stderr: `Paid 0.01 USDC.e · session ${channelId} (1.005 of 1.5 USDC.e deposit used)\n`,
+    stderr: `Paid 0.01 USDC.e · session ${channelId} (1.005 of 1.5 USDC.e deposit in signed vouchers)\n`,
   },
 ])("reports the receipt of $name", async (row) => {
   const home = await useTempHome();
@@ -534,7 +534,7 @@ it("keeps structured stderr empty and reports the receipt through --write-meta",
   const human = await cli("--write-meta", meta);
   expect(human.stdout).toBe("paid");
   expect(human.stderr).toBe(
-    `Paid 0.01 USDC.e · session ${channelId} (0.01 of 1 USDC.e deposit used)\n`,
+    `Paid 0.01 USDC.e · session ${channelId} (0.01 of 1 USDC.e deposit in signed vouchers)\n`,
   );
   expect(JSON.parse(await readFile(meta, "utf8")).payment).toEqual(payment);
 
@@ -572,7 +572,7 @@ it.each([
       symbol: null,
       channel_id: `${channelId}\\u202e`,
     },
-    stderr: `Paid 0.006 ${usdc.toLowerCase()}\\u200b · session ${channelId}\\u202e (0.006 of 0 ${usdc.toLowerCase()}\\u200b deposit used)\n`,
+    stderr: `Paid 0.006 ${usdc.toLowerCase()}\\u200b · session ${channelId}\\u202e (0.006 of 0 ${usdc.toLowerCase()}\\u200b deposit in signed vouchers)\n`,
   },
   {
     name: "a subscription with invisible characters in its terms",
