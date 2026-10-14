@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -96,6 +96,10 @@ function session(overrides: Partial<PersistedSessionRecord> = {}): PersistedSess
     token: usdc,
     ...overrides,
   };
+}
+
+function escape(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function pendingLogin(network: PendingLogin["network"]): PendingLogin {
@@ -467,31 +471,72 @@ describe("logout with sessions holding deposits", () => {
   });
 
   it.each([
-    { name: "no session store exists", stored: false, options: {}, refused: false },
-    { name: "a session store exists", stored: true, options: {}, refused: true },
-    { name: "a session store exists and --yes is set", stored: true, options: { yes: true } },
-  ])(
-    "without sqlite3, logs out only with confirmation when $name",
-    async ({ stored, options, refused = false }) => {
-      await setup(walletState(), stored ? [session()] : []);
-      const bin = join(process.env.HOME!, "bin");
-      await mkdir(bin);
-      vi.stubEnv("PATH", bin);
+    { name: "sqlite3 is missing and no session store exists", store: "none" },
+    {
+      name: "sqlite3 is missing and a session store exists",
+      store: "sessions",
+      refused: true,
+      reason: "sqlite3 is not installed",
+    },
+    {
+      name: "sqlite3 is missing, a session store exists, and --yes is set",
+      store: "sessions",
+      options: { yes: true },
+      reason: "sqlite3 is not installed",
+    },
+    {
+      name: "the session store is corrupt",
+      store: "corrupt",
+      refused: true,
+      reason: "file is not a database",
+    },
+    {
+      name: "the session store is corrupt and --yes is set",
+      store: "corrupt",
+      options: { yes: true },
+      reason: "file is not a database",
+    },
+  ] satisfies {
+    name: string;
+    store: "none" | "sessions" | "corrupt";
+    options?: { yes?: boolean };
+    refused?: boolean;
+    reason?: string;
+  }[])(
+    "logs out only with confirmation when $name",
+    async ({ store, options = {}, refused = false, reason }) => {
+      const home = await useTempHome();
+      await writeWalletState(walletState());
+      const channels = join(home, ".tempo", "wallet", "channels.db");
+      if (store === "sessions") await upsertSessionRecord(session());
+      if (store === "corrupt") await writeFile(channels, "not a sqlite database ".repeat(8));
+      if (store !== "corrupt") {
+        await mkdir(join(home, "bin"));
+        vi.stubEnv("PATH", join(home, "bin"));
+      }
       const context = runContext(true);
 
       const output = await logoutHandler(options, context);
 
-      const unreadable = `stored sessions in ${join(process.env.HOME!, ".tempo", "wallet", "channels.db")} could not be checked for unspent deposits because sqlite3 is not installed`;
+      const unchecked = `stored sessions in ${channels} could not be checked for unspent deposits (`;
       if (refused)
         expect(output).toMatchObject({
           code: "E_USAGE",
-          message: `Logging out of every network needs confirmation. The ${unreadable}. To log out anyway, run 'tempo wallet logout --yes'.`,
+          message: expect.stringMatching(
+            new RegExp(
+              `^Logging out of every network needs confirmation\\. The ${escape(unchecked)}.*${reason}.*\\)\\. To log out anyway, run 'tempo wallet logout --yes'\\.$`,
+            ),
+          ),
         });
       else {
         const result = logoutOutput.parse(output);
         expect(result).toMatchObject({ was_logged_in: true, sessions: [] });
         // A logout confirmed without a readable store says the sessions went unchecked.
-        expect(result.message.endsWith(`; ${unreadable}`)).toBe(stored);
+        expect(result.message).toMatch(
+          reason
+            ? new RegExp(`; ${escape(unchecked)}.*${reason}.*\\)$`)
+            : /^(?!.*could not be checked)/,
+        );
       }
       expect((await loadWalletState()).accounts).toEqual(refused ? [{ address: testWallet }] : []);
     },

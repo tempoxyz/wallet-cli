@@ -186,25 +186,14 @@ export async function logoutHandler(
 
   const next = loggedOutState(state, network);
   const disconnected = next.accounts.length === 0;
-  // Without sqlite3 the session store cannot be read, which is safe only when there is none.
-  const unreadable = `stored sessions in ${channelsDbPath()} could not be checked for unspent deposits because sqlite3 is not installed`;
-  const lookup = await fundedSessions({
+  const { sessions, unchecked } = await readFundedSessions({
     payers: [...state.accounts.map((account) => account.address), ...keys.map((key) => key.access)],
     // A logout that removes the wallet leaves its sessions on every network without a login.
     chainId: disconnected ? undefined : network?.chainId,
-  }).catch(async (error: NodeJS.ErrnoException) => {
-    if (error.code !== "ENOENT") throw error;
-    return (await access(channelsDbPath()).then(
-      () => true,
-      () => false,
-    ))
-      ? undefined
-      : [];
   });
-  const sessions = lookup ?? [];
   const closeSteps = sessionCloseSteps(sessions);
   const reasons = [
-    ...(lookup === undefined ? [`The ${unreadable}.`] : []),
+    ...(unchecked ? [`The ${unchecked}.`] : []),
     ...(sessions.length > 0 ? [fundedSessionsReason(sessions, closeSteps)] : []),
     ...(options.revoke && keys.length > 0
       ? [`--revoke revokes ${count(keys.length, "access key")} on-chain, which cannot be undone.`]
@@ -283,7 +272,7 @@ export async function logoutHandler(
         : [
             `${count(keys.length, "access key")} removed locally but not revoked, so authorized on-chain until expiry (use --revoke to revoke)`,
           ]),
-    ...(lookup === undefined ? [unreadable] : []),
+    ...(unchecked ? [unchecked] : []),
   ].join("; ");
   await saveWalletState(next);
   // A pending login must not bring the wallet back after logout.
@@ -361,6 +350,31 @@ function sessionCloseSteps(sessions: readonly { network: string; status: string 
         : "--all",
     ],
   }));
+}
+
+/**
+ * The stored sessions that still hold deposits, or `unchecked` saying why the session store could
+ * not be read; logout then needs the confirmation funded sessions need. Without sqlite3 and
+ * without a session store, no session was ever stored.
+ */
+async function readFundedSessions(options: Parameters<typeof fundedSessions>[0]) {
+  try {
+    return { sessions: await fundedSessions(options), unchecked: undefined };
+  } catch (error) {
+    const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
+    const stored = await access(channelsDbPath()).then(
+      () => true,
+      () => false,
+    );
+    if (missing && !stored) return { sessions: [], unchecked: undefined };
+    const reason = missing
+      ? "sqlite3 is not installed"
+      : (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").trim();
+    return {
+      sessions: [],
+      unchecked: `stored sessions in ${channelsDbPath()} could not be checked for unspent deposits (${reason})`,
+    };
+  }
 }
 
 /** Why logging out needs confirmation while `sessions` hold deposits, and how to close them. */
