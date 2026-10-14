@@ -49,6 +49,7 @@ import {
   stringValue,
 } from "../shared/utils.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
+import type { Wallet } from "../shared/require-wallet.js";
 import { createProvider } from "../provider.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -88,21 +89,20 @@ type OnChainDiscoveredChannel = {
   closeRequestedAt: bigint;
 };
 
-type CloseOptions = {
-  all?: boolean | undefined;
-  cooperative?: boolean | undefined;
-  finalize?: boolean | undefined;
-  network?: string | undefined;
-  orphaned?: boolean | undefined;
-  target?: string | undefined;
-};
-
 type CloseResultRecord = {
   channel_id: string;
   status: "closed" | "pending" | "requested" | "not_found" | "error";
   origin?: string | undefined;
   remaining_secs?: number | undefined;
   error?: string | undefined;
+};
+
+type CloseOptions = {
+  all?: boolean | undefined;
+  cooperative?: boolean | undefined;
+  finalize?: boolean | undefined;
+  orphaned?: boolean | undefined;
+  target?: string | undefined;
 };
 
 type CloseSummaryOutput = {
@@ -182,9 +182,8 @@ export async function syncSessions(options: {
   return sessionList(network, {});
 }
 
-export async function dryRunCloseSessions(options: CloseOptions) {
+export async function dryRunCloseSessions({ network }: Wallet, options: CloseOptions) {
   validateCloseOptions(options);
-  const network = await resolveNetwork(options.network);
   const targets = await closeTargets(options, network, { dryRun: true });
   return {
     targets: targets.map((record) => {
@@ -195,17 +194,8 @@ export async function dryRunCloseSessions(options: CloseOptions) {
   };
 }
 
-export async function closeSessions(options: CloseOptions) {
+export async function closeSessions({ network, state }: Wallet, options: CloseOptions) {
   validateCloseOptions(options);
-  const state = await loadWalletState();
-  const activeAccount = state.accounts[state.activeAccount ?? 0];
-  if (!activeAccount)
-    throw walletError({
-      code: "E_NOT_AUTHENTICATED",
-      message: "No wallet is logged in. Run 'tempo wallet login'.",
-    });
-
-  const network = await resolveNetwork(options.network, state);
   const summary = closeSummary();
   const targets = await closeTargets(options, network, { walletChainId: storedChainId(state) });
   for (const target of targets)

@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { executeRequest, parseRequestArgs } from "../src/commands/request.js";
-import { closeSessions } from "../src/commands/sessions.js";
 import { requireSessionDescriptor } from "../src/payment/session-descriptor.js";
 import {
   authRefreshRequiredError,
@@ -17,7 +16,6 @@ import {
   walletError,
   type WalletErrorCode,
 } from "../src/shared/errors.js";
-import { useTempHome, walletState, writeWalletState } from "./helpers.js";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -92,16 +90,6 @@ describe("typed error sites", () => {
       code: "E_USAGE",
       message: expect.stringMatching(/^Invalid JSON passed to --json: /),
       run: () => executeRequest(parseRequestArgs(["--json", "{bad", "http://127.0.0.1:9/"])),
-    },
-    {
-      site: "sessions close without a wallet",
-      code: "E_NOT_AUTHENTICATED",
-      message: "No wallet is logged in. Run 'tempo wallet login'.",
-      run: async () => {
-        await useTempHome();
-        await writeWalletState(walletState({ accounts: [] }));
-        return closeSessions({ all: true });
-      },
     },
     {
       site: "v2 session without a stored descriptor",

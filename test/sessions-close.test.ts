@@ -59,17 +59,30 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 }));
 
 import { runRequest } from "../src/commands/request.js";
-import { closeSessions, dryRunCloseSessions, listSessions } from "../src/commands/sessions.js";
+import {
+  closeSessions as closeWithWallet,
+  dryRunCloseSessions as dryRunWithWallet,
+  listSessions,
+} from "../src/commands/sessions.js";
 import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
 import { escrowAbi, mainnetEscrow, moderatoEscrow, usdcToken } from "../src/shared/constants.js";
 import {
   testAccessKey,
   testWallet,
   testWallet2,
+  readyWallet,
   useTempHome,
   walletState,
   writeWalletState,
 } from "./helpers.js";
+
+type CloseInput = Parameters<typeof closeWithWallet>[1] & { network?: string | undefined };
+
+// `sessions close` loads the wallet the way the command does, without requiring a usable key.
+const closeSessions = async ({ network, ...options }: CloseInput) =>
+  closeWithWallet(await readyWallet(network, false), options);
+const dryRunCloseSessions = async ({ network, ...options }: CloseInput) =>
+  dryRunWithWallet(await readyWallet(network, false), options);
 
 const channelId = `0x${"a".repeat(64)}`;
 const otherChannelId = `0x${"b".repeat(64)}`;

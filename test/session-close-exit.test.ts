@@ -10,6 +10,8 @@ import { upsertSessionRecord } from "../src/payment/session-store.js";
 import { escrowAbi, mainnetEscrow } from "../src/shared/constants.js";
 import {
   testAccessKey,
+  testAccessKey2,
+  testPrivateKey2,
   testWallet,
   testWallet2,
   usdc,
@@ -28,8 +30,19 @@ describe("session close process exit status", () => {
     "preserves the %s summary and reports the correct shell status",
     async (scenario) => {
       const home = await useTempHome();
-      // No signing key is available: the cooperative failure must occur before payment.
-      await writeWalletState(walletState({ accessKeys: [] }));
+      // The wallet's only key is not the channel's signer: the cooperative failure must occur
+      // before payment.
+      await writeWalletState(
+        walletState({
+          accessKeys: [
+            {
+              ...walletState().accessKeys[0]!,
+              address: testAccessKey2,
+              privateKey: testPrivateKey2,
+            },
+          ],
+        }),
+      );
       const closeRequestedAt = BigInt(Math.floor(Date.now() / 1000));
       const unexpected: string[] = [];
       let rpcCalls = 0;

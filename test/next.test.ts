@@ -36,6 +36,7 @@ import {
 } from "../src/shared/constants.js";
 import { shellQuote } from "../src/shared/next.js";
 import {
+  readyWallet,
   testAccessKey,
   testAccessKey2,
   testWallet,
@@ -96,9 +97,10 @@ const continuations: {
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return swapTokens(
+        await readyWallet(option),
         {
           args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
-          options: { network: option, "dry-run": true, "slippage-bps": 50 },
+          options: { "dry-run": true, "slippage-bps": 50 },
         },
         swapDependencies(),
       );
@@ -121,10 +123,10 @@ const continuations: {
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return swapTokens(
+        await readyWallet(option),
         {
           args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
           options: {
-            network: option,
             "dry-run": true,
             "exact-out": true,
             "fee-token": moderatoToken,
@@ -155,9 +157,10 @@ const continuations: {
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return swapTokens(
+        await readyWallet(option),
         {
           args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
-          options: { network: option, "dry-run": true, "slippage-bps": 50 },
+          options: { "dry-run": true, "slippage-bps": 50 },
         },
         swapDependencies(),
       );
@@ -165,26 +168,12 @@ const continuations: {
     argv: ["wallet", "keys", "update", testAccessKey, "--token", moderatoToken, "--limit", "10"],
   },
   {
-    name: "swap --dry-run without a usable key points at login",
-    run: async ({ option, chain }) => {
-      await writeWalletState(stateFor(chain, { accessKeys: [] }));
-      return swapTokens(
-        {
-          args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
-          options: { network: option, "dry-run": true, "slippage-bps": 50 },
-        },
-        swapDependencies(),
-      );
-    },
-    argv: ["wallet", "login"],
-  },
-  {
     name: "transfer --dry-run reruns without --dry-run",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
-      return transferTokens({
+      return transferTokens(await readyWallet(option), {
         args: { amount: "1.5", token: usdcToken, to: recipient },
-        options: { network: option, "dry-run": true },
+        options: { "dry-run": true },
       });
     },
     argv: ["wallet", "transfer", "1.5", usdcToken, recipient],
@@ -193,10 +182,9 @@ const continuations: {
     name: "transfer --dry-run keeps fee token and address",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
-      return transferTokens({
+      return transferTokens(await readyWallet(option), {
         args: { amount: "1.5", token: usdcToken, to: recipient },
         options: {
-          network: option,
           "dry-run": true,
           "fee-token": moderatoToken,
           address: testWallet,
@@ -245,7 +233,11 @@ const continuations: {
     name: "revoke --dry-run reruns without --dry-run",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
-      return revokeHandler({ accessKey: testAccessKey2 }, { network: option, "dry-run": true });
+      return revokeHandler(
+        await readyWallet(option),
+        { accessKey: testAccessKey2 },
+        { "dry-run": true },
+      );
     },
     argv: ["wallet", "revoke", testAccessKey2.toLowerCase()],
   },
@@ -253,7 +245,7 @@ const continuations: {
     name: "keys update confirms the new limit with keys list",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
-      return updateAccessKeyHandler({ network: option, limit: "250" }, () => ({
+      return updateAccessKeyHandler(await readyWallet(option), { limit: "250" }, () => ({
         request: vi.fn(),
       }));
     },
@@ -274,7 +266,7 @@ const continuations: {
       await writeWalletState(stateFor(chain));
       await saveSession(channelId, chain);
       mockEscrow();
-      return closeSessions({ network: option, target: channelId });
+      return closeSessions(await readyWallet(option), { target: channelId });
     },
     argv: ["wallet", "sessions", "close", channelId],
     until: ".pending == 0 and .failed == 0",
@@ -325,7 +317,7 @@ it("states when a pending session close becomes withdrawable", async () => {
   await saveSession(channelId, 4217);
   mockEscrow();
 
-  const result = await closeSessions({ target: channelId });
+  const result = await closeSessions(await readyWallet(), { target: channelId });
 
   expect(result).toMatchObject({
     pending: 1,
@@ -340,6 +332,7 @@ it.each([
     run: async () => {
       await writeWalletState(stateFor(4217));
       return swapTokens(
+        await readyWallet(),
         {
           args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
           options: { "slippage-bps": 50, yes: true },
@@ -368,7 +361,7 @@ it.each([
         10_000n,
         2_000n,
       ]);
-      return closeSessions({ target: channelId });
+      return closeSessions(await readyWallet(), { target: channelId });
     },
   },
 ])("omits a continuation from $name", async ({ run }) => {
@@ -402,7 +395,7 @@ it.each([
     await saveSession(otherChannelId, 4217, session);
     mockEscrow();
 
-    const result = await closeSessions(options);
+    const result = await closeSessions(await readyWallet(), options);
 
     expect(result).toMatchObject({ pending: 2 });
     for (const id of [channelId, otherChannelId])
@@ -425,6 +418,7 @@ it("omits a keys update command when the input token is not 6-decimal", async ()
   }));
 
   const result = await swapTokens(
+    await readyWallet(),
     {
       args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
       options: { "dry-run": true, "slippage-bps": 50 },
@@ -449,7 +443,7 @@ it("keeps the selected network on each per-channel close command", async () => {
   await saveSession(otherChannelId, 42431);
   mockEscrow();
 
-  const result = await closeSessions({ network: "testnet", target: origin });
+  const result = await closeSessions(await readyWallet("testnet"), { target: origin });
 
   for (const id of [channelId, otherChannelId])
     expect(result).toHaveProperty(

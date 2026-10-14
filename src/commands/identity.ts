@@ -18,6 +18,7 @@ import {
 } from "../shared/network.js";
 import { usageError } from "../shared/errors.js";
 import { nextStep } from "../shared/next.js";
+import type { Wallet } from "../shared/require-wallet.js";
 import { channelsDbPath, runProcess } from "../shared/process.js";
 import {
   cleanStoredScalar,
@@ -157,8 +158,8 @@ type AccessKeyUpdater = (options: {
 }) => Promise<unknown>;
 
 export async function updateAccessKeyHandler(
+  wallet: Wallet,
   options: {
-    network?: string | undefined;
     accessKey?: string | undefined;
     limit: string;
     token?: string | undefined;
@@ -170,33 +171,38 @@ export async function updateAccessKeyHandler(
   }) => UpdateAccessKeyProvider = createProvider,
   updateAccessKey: AccessKeyUpdater = updateAccessKeyThroughWallet,
 ) {
-  const state = await loadWalletState();
-  const activeAccount = state.accounts[state.activeAccount ?? 0];
-  if (!activeAccount)
-    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-  const network = await walletNetwork(state, options.network);
+  const { account, network, state } = wallet;
+  requireWalletChain(wallet);
 
   const selectedChainId = network.chainId;
-  if (options.accessKey !== undefined && !isAddress(options.accessKey))
+  const selected = options.accessKey;
+  if (selected !== undefined && !isAddress(selected))
     throw usageError("Invalid access key address: expected a 0x address");
-  const key = state.accessKeys.find(
-    (candidate) =>
-      candidate.access.toLowerCase() === activeAccount.address.toLowerCase() &&
-      candidate.chainId === selectedChainId &&
-      (options.accessKey === undefined ||
-        candidate.address.toLowerCase() === options.accessKey.toLowerCase()),
+  // Expired and unusable keys count: the wallet app approves the update, not the local key.
+  const stored = state.accessKeys.filter((candidate) =>
+    accessKeyMatches(candidate, { chainId: selectedChainId, walletAddress: account.address }),
   );
-  if (!key && options.accessKey !== undefined)
-    throw usageError("Selected access key is not configured for the current wallet and network.");
+  if (selected === undefined && stored.length > 1)
+    throw usageError(
+      `More than one access key is configured for the current wallet and network (${stored
+        .map((candidate) => candidate.address.toLowerCase())
+        .join(", ")}); pass the access key to update.`,
+    );
+  const key =
+    selected === undefined
+      ? stored[0]
+      : stored.find((candidate) => candidate.address.toLowerCase() === selected.toLowerCase());
   if (!key)
     throw usageError(
-      "No access key configured for the current wallet and network. Run 'tempo wallet login'.",
+      selected === undefined
+        ? "No access key is configured for the current wallet and network."
+        : "Selected access key is not configured for the current wallet and network.",
     );
 
   const token = options.token ?? key.limits?.[0]?.token ?? tokenAddress(selectedChainId);
   if (!isAddress(token)) throw usageError("Invalid token address: expected a 0x address");
   const limit = parseLimit(options.limit);
-  const walletAddress = activeAccount.address as Address;
+  const walletAddress = account.address as Address;
   const accessKeyAddress = key.address as Address;
   const tokenAddress_resolved = token as Address;
   const provider = createUpdateProvider({ network, noBrowser: options.browser === false });
@@ -277,22 +283,20 @@ type AccessKeyRevoker = (options: {
 }) => Promise<unknown>;
 
 export async function revokeHandler(
+  wallet: Wallet,
   args: { accessKey: string },
-  options: { network?: string | undefined; "dry-run"?: boolean | undefined },
+  options: { "dry-run"?: boolean | undefined },
   createRevokeProvider: (options: { network: Network }) => RevokeProvider = createProvider,
   revokeAccessKey: AccessKeyRevoker = revokeAccessKeyOnChain,
 ) {
   if (!isAddress(args.accessKey))
     throw usageError("Invalid access key address: expected a 0x address");
 
-  const state = await loadWalletState();
-  const activeAccount = state.accounts[state.activeAccount ?? 0];
-  if (!activeAccount)
-    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-  const network = await walletNetwork(state, options.network);
+  const { account, network, state } = wallet;
+  requireWalletChain(wallet);
 
   const accessKeyAddress = args.accessKey as Address;
-  const walletAddress = activeAccount.address as Address;
+  const walletAddress = account.address as Address;
   const selectedChainId = network.chainId;
   const output = {
     access_key: accessKeyAddress.toLowerCase(),
@@ -758,11 +762,9 @@ function debugArch() {
 }
 
 /** Key management signs through the wallet session, so it must target the logged-in chain. */
-async function walletNetwork(state: WalletState, flag: string | undefined) {
-  const network = await resolveNetwork(flag, state);
+function requireWalletChain({ network, state }: Wallet) {
   if (storedChainId(state) !== network.chainId)
     throw usageError(
       "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
     );
-  return network;
 }

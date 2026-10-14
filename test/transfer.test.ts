@@ -4,6 +4,7 @@ import { transferTokens } from "../src/commands/transfer.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import {
   expectUsageError,
+  readyWallet,
   testWallet,
   testWallet2,
   useTempHome,
@@ -54,12 +55,13 @@ describe("transferTokens", () => {
       { amount: "1", token: usdcToken, to: "0x0000000000000000000000000000000000000000" },
       "Invalid recipient address: cannot transfer to the zero address",
     ],
-  ])("rejects invalid input %j before loading the wallet", async (args, message) => {
+  ])("rejects invalid input %j in dry runs and sends alike", async (args, message) => {
     await useTempHome();
-    await writeWalletState(walletState({ accounts: [] }));
+    await writeWalletState(walletState());
+    const wallet = await readyWallet();
 
     for (const dryRun of [true, false]) {
-      const error = await transferTokens({ args, options: { "dry-run": dryRun } }).catch(
+      const error = await transferTokens(wallet, { args, options: { "dry-run": dryRun } }).catch(
         (err: unknown) => err,
       );
       expectUsageError(error, message);
@@ -72,7 +74,7 @@ describe("transferTokens", () => {
       await useTempHome();
       await writeWalletState(walletState());
 
-      const result = await transferTokens({
+      const result = await transferTokens(await readyWallet(), {
         args: { amount, token: usdcToken, to: testWallet2 },
         options: { "dry-run": true },
       });
@@ -85,7 +87,7 @@ describe("transferTokens", () => {
     await useTempHome();
     await writeWalletState(walletState());
 
-    const result = await transferTokens({
+    const result = await transferTokens(await readyWallet(), {
       args: { amount: "1.5", token: usdcToken, to: recipient },
       options: { "dry-run": true },
     });
@@ -106,11 +108,13 @@ describe("transferTokens", () => {
 
   it("uses the PathUSD symbol for Moderato token transfers", async () => {
     await useTempHome();
-    await writeWalletState(walletState());
+    await writeWalletState(
+      walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, chainId: 42431 }] }),
+    );
 
-    const result = await transferTokens({
+    const result = await transferTokens(await readyWallet("testnet"), {
       args: { amount: "1.5", token: moderatoToken, to: recipient },
-      options: { "dry-run": true, network: "testnet" },
+      options: { "dry-run": true },
     });
 
     expect(result).toMatchObject({
@@ -120,18 +124,15 @@ describe("transferTokens", () => {
     });
   });
 
-  it("throws E_USAGE for token dry-run without a wallet even when --address is set", async () => {
+  it("reports --address as the dry-run sender", async () => {
     await useTempHome();
-    await writeWalletState(walletState({ accounts: [] }));
+    await writeWalletState(walletState());
 
-    const error = await transferTokens({
+    const result = await transferTokens(await readyWallet(), {
       args: { amount: "1", token: usdcToken, to: recipient },
-      options: { "dry-run": true, address: recipient },
-    }).catch((err: unknown) => err);
+      options: { "dry-run": true, address: testWallet2 },
+    });
 
-    expectUsageError(
-      error,
-      "Configuration missing: No wallet configured. Run 'tempo wallet login'.",
-    );
+    expect(result).toMatchObject({ from: testWallet2.toLowerCase() });
   });
 });

@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cliBundle } from "./cli-bundle.js";
-import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
+import { testWallet, usdc, useTempHome, walletState, writeWalletState } from "./helpers.js";
 
 const root = resolve(import.meta.dirname, "..");
 const mockFetchModule = resolve(root, "test", "fixtures", "mock-services-fetch.mjs");
@@ -62,6 +62,23 @@ describe("MCP tools", () => {
       expect(firstToolText(response)).toContain("Positional amount, token, and recipient");
     },
   );
+
+  it("returns the login command for a transfer without a wallet", async () => {
+    const response = await mcpCall({
+      name: "transfer",
+      arguments: { amount: "1", token: usdc, to: testWallet, "dry-run": true, network: "testnet" },
+    });
+
+    const command = "tempo wallet login --network testnet";
+    expect(response.error).toBeUndefined();
+    expect(response.result).toMatchObject({
+      isError: true,
+      _meta: { cta: { commands: [{ command }] } },
+    });
+    expect(firstToolText(response)).toBe(
+      `No wallet is logged in. Run '${command}' before retrying.\n\nSuggested command:\n  ${command}`,
+    );
+  });
 
   it("exposes access key commands as nested tools", async () => {
     const response = await mcpRequest<{ tools: { name: string }[] }>("tools/list", {});
@@ -151,6 +168,7 @@ async function mcpCall(params: Record<string, unknown>) {
     content: { text: string }[];
     isError?: boolean;
     structuredContent?: unknown;
+    _meta?: unknown;
   }>("tools/call", params);
 }
 
