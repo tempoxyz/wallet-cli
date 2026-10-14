@@ -1,6 +1,9 @@
+import { Rpc } from "accounts";
 import { Storage } from "accounts/cli";
+import { z } from "incur";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toHex } from "viem";
+import { Account } from "viem/tempo";
 
 import { refreshHandler, revokeHandler, updateAccessKeyHandler } from "../src/commands/identity.js";
 import { createProvider } from "../src/provider.js";
@@ -15,6 +18,7 @@ import {
   testPrivateKey2,
   testWallet,
   testWallet2,
+  usdc,
   useTempHome,
   walletState,
   writeWalletState,
@@ -51,6 +55,15 @@ function walletApp(chainId: number = mainnet.chainId) {
   return { request, createProvider: vi.fn(() => ({ request })) };
 }
 
+type KeyStatus = "published" | "revoked" | "missing";
+
+/** The key's AccountKeychain state on each successive read. */
+function keychain(...statuses: KeyStatus[]) {
+  const readKey = vi.fn();
+  for (const status of statuses) readKey.mockResolvedValueOnce({ status, expiry: undefined });
+  return readKey;
+}
+
 describe("revoke", () => {
   it.each([mainnet, testnet])(
     "revokes a $name key through the wallet app without signing locally",
@@ -67,16 +80,21 @@ describe("revoke", () => {
       );
       const app = walletApp(network.chainId);
       const confirm = vi.fn();
+      const readKey = keychain("revoked");
 
       const result = await revokeHandler(
         await readyWallet(network.name, false),
         { accessKey: testAccessKey },
         { yes: true },
         runContext(true),
-        { confirm, createProvider: app.createProvider },
+        { confirm, createProvider: app.createProvider, readKey },
       );
 
       expect(app.createProvider).toHaveBeenCalledExactlyOnceWith({ network, noBrowser: false });
+      // The chain confirms the revocation on the key's network.
+      expect(readKey.mock.calls).toEqual([
+        [{ chainId: network.chainId, walletAddress: testWallet, accessKeyAddress: testAccessKey }],
+      ]);
       expect(app.request.mock.calls).toEqual([
         [{ method: "eth_chainId" }],
         [
@@ -208,54 +226,107 @@ describe("revoke", () => {
     },
   );
 
-  const listed = `Its keys on mainnet: ${testAccessKey.toLowerCase()}.`;
+  const listed = `Its stored keys on mainnet: ${testAccessKey.toLowerCase()}.`;
   it.each(
     [
       {
         name: "another wallet's key",
         accessKeys: [key, { ...key, address: testAccessKey2, access: testWallet2 }],
         detail: listed,
+        status: "missing" as const,
       },
       {
         name: "a key on another network",
         accessKeys: [key, { ...key, address: testAccessKey2, chainId: testnet.chainId }],
         detail: listed,
+        status: "missing" as const,
       },
       {
         name: "a key when the wallet holds none",
         accessKeys: [{ ...key, access: testWallet2 }],
-        detail: "It has no keys on mainnet.",
+        detail: "It has no stored keys on mainnet.",
+        status: "missing" as const,
+      },
+      {
+        name: "an unstored key already revoked on-chain",
+        accessKeys: [key],
+        detail: listed,
+        status: "revoked" as const,
       },
     ].flatMap((scenario) =>
       [{ "dry-run": true }, { yes: true }, {}].map((options) => ({ ...scenario, options })),
     ),
   )(
     "refuses $name with $options before doing anything",
-    async ({ accessKeys, detail, options }) => {
+    async ({ accessKeys, detail, status, options }) => {
       await useTempHome();
       await writeWalletState(walletState({ accessKeys }));
       const app = walletApp();
       const confirm = vi.fn();
       const context = runContext(false);
+      const readKey = keychain(status);
 
       const error = await revokeHandler(
         await readyWallet(undefined, false),
         { accessKey: testAccessKey2 },
         options,
         context,
-        { confirm, createProvider: app.createProvider },
+        { confirm, createProvider: app.createProvider, readKey },
       ).catch((value: unknown) => value);
 
       expectUsageError(
         error,
-        `Access key ${testAccessKey2.toLowerCase()} is not configured for wallet ${testWallet.toLowerCase()} on mainnet. ${detail}`,
+        `Access key ${testAccessKey2.toLowerCase()} is not stored for wallet ${testWallet.toLowerCase()} on mainnet or authorized for it on-chain. ${detail}`,
       );
+      expect(readKey.mock.calls).toEqual([
+        [{ chainId: mainnet.chainId, walletAddress: testWallet, accessKeyAddress: testAccessKey2 }],
+      ]);
       expect(app.createProvider).not.toHaveBeenCalled();
       expect(confirm).not.toHaveBeenCalled();
       expect(context.error).not.toHaveBeenCalled();
       expect((await loadWalletState()).accessKeys).toEqual(accessKeys);
     },
   );
+
+  it.each([
+    { name: "a dry run", options: { "dry-run": true }, revoked: false },
+    { name: "a confirmed run", options: { yes: true }, revoked: true },
+  ])("revokes a key created elsewhere and authorized on-chain in $name", async (scenario) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const app = walletApp();
+    const readKey = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "published", expiry: 2_000_000_000 })
+      .mockResolvedValueOnce({ status: "revoked", expiry: 2_000_000_000 });
+
+    const result = await revokeHandler(
+      await readyWallet(),
+      { accessKey: testAccessKey2 },
+      scenario.options,
+      runContext(true),
+      { createProvider: app.createProvider, readKey },
+    );
+
+    expect(revokeOutput.parse(result)).toMatchObject(
+      scenario.revoked
+        ? { status: "success", access_key: testAccessKey2.toLowerCase(), local_key_removed: false }
+        : {
+            status: "dry_run",
+            access_key: testAccessKey2.toLowerCase(),
+            key: {
+              address: testAccessKey2.toLowerCase(),
+              wallet_address: testWallet.toLowerCase(),
+              spending_limit: { mode: "unknown" },
+              spending_limits: [],
+              expires_at: "2033-05-18T03:33:20Z",
+            },
+          },
+    );
+    expect(readKey).toHaveBeenCalledTimes(scenario.revoked ? 2 : 1);
+    expect(app.request).toHaveBeenCalledTimes(scenario.revoked ? 2 : 0);
+    expect((await loadWalletState()).accessKeys).toEqual([key]);
+  });
 
   const cta = (...flags: string[]) =>
     [
@@ -300,7 +371,7 @@ describe("revoke", () => {
       { accessKey: testAccessKey },
       options,
       context,
-      { confirm, createProvider: app.createProvider },
+      { confirm, createProvider: app.createProvider, readKey: keychain("revoked") },
     ).catch((value: unknown) => value);
 
     if (refused) {
@@ -407,6 +478,79 @@ describe("revoke", () => {
     expect((await loadWalletState()).accessKeys).toEqual([key]);
   });
 
+  it.each<{ name: string; pending: boolean; reads: KeyStatus[]; authorizes: boolean; ok: boolean }>(
+    [
+      { name: "a published key", pending: false, reads: ["revoked"], authorizes: false, ok: true },
+      {
+        name: "a pending key not yet published",
+        pending: true,
+        reads: ["missing", "revoked"],
+        authorizes: true,
+        ok: true,
+      },
+      {
+        name: "a pending key published since login",
+        pending: true,
+        reads: ["published", "revoked"],
+        authorizes: false,
+        ok: true,
+      },
+      {
+        name: "a key the wallet app did not revoke",
+        pending: false,
+        reads: ["missing"],
+        authorizes: false,
+        ok: false,
+      },
+      {
+        name: "a pending key the wallet app did not revoke",
+        pending: true,
+        reads: ["missing", "missing"],
+        authorizes: true,
+        ok: false,
+      },
+    ],
+  )(
+    "revokes $name only once the chain shows it revoked",
+    async ({ pending, reads, authorizes, ok }) => {
+      await useTempHome();
+      const keyAuthorization = await Account.fromSecp256k1(testPrivateKey2).signKeyAuthorization(
+        { accessKeyAddress: testAccessKey, keyType: "secp256k1" },
+        { chainId: 4217n, expiry: 2_000_000_000, limits: [{ token: usdc, limit: 100_000_000n }] },
+      );
+      const stored = pending ? { ...key, keyAuthorization } : key;
+      await writeWalletState(walletState({ accessKeys: [stored] }));
+      const before = (await loadWalletState()).accessKeys;
+      const app = walletApp();
+      const readKey = keychain(...reads);
+
+      const result = await revokeHandler(
+        await readyWallet(),
+        { accessKey: testAccessKey },
+        { yes: true },
+        runContext(true),
+        { createProvider: app.createProvider, readKey },
+      ).catch((value: unknown) => value);
+
+      const [, [revoke]] = app.request.mock.calls as [unknown, [{ params: [unknown] }]];
+      const sent = z.decode(Rpc.wallet_revokeAccessKey.parameters, revoke.params[0] as never);
+      // An unpublished key is authorized and revoked in one transaction.
+      expect(sent).toEqual({
+        address: testWallet,
+        accessKeyAddress: testAccessKey,
+        ...(authorizes ? { keyAuthorization } : {}),
+      });
+      expect(readKey).toHaveBeenCalledTimes(reads.length);
+      if (ok) expect(result).toMatchObject({ status: "success", local_key_removed: true });
+      else
+        expect(result).toMatchObject({
+          code: "E_NETWORK",
+          message: `The wallet app returned, but access key ${testAccessKey.toLowerCase()} is not revoked on mainnet, so nothing was removed locally. Rerun the command to retry.`,
+        });
+      expect((await loadWalletState()).accessKeys).toEqual(ok ? [] : before);
+    },
+  );
+
   it("rejects a malformed access key address", async () => {
     await useTempHome();
     await writeWalletState(walletState());
@@ -451,7 +595,7 @@ const walletAppCommands = [
         { accessKey: testAccessKey },
         { yes: true, browser },
         runContext(true),
-        { createProvider },
+        { createProvider, readKey: keychain("revoked") },
       ),
     request: "wallet_revokeAccessKey",
   },

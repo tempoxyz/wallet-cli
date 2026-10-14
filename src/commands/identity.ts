@@ -1,6 +1,8 @@
 import { arch, platform } from "node:process";
-import type { Provider as CoreProvider } from "accounts";
+import { Rpc, type Provider as CoreProvider } from "accounts";
+import { z } from "incur";
 import { erc20Abi, formatUnits, isAddress, parseUnits, toHex, type Address } from "viem";
+import { Actions } from "viem/tempo";
 
 import { version } from "../shared/constants.js";
 import {
@@ -13,7 +15,7 @@ import {
   tokenAddress,
   type Network,
 } from "../shared/network.js";
-import { errorCodes, usageError } from "../shared/errors.js";
+import { errorCodes, networkError, usageError } from "../shared/errors.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
 import { channelsDbPath, confirm as confirmPrompt, runProcess } from "../shared/process.js";
@@ -310,9 +312,20 @@ type RevokeContext = {
   }) => never;
 };
 
+/** An access key's state in the AccountKeychain precompile, where revocation takes effect. */
+type OnChainKey = { status: "published" | "revoked" | "missing"; expiry: number | undefined };
+
+type OnChainKeyReader = (options: {
+  chainId: number;
+  walletAddress: Address;
+  accessKeyAddress: Address;
+}) => Promise<OnChainKey>;
+
 /**
- * Revokes one of the logged-in wallet's stored keys on its network through the wallet app,
- * after confirmation: a prompt on interactive runs, `--yes` on agent runs.
+ * Revokes an access key of the logged-in wallet on its network through the wallet app, after
+ * confirmation: a prompt on interactive runs, `--yes` on agent runs. The key must be stored for
+ * the wallet or, when created elsewhere, authorized for it on-chain. The command succeeds only
+ * once the chain shows the key revoked.
  */
 export async function revokeHandler(
   wallet: Wallet,
@@ -329,6 +342,7 @@ export async function revokeHandler(
       network: Network;
       noBrowser?: boolean | undefined;
     }) => RevokeProvider;
+    readKey?: OnChainKeyReader;
   } = {},
 ) {
   if (!isAddress(args.accessKey))
@@ -340,6 +354,8 @@ export async function revokeHandler(
   const accessKeyAddress = args.accessKey as Address;
   const walletAddress = account.address as Address;
   const selectedChainId = network.chainId;
+  const readKey = dependencies.readKey ?? readAccessKeyOnChain;
+  const target = { chainId: selectedChainId, walletAddress, accessKeyAddress };
   const output = {
     access_key: accessKeyAddress.toLowerCase(),
     wallet: walletAddress.toLowerCase(),
@@ -350,14 +366,26 @@ export async function revokeHandler(
   );
   const isRevoked = (candidate: WalletState["accessKeys"][number]) =>
     walletKeys.includes(candidate) && candidate.address.toLowerCase() === output.access_key;
-  // Only a key the wallet holds on this network is revoked, so a mistyped address is caught.
-  const key = walletKeys.find(isRevoked);
+  const stored = walletKeys.find(isRevoked);
+  // A key created on another device is not stored here, but the chain shows whether it belongs
+  // to the wallet. A mistyped address is neither stored nor authorized.
+  const onChain = stored ? undefined : await readKey(target);
+  const key =
+    stored ??
+    (onChain?.status === "published"
+      ? {
+          address: output.access_key,
+          access: output.wallet,
+          chainId: selectedChainId,
+          expiry: onChain.expiry,
+        }
+      : undefined);
   if (!key)
     throw usageError(
-      `Access key ${output.access_key} is not configured for wallet ${output.wallet} on ${network.name}. ${
+      `Access key ${output.access_key} is not stored for wallet ${output.wallet} on ${network.name} or authorized for it on-chain. ${
         walletKeys.length
-          ? `Its keys on ${network.name}: ${walletKeys.map((candidate) => candidate.address.toLowerCase()).join(", ")}.`
-          : `It has no keys on ${network.name}.`
+          ? `Its stored keys on ${network.name}: ${walletKeys.map((candidate) => candidate.address.toLowerCase()).join(", ")}.`
+          : `It has no stored keys on ${network.name}.`
       }`,
     );
 
@@ -400,16 +428,24 @@ export async function revokeHandler(
       throw usageError("Access key not revoked.");
   }
 
+  // A key that is not published yet is authorized and revoked in one transaction; revoking it
+  // alone would leave its signed authorization publishable.
+  const keyAuthorization =
+    stored &&
+    localAccessKeyStatus(stored) === "pending" &&
+    (await readKey(target)).status === "missing"
+      ? stored.keyAuthorization
+      : undefined;
   const provider = (dependencies.createProvider ?? createProvider)({
     network,
     noBrowser: options.browser === false,
   });
-  await revokeAccessKeyThroughWallet({
-    provider,
-    walletAddress,
-    accessKeyAddress,
-    chainId: selectedChainId,
-  });
+  await revokeAccessKeyThroughWallet({ provider, ...target, keyAuthorization });
+  // The wallet app can return without revoking, for a key it could not find on-chain.
+  if ((await readKey(target)).status !== "revoked")
+    throw networkError(
+      `The wallet app returned, but access key ${output.access_key} is not revoked on ${network.name}, so nothing was removed locally. Rerun the command to retry.`,
+    );
 
   const accessKeys = state.accessKeys.filter((candidate) => !isRevoked(candidate));
   const localKeyRemoved = accessKeys.length !== state.accessKeys.length;
@@ -432,6 +468,7 @@ async function revokeAccessKeyThroughWallet(options: {
   walletAddress: Address;
   accessKeyAddress: Address;
   chainId: number;
+  keyAuthorization: unknown;
 }) {
   const activeChainId = Number(await options.provider.request({ method: "eth_chainId" }));
   if (activeChainId !== options.chainId)
@@ -440,8 +477,43 @@ async function revokeAccessKeyThroughWallet(options: {
     );
   await options.provider.request({
     method: "wallet_revokeAccessKey",
-    params: [{ address: options.walletAddress, accessKeyAddress: options.accessKeyAddress }],
+    params: [
+      // Encoded as the SDK encodes the request, from the stored signed authorization.
+      z.encode(Rpc.wallet_revokeAccessKey.parameters, {
+        address: options.walletAddress,
+        accessKeyAddress: options.accessKeyAddress,
+        ...(options.keyAuthorization
+          ? { keyAuthorization: options.keyAuthorization as never }
+          : {}),
+      }),
+    ],
   });
+}
+
+async function readAccessKeyOnChain(options: {
+  chainId: number;
+  walletAddress: Address;
+  accessKeyAddress: Address;
+}): Promise<OnChainKey> {
+  const metadata = await Actions.accessKey
+    .getMetadata(createTempoPublicClient(options.chainId), {
+      account: options.walletAddress,
+      accessKey: options.accessKeyAddress,
+    })
+    .catch(() => {
+      throw networkError(
+        `Unable to read access key ${options.accessKeyAddress.toLowerCase()} on-chain. Check RPC connectivity (TEMPO_RPC_URL).`,
+      );
+    });
+  return {
+    status: metadata.isRevoked
+      ? "revoked"
+      : metadata.address.toLowerCase() === options.accessKeyAddress.toLowerCase()
+        ? "published"
+        : "missing",
+    // Zero means the key never expires.
+    expiry: metadata.expiry > 0n ? Number(metadata.expiry) : undefined,
+  };
 }
 
 export async function debugHandler(options: { network?: string | undefined }) {

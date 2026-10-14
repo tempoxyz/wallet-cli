@@ -106,7 +106,7 @@ For credit payments, use `--amount-cents` as the direct payment amount or the ma
 - If response indicates payment/funding limit issues, report clearly and stop. Check `tempo wallet whoami --mach` and offer `tempo wallet fund --mach --no-browser --no-wait --format json` to fund from another device. Review token-specific access-key limits before retrying.
 - After multi-request workflows, check remaining balance with `tempo wallet whoami`.
 - Wallet results with a follow-up step include `instruction` and `_next`. Run `_next.argv` as given (`_next.command` is the shell-quoted form), but only after the user approves any spend, transfer, or revocation it performs.
-- Revocation cannot be undone. Run `tempo wallet revoke <ACCESS_KEY> --dry-run` to show the key, wallet, network, limits, and expiry, then run its `_next` (which adds `--yes`) only after the user approves. Without `--yes`, an agent run returns `E_USAGE` with that command as its `cta`. Only the logged-in wallet's keys on the selected network can be revoked; another key returns `E_USAGE` listing the wallet's keys.
+- Revocation cannot be undone. Run `tempo wallet revoke <ACCESS_KEY> --dry-run` to show the key, wallet, network, limits, and expiry, then run its `_next` (which adds `--yes`) only after the user approves. Without `--yes`, an agent run returns `E_USAGE` with that command as its `cta`. Only the logged-in wallet's keys on the selected network can be revoked: keys stored on this host, or keys from another device that the chain shows authorized for the wallet. Any other address returns `E_USAGE` listing the wallet's stored keys. If it returns `E_NETWORK` because the chain does not show the key revoked, the local key is kept; report it to the user before retrying.
 
 ### Rules
 
