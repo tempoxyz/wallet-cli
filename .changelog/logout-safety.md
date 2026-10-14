@@ -2,7 +2,7 @@
 wallet-cli: minor
 ---
 
-`tempo wallet logout --network <network>` (or `TEMPO_WALLET_NETWORK`) logs out of that network only: it removes the network's access keys and a pending login for it, keeps the wallet while another network still has keys, and moves the wallet's network there. Without a network, logout still logs out of every network and now reports `scope: "all"`.
+`tempo wallet logout --network <network>` (or `TEMPO_WALLET_NETWORK`) logs out of that network only: it removes the network's access keys and a pending login for it, keeps the wallet while it still has its own keys on another network, and moves the wallet's network there. Without a network, logout still logs out of every network and now reports `scope: "all"`.
 
 `--revoke` revokes each removed key on-chain through the wallet app before removing it, on the network the wallet is logged in on; a logout that also covers keys on another network is refused with `E_USAGE` naming the network logout to run first. A key the chain does not show revoked is kept with the wallet, and the command fails naming it. Without `--revoke`, the output notes that removed keys stay authorized on-chain until they expire.
 

@@ -106,11 +106,11 @@ export async function refreshHandler(
 /**
  * Logs out of `network` (`--network` or `TEMPO_WALLET_NETWORK`), or of every network without one,
  * and cancels a pending login for the networks logged out. Accounts are not stored per network,
- * so logging out of one network removes its access keys and keeps the wallet while another
- * network has keys. With `revoke`, each key is first revoked on-chain through the wallet app; a
- * key the chain does not show revoked is kept, with the wallet, and the command fails. Logging
- * out while stored sessions hold unspent deposits, or with `revoke`, needs confirmation: a prompt
- * on interactive runs, `--yes` on agent runs.
+ * so logging out of one network removes its access keys and keeps the wallet while it has its own
+ * keys on another network. With `revoke`, each key is first revoked on-chain through the wallet
+ * app; a key the chain does not show revoked is kept, with the wallet, and the command fails.
+ * Logging out while stored sessions hold unspent deposits, or with `revoke`, needs confirmation:
+ * a prompt on interactive runs, `--yes` on agent runs.
  */
 export async function logoutHandler(
   options: {
@@ -305,19 +305,20 @@ export async function logoutHandler(
 }
 
 /**
- * The store after logging out of `network`, or of every network without one. The wallet stays
- * while another network has keys, and the store's chain, the one the wallet app acts on, moves
- * off the network logged out to a network where the active wallet still has keys.
+ * The store after logging out of `network`, or of every network without one. The active wallet
+ * stays while it has its own keys on another network, and the store's chain, the one the wallet
+ * app acts on, moves off the network logged out to one of those; otherwise the wallet is removed
+ * and only other wallets' keys on other networks are kept.
  */
 function loggedOutState(state: WalletState, network: Network | undefined): WalletState {
   if (!network) return emptyWalletState();
   const accessKeys = state.accessKeys.filter((key) => key.chainId !== network.chainId);
-  if (accessKeys.length === 0) return emptyWalletState();
+  const active = state.accounts[state.activeAccount ?? 0];
+  const kept =
+    active && accessKeys.find((key) => key.access.toLowerCase() === active.address.toLowerCase());
+  if (!kept) return { ...emptyWalletState(), accessKeys };
   if (storedChainId(state) !== network.chainId) return { ...state, accessKeys };
-  const active = state.accounts[state.activeAccount ?? 0]?.address.toLowerCase();
-  const chainId = (accessKeys.find((key) => key.access.toLowerCase() === active) ?? accessKeys[0]!)
-    .chainId;
-  return { ...state, accessKeys, chainId };
+  return { ...state, accessKeys, chainId: kept.chainId };
 }
 
 /** Cancels the pending login when it is for a network logged out. */

@@ -38,6 +38,7 @@ const testnet = { name: "testnet", chainId: 42431 } as const;
 const key = walletState().accessKeys[0]!;
 const key2 = { ...key, address: testAccessKey2, privateKey: testPrivateKey2 };
 const testnetKey = { ...key2, chainId: testnet.chainId };
+const otherWalletKey = { ...testnetKey, access: testWallet2 };
 const bothNetworks = walletState({ accessKeys: [key, testnetKey] });
 const notRevoked =
   "removed locally but not revoked, so authorized on-chain until expiry (use --revoke to revoke)";
@@ -187,6 +188,27 @@ describe("logout scope", () => {
         message: `logged out of testnet; wallet disconnected; 1 access key ${notRevoked}`,
       },
       after: { accounts: [], accessKeys: [] },
+    },
+    {
+      name: "the wallet's only network when another wallet keeps a key elsewhere",
+      state: walletState({ accessKeys: [key, otherWalletKey] }),
+      options: { network: "mainnet" },
+      result: {
+        disconnected: true,
+        keys: [removed(key)],
+        message: `logged out of mainnet; wallet disconnected; 1 access key ${notRevoked}`,
+      },
+      after: { accounts: [], accessKeys: [otherWalletKey] },
+    },
+    {
+      name: "the active wallet's only network when another stored account keeps a key elsewhere",
+      state: walletState({
+        accounts: [{ address: testWallet }, { address: testWallet2 }],
+        accessKeys: [key, otherWalletKey],
+      }),
+      options: { network: "mainnet" },
+      result: { disconnected: true, keys: [removed(key)] },
+      after: { accounts: [], accessKeys: [otherWalletKey] },
     },
     {
       name: "the stored network of a wallet without keys",
