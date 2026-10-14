@@ -98,7 +98,9 @@ so instead of a rerun it points at `tempo wallet sessions list`. Invalid amounts
 the HTTP request. The cap
 cannot be disabled; pass a larger `--max-spend` instead.
 Capped recurring subscriptions are rejected because a per-period authorization cannot enforce
-a cumulative cap, so the default cap does not apply to them.
+a cumulative cap, so the default cap does not apply to them: `--payment-intent auto` can still
+accept a subscription offer. Set `--max-spend`, or pass `--payment-intent charge` or `session`,
+to refuse subscriptions.
 
 Every `tempo wallet` and `tempo request` command selects its network the same way:
 `--network`/`-n` (anywhere on the command line), then `TEMPO_WALLET_NETWORK`, then the
