@@ -376,26 +376,69 @@ it.each<{
   expect(JSON.parse(await readFile(meta, "utf8")).payment).toEqual(row.payment);
 });
 
-it.each([
-  { name: "an unpaid request", challenge: undefined, status: 200 },
-  { name: "a zero-amount proof", challenge: offer("charge", { amount: "0" }), status: 200 },
-  { name: "a paid request answered with an HTTP error", challenge: offer("charge"), status: 500 },
-])("reports no receipt for $name", async ({ challenge, status }) => {
+it.each<{
+  name: string;
+  challenge?: Challenge.Challenge;
+  status?: number;
+  receipt?: string;
+  code?: string;
+}>([
+  { name: "an unpaid request" },
+  { name: "a zero-amount proof", challenge: offer("charge", { amount: "0" }) },
+  {
+    name: "a paid request answered with an HTTP error",
+    challenge: offer("charge"),
+    status: 500,
+    code: "E_HTTP",
+  },
+  {
+    name: "a session whose server receipt cannot be stored",
+    challenge: offer("session"),
+    receipt: "not-a-valid-receipt",
+    code: "E_PAYMENT_OUTCOME_UNKNOWN",
+  },
+])("reports no receipt for $name", async ({ challenge, status, receipt, code }) => {
   const home = await useTempHome();
   await writeWalletState(walletState());
   const origin = challenge
-    ? await service({ challenge, paidStatus: status, receipt: chargeReceipt(txHash) })
+    ? await service({ challenge, paidStatus: status, receipt: receipt ?? chargeReceipt(txHash) })
     : await listen((_req, res) => res.end("paid"));
   const meta = join(home, "meta.json");
   const io = { stdout: capture(), stderr: capture() };
 
   const result = runRequest(["--write-meta", meta, `${origin}/paid`], io);
 
-  if (status >= 400) await expect(result).rejects.toMatchObject({ code: "E_HTTP" });
+  if (code) await expect(result).rejects.toMatchObject({ code });
   else await result;
   expect(io.stdout.text()).toBe("paid");
   expect(io.stderr.text()).toBe("");
   expect(JSON.parse(await readFile(meta, "utf8"))).not.toHaveProperty("payment");
+});
+
+it("keeps the receipt in --write-meta when the paid body fails to arrive", async () => {
+  const home = await useTempHome();
+  await writeWalletState(walletState());
+  const origin = await listen((req, res) => {
+    if (!req.headers.authorization) {
+      res.writeHead(402, { "www-authenticate": Challenge.serialize(offer("charge")) });
+      res.end("Payment Required");
+      return;
+    }
+    res.writeHead(200, { "payment-receipt": chargeReceipt(txHash) });
+    res.flushHeaders();
+    setTimeout(() => res.destroy(), 10);
+  });
+  const meta = join(home, "meta.json");
+  const stderr = capture();
+
+  await expect(
+    runRequest(["--write-meta", meta, `${origin}/paid`], { stdout: capture(), stderr }),
+  ).rejects.toMatchObject({ code: "E_PAYMENT_OUTCOME_UNKNOWN" });
+  expect(stderr.text()).toBe("");
+  expect(JSON.parse(await readFile(meta, "utf8")).payment).toEqual({
+    ...charged,
+    tx_hash: txHash,
+  });
 });
 
 // The actual CLI signs a voucher for the stored session, so this runs without mocks.
