@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cliBundle } from "./cli-bundle.js";
 import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
@@ -20,6 +20,11 @@ afterEach(() => {
 });
 
 describe("MCP tools", () => {
+  // Subprocesses inherit HOME, so the service directory cache stays out of the real wallet dir.
+  beforeEach(async () => {
+    await useTempHome();
+  });
+
   it("accepts a direct credits recipient through MCP", async () => {
     await useTempHome();
     await writeWalletState(walletState());

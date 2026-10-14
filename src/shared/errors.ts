@@ -60,7 +60,7 @@ export const errorCodes = {
   E_LIMIT_EXCEEDED: {
     exitCode: 4,
     retryable: false,
-    description: "The amount exceeds a spending limit or --max-spend.",
+    description: "The amount exceeds a spending limit, --max-spend, or a reviewed swap bound.",
   },
   E_INSUFFICIENT_FUNDS: {
     exitCode: 4,

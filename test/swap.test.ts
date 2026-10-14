@@ -1,3 +1,5 @@
+import { decodeFunctionData, erc20Abi, formatUnits, type Hex } from "viem";
+import { Abis } from "viem/tempo";
 import { describe, expect, it, vi } from "vitest";
 
 import { swapTokens } from "../src/commands/swap.js";
@@ -207,5 +209,128 @@ describe("swapTokens", () => {
     ).catch((value: unknown) => value);
 
     expectUsageError(error, "Insufficient USDC.e balance: need up to 10, have 9");
+  });
+
+  it.each([
+    { name: "a stricter minimum output", options: { "min-amount-out": "9.76" }, bound: 9_760_000n },
+    { name: "a looser minimum output", options: { "min-amount-out": "9.7" }, bound: 9_751_000n },
+    {
+      name: "a minimum output at the quote",
+      options: { "min-amount-out": "9.8" },
+      bound: 9_800_000n,
+    },
+    {
+      name: "a stricter maximum input",
+      options: { "exact-out": true, "max-amount-in": "10.12" },
+      bound: 10_120_000n,
+    },
+    {
+      name: "a looser maximum input",
+      options: { "exact-out": true, "max-amount-in": "10.2" },
+      bound: 10_150_500n,
+    },
+    {
+      name: "a maximum input at the quote",
+      options: { "exact-out": true, "max-amount-in": "10.1" },
+      bound: 10_100_000n,
+    },
+  ])("submits the stricter of slippage and $name", async ({ options, bound }) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const exactOut = "exact-out" in options;
+
+    for (const mode of [{ "dry-run": true }, { yes: true }]) {
+      const runtime = dependencies();
+      const result = await swapTokens(
+        {
+          args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
+          options: { "slippage-bps": 50, ...options, ...mode },
+        },
+        runtime,
+      );
+      const [approve, swap] = result.calls;
+      const { args } = decodeFunctionData({ abi: Abis.stablecoinDex, data: swap!.data as Hex });
+
+      expect(args[3]).toBe(bound);
+      expect(result[exactOut ? "max_amount_in" : "min_amount_out"]).toBe(formatUnits(bound, 6));
+      if (exactOut)
+        expect(decodeFunctionData({ abi: erc20Abi, data: approve!.data as Hex }).args[1]).toBe(
+          bound,
+        );
+      if ("yes" in mode)
+        expect(runtime.submit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            calls: [
+              expect.objectContaining({ data: approve!.data }),
+              expect.objectContaining({ data: swap!.data }),
+            ],
+          }),
+        );
+      expect(runtime.submit).toHaveBeenCalledTimes("yes" in mode ? 1 : 0);
+    }
+  });
+
+  it.each([
+    {
+      options: { "min-amount-out": "9.81" },
+      message:
+        "Quote moved: 10 USDC.e now returns 9.8 pathUSD, below --min-amount-out 9.81. Rerun --dry-run without --min-amount-out to review a new quote.",
+    },
+    {
+      options: { "exact-out": true, "max-amount-in": "10.09" },
+      message:
+        "Quote moved: 10 pathUSD now costs 10.1 USDC.e, above --max-amount-in 10.09. Rerun --dry-run without --max-amount-in to review a new quote.",
+    },
+  ])("refuses a fresh quote worse than $options", async ({ options, message }) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+
+    for (const mode of [{ "dry-run": true }, { yes: true }]) {
+      const runtime = dependencies();
+      const error = await swapTokens(
+        {
+          args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
+          options: { "slippage-bps": 50, ...options, ...mode },
+        },
+        runtime,
+      ).catch((value: unknown) => value);
+
+      expect(error).toMatchObject({ code: "E_LIMIT_EXCEEDED", exitCode: 4, message });
+      expect(runtime.submit).not.toHaveBeenCalled();
+    }
+  });
+
+  const boundError = (flag: string) =>
+    `Invalid ${flag}: expected a positive amount with at most 6 decimals`;
+
+  it.each([
+    ...["0", "0.000000", "abc", "-1", "", " 1", "1.", "1e3", "1.1234567"].flatMap((value) => [
+      [{ "min-amount-out": value }, boundError("--min-amount-out")] as const,
+      [{ "exact-out": true, "max-amount-in": value }, boundError("--max-amount-in")] as const,
+    ]),
+    [
+      { "exact-out": true, "min-amount-out": "9" },
+      "--min-amount-out applies to exact-input swaps; use --max-amount-in with --exact-out",
+    ] as const,
+    [
+      { "max-amount-in": "11" },
+      "--max-amount-in applies to --exact-out swaps; use --min-amount-out instead",
+    ] as const,
+  ])("rejects bound %j before quoting", async (options, message) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const runtime = dependencies();
+
+    const error = await swapTokens(
+      {
+        args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
+        options: { "dry-run": true, "slippage-bps": 50, ...options },
+      },
+      runtime,
+    ).catch((value: unknown) => value);
+
+    expectUsageError(error, message);
+    expect(runtime.getBuyQuote).not.toHaveBeenCalled();
+    expect(runtime.getSellQuote).not.toHaveBeenCalled();
   });
 });
