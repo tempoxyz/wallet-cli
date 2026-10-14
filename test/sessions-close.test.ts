@@ -1,9 +1,12 @@
-import { Challenge } from "mppx";
+import { createServer } from "node:http";
+
+import { Challenge, Credential } from "mppx";
 import { decodeFunctionData, type Hex } from "viem";
 import { Channel as TempoChannel } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  createCredential: vi.fn(),
   getLogs: vi.fn(),
   readContract: vi.fn(),
   request: vi.fn(),
@@ -19,11 +22,43 @@ vi.mock("viem", async (importOriginal) => ({
   })),
 }));
 
+// A paid request signs its session credential through this stub and sees a funded wallet.
+vi.mock("mppx/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("mppx/client")>();
+  return {
+    ...actual,
+    Mppx: {
+      ...actual.Mppx,
+      create: () => ({
+        createCredential: mocks.createCredential,
+        transport: {
+          setCredential: (init: RequestInit, credential: string) => ({
+            ...init,
+            headers: { authorization: credential },
+          }),
+        },
+      }),
+    },
+  };
+});
+
+vi.mock("viem/tempo", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("viem/tempo")>();
+  return {
+    ...actual,
+    Actions: {
+      ...actual.Actions,
+      token: { ...actual.Actions.token, getBalance: async () => ({ amount: 1_000_000n }) },
+    },
+  };
+});
+
 vi.mock("../src/provider.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/provider.js")>()),
   createProvider: vi.fn(() => ({ request: mocks.request })),
 }));
 
+import { runRequest } from "../src/commands/request.js";
 import { closeSessions, dryRunCloseSessions, listSessions } from "../src/commands/sessions.js";
 import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
 import { escrowAbi, mainnetEscrow, moderatoEscrow, usdcToken } from "../src/shared/constants.js";
@@ -58,6 +93,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  mocks.createCredential.mockReset();
   mocks.getLogs.mockReset();
   mocks.readContract.mockReset();
   mocks.request.mockReset();
@@ -378,8 +414,108 @@ describe("--cooperative", () => {
           until: ".pending == 0 and .failed == 0",
         },
       });
-      expect(stored?.channel_id).toBe(channelId);
-      expect(stored?.descriptor_json).toBe(v2 ? v2Session.descriptor_json : undefined);
+      expect(stored).toMatchObject({
+        channel_id: channelId,
+        descriptor_json: v2 ? v2Session.descriptor_json : undefined,
+        state: "closing",
+        close_requested_at: now,
+        grace_ready_at: 0,
+      });
+    }
+  });
+
+  it("requests the close on-chain when a rerun finds the channel the server accepted still open", async () => {
+    await writeWalletState(stateFor(mainnet));
+    await saveSession(channelId, mainnet, { challenge_echo: sessionChallenge() });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const authorized = (init?.headers as Record<string, string> | undefined)?.Authorization;
+        return new Response(null, { status: authorized ? 204 : 503 });
+      }),
+    );
+    mockEscrow({ [channelId]: escrowChannel() });
+    mocks.request.mockResolvedValue({ transactionHash: `0x${"c".repeat(64)}`, status: "0x1" });
+
+    await closeSessions({ cooperative: true, target: channelId });
+    const rerun = await closeSessions({ target: channelId });
+
+    expect(rerun.results).toEqual([
+      { channel_id: channelId, status: "pending", origin, remaining_secs: 900 },
+    ]);
+    expect(withdrawals()).toEqual([{ functionName: "requestClose", args: [channelId] }]);
+    expect(await readSessionRecordsByOrigin(origin)).toEqual([
+      expect.objectContaining({
+        state: "closing",
+        close_requested_at: now,
+        grace_ready_at: now + 900,
+      }),
+    ]);
+  });
+
+  it("opens a new channel for a later payment instead of reusing one whose close was requested", async () => {
+    await writeWalletState(stateFor(mainnet));
+    const challenge = Challenge.from({
+      id: "reuse-test",
+      realm: "service",
+      method: "tempo",
+      intent: "session",
+      request: {
+        amount: "1000",
+        currency: usdcToken,
+        methodDetails: { chainId: mainnet, sessionProtocol: "v2" },
+        recipient: testWallet2,
+      },
+    });
+    const paid: string[] = [];
+    const server = createServer((request, response) => {
+      const authorization = request.headers.authorization;
+      if (authorization) paid.push(authorization);
+      else response.setHeader("www-authenticate", Challenge.serialize(challenge));
+      response.statusCode = authorization ? 200 : 402;
+      response.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw Error("Missing server address");
+    const service = `http://127.0.0.1:${address.port}`;
+    try {
+      await saveSession(channelId, mainnet, {
+        ...v2Session,
+        origin: service,
+        request_url: `${service}/session`,
+        challenge_echo: JSON.stringify(challenge),
+      });
+      // The server accepts the close but the precompile still holds the deposit.
+      mockEscrow({ [channelId]: precompileState(10_000n) });
+      mocks.createCredential.mockResolvedValue(
+        Credential.serialize({ challenge, payload: { channelId: otherChannelId } }),
+      );
+
+      const close = await closeSessions({ cooperative: true, target: channelId });
+      await runRequest([`${service}/paid`], { stdout: { write: () => true } as never });
+
+      expect(close.results).toEqual([
+        { channel_id: channelId, status: "requested", origin: service },
+      ]);
+      // The payment opened a channel rather than signing a voucher on the one being closed.
+      expect(mocks.createCredential).toHaveBeenCalledOnce();
+      expect(mocks.createCredential.mock.calls[0]![1]).toEqual({ depositRaw: expect.any(String) });
+      expect(paid).toHaveLength(2);
+      expect(
+        (await readSessionRecordsByOrigin(service)).map(({ channel_id, state }) => ({
+          channel_id,
+          state,
+        })),
+      ).toEqual(
+        expect.arrayContaining([
+          { channel_id: channelId, state: "closing" },
+          { channel_id: otherChannelId, state: "active" },
+        ]),
+      );
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });

@@ -441,7 +441,18 @@ async function closeOneSession(
       escrowContract: escrow,
       network: options.network,
     });
-    if (!closed?.finalized) return closeResult(record, "requested");
+    if (!closed?.finalized) {
+      // Marked closing, the channel is no longer reused, so a later payment to the same service
+      // opens a new channel instead of signing a higher voucher on this one. Only an on-chain
+      // close request starts a grace period.
+      await updateChannelCloseState({
+        channelId: record.channel_id,
+        closeRequestedAt: closeRequestedAt || now,
+        graceReadyAt: closeRequestedAt ? closeRequestedAt + gracePeriod : 0,
+        state: "closing",
+      });
+      return closeResult(record, "requested");
+    }
     await deleteChannelRecord(record.channel_id);
     return closeResult(record, "closed");
   }
