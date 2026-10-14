@@ -24,7 +24,7 @@ import {
   type Network,
 } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
-import { escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
+import { escapeInvisible, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { version } from "../shared/constants.js";
 import {
   type CreditsAuthorization,
@@ -58,7 +58,7 @@ export async function transferTokens(options: {
       `missing ${missing.map((name) => `<${name}>`).join(", ")}; usage: tempo wallet transfer <amount> <token> <to>`,
     );
   }
-  const amount = parseTransferAmount(args.amount);
+  const amount = parseTokenAmount(args.amount, tokenDecimals());
   if (!isAddress(args.token)) throw usageError("Invalid token address: expected a full 0x address");
   if (!isAddress(args.to))
     throw usageError("Invalid recipient address: expected a full 0x address");
@@ -135,18 +135,6 @@ export async function transferTokens(options: {
     tx_hash: txHash,
     ...outputBase,
   };
-}
-
-function parseTransferAmount(value: string) {
-  const decimals = tokenDecimals();
-  const amount = new RegExp(`^\\d+(?:\\.\\d{1,${decimals}})?$`).test(value)
-    ? parseUnits(value, decimals)
-    : 0n;
-  if (amount <= 0n)
-    throw usageError(
-      `Invalid amount: expected a positive decimal with at most ${decimals} decimals`,
-    );
-  return amount;
 }
 
 export async function transferMach(options: {
