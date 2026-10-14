@@ -92,7 +92,10 @@ commands stay on testnet without repeating the flag. `tempo`/`mainnet` and
 `tempo-moderato`/`moderato`/`testnet` are aliases. Unknown networks and payment challenges for
 a different chain are rejected before payment. Network-scoped JSON output reports `chain_id`
 and `network`. `tempo wallet keys list` shows keys on every network, each labeled with its own
-chain and wallet, unless `--network` or `TEMPO_WALLET_NETWORK` selects one.
+chain and wallet, unless `--network` or `TEMPO_WALLET_NETWORK` selects one; balances are queried
+only for the logged-in wallet's keys, so other stored wallets are never sent to an RPC endpoint.
+When `--private-key` or `TEMPO_PRIVATE_KEY` pays, the logged-in wallet's network does not apply:
+the network is `--network`, then `TEMPO_WALLET_NETWORK`, then mainnet.
 
 When a server offers both reusable sessions and one-time charges, choose an intent explicitly:
 

@@ -235,13 +235,27 @@ it("leaves the wallet store unread for requests that need no payment", async () 
   expect(output).toBe("free");
 });
 
-it.each([
-  { source: "the logged-in chain", env: undefined, args: [], chain: 42431 },
+// The wallet is logged in on testnet; a private key pays on its own, unrelated to that login.
+it.each<{ source: string; env?: string; privateKey?: string; args: string[]; chain: number }>([
+  { source: "the logged-in chain", args: [], chain: 42431 },
   { source: "TEMPO_WALLET_NETWORK", env: "mainnet", args: [], chain: 4217 },
   { source: "a -n flag after the URL", env: "mainnet", args: ["-n", "testnet"], chain: 42431 },
+  { source: "the default for --private-key", args: ["--private-key", testPrivateKey], chain: 4217 },
+  {
+    source: "the default for TEMPO_PRIVATE_KEY",
+    privateKey: testPrivateKey,
+    args: [],
+    chain: 4217,
+  },
+  {
+    source: "-n with TEMPO_PRIVATE_KEY",
+    privateKey: testPrivateKey,
+    args: ["-n", "testnet"],
+    chain: 42431,
+  },
 ])(
   "selects chain $chain from $source through the actual request CLI",
-  async ({ env, args, chain }) => {
+  async ({ env, privateKey, args, chain }) => {
     await useTempHome();
     await writeWalletState(walletState({ chainId: 42431 }));
     const endpoint = await service([offer(4217), offer(42431)]);
@@ -249,7 +263,10 @@ it.each([
       execFile(
         process.execPath,
         [cliBundle("request"), "--dry-run", "--payment-intent", "charge", endpoint.url, ...args],
-        { env: { ...process.env, TEMPO_WALLET_NETWORK: env }, timeout: 30_000 },
+        {
+          env: { ...process.env, TEMPO_WALLET_NETWORK: env, TEMPO_PRIVATE_KEY: privateKey },
+          timeout: 30_000,
+        },
         (error, stdout, stderr) => {
           if (error) reject(new Error(`${error.message}: ${stderr}`));
           else resolve(stdout);

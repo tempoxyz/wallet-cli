@@ -402,18 +402,25 @@ it.each(chainlessSelections.filter(({ accepted }) => !accepted))(
   },
 );
 
-it("keys list labels and prices each key from its own chain and wallet", async () => {
+it("keys list labels each key from its own record and prices only the active wallet's keys", async () => {
   await useTempHome();
+  const otherWalletKey = { ...testnetKey, address: "0x3333333333333333333333333333333333333333" };
   await saveWalletState(
     walletState({
       chainId: 4217,
-      accessKeys: [walletState().accessKeys[0]!, { ...testnetKey, access: testWallet2 }],
+      accessKeys: [
+        walletState().accessKeys[0]!,
+        testnetKey,
+        { ...otherWalletKey, access: testWallet2 },
+      ],
     }),
   );
   mocks.readContract.mockResolvedValueOnce(1_000_000n).mockResolvedValueOnce(2_000_000n);
 
-  expect(await keysHandler()).toMatchObject({
-    total: 2,
+  const result = await keysHandler();
+
+  expect(result).toMatchObject({
+    total: 3,
     keys: [
       {
         address: testAccessKey.toLowerCase(),
@@ -425,12 +432,21 @@ it("keys list labels and prices each key from its own chain and wallet", async (
       {
         address: testAccessKey2.toLowerCase(),
         ...testnet,
-        wallet_address: testWallet2.toLowerCase(),
+        wallet_address: testWallet.toLowerCase(),
         token: moderatoToken,
         balance: "2",
       },
+      {
+        address: otherWalletKey.address,
+        ...testnet,
+        wallet_address: testWallet2.toLowerCase(),
+        token: moderatoToken,
+        balance: null,
+      },
     ],
   });
+  // Another stored wallet's key is listed without disclosing that wallet to an RPC endpoint.
+  expect(result.keys[2]).not.toHaveProperty("balance_error");
   expect(vi.mocked(createPublicClient).mock.calls.map(([options]) => options.chain?.id)).toEqual([
     4217, 42431,
   ]);
@@ -440,21 +456,30 @@ it("keys list labels and prices each key from its own chain and wallet", async (
   ]);
   expect(mocks.readContract.mock.calls.map(([call]) => [call.address, call.args])).toEqual([
     [usdc, [testWallet]],
-    [moderatoToken, [testWallet2]],
+    [moderatoToken, [testWallet]],
   ]);
 });
 
-it("keys list caches balances per chain, wallet, and token", async () => {
+it.each([
+  { name: "with no logged-in wallet", accounts: [] },
+  { name: "for another wallet", accounts: [{ address: testWallet2 }] },
+])("keys list queries no balances $name", async ({ accounts }) => {
+  await useTempHome();
+  await saveWalletState(walletState({ accounts }));
+
+  const result = await keysHandler();
+
+  expect(result.keys).toMatchObject([{ wallet_address: testWallet.toLowerCase(), balance: null }]);
+  expect(result.keys[0]).not.toHaveProperty("balance_error");
+  expect(mocks.readContract).not.toHaveBeenCalled();
+});
+
+it("keys list caches balances per chain and token", async () => {
   await useTempHome();
   const key = walletState().accessKeys[0]!;
   await saveWalletState(
     walletState({
-      accessKeys: [
-        key,
-        { ...key, address: testAccessKey2 },
-        { ...key, chainId: 42431 },
-        { ...key, access: testWallet2 },
-      ],
+      accessKeys: [key, { ...key, address: testAccessKey2 }, { ...key, chainId: 42431 }],
     }),
   );
 
@@ -463,10 +488,9 @@ it("keys list caches balances per chain, wallet, and token", async () => {
   expect(mocks.readContract.mock.calls.map(([call]) => call.args)).toEqual([
     [testWallet],
     [testWallet],
-    [testWallet2],
   ]);
   expect(vi.mocked(createPublicClient).mock.calls.map(([options]) => options.chain?.id)).toEqual([
-    4217, 42431, 4217,
+    4217, 42431,
   ]);
 });
 

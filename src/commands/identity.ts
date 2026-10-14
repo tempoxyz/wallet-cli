@@ -137,6 +137,7 @@ export async function keysHandler(options: { network?: string | undefined } = {}
   const network = explicitNetwork(options.network);
 
   return await currentKeysOutput({
+    walletAddress: state.accounts[state.activeAccount ?? 0]?.address ?? null,
     accessKeys: network
       ? state.accessKeys.filter((key) => key.chainId === network.chainId)
       : state.accessKeys,
@@ -439,13 +440,23 @@ export async function currentWhoamiOutput(options: {
   };
 }
 
-/** Labels each key, and queries its balance, from the key's own chain and wallet. */
-export async function currentKeysOutput(options: { accessKeys: WalletState["accessKeys"] }) {
+/**
+ * Labels each key from its own chain and wallet. Balances are queried only for the active
+ * wallet's keys, so the RPC never learns the other stored wallets; theirs report `null`.
+ */
+export async function currentKeysOutput(options: {
+  walletAddress: string | null;
+  accessKeys: WalletState["accessKeys"];
+}) {
   const balances = new Map<string, TokenBalance | null>();
   const keys = [];
   for (const key of options.accessKeys) {
+    if (key.access.toLowerCase() !== options.walletAddress?.toLowerCase()) {
+      keys.push(currentKeyOutput(key, undefined));
+      continue;
+    }
     const token = key.limits?.[0]?.token ?? tokenAddress(key.chainId);
-    const balanceKey = `${key.chainId}:${key.access}:${token}`.toLowerCase();
+    const balanceKey = `${key.chainId}:${token}`.toLowerCase();
     const balance = balances.has(balanceKey)
       ? (balances.get(balanceKey) ?? null)
       : await tokenBalance({ chain: key.chainId, token, walletAddress: key.access });
@@ -459,7 +470,11 @@ export async function currentKeysOutput(options: { accessKeys: WalletState["acce
   };
 }
 
-function currentKeyOutput(key: WalletState["accessKeys"][number], balance: TokenBalance | null) {
+/** `balance` is `undefined` when it was not queried and `null` when the query failed. */
+function currentKeyOutput(
+  key: WalletState["accessKeys"][number],
+  balance: TokenBalance | null | undefined,
+) {
   const limit = key.limits?.[0];
   const spendingMode = permissionMode(key.limits, key.permissionSemantics);
   const callMode = permissionMode(key.scopes, key.permissionSemantics);
@@ -473,7 +488,7 @@ function currentKeyOutput(key: WalletState["accessKeys"][number], balance: Token
     token: token.toLowerCase(),
     balance:
       balance && balance.token.toLowerCase() === token.toLowerCase() ? balance.formatted : null,
-    ...(!balance ? { balance_error: balanceQueryError } : {}),
+    ...(balance === null ? { balance_error: balanceQueryError } : {}),
     spending_limit: {
       mode: spendingMode,
       unlimited: spendingMode === "unknown" ? null : spendingMode === "unrestricted",

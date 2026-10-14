@@ -38,6 +38,7 @@ import {
   parseRequestArgs,
   preparePaymentChallenge,
   resolvePaymentIdentity,
+  resolvePaymentNetwork,
   resolveMaxSpend,
 } from "./request.js";
 
@@ -182,18 +183,19 @@ export async function transferMach(options: {
   const maxSpend =
     flags["max-spend"] ??
     (cents !== undefined ? formatUnits(BigInt(cents) * 10_000n, 6) : undefined);
-  const network = await resolveNetwork(flags.network);
   const requestOptions = parseRequestArgs([
     "--payment-token",
     "MACH",
     "--payment-intent",
     "charge",
-    "--network",
-    network.name,
+    ...(flags.network ? ["--network", flags.network] : []),
     ...(maxSpend !== undefined ? ["--max-spend", maxSpend] : []),
     ...(flags["dry-run"] ? ["--dry-run"] : []),
     "https://mpp.invalid",
   ]);
+  // TEMPO_PRIVATE_KEY can pay here too, so resolve the network the way request payments do.
+  const network = await resolvePaymentNetwork(requestOptions);
+  requestOptions.network = network.name;
   if (requestOptions.maxSpend === undefined && !flags["dry-run"])
     throw usageError(
       "MACH transfer requires --max-spend (or TEMPO_MAX_SPEND); --amount-cents is a legacy spending-cap alias",

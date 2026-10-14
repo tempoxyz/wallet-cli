@@ -76,7 +76,7 @@ import {
   isPaymentCapableAccessKey,
   localAccessKeyStatus,
 } from "../wallet/access-key.js";
-import { loadWalletState, type WalletState } from "../wallet/store.js";
+import { emptyWalletState, loadWalletState, type WalletState } from "../wallet/store.js";
 
 export type RequestOptions = {
   allowInsecurePayment?: boolean | undefined;
@@ -500,7 +500,7 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
 
   if (response.status === 402) {
     // Only payment depends on the network, so free requests never read the wallet store.
-    options.network = (await resolveNetwork(options.network)).name;
+    options.network = (await resolvePaymentNetwork(options)).name;
     if (options.dryRun) {
       const { challenge } = preparePaymentChallenge(response, options, request.url);
       const signer = privateKeySigner(options);
@@ -1102,6 +1102,17 @@ async function ensureProviderAccounts(provider: Parameters<typeof connect>[0], n
   const accounts = (await provider.request({ method: "eth_accounts" })) as unknown[];
   if (accounts.length > 0) return;
   await connect(provider, network);
+}
+
+/**
+ * The network a payment uses. A private-key payer is unrelated to the logged-in wallet, so that
+ * wallet's chain never applies: only `--network`, `TEMPO_WALLET_NETWORK`, or the mainnet default.
+ */
+export function resolvePaymentNetwork(options: RequestOptions) {
+  return resolveNetwork(
+    options.network,
+    privateKeySigner(options) ? emptyWalletState() : undefined,
+  );
 }
 
 /** executeRequest resolves this before payment; mainnet only backs direct callers. */

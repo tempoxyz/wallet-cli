@@ -101,7 +101,9 @@ describe("wallet store", () => {
         }),
       );
       const state = await loadWalletState();
-      const result = keysOutput.parse(await currentKeysOutput({ accessKeys: state.accessKeys }));
+      const result = keysOutput.parse(
+        await currentKeysOutput({ walletAddress: testWallet, accessKeys: state.accessKeys }),
+      );
       expect(result.keys[0]).toMatchObject({
         spending_limit: { mode, unlimited, limit, remaining: null, spent: null },
         call_permissions: mode,
@@ -129,6 +131,7 @@ describe("wallet store", () => {
       const state = await loadWalletState();
       expect(state.accessKeys[0]?.permissionSemantics).toBeUndefined();
       const result = await currentKeysOutput({
+        walletAddress: testWallet,
         accessKeys: state.accessKeys,
       });
       expect(result.keys[0]).toMatchObject({
@@ -731,6 +734,7 @@ limit = "100000000"
 
   it("keys output includes all spending limits, periods, scopes, and local status", async () => {
     const result = await currentKeysOutput({
+      walletAddress: testWallet,
       accessKeys: [
         {
           ...walletState().accessKeys[0]!,
@@ -784,6 +788,7 @@ limit = "100000000"
 
   it("keys output preserves explicit empty scopes", async () => {
     const result = await currentKeysOutput({
+      walletAddress: testWallet,
       accessKeys: [
         {
           ...walletState().accessKeys[0]!,
@@ -856,6 +861,7 @@ limit = "100000000"
     },
   ])("keys output reports $name local key status", async ({ overrides, status }) => {
     const result = await currentKeysOutput({
+      walletAddress: testWallet,
       accessKeys: [{ ...walletState().accessKeys[0]!, ...overrides }],
     });
 
@@ -1023,6 +1029,7 @@ limit = "100000000"
     await updateAccessKeyHandler({ limit: "250", token: usdc }, () => ({ request }));
     const state = await loadWalletState();
     const result = await currentKeysOutput({
+      walletAddress: testWallet,
       accessKeys: state.accessKeys,
     });
     expect(result.keys[0]).toMatchObject({
