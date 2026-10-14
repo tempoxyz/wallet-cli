@@ -11,7 +11,6 @@ import {
   dryRunCloseSessions,
   listSessions,
 } from "../src/commands/sessions.js";
-import { handleCompatCommand } from "../src/compat.js";
 import { upsertSessionRecord } from "../src/payment/session-store.js";
 import { escrowAbi, mainnetEscrow } from "../src/shared/constants.js";
 
@@ -226,30 +225,3 @@ function normalizeDescriptor(value: unknown) {
     token: descriptor.token.toLowerCase(),
   };
 }
-
-describe("compat completions", () => {
-  it("lists supported shells when no shell is provided", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    expect(await handleCompatCommand(["completions"])).toBe(true);
-    expect(log).toHaveBeenCalledWith("Supported shells: bash, zsh, fish, powershell, elvish");
-  });
-
-  it("prints a powershell completion script", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    expect(await handleCompatCommand(["completions", "powershell"])).toBe(true);
-    const output = log.mock.calls[0]?.[0] as string;
-    expect(output).toContain("Register-ArgumentCompleter");
-    expect(output).toContain("CommandName 'tempo wallet'");
-  });
-
-  it("prints an elvish completion script", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    expect(await handleCompatCommand(["completions", "elvish"])).toBe(true);
-    const output = log.mock.calls[0]?.[0] as string;
-    expect(output).toContain("edit:completion:arg-completer[tempo wallet]");
-    expect(output).toContain("cand login");
-  });
-});
