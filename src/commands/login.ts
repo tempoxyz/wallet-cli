@@ -146,12 +146,28 @@ async function finishLogin(pending: PendingLogin, network: Network, options: Pol
   if (result === "network")
     return commandError(
       "E_NETWORK",
-      `Could not reach the wallet to check the login. Run '${status}' to retry.`,
+      `Could not get an answer from the wallet about the login. Run '${status}' to retry.`,
       status,
       { retryable: true },
     );
+  if (result === "superseded") {
+    // Another process started a new login or logged out; this one no longer counts.
+    const current = await loadPendingLogin();
+    if (!current)
+      return commandError(
+        "E_USAGE",
+        `The login was cancelled by logout. Run '${login}' to start a new one.`,
+        login,
+      );
+    const newer = continuationCommand(["wallet", "login", "status"], parseNetwork(current.network));
+    return commandError(
+      "E_USAGE",
+      `A newer login replaced this one. Run '${newer}' to finish it.`,
+      newer,
+    );
+  }
 
-  await clearPendingLogin();
+  await clearPendingLogin(pending.registration.device_code);
   if (result === "denied")
     return commandError(
       "E_LOGIN_DENIED",
@@ -181,7 +197,11 @@ async function pollLogin(pending: PendingLogin, network: Network, options: PollO
 
   const keystore = Keystore.webCryptoP256({ extractable: true });
   let attempts = 0;
-  let stopped: "denied" | "expired" | "exhausted" | "network" | undefined;
+  let stopped: "denied" | "expired" | "exhausted" | "network" | "superseded" | undefined;
+  const stop = (reason: NonNullable<typeof stopped>) => {
+    stopped = reason;
+    return new StopExchange();
+  };
   const provider = createLoginProvider({
     network,
     keystore: { ...keystore, createKey: async () => pending.accessKey },
@@ -190,13 +210,14 @@ async function pollLogin(pending: PendingLogin, network: Network, options: PollO
     async fetch(input, init) {
       if (!isTokenRequest(input)) return Response.json(pending.registration);
       const body = { ...tokenRequest(init), code_verifier: pending.codeVerifier };
-      const response = await fetch(input, { ...init, body: JSON.stringify(body) }).catch(
-        (error: unknown) => {
-          stopped = "network";
-          throw error;
-        },
-      );
+      const response = await fetch(input, { ...init, body: JSON.stringify(body) }).catch(() => {
+        throw stop("network");
+      });
       attempts++;
+      // A new login or a logout since this poll began voids its answer, approval included.
+      if (!(await isCurrent(pending))) throw stop("superseded");
+      // Anything but a token (200) or an OAuth error (400) is a server or proxy failure.
+      if (response.status !== 200 && response.status !== 400) throw stop("network");
       const error =
         response.status === 400
           ? getRecord(
@@ -211,10 +232,8 @@ async function pollLogin(pending: PendingLogin, network: Network, options: PollO
       if (
         (error === "authorization_pending" || error === "slow_down") &&
         attempts >= (options.maxAttempts ?? Infinity)
-      ) {
-        stopped = "exhausted";
-        throw new StopExchange();
-      }
+      )
+        throw stop("exhausted");
       return response;
     },
   });
@@ -230,6 +249,11 @@ async function pollLogin(pending: PendingLogin, network: Network, options: PollO
 
 /** Thrown from the SDK's device-code `fetch` to end the exchange; it never reaches the user. */
 class StopExchange extends Error {}
+
+/** Whether `pending` is still the saved login: no new login replaced it and no logout cleared it. */
+async function isCurrent(pending: PendingLogin) {
+  return (await loadPendingLogin())?.registration.device_code === pending.registration.device_code;
+}
 
 function isTokenRequest(input: string | URL | Request) {
   return new URL(input instanceof Request ? input.url : input).pathname.endsWith("/token");
@@ -264,8 +288,10 @@ function expiresAt(pending: PendingLogin) {
 
 function pendingLoginOutput(pending: PendingLogin, network: Network) {
   const { code, url } = loginPrompt(pending);
-  // Whole seconds, at the wallet's cadence; polling faster earns `slow_down` replies.
-  const interval = Math.ceil(pending.registration.interval ?? defaultIntervalSeconds);
+  // Whole seconds, at the wallet's cadence (polling faster earns `slow_down` replies), with the
+  // SDK's RFC 8628 default for a missing or nonpositive interval.
+  const advertised = pending.registration.interval ?? 0;
+  const interval = advertised > 0 ? Math.ceil(advertised) : defaultIntervalSeconds;
   return {
     status: "pending" as const,
     verification_url: url,

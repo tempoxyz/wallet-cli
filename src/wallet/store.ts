@@ -244,7 +244,16 @@ export async function savePendingLogin(pending: PendingLogin) {
   await writePrivateFile(path, JSON.stringify(pending, null, 2));
 }
 
-export async function clearPendingLogin() {
+/**
+ * Removes the pending login. With `deviceCode`, removes it only while it is still that login,
+ * so a process finishing an older login leaves a newer one in place.
+ */
+export async function clearPendingLogin(deviceCode?: string | undefined) {
+  if (
+    deviceCode !== undefined &&
+    (await loadPendingLogin())?.registration.device_code !== deviceCode
+  )
+    return;
   await unlink(pendingLoginPath()).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });

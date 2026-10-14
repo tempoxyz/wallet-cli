@@ -38,6 +38,7 @@ import {
 import { supportedShells } from "../completions.js";
 import { connect, createProvider } from "../provider.js";
 import {
+  clearPendingLogin,
   emptyWalletState,
   loadWalletState,
   saveWalletState,
@@ -97,6 +98,8 @@ export async function logoutHandler() {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   await saveWalletState(emptyWalletState());
+  // A pending login must not bring the wallet back after logout.
+  await clearPendingLogin();
   return {
     logged_in: Boolean(activeAccount),
     disconnected: Boolean(activeAccount),

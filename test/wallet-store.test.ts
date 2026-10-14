@@ -4,8 +4,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  clearPendingLogin,
   emptyWalletState,
+  loadPendingLogin,
   loadWalletState,
+  pendingLoginPath,
+  savePendingLogin,
   saveWalletState,
   walletStorePath,
 } from "../src/wallet/store.js";
@@ -436,6 +440,35 @@ limit = "100000000"
         chainId: 4217,
       }),
     );
+  });
+});
+
+describe("pending login file", () => {
+  const pending = (deviceCode: string) => ({
+    network: "testnet" as const,
+    registration: {
+      device_code: deviceCode,
+      user_code: "ABCDEFGH",
+      verification_uri: "https://wallet.tempo.xyz/api/auth/device/verify",
+    },
+    codeVerifier: "verifier",
+    accessKey: { handle: { kind: "webcrypto-p256" }, publicKey: "0x04" as const },
+    expiresAt: 2_000_000_000,
+  });
+
+  it.each([
+    { name: "any login", clear: undefined, left: undefined },
+    { name: "the saved login", clear: "device-2", left: undefined },
+    { name: "a login it replaced", clear: "device-1", left: "device-2" },
+  ])("clearing $name leaves $left", async ({ clear, left }) => {
+    await useTempHome();
+    await savePendingLogin(pending("device-1"));
+    await savePendingLogin(pending("device-2"));
+    await expectMode(pendingLoginPath(), 0o600);
+
+    await clearPendingLogin(clear);
+
+    expect((await loadPendingLogin())?.registration.device_code).toBe(left);
   });
 });
 

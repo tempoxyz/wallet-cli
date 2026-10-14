@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { logoutHandler } from "../src/commands/identity.js";
 import { loginHandler, loginStatusHandler } from "../src/commands/login.js";
 import {
   loadPendingLogin,
@@ -84,6 +85,30 @@ describe("login", () => {
     expect(pending!.expiresAt - Math.floor(Date.now() / 1000)).toBeGreaterThan(590);
     expect((await stat(pendingLoginPath())).mode & 0o777).toBe(0o600);
   });
+
+  it.each([
+    { advertised: 5, interval: 5 },
+    { advertised: 12, interval: 12 },
+    { advertised: 0.5, interval: 1 },
+    // The SDK polls every five seconds when the wallet advertises no usable interval.
+    { advertised: 0, interval: 5 },
+    { advertised: -1, interval: 5 },
+  ])(
+    "points the continuation at a $interval second interval for an advertised $advertised",
+    async ({ advertised, interval }) => {
+      await useTempHome();
+      useHost(["approve"], { interval: advertised });
+
+      expect(await loginHandler({ network: "testnet", browser: false, wait: false })).toMatchObject(
+        {
+          _next: {
+            command: `tempo wallet login status --interval ${interval} --network testnet`,
+            poll_interval_seconds: interval,
+          },
+        },
+      );
+    },
+  );
 
   it("waits for approval when asked to, and stores the account and key", async () => {
     await useTempHome();
@@ -192,6 +217,19 @@ describe("login status", () => {
       },
       kept: true,
     },
+    {
+      name: "an HTTP failure",
+      answers: ["pending", "unavailable"],
+      options: {},
+      polls: 2,
+      result: {
+        code: "E_NETWORK",
+        exitCode: 3,
+        retryable: true,
+        cta: { commands: [{ command: "tempo wallet login status --network testnet" }] },
+      },
+      kept: true,
+    },
   ] as const)("ends on $name", async ({ answers, options, polls, result, kept }) => {
     await useTempHome();
     const host = useHost(answers);
@@ -238,6 +276,64 @@ describe("login status", () => {
       cta: { commands: [{ command: "tempo wallet login status --interval 5 --network testnet" }] },
     });
     expect(await loadPendingLogin()).toBeDefined();
+  });
+
+  it.each([
+    {
+      name: "a new login",
+      replace: () => loginHandler({ network: "mainnet", browser: false, wait: false }),
+      message:
+        "A newer login replaced this one. Run 'tempo wallet login status --network mainnet' to finish it.",
+      cta: { commands: [{ command: "tempo wallet login status --network mainnet" }] },
+      left: "device-2",
+    },
+    {
+      name: "logout",
+      replace: () => logoutHandler(),
+      message:
+        "The login was cancelled by logout. Run 'tempo wallet login --network testnet' to start a new one.",
+      cta: loginCta("testnet"),
+      left: undefined,
+    },
+  ])(
+    "drops an approval that arrives after $name, keeping what replaced it",
+    async ({ replace, message, cta, left }) => {
+      await useTempHome();
+      let approved = false;
+      const host = deviceCodeHost(() => (approved ? "approve" : "pending"));
+      vi.stubGlobal("fetch", vi.fn(host.fetch));
+      await loginHandler({ network: "testnet", browser: false, wait: false });
+
+      const status = loginStatusHandler({});
+      await vi.waitFor(() => expect(host.polls.length).toBeGreaterThan(0));
+      await replace();
+      approved = true;
+
+      expect(await status).toEqual({
+        code: "E_USAGE",
+        message,
+        exitCode: 2,
+        retryable: false,
+        cta,
+      });
+      expect(host.polls.at(-1)?.device_code).toBe("device-1");
+      expect((await loadWalletState()).accounts).toEqual([]);
+      expect((await loadPendingLogin())?.registration.device_code).toBe(left);
+    },
+  );
+
+  it("lets logout cancel a login that has not been polled yet", async () => {
+    await useTempHome();
+    const host = useHost(["approve"]);
+    await loginHandler({ network: "testnet", browser: false, wait: false });
+    await logoutHandler();
+
+    expect(await loginStatusHandler({ network: "testnet" })).toMatchObject({
+      code: "E_USAGE",
+      cta: loginCta("testnet"),
+    });
+    expect(host.polls).toEqual([]);
+    expect((await loadWalletState()).accounts).toEqual([]);
   });
 
   it("ends a login whose code has expired without polling", async () => {

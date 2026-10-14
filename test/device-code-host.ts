@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { testWallet } from "./helpers.js";
 
 /** How the host answers one `/token` poll. */
-export type TokenAnswer = "pending" | "slow_down" | "approve" | "deny" | "expire";
+export type TokenAnswer = "pending" | "slow_down" | "approve" | "deny" | "expire" | "unavailable";
 
 const tokenErrors = {
   pending: "authorization_pending",
@@ -51,6 +51,7 @@ export function deviceCodeHost(
         return Response.json({ error: "invalid_grant" }, { status: 400 });
       const result = answer(polls.length);
       if (result === "approve") return Response.json(approval(registration));
+      if (result === "unavailable") return new Response("Service Unavailable", { status: 503 });
       return Response.json({ error: tokenErrors[result] }, { status: 400 });
     }
     // Chain RPC and other reads see an empty result.
