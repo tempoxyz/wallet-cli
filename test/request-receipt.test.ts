@@ -135,7 +135,10 @@ afterEach(async () => {
   );
 });
 
-function offer(intent: "charge" | "session", request: Record<string, unknown> = {}) {
+function offer(
+  intent: "charge" | "session" | "subscription",
+  request: Record<string, unknown> = {},
+) {
   return Challenge.from({
     id: `receipt-${intent}`,
     realm: "local",
@@ -300,6 +303,7 @@ const charged = {
   channel_id: null,
   deposit_locked: null,
   cumulative: null,
+  subscription: null,
   payer: testWallet,
   chain_id: 4217,
   network: "tempo",
@@ -360,6 +364,23 @@ it.each<{
     payload: directTransfer,
     payment: charged,
     stderr: "Paid 0.01 USDC.e\n",
+  },
+  {
+    name: "a subscription, as a recurring authorization rather than a payment",
+    challenge: offer("subscription", {
+      amount: "25000000",
+      periodCount: "1",
+      periodUnit: "week",
+      subscriptionExpires: "2027-01-01T00:00:00.000Z",
+    }),
+    payment: {
+      ...charged,
+      intent: "subscription",
+      amount: "25",
+      subscription: { period: "1 week", expires: "2027-01-01T00:00:00.000Z" },
+    },
+    stderr:
+      "Authorized a subscription of up to 25 USDC.e every 1 week until 2027-01-01T00:00:00.000Z\n",
   },
   {
     name: "a private-key payer",
@@ -552,6 +573,20 @@ it.each([
       channel_id: `${channelId}\\u202e`,
     },
     stderr: `Paid 0.006 ${usdc.toLowerCase()}\\u200b · session ${channelId}\\u202e (0.006 of 0 ${usdc.toLowerCase()}\\u200b deposit used)\n`,
+  },
+  {
+    name: "a subscription with invisible characters in its terms",
+    payment: {
+      intent: "subscription",
+      amount: 6000n,
+      token: usdc,
+      subscription: { period: `1 week${rlo}`, expires: `2027-01-01T00:00:00.000Z${zwsp}` },
+    },
+    receipt: {
+      subscription: { period: "1 week\\u202e", expires: "2027-01-01T00:00:00.000Z\\u200b" },
+    },
+    stderr:
+      "Authorized a subscription of up to 0.006 USDC.e every 1 week\\u202e until 2027-01-01T00:00:00.000Z\\u200b\n",
   },
 ])("builds the receipt of $name", ({ payment, receipt, stderr }) => {
   const built = paymentReceipt({ ...payment, network, payer: testWallet, txHash: null });

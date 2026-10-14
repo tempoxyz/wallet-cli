@@ -1860,7 +1860,8 @@ async function persistSessionReceipt(
 }
 
 /**
- * Records the receipt of a paid charge. A zero-amount charge is a signed proof of the payer, not
+ * Records the receipt of a paid charge, or of a subscription's recurring authorization (its
+ * period and expiry come from the offer). A zero-amount charge is a signed proof of the payer, not
  * a payment, so it has none. A MACH settlement debits MACH from the wallet, whether `--mach`
  * required it or the SDK chose it for a machine-enabled offer. A pushed charge names the
  * transaction the wallet sent; only a pulled one, which the server broadcasts, takes the hash
@@ -1881,6 +1882,7 @@ function recordChargeReceipt(
   const payload = credentialPayload(credential);
   const mach =
     deployment && (isMachPaymentToken(options.paymentToken) || runsMachRoute(payload, deployment));
+  const request = challenge.request as Record<string, unknown>;
   paymentReceipts.set(
     response,
     paymentReceipt({
@@ -1893,6 +1895,13 @@ function recordChargeReceipt(
         payload.type === "hash"
           ? transactionHash(payload.hash)
           : receiptTxHash(response, challenge.intent),
+      subscription:
+        challenge.intent === "subscription"
+          ? {
+              period: `${stringValue(request.periodCount)} ${stringValue(request.periodUnit)}`,
+              expires: stringValue(request.subscriptionExpires),
+            }
+          : undefined,
     }),
   );
 }

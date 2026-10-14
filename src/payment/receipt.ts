@@ -13,11 +13,13 @@ export type PaymentReceipt = ReturnType<typeof paymentReceipt>;
  * units, as `--max-spend` counts them; `symbol` and `decimals` are known only for listed tokens.
  * The session fields are `null` for a charge. A newly opened session adds `instruction` and
  * `_next` naming the command that requests its close; rerun after the close grace period, it
- * withdraws the unspent deposit. Strings the server chose are shown with visible escapes.
+ * withdraws the unspent deposit. A subscription authorizes `amount` every `subscription.period`
+ * until `subscription.expires` rather than paying it once. Strings the server chose are shown
+ * with visible escapes.
  */
 export function paymentReceipt(payment: {
   intent: string;
-  /** Raw amount of `token` this request paid. */
+  /** Raw amount of `token` this request paid, or a subscription authorizes per period. */
   amount: bigint;
   /** The token the payment debits: MACH for a MACH settlement. */
   token: string;
@@ -26,8 +28,10 @@ export function paymentReceipt(payment: {
   txHash: string | null;
   /** The channel a session payment used, its raw deposit, and its raw cumulative voucher. */
   session?: { channelId: string; deposit: bigint; cumulative: bigint; reused: boolean } | undefined;
+  /** A subscription's billing period (e.g. `1 week`) and when its authorization expires. */
+  subscription?: { period: string; expires: string } | undefined;
 }) {
-  const { network, session } = payment;
+  const { network, session, subscription } = payment;
   const listed = knownToken(payment.token, network.chainId);
   const token = escapeInvisible(payment.token.toLowerCase());
   const channelId = session ? escapeInvisible(session.channelId) : null;
@@ -43,6 +47,12 @@ export function paymentReceipt(payment: {
     channel_id: channelId,
     deposit_locked: deposit,
     cumulative: session ? tokenUnits(session.cumulative) : null,
+    subscription: subscription
+      ? {
+          period: escapeInvisible(subscription.period),
+          expires: escapeInvisible(subscription.expires),
+        }
+      : null,
     payer: payment.payer,
     ...networkFields(network.chainId),
     ...(session && !session.reused && channelId
@@ -58,6 +68,8 @@ export function paymentReceipt(payment: {
 /** The stderr summary of `receipt`: one line, plus the close command for a new session. */
 export function receiptSummary(receipt: PaymentReceipt) {
   const label = receipt.symbol ?? receipt.token;
+  if (receipt.subscription)
+    return `Authorized a subscription of up to ${receipt.amount} ${label} every ${receipt.subscription.period} until ${receipt.subscription.expires}\n`;
   const paid = `Paid ${receipt.amount} ${label}`;
   if (receipt._next)
     return `${paid} · opened a session with ${receipt.deposit_locked} ${label} locked\nWhen done, request its close, then rerun after the grace period to withdraw the unspent deposit: ${receipt._next.command}\n`;
