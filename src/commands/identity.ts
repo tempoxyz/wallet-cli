@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises";
 import { Rpc, type Provider as CoreProvider } from "accounts";
 import { z } from "incur";
 import { erc20Abi, formatUnits, isAddress, parseUnits, toHex, type Address } from "viem";
@@ -183,16 +184,24 @@ export async function logoutHandler(
     );
   }
 
-  const sessions = await fundedSessions({
+  // Without sqlite3 the session store cannot be read, which is safe only when there is none.
+  const unreadable = `stored sessions in ${channelsDbPath()} could not be checked for unspent deposits because sqlite3 is not installed`;
+  const lookup = await fundedSessions({
     payers: [...state.accounts.map((account) => account.address), ...keys.map((key) => key.access)],
     chainId: network?.chainId,
-  }).catch((error: NodeJS.ErrnoException) => {
-    // Without sqlite3, no session could have been stored.
-    if (error.code === "ENOENT") return [];
-    throw error;
+  }).catch(async (error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+    return (await access(channelsDbPath()).then(
+      () => true,
+      () => false,
+    ))
+      ? undefined
+      : [];
   });
+  const sessions = lookup ?? [];
   const closeSteps = sessionCloseSteps(sessions);
   const reasons = [
+    ...(lookup === undefined ? [`The ${unreadable}.`] : []),
     ...(sessions.length > 0 ? [fundedSessionsReason(sessions, closeSteps)] : []),
     ...(options.revoke && keys.length > 0
       ? [`--revoke revokes ${count(keys.length, "access key")} on-chain, which cannot be undone.`]
@@ -273,6 +282,7 @@ export async function logoutHandler(
         : [
             `${count(keys.length, "access key")} removed locally but not revoked, so authorized on-chain until expiry (use --revoke to revoke)`,
           ]),
+    ...(lookup === undefined ? [unreadable] : []),
   ].join("; ");
   await saveWalletState(next);
   // A pending login must not bring the wallet back after logout.

@@ -430,18 +430,36 @@ describe("logout with sessions holding deposits", () => {
     expect(output).not.toHaveProperty("_next");
   });
 
-  it("logs out without a prompt when sqlite3 is not installed", async () => {
-    const home = await useTempHome();
-    await writeWalletState(walletState());
-    await mkdir(join(home, "bin"));
-    vi.stubEnv("PATH", join(home, "bin"));
-    const context = runContext(true);
+  it.each([
+    { name: "no session store exists", stored: false, options: {}, refused: false },
+    { name: "a session store exists", stored: true, options: {}, refused: true },
+    { name: "a session store exists and --yes is set", stored: true, options: { yes: true } },
+  ])(
+    "without sqlite3, logs out only with confirmation when $name",
+    async ({ stored, options, refused = false }) => {
+      await setup(walletState(), stored ? [session()] : []);
+      const bin = join(process.env.HOME!, "bin");
+      await mkdir(bin);
+      vi.stubEnv("PATH", bin);
+      const context = runContext(true);
 
-    const output = await logoutHandler({}, context);
+      const output = await logoutHandler(options, context);
 
-    expect(context.error).not.toHaveBeenCalled();
-    expect(output).toMatchObject({ was_logged_in: true, sessions: [] });
-  });
+      const unreadable = `stored sessions in ${join(process.env.HOME!, ".tempo", "wallet", "channels.db")} could not be checked for unspent deposits because sqlite3 is not installed`;
+      if (refused)
+        expect(output).toMatchObject({
+          code: "E_USAGE",
+          message: `Logging out of every network needs confirmation. The ${unreadable}. To log out anyway, run 'tempo wallet logout --yes'.`,
+        });
+      else {
+        const result = logoutOutput.parse(output);
+        expect(result).toMatchObject({ was_logged_in: true, sessions: [] });
+        // A logout confirmed without a readable store says the sessions went unchecked.
+        expect(result.message.endsWith(`; ${unreadable}`)).toBe(stored);
+      }
+      expect((await loadWalletState()).accounts).toEqual(refused ? [{ address: testWallet }] : []);
+    },
+  );
 });
 
 describe("logout --revoke", () => {
