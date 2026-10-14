@@ -89,7 +89,9 @@ either, the cap is 10 (about $10 in stablecoins). An offer above the cap is refu
 `E_LIMIT_EXCEEDED` in both preview and execution, before anything is signed, and the error's
 `cta` reruns the same command with the `--max-spend` it needs. That command shows
 credentials (`--private-key`, `--bearer`, `--user`, proxy credentials, and headers such as
-`Authorization` or `Cookie`) as `<redacted>`. A session deposit suggested
+`Authorization` or `Cookie`) as `<redacted>`. When a reused session is refused under
+`--payment-intent auto` and the server also offers a one-time charge within the cap, the
+`cta` suggests that charge as well. A session deposit suggested
 above the cap is lowered to the cap. For reusable sessions, execution also checks cumulative
 spending and top-ups against the cap. A top-up is refused after the request's voucher was sent,
 so instead of a rerun it points at `tempo wallet sessions list`. Invalid amounts fail before

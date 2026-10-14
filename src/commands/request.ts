@@ -863,6 +863,9 @@ async function payAndRetryRequest(
         paySessionAndRetryRequest(selectedResponse, request, options, sessionChallenge),
       );
     } catch (error) {
+      // A session refused by the cap still names a one-time charge within it.
+      if (options.paymentIntent === "auto" && error instanceof MaxSpendExceededError)
+        error.charge = chargeWithinCap(header, sessionChallenge, options);
       // Only payment failures fall back to a charge offer; other typed errors keep their code.
       if (
         options.paymentIntent === "auto" &&
@@ -1773,6 +1776,23 @@ export function chargeFallbackError(
   );
 }
 
+/** The cheapest matching one-time charge the server offered, when it fits the spending cap. */
+function chargeWithinCap(
+  header: string | null,
+  sessionChallenge: Challenge.Challenge,
+  options: RequestOptions,
+) {
+  const challenge = chargeChallengeFromHeader(header, sessionChallenge, options);
+  try {
+    const amount = challenge ? challengeAmount(challenge) : undefined;
+    if (amount !== undefined && amount <= parseUnits(spendCap(options), 6))
+      return formatTokenAmount(amount);
+  } catch {
+    // A malformed charge offer is no alternative.
+  }
+  return undefined;
+}
+
 function challengeAmount(challenge: Challenge.Challenge) {
   const amount = (challenge.request as Record<string, unknown>).amount;
   if (typeof amount === "string" && /^\d+$/.test(amount)) return BigInt(amount);
@@ -2152,6 +2172,8 @@ export class MaxSpendExceededError extends Errors.IncurError {
   readonly required: string;
   /** The network the payment would use. */
   readonly network: Network;
+  /** A one-time charge within the cap that the server also offered, when a session is refused. */
+  charge: string | undefined = undefined;
 
   constructor(required: bigint, options: RequestOptions) {
     const { exitCode, retryable } = errorCodes.E_LIMIT_EXCEEDED;

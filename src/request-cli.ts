@@ -154,7 +154,7 @@ const cli = Cli.create("tempo request", {
     } catch (caught) {
       if (!(caught instanceof MaxSpendExceededError)) throw caught;
       // incur drops the cta of thrown errors, so return the refusal through `error`.
-      const rerun = rerunArgs(argv);
+      const rerun = rerunArgs(argv, ["max-spend", "network"]);
       const command = continuationCommand(
         ["request", ...rerun, "--max-spend", caught.required],
         caught.network,
@@ -162,12 +162,29 @@ const cli = Cli.create("tempo request", {
       const replace = rerun.some((arg) => arg.includes(redacted))
         ? ` with each ${redacted} replaced by its original value`
         : "";
+      const commands: { command: string; description?: string }[] = [{ command }];
+      let message = `${caught.message}. To allow it, rerun${replace}: ${command}`;
+      if (caught.charge) {
+        const charge = continuationCommand(
+          [
+            "request",
+            ...rerunArgs(argv, ["max-spend", "network", "payment-intent"]),
+            "--max-spend",
+            caught.charge,
+            "--payment-intent",
+            "charge",
+          ],
+          caught.network,
+        );
+        commands.push({ command: charge, description: "one-time charge, not refundable" });
+        message += `. The server also offers a one-time charge of ${caught.charge}, which is not refundable: ${charge}`;
+      }
       return error({
         code: caught.code,
-        message: `${caught.message}. To allow it, rerun${replace}: ${command}`,
+        message,
         exitCode: caught.exitCode,
         retryable: caught.retryable,
-        cta: { commands: [{ command }] },
+        cta: { commands },
       });
     }
     return undefined;
@@ -288,14 +305,14 @@ const credentialOptions = new Set(["private-key", "bearer", "user"]);
 const credentialHeader = /auth|cookie|key|secret|token|pass|session/i;
 
 /**
- * The invocation's arguments for a rerun that sets its own `--max-spend` and `--network`. Values
- * are bound to their options as incur parses them, so `-n` in a stack such as `-sn testnet` is
+ * The invocation's arguments for a rerun that sets the `replaced` options itself. Values are
+ * bound to their options as incur parses them, so `-n` in a stack such as `-sn testnet` is
  * dropped while a value that looks like an option (`-d -n`) is kept. Credentials are replaced by
  * `<redacted>` so the suggestion never echoes them.
  */
-function rerunArgs(argv: readonly string[]) {
+function rerunArgs(argv: readonly string[], replaced: readonly string[]) {
   return bindOptionValues(argv, optionSpecs)
-    .filter((arg) => !/^--(?:max-spend|network)(?:=|$)/.test(arg))
+    .filter((arg) => !replaced.some((name) => arg === `--${name}` || arg.startsWith(`--${name}=`)))
     .map(redactCredential);
 }
 

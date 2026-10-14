@@ -1,13 +1,19 @@
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
+import { promisify } from "node:util";
 
 import { Challenge, Credential } from "mppx";
 import { privateKeyToAccount } from "viem/accounts";
-import { Channel as TempoChannel } from "viem/tempo";
+import { encodeFunctionResult } from "viem";
+import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { MaxSpendExceededError, runRequest } from "../src/commands/request.js";
 import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
+import { cliBundle } from "./cli-bundle.js";
 import { testPrivateKey, useTempHome } from "./helpers.js";
+
+const exec = promisify(execFile);
 
 const { credentialOptions, onChain } = vi.hoisted(() => ({
   credentialOptions: [] as unknown[],
@@ -89,35 +95,59 @@ afterEach(async () => {
   );
 });
 
-/** A 402 service; a paid request gets `paidStatus` and `paidBody`. */
+/**
+ * A 402 service, also offering a one-time `charge` when set; a paid request gets `paidStatus`
+ * and `paidBody`. Its `/rpc` reports a channel holding `onChain.deposit`.
+ */
 async function service(options: {
   intent: string;
   amount: string;
+  charge?: string | undefined;
   suggestedDeposit?: string | undefined;
   paidStatus?: number | undefined;
   paidBody?: string | undefined;
 }) {
   const seen: boolean[] = [];
-  const challenge = Challenge.from({
-    id: "spend-cap",
-    realm: "local",
-    method: "tempo",
-    intent: options.intent,
-    request: {
-      amount: options.amount,
-      currency: token,
-      recipient: payee,
-      methodDetails: {
-        chainId: 4217,
-        ...(options.intent === "session" ? { sessionProtocol: "v2" } : {}),
-      },
-      ...(options.suggestedDeposit ? { suggestedDeposit: options.suggestedDeposit } : {}),
-    },
-  });
-  const server = createServer((req, res) => {
+  const offer = (intent: string, amount: string) =>
+    Challenge.serialize(
+      Challenge.from({
+        id: `spend-cap-${intent}`,
+        realm: "local",
+        method: "tempo",
+        intent,
+        request: {
+          amount,
+          currency: token,
+          recipient: payee,
+          methodDetails: {
+            chainId: 4217,
+            ...(intent === "session" ? { sessionProtocol: "v2" } : {}),
+          },
+          ...(options.suggestedDeposit ? { suggestedDeposit: options.suggestedDeposit } : {}),
+        },
+      }),
+    );
+  const header = [
+    offer(options.intent, options.amount),
+    ...(options.charge ? [offer("charge", options.charge)] : []),
+  ].join(", ");
+  const server = createServer(async (req, res) => {
+    if (req.url === "/rpc") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const { id } = JSON.parse(body) as { id: number };
+      const result = encodeFunctionResult({
+        abi: TempoAbis.tip20ChannelReserve,
+        functionName: "getChannelState",
+        result: { settled: 0n, deposit: onChain.deposit, closeRequestedAt: 0 },
+      });
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
+      return;
+    }
     seen.push(Boolean(req.headers.authorization));
     if (!req.headers.authorization) {
-      res.writeHead(402, { "www-authenticate": Challenge.serialize(challenge) });
+      res.writeHead(402, { "www-authenticate": header });
       res.end("Payment Required");
       return;
     }
@@ -275,6 +305,35 @@ it.each([
   },
 );
 
+/** A reusable v2 session for `origin`, paid by the test key. */
+function storeSession(origin: string, deposit: bigint, cumulative: bigint) {
+  return upsertSessionRecord({
+    accepted_cumulative: cumulative,
+    authorized_signer: payer,
+    chain_id: 4217,
+    challenge_echo: "{}",
+    channel_id: channelId,
+    close_requested_at: 0,
+    created_at: 1,
+    cumulative_amount: cumulative,
+    deposit,
+    descriptor_json: JSON.stringify({ payer, payee, token }),
+    escrow_contract: TempoChannel.address.toLowerCase(),
+    grace_ready_at: 0,
+    last_used_at: 1,
+    network: "tempo",
+    origin,
+    payee,
+    payer,
+    request_url: `${origin}/paid`,
+    salt: "0x00",
+    server_spent: cumulative,
+    session_protocol: "v2",
+    state: "active",
+    token,
+  });
+}
+
 const topUpProblem = (requiredTopUp: string) =>
   JSON.stringify({ title: "Insufficient deposit", requiredTopUp });
 
@@ -294,6 +353,28 @@ it.each([
     name: "a voucher past the default cap",
     cumulative: 9_500_000n,
     refused: refused("10.5"),
+    signed: [],
+  },
+  {
+    name: "a voucher past the default cap, naming a one-time charge within it",
+    cumulative: 9_500_000n,
+    charge: "500000",
+    refused: { ...refused("10.5"), charge: "0.5" },
+    signed: [],
+  },
+  {
+    name: "a voucher past the default cap, with a one-time charge over it",
+    cumulative: 9_500_000n,
+    charge: "20000000",
+    refused: { ...refused("10.5"), charge: undefined },
+    signed: [],
+  },
+  {
+    name: "a voucher past the default cap under --payment-intent session",
+    cumulative: 9_500_000n,
+    charge: "500000",
+    args: ["--payment-intent", "session"],
+    refused: { ...refused("10.5"), charge: undefined },
     signed: [],
   },
   {
@@ -339,6 +420,7 @@ it.each([
     deposit = 10_000_000n,
     onChainDeposit = deposit,
     cumulative,
+    charge,
     args = [],
     paidStatus,
     paidBody,
@@ -350,34 +432,11 @@ it.each([
     const { origin } = await service({
       intent: "session",
       amount: "1000000",
+      charge,
       paidStatus,
       paidBody,
     });
-    await upsertSessionRecord({
-      accepted_cumulative: cumulative,
-      authorized_signer: payer,
-      chain_id: 4217,
-      challenge_echo: "{}",
-      channel_id: channelId,
-      close_requested_at: 0,
-      created_at: 1,
-      cumulative_amount: cumulative,
-      deposit,
-      descriptor_json: JSON.stringify({ payer, payee, token }),
-      escrow_contract: TempoChannel.address.toLowerCase(),
-      grace_ready_at: 0,
-      last_used_at: 1,
-      network: "tempo",
-      origin,
-      payee,
-      payer,
-      request_url: `${origin}/paid`,
-      salt: "0x00",
-      server_spent: cumulative,
-      session_protocol: "v2",
-      state: "active",
-      token,
-    });
+    await storeSession(origin, deposit, cumulative);
     const request = run(args, `${origin}/paid`);
 
     if (refused) {
@@ -392,3 +451,34 @@ it.each([
       expect((await readSessionRecordsByOrigin(origin))[0]?.cumulative_amount).toBe(cumulative);
   },
 );
+
+it("suggests raising the cap or a one-time charge for a reused session past it", async () => {
+  await useTempHome();
+  onChain.deposit = 10_000_000n;
+  const { origin, seen } = await service({
+    intent: "session",
+    amount: "1000000",
+    charge: "500000",
+  });
+  await storeSession(origin, 10_000_000n, 9_500_000n);
+  const url = `${origin}/paid`;
+  const result = await exec(process.execPath, [cliBundle("request"), "-j", "-X", "POST", url], {
+    env: { ...process.env, TEMPO_RPC_URL: `${origin}/rpc` },
+  }).catch((error: { stdout: string; stderr: string; code: number }) => error);
+
+  const raise = `tempo request -j --request=POST ${url} --max-spend 10.5 --network mainnet`;
+  const charge = `tempo request -j --request=POST ${url} --max-spend 0.5 --payment-intent charge --network mainnet`;
+  expect(JSON.parse(result.stderr)).toEqual({
+    code: "E_LIMIT_EXCEEDED",
+    message: `Payment max spend exceeded: max=10 (default) required=10.5. To allow it, rerun: ${raise}. The server also offers a one-time charge of 0.5, which is not refundable: ${charge}`,
+    retryable: false,
+    cta: {
+      description: "Suggested commands:",
+      commands: [
+        { command: raise },
+        { command: charge, description: "one-time charge, not refundable" },
+      ],
+    },
+  });
+  expect(seen).toEqual([false]);
+});
