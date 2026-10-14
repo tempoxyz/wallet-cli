@@ -42,6 +42,7 @@ import { transferCredits, transferTokens } from "../src/commands/transfer.js";
 import { loadWalletState, saveWalletState, type WalletState } from "../src/wallet/store.js";
 import { moderatoToken } from "../src/shared/constants.js";
 import {
+  readyWallet,
   testAccessKey,
   testAccessKey2,
   testPrivateKey2,
@@ -241,10 +242,10 @@ const networkCommands = [
   ...loggedOutCommands,
   {
     command: "transfer --dry-run",
-    run: (network?: string) =>
-      transferTokens({
+    run: async (network?: string) =>
+      transferTokens(await readyWallet(network), {
         args: { amount: "1", token: usdc, to: testWallet2 },
-        options: { network, "dry-run": true },
+        options: { "dry-run": true },
       }),
   },
   {
@@ -256,11 +257,12 @@ const networkCommands = [
   },
   {
     command: "swap --dry-run",
-    run: (network?: string) =>
+    run: async (network?: string) =>
       swapTokens(
+        await readyWallet(network),
         {
           args: { amount: "1", tokenIn: usdc, tokenOut: moderatoToken },
-          options: { network, "dry-run": true, "slippage-bps": 50 },
+          options: { "dry-run": true, "slippage-bps": 50 },
         },
         {
           getBalance: async () => 100_000_000n,
@@ -330,13 +332,18 @@ it.each(loggedOutCommands)("$command defaults to mainnet when logged out", async
 const keyManagementCommands = [
   {
     command: "revoke --dry-run",
-    run: (network?: string) =>
-      revokeHandler({ accessKey: testAccessKey2 }, { network, "dry-run": true }),
+    run: async (network?: string) =>
+      revokeHandler(await readyWallet(network), { accessKey: testAccessKey2 }, { "dry-run": true }),
   },
   {
     command: "keys update",
-    run: (network?: string) =>
-      updateAccessKeyHandler({ network, limit: "1" }, () => ({ request: vi.fn() }), vi.fn()),
+    run: async (network?: string) =>
+      updateAccessKeyHandler(
+        await readyWallet(network),
+        { limit: "1" },
+        () => ({ request: vi.fn() }),
+        vi.fn(),
+      ),
   },
 ];
 
@@ -361,7 +368,10 @@ it.each(
 )("$command rejects another chain from $source", async ({ env, flag, run }) => {
   await useTempHome();
   vi.stubEnv("TEMPO_WALLET_NETWORK", env);
-  await saveWalletState(walletState({ chainId: 42431, accessKeys: [testnetKey] }));
+  // A usable mainnet key leaves only the logged-in chain to reject the selection.
+  await saveWalletState(
+    walletState({ chainId: 42431, accessKeys: [testnetKey, walletState().accessKeys[0]!] }),
+  );
 
   await expect(run(flag)).rejects.toMatchObject({
     code: "E_USAGE",
@@ -393,7 +403,7 @@ it.each(chainlessSelections.filter(({ accepted }) => !accepted))(
   async ({ env, flag, run }) => {
     await useTempHome();
     vi.stubEnv("TEMPO_WALLET_NETWORK", env);
-    await writeStoreWithoutChain([walletState().accessKeys[0]!]);
+    await writeStoreWithoutChain([walletState().accessKeys[0]!, testnetKey]);
 
     await expect(run(flag)).rejects.toMatchObject({
       code: "E_USAGE",

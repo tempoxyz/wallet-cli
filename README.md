@@ -133,6 +133,8 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 
 Results with a follow-up step include `instruction` and `_next`. `swap`, `transfer`, and `revoke` dry runs point at the command that submits them, and the swap command pins the reviewed `--min-amount-out` (or `--max-amount-in` with `--exact-out`); a pending `sessions close` points at the withdrawal and sets `poll_interval_seconds` to the remaining grace period; `keys update` and a fresh `login` point at the command that confirms the result. `_next.argv` is authoritative and always ends with `--network` set to the network the command resolved, so it targets the same chain wherever it runs; `_next.command` is the same argv quoted for a POSIX shell.
 
+`transfer` (token and `--mach` payments), `swap`, `keys update`, `revoke`, and `sessions close`, dry runs included, first check for a logged-in wallet with a usable access key on the resolved network. Otherwise they exit 4 with `E_NOT_AUTHENTICATED`, `E_KEY_EXPIRED`, or `E_AUTH_REFRESH_REQUIRED` and a `cta` naming `tempo wallet login` or `tempo wallet refresh` with that `--network`. `transfer --credits` and `transfer --mach` paid by `TEMPO_PRIVATE_KEY` skip the check.
+
 ## Commands
 
 ### Wallet

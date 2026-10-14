@@ -17,6 +17,7 @@ import { escrowAbi, mainnetEscrow } from "../src/shared/constants.js";
 
 import {
   expectUsageError,
+  readyWallet,
   testAccessKey,
   testWallet,
   testWallet2,
@@ -42,9 +43,11 @@ describe("sessions utilities", () => {
 
   it("rejects a dry-run close with no target via E_USAGE", async () => {
     await useTempHome();
+    await writeWalletState(walletState());
+    const wallet = await readyWallet();
 
-    await expect(dryRunCloseSessions({})).rejects.toMatchObject({ code: "E_USAGE" });
-    await dryRunCloseSessions({}).catch((error) =>
+    await expect(dryRunCloseSessions(wallet, {})).rejects.toMatchObject({ code: "E_USAGE" });
+    await dryRunCloseSessions(wallet, {}).catch((error) =>
       expectUsageError(
         error,
         "Specify a URL, channel ID (0x...), or use --all/--orphaned/--finalize to close sessions",
@@ -54,14 +57,17 @@ describe("sessions utilities", () => {
 
   it("returns a bare channel target for a dry-run close of an unknown channel id", async () => {
     await useTempHome();
+    await writeWalletState(walletState());
 
-    expect(await dryRunCloseSessions({ target: validChannelId })).toEqual({
+    expect(await dryRunCloseSessions(await readyWallet(), { target: validChannelId })).toEqual({
       targets: [{ channel_id: validChannelId }],
     });
   });
 
   it("rejects cooperative combined with --all/--orphaned/--finalize via E_USAGE", async () => {
     await useTempHome();
+    await writeWalletState(walletState());
+    const wallet = await readyWallet();
 
     const message = "--cooperative cannot be combined with --all, --orphaned, or --finalize";
     for (const combo of [
@@ -69,7 +75,7 @@ describe("sessions utilities", () => {
       { cooperative: true, orphaned: true },
       { cooperative: true, finalize: true },
     ]) {
-      await dryRunCloseSessions(combo).then(
+      await dryRunCloseSessions(wallet, combo).then(
         () => {
           throw new Error("expected dryRunCloseSessions to throw");
         },
@@ -189,7 +195,10 @@ describe("sessions utilities", () => {
         token: usdc,
       });
 
-      const summary = await closeSessions({ cooperative: true, network: "tempo", target: origin });
+      const summary = await closeSessions(await readyWallet("tempo"), {
+        cooperative: true,
+        target: origin,
+      });
 
       expect(summary.results).toEqual([
         expect.objectContaining({ status: "error", error: "voucher rejected" }),

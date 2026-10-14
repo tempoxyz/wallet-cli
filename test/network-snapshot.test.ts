@@ -12,7 +12,7 @@ import { syncSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";
 import { transferCredits, transferTokens } from "../src/commands/transfer.js";
 import { moderatoToken } from "../src/shared/constants.js";
-import { testAccessKey, testWallet2, useTempHome, walletState } from "./helpers.js";
+import { readyWallet, testAccessKey, testWallet2, useTempHome, walletState } from "./helpers.js";
 
 const testnet = { chain_id: 42431, network: "tempo-moderato" };
 
@@ -47,13 +47,14 @@ it.each<{ command: string; run: () => Promise<unknown>; continues?: boolean }>([
   { command: "debug", run: () => debugHandler({}) },
   {
     command: "revoke --dry-run",
-    run: () => revokeHandler({ accessKey: testAccessKey }, { "dry-run": true }),
+    run: async () =>
+      revokeHandler(await readyWallet(), { accessKey: testAccessKey }, { "dry-run": true }),
     continues: true,
   },
   {
     command: "transfer --dry-run",
-    run: () =>
-      transferTokens({
+    run: async () =>
+      transferTokens(await readyWallet(), {
         args: { amount: "1", token: moderatoToken, to: testWallet2 },
         options: { "dry-run": true },
       }),
@@ -67,8 +68,9 @@ it.each<{ command: string; run: () => Promise<unknown>; continues?: boolean }>([
   {
     command: "swap --dry-run",
     continues: true,
-    run: () =>
+    run: async () =>
       swapTokens(
+        await readyWallet(),
         {
           args: { amount: "1", tokenIn: moderatoToken, tokenOut: testWallet2 },
           options: { "dry-run": true, "slippage-bps": 50 },

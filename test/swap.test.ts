@@ -7,6 +7,7 @@ import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { machToken } from "../src/shared/mach.js";
 import {
   expectUsageError,
+  readyWallet,
   testWallet,
   useTempHome,
   walletState,
@@ -68,6 +69,7 @@ describe("swapTokens", () => {
       for (const dryRun of [true, false]) {
         const runtime = decimalDependencies(decimalsIn, decimalsOut);
         const error = await swapTokens(
+          await readyWallet(),
           {
             args: { amount, tokenIn: usdcToken, tokenOut: moderatoToken },
             options: { "dry-run": dryRun, "exact-out": exactOut, "slippage-bps": 50, yes: true },
@@ -103,6 +105,7 @@ describe("swapTokens", () => {
       const runtime = decimalDependencies(decimalsIn, decimalsOut);
 
       const result = await swapTokens(
+        await readyWallet(),
         {
           args: { amount, tokenIn: usdcToken, tokenOut: moderatoToken },
           options: { "dry-run": true, "exact-out": exactOut, "slippage-bps": 50 },
@@ -135,9 +138,12 @@ describe("swapTokens", () => {
     ["testnet", 42431, "tokenOut"],
   ] as const)("rejects MACH on %s (chain %i, %s)", async (network, chain, side) => {
     await useTempHome();
-    await writeWalletState(walletState());
+    await writeWalletState(
+      walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, chainId: chain }] }),
+    );
     const runtime = dependencies();
     const error = await swapTokens(
+      await readyWallet(network),
       {
         args: {
           amount: "10",
@@ -145,7 +151,7 @@ describe("swapTokens", () => {
           tokenOut: moderatoToken,
           [side]: machToken(chain),
         },
-        options: { network, "dry-run": true, "slippage-bps": 50 },
+        options: { "dry-run": true, "slippage-bps": 50 },
       },
       runtime,
     ).catch((value: unknown) => value);
@@ -166,6 +172,7 @@ describe("swapTokens", () => {
     const runtime = dependencies();
 
     const result = await swapTokens(
+      await readyWallet(),
       {
         args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
         options: { "dry-run": true, "slippage-bps": 50 },
@@ -201,6 +208,7 @@ describe("swapTokens", () => {
     await writeWalletState(walletState());
 
     const result = await swapTokens(
+      await readyWallet(),
       {
         args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
         options: { "dry-run": true, "exact-out": true, "slippage-bps": 50 },
@@ -222,6 +230,7 @@ describe("swapTokens", () => {
     await writeWalletState(walletState());
 
     const error = await swapTokens(
+      await readyWallet(),
       {
         args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
         options: { "slippage-bps": 50 },
@@ -237,6 +246,7 @@ describe("swapTokens", () => {
     await writeWalletState(walletState());
 
     const error = await swapTokens(
+      await readyWallet(),
       {
         args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
         options: { "slippage-bps": 50, yes: true },
@@ -260,6 +270,7 @@ describe("swapTokens", () => {
     const runtime = dependencies();
 
     const result = await swapTokens(
+      await readyWallet(),
       {
         args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
         options: { "slippage-bps": 50, yes: true },
@@ -281,6 +292,7 @@ describe("swapTokens", () => {
     const runtime = dependencies();
 
     const result = await swapTokens(
+      await readyWallet(),
       {
         args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
         options: { "slippage-bps": 50, yes: true },
@@ -301,6 +313,7 @@ describe("swapTokens", () => {
     await writeWalletState(walletState());
 
     const error = await swapTokens(
+      await readyWallet(),
       {
         args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
         options: { "dry-run": true, "slippage-bps": 50 },
@@ -342,6 +355,7 @@ describe("swapTokens", () => {
     for (const mode of [{ "dry-run": true }, { yes: true }]) {
       const runtime = dependencies();
       const result = await swapTokens(
+        await readyWallet(),
         {
           args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
           options: { "slippage-bps": 50, ...options, ...mode },
@@ -388,6 +402,7 @@ describe("swapTokens", () => {
     for (const mode of [{ "dry-run": true }, { yes: true }]) {
       const runtime = dependencies();
       const error = await swapTokens(
+        await readyWallet(),
         {
           args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
           options: { "slippage-bps": 50, ...options, ...mode },
@@ -422,6 +437,7 @@ describe("swapTokens", () => {
     const runtime = dependencies();
 
     const error = await swapTokens(
+      await readyWallet(),
       {
         args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
         options: { "dry-run": true, "slippage-bps": 50, ...options },

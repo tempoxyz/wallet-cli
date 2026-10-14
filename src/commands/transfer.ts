@@ -24,6 +24,7 @@ import {
   type Network,
 } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
+import type { Wallet } from "../shared/require-wallet.js";
 import { escapeInvisible, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { version } from "../shared/constants.js";
 import {
@@ -42,15 +43,17 @@ import {
   resolveMaxSpend,
 } from "./request.js";
 
-export async function transferTokens(options: {
-  args: { amount?: string | undefined; token?: string | undefined; to?: string | undefined };
+export async function transferTokens(
+  wallet: Wallet,
   options: {
-    network?: string | undefined;
-    address?: string | undefined;
-    "dry-run"?: boolean | undefined;
-    "fee-token"?: string | undefined;
-  };
-}) {
+    args: { amount?: string | undefined; token?: string | undefined; to?: string | undefined };
+    options: {
+      address?: string | undefined;
+      "dry-run"?: boolean | undefined;
+      "fee-token"?: string | undefined;
+    };
+  },
+) {
   const { args } = options;
   if (args.amount === undefined || args.token === undefined || args.to === undefined) {
     const missing = (["amount", "token", "to"] as const).filter((name) => args[name] === undefined);
@@ -65,15 +68,8 @@ export async function transferTokens(options: {
   if (args.to.toLowerCase() === zeroAddress)
     throw usageError("Invalid recipient address: cannot transfer to the zero address");
 
-  const state = await loadWalletState();
-  const activeAccount = state.accounts[state.activeAccount ?? 0];
-  const from = options.options.address ?? activeAccount?.address;
-  if (!activeAccount)
-    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-  if (!from)
-    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-
-  const network = await resolveNetwork(options.options.network, state);
+  const { network } = wallet;
+  const from = options.options.address ?? wallet.account.address;
   const token = args.token.toLowerCase() as `0x${string}`;
   const to = args.to.toLowerCase() as `0x${string}`;
   const fromAddress = from.toLowerCase();

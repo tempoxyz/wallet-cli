@@ -4,6 +4,7 @@ import { Cli, Mcp, type z } from "incur";
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
 import { usageError } from "./shared/errors.js";
+import { withWallet } from "./shared/require-wallet.js";
 import {
   completionsHandler,
   debugHandler,
@@ -148,13 +149,9 @@ keys.command("update", {
   options: updateAccessKeyOptions,
   alias: globalAlias,
   output: updateAccessKeyOutput,
-  async run({ args, globals, options }) {
-    return updateAccessKeyHandler({
-      ...options,
-      accessKey: args.accessKey,
-      network: globals.network,
-    });
-  },
+  run: withWallet(({ args, options }, wallet) =>
+    updateAccessKeyHandler(wallet, { ...options, accessKey: args.accessKey }),
+  ),
 });
 
 cli.command(keys);
@@ -165,9 +162,7 @@ cli.command("revoke", {
   options: revokeOptions,
   alias: globalAlias,
   output: revokeOutput,
-  async run({ args, globals, options }) {
-    return revokeHandler(args, { ...options, network: globals.network });
-  },
+  run: withWallet(({ args, options }, wallet) => revokeHandler(wallet, args, options)),
 });
 
 cli.command("transfer", {
@@ -184,7 +179,8 @@ cli.command("transfer", {
     },
     { options: { mach: true, "max-spend": "5", "mpp-challenge": "<WWW_AUTHENTICATE>" } },
   ],
-  async run({ args, globals, options }) {
+  async run(context) {
+    const { args, globals, options } = context;
     const flags = { ...options, network: globals.network };
     if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
     if (options.credits) {
@@ -193,10 +189,16 @@ cli.command("transfer", {
         throw usageError(
           "Positional amount, token, and recipient arguments cannot be used with --credits; use --amount-cents and --to, or an MPP challenge",
         );
+      // Credits are signed by the wallet app, not the local access key.
       return transferCredits({ options: { ...flags, to: options.to ?? args.to } });
     }
-    if (options.mach) return transferMach({ options: flags });
-    return transferTokens({ args, options: flags });
+    // A TEMPO_PRIVATE_KEY payer stands in for the logged-in wallet.
+    if (options.mach && process.env.TEMPO_PRIVATE_KEY) return transferMach({ options: flags });
+    return withWallet(async (_, wallet) =>
+      options.mach
+        ? transferMach({ options: { ...flags, network: wallet.network.name } })
+        : transferTokens(wallet, { args, options }),
+    )(context);
   },
 });
 
@@ -216,9 +218,7 @@ cli.command("swap", {
       options: { "dry-run": true },
     },
   ],
-  async run({ args, globals, options }) {
-    return swapTokens({ args, options: { ...options, network: globals.network } });
-  },
+  run: withWallet(({ args, options }, wallet) => swapTokens(wallet, { args, options })),
 });
 
 cli.command("fund", {
@@ -266,27 +266,19 @@ sessions.command("close", {
   options: sessionsCloseOptions,
   alias: globalAlias,
   output: sessionsCloseCommandOutput,
-  async run({ args, globals, options }) {
-    if (options["dry-run"])
-      return dryRunCloseSessions({
-        all: options.all,
-        cooperative: options.cooperative,
-        finalize: options.finalize,
-        network: globals.network,
-        orphaned: options.orphaned,
-        target: args.url,
-      });
-    const summary = await closeSessions({
+  run: withWallet(async ({ args, options }, wallet) => {
+    const close = {
       all: options.all,
       cooperative: options.cooperative,
       finalize: options.finalize,
-      network: globals.network,
       orphaned: options.orphaned,
       target: args.url,
-    });
+    };
+    if (options["dry-run"]) return dryRunCloseSessions(wallet, close);
+    const summary = await closeSessions(wallet, close);
     closeCommandFailed = summary.failed > 0;
     return summary;
-  },
+  }),
 });
 
 sessions.command("sync", {

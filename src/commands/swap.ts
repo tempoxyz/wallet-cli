@@ -6,15 +6,13 @@ import { machToken } from "../shared/mach.js";
 import {
   createTempoPublicClient,
   networkFields,
-  resolveNetwork,
   tokenDecimals,
   type Network,
 } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
+import type { Wallet } from "../shared/require-wallet.js";
 import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { createProvider } from "../provider.js";
-import { selectPaymentCapableAccessKey } from "../wallet/access-key.js";
-import { loadWalletState } from "../wallet/store.js";
 
 const slippageScale = 10_000n;
 
@@ -39,10 +37,10 @@ type SwapDependencies = {
 };
 
 export async function swapTokens(
+  wallet: Wallet,
   input: {
     args: { amount: string; tokenIn: string; tokenOut: string };
     options: {
-      network?: string | undefined;
       "dry-run"?: boolean | undefined;
       "exact-out"?: boolean | undefined;
       "fee-token"?: string | undefined;
@@ -54,11 +52,7 @@ export async function swapTokens(
   },
   dependencies: Partial<SwapDependencies> = {},
 ) {
-  const state = await loadWalletState();
-  const activeAccount = state.accounts[state.activeAccount ?? 0];
-  if (!activeAccount)
-    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-
+  const { account, key, network } = wallet;
   if (!isAddress(input.args.tokenIn) || !isAddress(input.args.tokenOut))
     throw usageError("Invalid token address: expected full 0x addresses for tokenIn and tokenOut");
   if (input.args.tokenIn.toLowerCase() === input.args.tokenOut.toLowerCase())
@@ -81,7 +75,6 @@ export async function swapTokens(
 
   const tokenIn = input.args.tokenIn.toLowerCase() as `0x${string}`;
   const tokenOut = input.args.tokenOut.toLowerCase() as `0x${string}`;
-  const network = await resolveNetwork(input.options.network, state);
   const selectedChainId = network.chainId;
   const mach = machToken(selectedChainId).toLowerCase();
   if (tokenIn === mach || tokenOut === mach)
@@ -137,7 +130,7 @@ export async function swapTokens(
       ? reviewedMinOut
       : slippageMinOut;
   const balance = await runtime.getBalance({
-    account: activeAccount.address as `0x${string}`,
+    account: account.address as `0x${string}`,
     token: tokenIn,
   });
   if (maxAmountIn > balance)
@@ -154,21 +147,16 @@ export async function swapTokens(
     ? Actions.dex.buy.call({ amountOut, maxAmountIn, tokenIn, tokenOut })
     : Actions.dex.sell.call({ amountIn, minAmountOut, tokenIn, tokenOut });
   const calls = [approve, swap] as const;
-  const key = selectPaymentCapableAccessKey(state.accessKeys, {
-    chainId: selectedChainId,
-    walletAddress: activeAccount.address,
-  });
-  const accessKeyLimit = key?.limits?.find((limit) => limit.token.toLowerCase() === tokenIn);
+  const accessKeyLimit = key.limits?.find((limit) => limit.token.toLowerCase() === tokenIn);
   const accessKeyLimitRaw = parseAccessKeyLimit(accessKeyLimit?.limit);
   // A key stored without limits is unrestricted; only a limited key can fall short.
-  const unrestricted = key !== undefined && key.limits === undefined;
   const requiresAccessKeyUpdate =
-    !unrestricted && (accessKeyLimitRaw === null || accessKeyLimitRaw < maxAmountIn);
+    key.limits !== undefined && (accessKeyLimitRaw === null || accessKeyLimitRaw < maxAmountIn);
   const feeToken = (input.options["fee-token"]?.toLowerCase() ?? tokenIn) as `0x${string}`;
   const output = {
     ...networkFields(selectedChainId),
     mode: exactOut ? ("exact_out" as const) : ("exact_in" as const),
-    from: activeAccount.address.toLowerCase(),
+    from: account.address.toLowerCase(),
     dex: Addresses.stablecoinDex.toLowerCase(),
     token_in: tokenIn,
     token_in_symbol: metadataIn.symbol,
@@ -208,31 +196,25 @@ export async function swapTokens(
           ],
           { network },
         )
-      : key && metadataIn.decimals !== tokenDecimals()
+      : metadataIn.decimals !== tokenDecimals()
         ? // keys update reads --limit with a fixed decimal count, so a generated command would set the wrong raw limit.
           {
             instruction: `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to raise its ${metadataIn.symbol} limit to at least ${output.max_amount_in} in the wallet app, then rerun this dry run to review the swap.`,
           }
-        : key
-          ? nextStep(
-              `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to run the next command, then rerun this dry run to review the swap.`,
-              [
-                "wallet",
-                "keys",
-                "update",
-                key.address,
-                "--token",
-                tokenIn,
-                "--limit",
-                output.max_amount_in,
-              ],
-              { network },
-            )
-          : nextStep(
-              "No usable access key for this wallet and network. Run the next command to log in, then rerun this dry run to review the swap.",
-              ["wallet", "login"],
-              { network },
-            );
+        : nextStep(
+            `The active access key cannot spend ${output.max_amount_in} ${metadataIn.symbol}. Ask the wallet owner to run the next command, then rerun this dry run to review the swap.`,
+            [
+              "wallet",
+              "keys",
+              "update",
+              key.address,
+              "--token",
+              tokenIn,
+              "--limit",
+              output.max_amount_in,
+            ],
+            { network },
+          );
     return { status: "dry_run" as const, ...output, ...next };
   }
   if (!input.options.yes)

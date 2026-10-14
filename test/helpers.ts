@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, expect, vi } from "vitest";
 
+import { loadWallet } from "../src/shared/require-wallet.js";
 import type { WalletState } from "../src/wallet/store.js";
 
 const originalHome = process.env.HOME;
@@ -114,6 +115,13 @@ export function walletState(overrides: Partial<WalletState> = {}): WalletState {
     chainId: 4217,
     ...overrides,
   };
+}
+
+/** The wallet `withWallet` hands a command, loaded from the test store; throws if it is not ready. */
+export async function readyWallet(network?: string) {
+  const wallet = await loadWallet(network);
+  if (!("key" in wallet)) throw new Error(wallet.message);
+  return wallet;
 }
 
 export function expectUsageError(error: unknown, message: string) {
