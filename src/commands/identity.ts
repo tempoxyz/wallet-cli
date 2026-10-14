@@ -8,13 +8,21 @@ import {
   createTempoPublicClient,
   explicitNetwork,
   networkFields,
+  networkName,
+  parseNetwork,
   resolveNetwork,
   storedChainId,
   tokenAddress,
   type Network,
 } from "../shared/network.js";
-import { errorCodes, networkError, usageError } from "../shared/errors.js";
-import { continuationCommand, nextStep } from "../shared/next.js";
+import {
+  commandError,
+  errorCodes,
+  networkError,
+  usageError,
+  type WalletErrorCode,
+} from "../shared/errors.js";
+import { continuationCommand, nextStep, shellQuote } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
 import { confirm as confirmPrompt, querySql } from "../shared/process.js";
 import {
@@ -38,6 +46,7 @@ import { connect, createProvider, settleWalletStore } from "../provider.js";
 import {
   clearPendingLogin,
   emptyWalletState,
+  loadPendingLogin,
   loadWalletState,
   saveWalletState,
   type WalletState,
@@ -49,6 +58,7 @@ import {
 } from "../wallet/access-key.js";
 import { queryMachBalance } from "../shared/mach.js";
 import { queryCreditBalance, warnCreditsDeprecated } from "./credits.js";
+import { fundedSessions } from "./sessions.js";
 
 /** Whoami output when the active wallet already has a usable access key on `network`. */
 export async function cachedLoginOutput(state: WalletState, network: Network) {
@@ -92,18 +102,318 @@ export async function refreshHandler(
   };
 }
 
-export async function logoutHandler() {
+/**
+ * Logs out of `network` (`--network` or `TEMPO_WALLET_NETWORK`), or of every network without one,
+ * and cancels a pending login for the networks logged out. Accounts are not stored per network,
+ * so logging out of one network removes its access keys and keeps the wallet while another
+ * network has keys. With `revoke`, each key is first revoked on-chain through the wallet app; a
+ * key the chain does not show revoked is kept, with the wallet, and the command fails. Logging
+ * out while stored sessions hold unspent deposits, or with `revoke`, needs confirmation: a prompt
+ * on interactive runs, `--yes` on agent runs.
+ */
+export async function logoutHandler(
+  options: {
+    network?: string | undefined;
+    revoke?: boolean | undefined;
+    yes?: boolean | undefined;
+    browser?: boolean | undefined;
+  },
+  context: CommandContext,
+  dependencies: {
+    confirm?: (question: string) => Promise<boolean>;
+    createProvider?: (options: {
+      network: Network;
+      noBrowser?: boolean | undefined;
+    }) => Promise<RevokeProvider>;
+    readKey?: OnChainKeyReader;
+  } = {},
+) {
   const state = await loadWalletState();
+  const network = explicitNetwork(options.network);
   const activeAccount = state.accounts[state.activeAccount ?? 0];
-  await saveWalletState(emptyWalletState());
-  // A pending login must not bring the wallet back after logout.
-  await clearPendingLogin();
-  return {
-    logged_in: Boolean(activeAccount),
-    disconnected: Boolean(activeAccount),
+  const keys = network
+    ? state.accessKeys.filter((key) => key.chainId === network.chainId)
+    : state.accessKeys;
+  const where = network?.name ?? "every network";
+  const flags = { revoke: options.revoke, yes: options.yes, browser: options.browser, network };
+  const output = {
     wallet: activeAccount?.address.toLowerCase() ?? null,
-    message: activeAccount ? "wallet disconnected" : "not logged in",
+    scope: network?.name ?? ("all" as const),
   };
+  // The wallet counts as logged in on its stored network even once it has no keys there.
+  const wasLoggedIn = network
+    ? keys.length > 0 || (state.accounts.length > 0 && storedChainId(state) === network.chainId)
+    : state.accounts.length > 0 || state.accessKeys.length > 0;
+  if (!wasLoggedIn) {
+    await clearLoggedOutPendingLogin(network);
+    return {
+      was_logged_in: false,
+      disconnected: false,
+      ...output,
+      keys: [],
+      sessions: [],
+      message: network ? `not logged in on ${network.name}` : "not logged in",
+    };
+  }
+
+  // `wallet_revokeAccessKey` takes no chain, so the wallet app revokes on the stored chain only.
+  const walletChainId = storedChainId(state);
+  const elsewhere = options.revoke && keys.find((key) => key.chainId !== walletChainId);
+  if (elsewhere) {
+    const walletNetwork = chainNetwork(walletChainId);
+    const keyNetwork = chainNetwork(elsewhere.chainId);
+    const reason = `The wallet app revokes access keys only on the network the wallet is logged in on (${walletNetwork.name}), not on ${keyNetwork.name}.`;
+    if (keys.some((key) => key.chainId === walletChainId)) {
+      const command = logoutCommand({ ...flags, network: walletNetwork });
+      return context.error(
+        commandError(
+          "E_USAGE",
+          `${reason} Run '${command}' to revoke the ${walletNetwork.name} keys first; the wallet then stays logged in on ${keyNetwork.name}, where '${logoutCommand({ ...flags, network: keyNetwork })}' revokes the rest.`,
+          command,
+        ),
+      );
+    }
+    const command = continuationCommand(["wallet", "login"], keyNetwork);
+    return context.error(
+      commandError(
+        "E_USAGE",
+        `${reason} Run '${command}', then rerun '${logoutCommand(flags)}', or rerun without --revoke to remove the keys without revoking them.`,
+        command,
+      ),
+    );
+  }
+
+  const sessions = await fundedSessions({
+    payers: [...state.accounts.map((account) => account.address), ...keys.map((key) => key.access)],
+    chainId: network?.chainId,
+  }).catch((error: NodeJS.ErrnoException) => {
+    // Without sqlite3, no session could have been stored.
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  const closeSteps = sessionCloseSteps(sessions);
+  const reasons = [
+    ...(sessions.length > 0 ? [fundedSessionsReason(sessions, closeSteps)] : []),
+    ...(options.revoke && keys.length > 0
+      ? [`--revoke revokes ${count(keys.length, "access key")} on-chain, which cannot be undone.`]
+      : []),
+  ];
+  if (reasons.length > 0 && !options.yes) {
+    if (context.agent) {
+      const command = logoutCommand({ ...flags, yes: true });
+      return context.error(
+        commandError(
+          "E_USAGE",
+          `Logging out of ${where} needs confirmation. ${reasons.join(" ")} To log out anyway, run '${command}'.`,
+          command,
+        ),
+      );
+    }
+    const confirm = dependencies.confirm ?? confirmPrompt;
+    if (!(await confirm(`${reasons.join(" ")} Log out of ${where}?`)))
+      throw usageError("Wallet not logged out.");
+  }
+
+  const revoked: WalletState["accessKeys"][number][] = [];
+  if (options.revoke && keys.length > 0) {
+    const walletNetwork = chainNetwork(walletChainId);
+    const readKey = dependencies.readKey ?? readAccessKeyOnChain;
+    const provider = await (dependencies.createProvider ?? createProvider)({
+      network: walletNetwork,
+      noBrowser: options.browser === false,
+    });
+    for (const key of keys) {
+      const failure = await revokeThroughWallet({
+        provider,
+        readKey,
+        stored: key,
+        target: keyTarget(key),
+      }).then(
+        (done) =>
+          done
+            ? undefined
+            : networkError("The wallet app returned, but the chain does not show it revoked."),
+        (error: unknown) => error,
+      );
+      if (failure === undefined) {
+        revoked.push(key);
+        continue;
+      }
+      // Only the revoked keys go. The SDK drops a key from the store once the wallet app returns,
+      // even when the chain does not show it revoked, so the rest are restored from the snapshot.
+      await settleWalletStore();
+      await saveWalletState({
+        ...state,
+        accessKeys: state.accessKeys.filter((candidate) => !revoked.some(sameKey(candidate))),
+      });
+      const command = logoutCommand(flags);
+      return context.error(
+        commandError(
+          walletErrorCode(failure),
+          `Not logged out: access key ${key.address.toLowerCase()} on ${walletNetwork.name} was not revoked, so it stays on this machine with the wallet${revoked.length > 0 ? ` (revoked and removed: ${revoked.map((candidate) => candidate.address.toLowerCase()).join(", ")})` : ""}. ${failure instanceof Error ? failure.message : String(failure)} Rerun '${command}' to retry, or rerun without --revoke to remove the keys without revoking them.`,
+          command,
+        ),
+      );
+    }
+    // The SDK writes the store after each revocation; let those writes land before this one.
+    await settleWalletStore();
+  }
+
+  const next = loggedOutState(state, network);
+  const disconnected = next.accounts.length === 0;
+  const message = [
+    `logged out of ${where}`,
+    disconnected
+      ? "wallet disconnected"
+      : `still logged in on ${chainNetwork(storedChainId(next)).name}`,
+    ...(keys.length === 0
+      ? []
+      : options.revoke
+        ? [`${count(keys.length, "access key")} revoked on-chain and removed`]
+        : [
+            `${count(keys.length, "access key")} removed locally but not revoked, so authorized on-chain until expiry (use --revoke to revoke)`,
+          ]),
+  ].join("; ");
+  await saveWalletState(next);
+  // A pending login must not bring the wallet back after logout.
+  await clearLoggedOutPendingLogin(network);
+
+  return {
+    was_logged_in: true,
+    disconnected,
+    ...output,
+    keys: keys.map((key) => ({
+      address: key.address.toLowerCase(),
+      wallet_address: key.access.toLowerCase(),
+      ...networkFields(key.chainId),
+      revoked: options.revoke === true,
+    })),
+    sessions,
+    message,
+    ...sessionsNextStep(sessions.length, closeSteps),
+  };
+}
+
+/**
+ * The store after logging out of `network`, or of every network without one. The wallet stays
+ * while another network has keys, and the store's chain, the one the wallet app acts on, moves
+ * off the network logged out to a network where the active wallet still has keys.
+ */
+function loggedOutState(state: WalletState, network: Network | undefined): WalletState {
+  if (!network) return emptyWalletState();
+  const accessKeys = state.accessKeys.filter((key) => key.chainId !== network.chainId);
+  if (accessKeys.length === 0) return emptyWalletState();
+  if (storedChainId(state) !== network.chainId) return { ...state, accessKeys };
+  const active = state.accounts[state.activeAccount ?? 0]?.address.toLowerCase();
+  const chainId = (accessKeys.find((key) => key.access.toLowerCase() === active) ?? accessKeys[0]!)
+    .chainId;
+  return { ...state, accessKeys, chainId };
+}
+
+/** Cancels the pending login when it is for a network logged out. */
+async function clearLoggedOutPendingLogin(network: Network | undefined) {
+  if (!network) return await clearPendingLogin();
+  const pending = await loadPendingLogin();
+  if (pending?.network === network.name) await clearPendingLogin(pending.registration.device_code);
+}
+
+/** A logout command; without a network it logs out of every network, so it has no `--network`. */
+function logoutCommand(options: {
+  network?: Network | undefined;
+  revoke?: boolean | undefined;
+  yes?: boolean | undefined;
+  browser?: boolean | undefined;
+}) {
+  const argv = [
+    "wallet",
+    "logout",
+    ...(options.revoke ? ["--revoke"] : []),
+    ...(options.yes ? ["--yes"] : []),
+    ...(options.browser === false ? ["--no-browser"] : []),
+  ];
+  return options.network
+    ? continuationCommand(argv, options.network)
+    : ["tempo", ...argv].map(shellQuote).join(" ");
+}
+
+/** Per network, the `sessions close` that withdraws its sessions: `--finalize` once all can be. */
+function sessionCloseSteps(sessions: readonly { network: string; status: string }[]) {
+  return [...new Set(sessions.map((session) => session.network))].map((name) => ({
+    network: parseNetwork(name),
+    argv: [
+      "wallet",
+      "sessions",
+      "close",
+      sessions.every((session) => session.network !== name || session.status === "finalizable")
+        ? "--finalize"
+        : "--all",
+    ],
+  }));
+}
+
+/** Why logging out needs confirmation while `sessions` hold deposits, and how to close them. */
+function fundedSessionsReason(
+  sessions: Awaited<ReturnType<typeof fundedSessions>>,
+  steps: ReturnType<typeof sessionCloseSteps>,
+) {
+  const listed = sessions.map(
+    (session) =>
+      `${session.remaining} ${session.symbol ?? "tokens"} with ${session.origin || session.channel_id} on ${session.network} (${session.status})`,
+  );
+  const commands = steps.map((step) => `'${continuationCommand(step.argv, step.network)}'`);
+  return `Unspent deposits remain in ${count(sessions.length, "stored session")}: ${listed.join("; ")}. Withdrawing them after logout needs a new login, so close them first with ${commands.join(" and ")}.`;
+}
+
+/** Points sessions left holding deposits at the login and close that withdraw them. */
+function sessionsNextStep(total: number, steps: ReturnType<typeof sessionCloseSteps>) {
+  const login = (network: Network) => continuationCommand(["wallet", "login"], network);
+  const [single] = steps;
+  if (!single) return {};
+  if (steps.length === 1)
+    return nextStep(
+      `Unspent deposits remain in ${count(total, "stored session")} on ${single.network.name}. Log in again with '${login(single.network)}', then run the next command to close them and withdraw the deposits.`,
+      single.argv,
+      { network: single.network },
+    );
+  return {
+    instruction: `Unspent deposits remain in ${count(total, "stored session")} on ${steps.length} networks. To withdraw them, log in again on each network and close its sessions: ${steps
+      .map(
+        (step) =>
+          `'${login(step.network)}', then '${continuationCommand(step.argv, step.network)}'`,
+      )
+      .join("; ")}.`,
+  };
+}
+
+function count(total: number, noun: string) {
+  return `${total} ${noun}${total === 1 ? "" : "s"}`;
+}
+
+function chainNetwork(chainId: number) {
+  return parseNetwork(networkName(chainId));
+}
+
+function keyTarget(key: WalletState["accessKeys"][number]) {
+  return {
+    chainId: key.chainId,
+    walletAddress: key.access as Address,
+    accessKeyAddress: key.address as Address,
+  };
+}
+
+function sameKey(key: WalletState["accessKeys"][number]) {
+  return (candidate: WalletState["accessKeys"][number]) =>
+    candidate.chainId === key.chainId &&
+    candidate.address.toLowerCase() === key.address.toLowerCase() &&
+    candidate.access.toLowerCase() === key.access.toLowerCase();
+}
+
+/** The wallet error code a failure carries, or `E_NETWORK` for a failed wallet-app request. */
+function walletErrorCode(error: unknown): WalletErrorCode {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code === "string" && Object.hasOwn(errorCodes, code)
+    ? (code as WalletErrorCode)
+    : "E_NETWORK";
 }
 
 export async function whoamiHandler(options: {
@@ -288,16 +598,13 @@ function parseLimit(value: string, decimals: number) {
 
 type RevokeProvider = Pick<CoreProvider.Provider, "request">;
 
-/** What `revoke` uses of incur's run context; `error` keeps the `cta` that thrown errors lose. */
-type RevokeContext = {
+/**
+ * What `revoke` and `logout` use of incur's run context: `agent` is set when no one can answer a
+ * prompt, and `error` keeps the `cta` that thrown errors lose.
+ */
+type CommandContext = {
   agent: boolean;
-  error: (error: {
-    code: "E_USAGE";
-    message: string;
-    exitCode: number;
-    retryable: boolean;
-    cta: { commands: { command: string }[] };
-  }) => never;
+  error: (error: ReturnType<typeof commandError>) => never;
 };
 
 /** An access key's state in the AccountKeychain precompile, where revocation takes effect. */
@@ -323,7 +630,7 @@ export async function revokeHandler(
     "dry-run"?: boolean | undefined;
     yes?: boolean | undefined;
   },
-  context: RevokeContext,
+  context: CommandContext,
   dependencies: {
     confirm?: (question: string) => Promise<boolean>;
     createProvider?: (options: {
@@ -400,13 +707,13 @@ export async function revokeHandler(
   if (!options.yes) {
     const command = continuationCommand(argv, network);
     if (context.agent)
-      return context.error({
-        code: "E_USAGE",
-        message: `Revocation cannot be undone, so it needs confirmation. Review the key with --dry-run, then run '${command}'.`,
-        exitCode: errorCodes.E_USAGE.exitCode,
-        retryable: errorCodes.E_USAGE.retryable,
-        cta: { commands: [{ command }] },
-      });
+      return context.error(
+        commandError(
+          "E_USAGE",
+          `Revocation cannot be undone, so it needs confirmation. Review the key with --dry-run, then run '${command}'.`,
+          command,
+        ),
+      );
     const confirm = dependencies.confirm ?? confirmPrompt;
     if (
       !(await confirm(
@@ -416,21 +723,11 @@ export async function revokeHandler(
       throw usageError("Access key not revoked.");
   }
 
-  // A key that is not published yet is authorized and revoked in one transaction; revoking it
-  // alone would leave its signed authorization publishable.
-  const keyAuthorization =
-    stored &&
-    localAccessKeyStatus(stored) === "pending" &&
-    (await readKey(target)).status === "missing"
-      ? stored.keyAuthorization
-      : undefined;
   const provider = await (dependencies.createProvider ?? createProvider)({
     network,
     noBrowser: options.browser === false,
   });
-  await revokeAccessKeyThroughWallet({ provider, ...target, keyAuthorization });
-  // The wallet app can return without revoking, for a key it could not find on-chain.
-  if ((await readKey(target)).status !== "revoked")
+  if (!(await revokeThroughWallet({ provider, readKey, stored, target })))
     throw networkError(
       `The wallet app returned, but access key ${output.access_key} is not revoked on ${network.name}, so nothing was removed locally. Rerun the command to retry.`,
     );
@@ -444,6 +741,30 @@ export async function revokeHandler(
     status: "success" as const,
     local_key_removed: localKeyRemoved,
   };
+}
+
+/**
+ * Asks the wallet app to revoke a key and returns whether the chain then shows it revoked, since
+ * the wallet app can return without revoking a key it could not find on-chain. `stored` is the
+ * key's local copy, if any.
+ */
+async function revokeThroughWallet(options: {
+  provider: RevokeProvider;
+  readKey: OnChainKeyReader;
+  stored: WalletState["accessKeys"][number] | undefined;
+  target: { chainId: number; walletAddress: Address; accessKeyAddress: Address };
+}) {
+  const { provider, readKey, stored, target } = options;
+  // A key that is not published yet is authorized and revoked in one transaction; revoking it
+  // alone would leave its signed authorization publishable.
+  const keyAuthorization =
+    stored &&
+    localAccessKeyStatus(stored) === "pending" &&
+    (await readKey(target)).status === "missing"
+      ? stored.keyAuthorization
+      : undefined;
+  await revokeAccessKeyThroughWallet({ provider, ...target, keyAuthorization });
+  return (await readKey(target)).status === "revoked";
 }
 
 /**

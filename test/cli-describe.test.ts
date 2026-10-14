@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   fundOptions,
   loginOptions,
+  logoutOptions,
   refreshOptions,
   revokeOptions,
   updateAccessKeyOptions,
@@ -200,6 +201,7 @@ describe("generated CLI metadata", () => {
     { command: ["keys", "update"] },
     { command: ["login"] },
     { command: ["sessions", "close"] },
+    { command: ["logout"] },
   ])("advertises next-step fields in the $command output schema", async ({ command }) => {
     const schema = JSON.parse(await walletCli([...command, "--schema", "--format", "json"])) as {
       output: unknown;
@@ -350,6 +352,7 @@ describe("generated CLI metadata", () => {
     { command: "fund", options: fundOptions, argv: [] },
     { command: "keys update", options: updateAccessKeyOptions, argv: ["--limit", "250"] },
     { command: "revoke", options: revokeOptions, argv: ["--yes"] },
+    { command: "logout", options: logoutOptions, argv: ["--revoke"] },
   ])("accepts --no-browser for $command", ({ options, argv }) => {
     expect(Parser.parse(argv, { options }).options).toMatchObject({ browser: true });
     expect(Parser.parse([...argv, "--no-browser"], { options }).options).toMatchObject({
@@ -361,6 +364,7 @@ describe("generated CLI metadata", () => {
     { command: ["refresh"], flags: ["--no-browser"] },
     { command: ["keys", "update"], flags: ["--no-browser"] },
     { command: ["revoke"], flags: ["--dry-run", "--yes", "--no-browser"] },
+    { command: ["logout"], flags: ["--revoke", "--yes", "--no-browser"] },
   ])("describes $flags for $command", async ({ command, flags }) => {
     type Command = {
       name: string;

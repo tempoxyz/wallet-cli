@@ -39,7 +39,6 @@ import {
   currentWhoamiOutput,
   currentKeysOutput,
   keysHandler,
-  logoutHandler,
   updateAccessKeyHandler,
   whoamiHandler,
 } from "../src/commands/identity.js";
@@ -1491,23 +1490,6 @@ limit = "100000000"
       );
     }
     expect(createProvider).not.toHaveBeenCalled();
-  });
-
-  it("logout clears the store", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-
-    const result = await logoutHandler();
-    expect(result).toMatchObject({
-      logged_in: true,
-      disconnected: true,
-      wallet: testWallet.toLowerCase(),
-    });
-
-    expect(await loadWalletState()).toMatchObject({ accounts: [], accessKeys: [] });
-    expect(await readWalletStoreJson()).toMatchObject({
-      "tempo-cli.store": { state: { accounts: [], accessKeys: [] } },
-    });
   });
 
   it("requests 30-day access keys and the deposit screen when connecting", async () => {

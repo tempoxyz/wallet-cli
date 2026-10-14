@@ -2,7 +2,6 @@ import { Rpc } from "accounts";
 import { Storage } from "accounts/cli";
 import { z } from "incur";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { toHex } from "viem";
 import { Account } from "viem/tempo";
 
 import { refreshHandler, revokeHandler, updateAccessKeyHandler } from "../src/commands/identity.js";
@@ -11,6 +10,7 @@ import { revokeOutput } from "../src/schemas.js";
 import { loadWalletState } from "../src/wallet/store.js";
 import {
   expectUsageError,
+  keychain,
   readyWallet,
   runContext,
   testAccessKey,
@@ -20,8 +20,10 @@ import {
   testWallet2,
   usdc,
   useTempHome,
+  walletApp,
   walletState,
   writeWalletState,
+  type KeyStatus,
 } from "./helpers.js";
 
 beforeEach(() => {
@@ -43,26 +45,6 @@ afterEach(() => {
 const key = walletState().accessKeys[0]!;
 const mainnet = { name: "mainnet", chainId: 4217 } as const;
 const testnet = { name: "testnet", chainId: 42431 } as const;
-
-/** A wallet-app provider that only takes requests, so nothing can be signed locally. */
-function walletApp(chainId: number = mainnet.chainId) {
-  const request = vi.fn();
-  request.mockImplementation(async ({ method }: { method: string }) => {
-    if (method === "eth_chainId") return toHex(chainId);
-    if (method === "wallet_connect") return { accounts: [] };
-    return undefined;
-  });
-  return { request, createProvider: vi.fn(async () => ({ request })) };
-}
-
-type KeyStatus = "published" | "revoked" | "missing";
-
-/** The key's AccountKeychain state on each successive read. */
-function keychain(...statuses: KeyStatus[]) {
-  const readKey = vi.fn();
-  for (const status of statuses) readKey.mockResolvedValueOnce({ status, expiry: undefined });
-  return readKey;
-}
 
 describe("revoke", () => {
   it.each([mainnet, testnet])(

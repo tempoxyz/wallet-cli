@@ -1,0 +1,764 @@
+import { execFile } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { logoutHandler } from "../src/commands/identity.js";
+import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
+import { logoutOutput } from "../src/schemas.js";
+import { networkFields } from "../src/shared/network.js";
+import { nowSeconds } from "../src/shared/utils.js";
+import {
+  loadPendingLogin,
+  loadWalletState,
+  savePendingLogin,
+  type PendingLogin,
+  type WalletState,
+} from "../src/wallet/store.js";
+import { cliBundle } from "./cli-bundle.js";
+import {
+  keychain,
+  runContext,
+  testAccessKey,
+  testAccessKey2,
+  testPrivateKey2,
+  testWallet,
+  testWallet2,
+  usdc,
+  useTempHome,
+  walletApp,
+  walletState,
+  writeWalletState,
+} from "./helpers.js";
+
+const interactiveStdout = join(import.meta.dirname, "fixtures", "interactive-stdout.mjs");
+const mainnet = { name: "mainnet", chainId: 4217 } as const;
+const testnet = { name: "testnet", chainId: 42431 } as const;
+const key = walletState().accessKeys[0]!;
+const key2 = { ...key, address: testAccessKey2, privateKey: testPrivateKey2 };
+const testnetKey = { ...key2, chainId: testnet.chainId };
+const bothNetworks = walletState({ accessKeys: [key, testnetKey] });
+const notRevoked =
+  "removed locally but not revoked, so authorized on-chain until expiry (use --revoke to revoke)";
+
+beforeEach(() => {
+  vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+  // Any wallet-app or RPC request fails, so no test reaches a real service.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new Error("offline");
+    }),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
+
+/** A key as logout reports it. */
+function removed(accessKey: WalletState["accessKeys"][number], revoked = false) {
+  return {
+    address: accessKey.address.toLowerCase(),
+    wallet_address: accessKey.access.toLowerCase(),
+    ...networkFields(accessKey.chainId),
+    revoked,
+  };
+}
+
+/** A mainnet session of the test wallet holding 0.008 of its 0.01 USDC.e deposit. */
+function session(overrides: Partial<PersistedSessionRecord> = {}): PersistedSessionRecord {
+  return {
+    accepted_cumulative: 2_000n,
+    authorized_signer: testAccessKey,
+    chain_id: mainnet.chainId,
+    challenge_echo: "{}",
+    channel_id: `0x${"a".repeat(64)}`,
+    close_requested_at: 0,
+    created_at: 1,
+    cumulative_amount: 2_000n,
+    deposit: 10_000n,
+    escrow_contract: "0x0000000000000000000000000000000000000001",
+    grace_ready_at: 0,
+    last_used_at: 1,
+    network: "tempo",
+    origin: "https://example.com",
+    payee: testWallet2,
+    payer: testWallet,
+    request_url: "https://example.com/",
+    salt: `0x${"0".repeat(64)}`,
+    server_spent: 2_000n,
+    session_protocol: "v1",
+    state: "active",
+    token: usdc,
+    ...overrides,
+  };
+}
+
+function pendingLogin(network: PendingLogin["network"]): PendingLogin {
+  return {
+    network,
+    registration: {
+      device_code: `device-${network}`,
+      user_code: "ABCDEFGH",
+      verification_uri: "https://wallet.tempo.xyz/device",
+    },
+    codeVerifier: "verifier",
+    accessKey: { handle: { kind: "p256" }, publicKey: "0x04" },
+    expiresAt: 2_000_000_000,
+  };
+}
+
+async function setup(state: WalletState | undefined, sessions: PersistedSessionRecord[] = []) {
+  await useTempHome();
+  if (state) await writeWalletState(state);
+  for (const record of sessions) await upsertSessionRecord(record);
+}
+
+describe("logout scope", () => {
+  it.each<{
+    name: string;
+    state?: WalletState;
+    options?: { network?: string };
+    env?: string;
+    result: Record<string, unknown>;
+    after: Partial<WalletState>;
+  }>([
+    {
+      name: "every network without --network",
+      state: bothNetworks,
+      result: {
+        was_logged_in: true,
+        disconnected: true,
+        scope: "all",
+        keys: [removed(key), removed(testnetKey)],
+        message: `logged out of every network; wallet disconnected; 2 access keys ${notRevoked}`,
+      },
+      after: { accounts: [], accessKeys: [] },
+    },
+    {
+      name: "only testnet with --network testnet",
+      state: bothNetworks,
+      options: { network: "testnet" },
+      result: {
+        was_logged_in: true,
+        disconnected: false,
+        scope: "testnet",
+        keys: [removed(testnetKey)],
+        message: `logged out of testnet; still logged in on mainnet; 1 access key ${notRevoked}`,
+      },
+      after: { accounts: [{ address: testWallet }], accessKeys: [key], chainId: mainnet.chainId },
+    },
+    {
+      name: "only testnet when TEMPO_WALLET_NETWORK selects it",
+      state: bothNetworks,
+      env: "testnet",
+      result: { scope: "testnet", disconnected: false, keys: [removed(testnetKey)] },
+      after: { accounts: [{ address: testWallet }], accessKeys: [key], chainId: mainnet.chainId },
+    },
+    {
+      name: "the stored network, moving the wallet to the network that keeps keys",
+      state: bothNetworks,
+      options: { network: "mainnet" },
+      result: {
+        was_logged_in: true,
+        disconnected: false,
+        scope: "mainnet",
+        keys: [removed(key)],
+        message: `logged out of mainnet; still logged in on testnet; 1 access key ${notRevoked}`,
+      },
+      after: {
+        accounts: [{ address: testWallet }],
+        accessKeys: [testnetKey],
+        chainId: testnet.chainId,
+      },
+    },
+    {
+      name: "the wallet's only network",
+      state: walletState({ chainId: testnet.chainId, accessKeys: [testnetKey] }),
+      options: { network: "testnet" },
+      result: {
+        was_logged_in: true,
+        disconnected: true,
+        scope: "testnet",
+        keys: [removed(testnetKey)],
+        message: `logged out of testnet; wallet disconnected; 1 access key ${notRevoked}`,
+      },
+      after: { accounts: [], accessKeys: [] },
+    },
+    {
+      name: "the stored network of a wallet without keys",
+      state: walletState({ accessKeys: [] }),
+      options: { network: "mainnet" },
+      result: {
+        was_logged_in: true,
+        disconnected: true,
+        keys: [],
+        message: "logged out of mainnet; wallet disconnected",
+      },
+      after: { accounts: [], accessKeys: [] },
+    },
+    {
+      name: "nothing on a network the wallet is not logged in on",
+      state: walletState(),
+      options: { network: "testnet" },
+      result: {
+        was_logged_in: false,
+        disconnected: false,
+        wallet: testWallet.toLowerCase(),
+        scope: "testnet",
+        keys: [],
+        message: "not logged in on testnet",
+      },
+      after: { accounts: [{ address: testWallet }], accessKeys: [key] },
+    },
+    {
+      name: "nothing when no wallet is stored",
+      result: {
+        was_logged_in: false,
+        disconnected: false,
+        wallet: null,
+        scope: "all",
+        keys: [],
+        message: "not logged in",
+      },
+      after: { accounts: [], accessKeys: [] },
+    },
+  ])("logs out of $name", async ({ state, options = {}, env, result, after }) => {
+    await setup(state);
+    if (env) vi.stubEnv("TEMPO_WALLET_NETWORK", env);
+    const context = runContext(true);
+
+    const output = await logoutHandler(options, context);
+
+    expect(context.error).not.toHaveBeenCalled();
+    expect(logoutOutput.parse(output)).toMatchObject({
+      wallet: state?.accounts.length ? testWallet.toLowerCase() : null,
+      sessions: [],
+      ...result,
+    });
+    expect(output).not.toHaveProperty("_next");
+    expect(await loadWalletState()).toMatchObject(after);
+  });
+
+  it.each([
+    { name: "every network", options: {}, kept: false },
+    { name: "the login's network", options: { network: "testnet" }, kept: false },
+    { name: "another network", options: { network: "mainnet" }, kept: true },
+    { name: "a network without keys", state: walletState(), options: { network: "testnet" } },
+    { name: "a store without a wallet", state: undefined, options: {} },
+  ])(
+    "logging out of $name clears a pending testnet login unless it is for another network",
+    async ({ state = bothNetworks, options, kept = false }) => {
+      await setup(state);
+      await savePendingLogin(pendingLogin("testnet"));
+
+      await logoutHandler(options, runContext(true));
+
+      expect(await loadPendingLogin()).toEqual(kept ? pendingLogin("testnet") : undefined);
+    },
+  );
+});
+
+describe("logout with sessions holding deposits", () => {
+  const closeAll = "tempo wallet sessions close --all --network mainnet";
+  const summary =
+    "Unspent deposits remain in 1 stored session: 0.008000 USDC.e with https://example.com on tempo (active).";
+
+  it.each<{
+    name: string;
+    agent: boolean;
+    options: { network?: string; yes?: boolean };
+    answer?: boolean;
+    cta?: string;
+    declined?: boolean;
+  }>([
+    {
+      name: "an agent run without --yes",
+      agent: true,
+      options: {},
+      cta: "tempo wallet logout --yes",
+    },
+    {
+      name: "an agent run on one network without --yes",
+      agent: true,
+      options: { network: "mainnet" },
+      cta: "tempo wallet logout --yes --network mainnet",
+    },
+    { name: "an agent run with --yes", agent: true, options: { yes: true } },
+    { name: "a confirmed prompt", agent: false, options: {}, answer: true },
+    { name: "a declined prompt", agent: false, options: {}, answer: false, declined: true },
+    { name: "an interactive run with --yes", agent: false, options: { yes: true } },
+  ])("needs confirmation in $name", async ({ agent, options, answer, cta, declined }) => {
+    await setup(walletState(), [session()]);
+    const context = runContext(agent);
+    const confirm = vi.fn(async () => answer ?? false);
+
+    const output = await logoutHandler(options, context, { confirm }).catch(
+      (error: unknown) => error,
+    );
+
+    const where = options.network ?? "every network";
+    expect(confirm.mock.calls).toEqual(
+      answer === undefined
+        ? []
+        : [
+            [
+              `${summary} Withdrawing them after logout needs a new login, so close them first with '${closeAll}'. Log out of ${where}?`,
+            ],
+          ],
+    );
+    if (cta)
+      expect(output).toEqual({
+        code: "E_USAGE",
+        message: `Logging out of ${where} needs confirmation. ${summary} Withdrawing them after logout needs a new login, so close them first with '${closeAll}'. To log out anyway, run '${cta}'.`,
+        exitCode: 2,
+        retryable: false,
+        cta: { commands: [{ command: cta }] },
+      });
+    if (declined)
+      expect(output).toMatchObject({
+        code: "E_USAGE",
+        exitCode: 2,
+        message: "Wallet not logged out.",
+      });
+    const loggedOut = !cta && !declined;
+    if (loggedOut)
+      expect(logoutOutput.parse(output)).toMatchObject({
+        was_logged_in: true,
+        sessions: [
+          {
+            channel_id: session().channel_id,
+            network: "tempo",
+            symbol: "USDC.e",
+            remaining: "0.008000",
+            status: "active",
+          },
+        ],
+        instruction:
+          "Unspent deposits remain in 1 stored session on mainnet. Log in again with 'tempo wallet login --network mainnet', then run the next command to close them and withdraw the deposits.",
+        _next: { command: closeAll },
+      });
+    expect((await loadWalletState()).accounts).toEqual(loggedOut ? [] : [{ address: testWallet }]);
+  });
+
+  it.each<{
+    name: string;
+    record: Partial<PersistedSessionRecord>;
+    options?: { network?: string };
+    close?: string;
+  }>([
+    { name: "an open session", record: {}, close: closeAll },
+    {
+      name: "a session closing in its grace period",
+      record: { state: "closing", close_requested_at: 1, grace_ready_at: nowSeconds() + 900 },
+      close: closeAll,
+    },
+    {
+      name: "a finalizable session",
+      record: { state: "closing", close_requested_at: 1, grace_ready_at: 2 },
+      close: "tempo wallet sessions close --finalize --network mainnet",
+    },
+    { name: "an orphaned channel", record: { state: "orphaned" }, close: closeAll },
+    {
+      name: "a testnet session on a logout of every network",
+      record: { chain_id: testnet.chainId, token: "0x20c0000000000000000000000000000000000000" },
+      close: "tempo wallet sessions close --all --network testnet",
+    },
+    { name: "a spent session", record: { accepted_cumulative: 10_000n } },
+    { name: "a finalized session", record: { state: "finalized" } },
+    { name: "another wallet's session", record: { payer: testWallet2 } },
+    {
+      name: "a testnet session on a mainnet logout",
+      record: { chain_id: testnet.chainId },
+      options: { network: "mainnet" },
+    },
+  ])("counts $name", async ({ record, options = {}, close }) => {
+    await setup(walletState(), [session(record)]);
+    const context = runContext(true);
+
+    const output = await logoutHandler(options, context);
+
+    if (close) {
+      expect(output).toMatchObject({
+        code: "E_USAGE",
+        message: expect.stringContaining(`close them first with '${close}'`),
+      });
+      expect((await loadWalletState()).accounts).toEqual([{ address: testWallet }]);
+    } else {
+      expect(context.error).not.toHaveBeenCalled();
+      expect(logoutOutput.parse(output)).toMatchObject({ was_logged_in: true, sessions: [] });
+      expect((await loadWalletState()).accounts).toEqual([]);
+    }
+  });
+
+  it("names each network's close when sessions on several networks hold deposits", async () => {
+    await setup(bothNetworks, [
+      session(),
+      session({ channel_id: `0x${"b".repeat(64)}`, chain_id: testnet.chainId }),
+    ]);
+
+    const output = await logoutHandler({ yes: true }, runContext(true));
+
+    expect(output).toMatchObject({
+      sessions: [{ network: "tempo" }, { network: "tempo-moderato" }],
+      instruction:
+        "Unspent deposits remain in 2 stored sessions on 2 networks. To withdraw them, log in again on each network and close its sessions: 'tempo wallet login --network mainnet', then 'tempo wallet sessions close --all --network mainnet'; 'tempo wallet login --network testnet', then 'tempo wallet sessions close --all --network testnet'.",
+    });
+    expect(output).not.toHaveProperty("_next");
+  });
+
+  it("logs out without a prompt when sqlite3 is not installed", async () => {
+    const home = await useTempHome();
+    await writeWalletState(walletState());
+    await mkdir(join(home, "bin"));
+    vi.stubEnv("PATH", join(home, "bin"));
+    const context = runContext(true);
+
+    const output = await logoutHandler({}, context);
+
+    expect(context.error).not.toHaveBeenCalled();
+    expect(output).toMatchObject({ was_logged_in: true, sessions: [] });
+  });
+});
+
+describe("logout --revoke", () => {
+  it.each<{
+    name: string;
+    state: WalletState;
+    options: { network?: string; browser?: boolean };
+    revoked: WalletState["accessKeys"];
+    after: Partial<WalletState>;
+  }>([
+    {
+      name: "the wallet's key",
+      state: walletState(),
+      options: {},
+      revoked: [key],
+      after: { accounts: [], accessKeys: [] },
+    },
+    {
+      name: "every key on the network",
+      state: walletState({ accessKeys: [key, key2] }),
+      options: { network: "mainnet" },
+      revoked: [key, key2],
+      after: { accounts: [], accessKeys: [] },
+    },
+    {
+      name: "only the network's key, without a browser",
+      state: bothNetworks,
+      options: { network: "mainnet", browser: false },
+      revoked: [key],
+      after: { accessKeys: [testnetKey], chainId: testnet.chainId },
+    },
+  ])("revokes $name through the wallet app before removing it", async (scenario) => {
+    await setup(scenario.state);
+    const app = walletApp();
+    const readKey = keychain(...scenario.revoked.map(() => "revoked" as const));
+    const confirm = vi.fn();
+
+    const output = await logoutHandler(
+      { ...scenario.options, revoke: true, yes: true },
+      runContext(true),
+      { confirm, createProvider: app.createProvider, readKey },
+    );
+
+    expect(app.createProvider).toHaveBeenCalledExactlyOnceWith({
+      network: mainnet,
+      noBrowser: scenario.options.browser === false,
+    });
+    expect(app.request.mock.calls).toEqual(
+      scenario.revoked.flatMap((revoked) => [
+        [{ method: "eth_chainId" }],
+        [
+          {
+            method: "wallet_revokeAccessKey",
+            params: [{ address: testWallet, accessKeyAddress: revoked.address }],
+          },
+        ],
+      ]),
+    );
+    expect(readKey.mock.calls).toEqual(
+      scenario.revoked.map((revoked) => [
+        {
+          chainId: mainnet.chainId,
+          walletAddress: testWallet,
+          accessKeyAddress: revoked.address,
+        },
+      ]),
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(logoutOutput.parse(output)).toMatchObject({
+      was_logged_in: true,
+      keys: scenario.revoked.map((revoked) => removed(revoked, true)),
+      message: expect.stringContaining(
+        `${scenario.revoked.length} access key${scenario.revoked.length === 1 ? "" : "s"} revoked on-chain and removed`,
+      ),
+    });
+    expect(await loadWalletState()).toMatchObject(scenario.after);
+  });
+
+  it.each<{
+    name: string;
+    agent: boolean;
+    answer?: boolean;
+    cta?: string;
+  }>([
+    { name: "an agent run", agent: true, cta: "tempo wallet logout --revoke --yes" },
+    { name: "a confirmed prompt", agent: false, answer: true },
+    { name: "a declined prompt", agent: false, answer: false },
+  ])("needs confirmation without --yes in $name", async ({ agent, answer, cta }) => {
+    await setup(walletState());
+    const app = walletApp();
+    const confirm = vi.fn(async () => answer ?? false);
+    const readKey = keychain("revoked");
+
+    const output = await logoutHandler({ revoke: true }, runContext(agent), {
+      confirm,
+      createProvider: app.createProvider,
+      readKey,
+    }).catch((error: unknown) => error);
+
+    const reason = "--revoke revokes 1 access key on-chain, which cannot be undone.";
+    expect(confirm.mock.calls).toEqual(
+      answer === undefined ? [] : [[`${reason} Log out of every network?`]],
+    );
+    if (cta)
+      expect(output).toEqual({
+        code: "E_USAGE",
+        message: `Logging out of every network needs confirmation. ${reason} To log out anyway, run '${cta}'.`,
+        exitCode: 2,
+        retryable: false,
+        cta: { commands: [{ command: cta }] },
+      });
+    if (answer === false) expect(output).toMatchObject({ message: "Wallet not logged out." });
+    expect(app.createProvider).toHaveBeenCalledTimes(answer ? 1 : 0);
+    expect((await loadWalletState()).accessKeys).toEqual(answer ? [] : [key]);
+  });
+
+  it("logs out without a prompt when the network has no keys to revoke", async () => {
+    await setup(walletState({ accessKeys: [] }));
+    const app = walletApp();
+    const confirm = vi.fn();
+
+    const output = await logoutHandler({ network: "mainnet", revoke: true }, runContext(false), {
+      confirm,
+      createProvider: app.createProvider,
+    });
+
+    expect(output).toMatchObject({ was_logged_in: true, disconnected: true, keys: [] });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(app.createProvider).not.toHaveBeenCalled();
+  });
+
+  const retry = "tempo wallet logout --revoke --yes";
+  it.each<{
+    name: string;
+    state?: WalletState;
+    chainId?: number;
+    statuses: ("revoked" | "published")[];
+    request?: () => Promise<never>;
+    code: string;
+    exitCode: number;
+    message: string;
+    kept: WalletState["accessKeys"];
+  }>([
+    {
+      name: "the chain does not show the key revoked",
+      statuses: ["published"],
+      code: "E_NETWORK",
+      exitCode: 3,
+      message: `Not logged out: access key ${testAccessKey} on mainnet was not revoked, so it stays on this machine with the wallet. The wallet app returned, but the chain does not show it revoked. Rerun '${retry}' to retry, or rerun without --revoke to remove the keys without revoking them.`,
+      kept: [key],
+    },
+    {
+      name: "the wallet app request fails",
+      statuses: [],
+      request: async () => {
+        throw new Error("Device code expired.");
+      },
+      code: "E_NETWORK",
+      exitCode: 3,
+      message: `Not logged out: access key ${testAccessKey} on mainnet was not revoked, so it stays on this machine with the wallet. Device code expired. Rerun '${retry}' to retry, or rerun without --revoke to remove the keys without revoking them.`,
+      kept: [key],
+    },
+    {
+      name: "the wallet app is on another chain",
+      statuses: [],
+      chainId: testnet.chainId,
+      code: "E_USAGE",
+      exitCode: 2,
+      message: `Not logged out: access key ${testAccessKey} on mainnet was not revoked, so it stays on this machine with the wallet. Wallet is not configured for the requested network. Run 'tempo wallet login'. Rerun '${retry}' to retry, or rerun without --revoke to remove the keys without revoking them.`,
+      kept: [key],
+    },
+    {
+      name: "a later key is not revoked",
+      state: walletState({ accessKeys: [key, key2] }),
+      statuses: ["revoked", "published"],
+      code: "E_NETWORK",
+      exitCode: 3,
+      message: `Not logged out: access key ${testAccessKey2.toLowerCase()} on mainnet was not revoked, so it stays on this machine with the wallet (revoked and removed: ${testAccessKey}). The wallet app returned, but the chain does not show it revoked. Rerun '${retry}' to retry, or rerun without --revoke to remove the keys without revoking them.`,
+      kept: [key2],
+    },
+  ])(
+    "keeps the key and the wallet when $name",
+    async ({
+      state = walletState(),
+      chainId,
+      statuses,
+      request,
+      code,
+      exitCode,
+      message,
+      kept,
+    }) => {
+      await setup(state);
+      await savePendingLogin(pendingLogin("mainnet"));
+      const app = walletApp(chainId);
+      if (request)
+        app.request.mockImplementation(async ({ method }: { method: string }) =>
+          method === "eth_chainId" ? "0x1079" : await request(),
+        );
+      const readKey = keychain(...statuses);
+
+      const output = await logoutHandler({ revoke: true, yes: true }, runContext(true), {
+        createProvider: app.createProvider,
+        readKey,
+      });
+
+      expect(output).toEqual({
+        code,
+        message,
+        exitCode,
+        retryable: false,
+        cta: { commands: [{ command: retry }] },
+      });
+      expect(await loadWalletState()).toMatchObject({
+        accounts: [{ address: testWallet }],
+        accessKeys: kept,
+      });
+      expect(await loadPendingLogin()).toEqual(pendingLogin("mainnet"));
+    },
+  );
+
+  it.each<{
+    name: string;
+    state: WalletState;
+    options: { network?: string };
+    message: string;
+    cta: string;
+  }>([
+    {
+      name: "keys on two networks",
+      state: bothNetworks,
+      options: {},
+      message:
+        "The wallet app revokes access keys only on the network the wallet is logged in on (mainnet), not on testnet. Run 'tempo wallet logout --revoke --yes --network mainnet' to revoke the mainnet keys first; the wallet then stays logged in on testnet, where 'tempo wallet logout --revoke --yes --network testnet' revokes the rest.",
+      cta: "tempo wallet logout --revoke --yes --network mainnet",
+    },
+    {
+      name: "keys on a network the wallet is not logged in on",
+      state: bothNetworks,
+      options: { network: "testnet" },
+      message:
+        "The wallet app revokes access keys only on the network the wallet is logged in on (mainnet), not on testnet. Run 'tempo wallet login --network testnet', then rerun 'tempo wallet logout --revoke --yes --network testnet', or rerun without --revoke to remove the keys without revoking them.",
+      cta: "tempo wallet login --network testnet",
+    },
+  ])("refuses to revoke $name before doing anything", async ({ state, options, message, cta }) => {
+    await setup(state, [session()]);
+    const app = walletApp();
+    const confirm = vi.fn();
+
+    const output = await logoutHandler({ ...options, revoke: true, yes: true }, runContext(false), {
+      confirm,
+      createProvider: app.createProvider,
+    });
+
+    expect(output).toEqual({
+      code: "E_USAGE",
+      message,
+      exitCode: 2,
+      retryable: false,
+      cta: { commands: [{ command: cta }] },
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(app.createProvider).not.toHaveBeenCalled();
+    expect(await loadWalletState()).toMatchObject({ accessKeys: state.accessKeys });
+  });
+
+  it("revokes keys on two networks with the two logouts it suggests", async () => {
+    await setup(bothNetworks);
+
+    for (const network of [mainnet, testnet]) {
+      const app = walletApp(network.chainId);
+      const output = await logoutHandler(
+        { network: network.name, revoke: true, yes: true },
+        runContext(true),
+        { createProvider: app.createProvider, readKey: keychain("revoked") },
+      );
+      expect(output).toMatchObject({ keys: [{ chain_id: network.chainId, revoked: true }] });
+      expect(app.createProvider).toHaveBeenCalledExactlyOnceWith({ network, noBrowser: false });
+    }
+
+    expect(await loadWalletState()).toMatchObject({ accounts: [], accessKeys: [] });
+  });
+});
+
+describe("tempo wallet logout", () => {
+  it.each([
+    {
+      name: "an agent run without --yes is refused",
+      args: ["--format", "json"],
+      exitCode: 2,
+      output: { code: "E_USAGE", cta: { commands: [{ command: "tempo wallet logout --yes" }] } },
+    },
+    {
+      name: "a terminal run with piped stdin is refused instead of prompting",
+      args: [],
+      interactive: true,
+      exitCode: 2,
+      output: "E_USAGE",
+    },
+    {
+      name: "an agent run with --yes logs out",
+      args: ["--yes", "--format", "json"],
+      exitCode: 0,
+      output: {
+        was_logged_in: true,
+        scope: "all",
+        sessions: [{ remaining: "0.008000" }],
+        _next: { command: "tempo wallet sessions close --all --network mainnet" },
+      },
+    },
+  ])("$name when a session holds a deposit", async ({ args, interactive, exitCode, output }) => {
+    await setup(walletState(), [session()]);
+
+    const result = await wallet(["logout", ...args], { interactive });
+
+    expect(result.code, result.stderr).toBe(exitCode);
+    if (typeof output === "string") expect(result.stdout + result.stderr).toContain(output);
+    else expect(JSON.parse(result.stdout)).toMatchObject(output);
+    expect((await loadWalletState()).accounts).toEqual(
+      exitCode === 0 ? [] : [{ address: testWallet }],
+    );
+  });
+});
+
+/** Runs the wallet CLI with piped stdin; `interactive` makes stdout look like a terminal. */
+function wallet(args: string[], { interactive = false } = {}) {
+  const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1" };
+  delete env.TEMPO_WALLET_NETWORK;
+  return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [...(interactive ? ["--import", interactiveStdout] : []), cliBundle("wallet"), ...args],
+      { env, timeout: 10_000 },
+      (error, stdout, stderr) => {
+        if (error && typeof error.code !== "number") return reject(error);
+        resolve({ code: typeof error?.code === "number" ? error.code : 0, stdout, stderr });
+      },
+    );
+  });
+}
