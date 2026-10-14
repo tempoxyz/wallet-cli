@@ -1,0 +1,16 @@
+diff --git a/dist/internal/cta.js b/dist/internal/cta.js
+index 0ac7926ecf3796cc86636cc5740c398a8a8a38c7..059fc95f2d2c0a6967856844d3a6b34e5763430e 100644
+--- a/dist/internal/cta.js
++++ b/dist/internal/cta.js
+@@ -19,7 +19,10 @@ export function renderCtaText(block) {
+ function formatCta(name, cta) {
+     if (typeof cta === 'string')
+         return { command: `${name} ${cta}` };
+-    const prefix = cta.command === name || cta.command.startsWith(`${name} `) ? '' : `${name} `;
++    // A command naming the program of a multi-word CLI (`tempo wallet ...` from `tempo request`)
++    // is already a full command line.
++    const program = name.split(' ')[0];
++    const prefix = cta.command === name || cta.command.startsWith(`${program} `) ? '' : `${name} `;
+     let cmd = `${prefix}${cta.command}`;
+     if (cta.args)
+         for (const [key, value] of Object.entries(cta.args))

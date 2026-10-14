@@ -133,20 +133,6 @@ export function paymentError(message: string) {
   return walletError({ code: "E_PAYMENT", message });
 }
 
-export function authRefreshRequiredError(
-  reason: "expired" | "missing" | "unusable",
-  network: "mainnet" | "testnet",
-) {
-  const detail =
-    reason === "missing"
-      ? "No usable access key is configured."
-      : `The configured access key is ${reason}.`;
-  return walletError({
-    code: "E_AUTH_REFRESH_REQUIRED",
-    message: `${detail} Run 'tempo wallet refresh --network ${network}' before retrying.`,
-  });
-}
-
 export function httpError(status: number, message = `HTTP ${status}`) {
   return walletError({ code: "E_HTTP", message });
 }

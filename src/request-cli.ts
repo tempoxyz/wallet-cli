@@ -11,6 +11,7 @@ import { cliGlobalAlias, cliGlobals } from "./schemas.js";
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
 import { continuationCommand } from "./shared/next.js";
+import { WalletRequiredError } from "./shared/require-wallet.js";
 
 const maxSpendHelp = `Hard cap for cumulative payment spend in token units (or TEMPO_MAX_SPEND; default ${defaultMaxSpend})`;
 
@@ -156,8 +157,9 @@ const cli = Cli.create("tempo request", {
         formatExplicit ? { stderr: { write: () => true } } : {},
       );
     } catch (caught) {
+      // incur drops the cta of thrown errors, so return these refusals through `error`.
+      if (caught instanceof WalletRequiredError) return error(caught.problem);
       if (!(caught instanceof MaxSpendExceededError)) throw caught;
-      // incur drops the cta of thrown errors, so return the refusal through `error`.
       const rerun = rerunArgs(argv, ["max-spend", "network"]);
       const command = continuationCommand(
         ["request", ...rerun, "--max-spend", caught.required],

@@ -752,6 +752,8 @@ export const requestDryRunOutput = z.union([
       address: z.string().nullable(),
       source: z.enum(["flag", "env", "wallet"]),
     }),
+    // Set when the wallet cannot pay: the login or refresh command that fixes it.
+    ...nextOutputShape,
   }),
   z.object({
     payment_required: z.literal(false),

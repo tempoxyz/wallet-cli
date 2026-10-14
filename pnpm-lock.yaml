@@ -11,6 +11,9 @@ overrides:
   tinypool: 2.1.2
   ws: 8.21.0
 
+patchedDependencies:
+  incur@0.7.1: ce9f4f28b7cb426f7ad6048b002752028a94ba5d9f22643b1fb0b254ffb2dcc1
+
 importers:
 
   .:
@@ -20,7 +23,7 @@ importers:
         version: 0.19.0(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
       incur:
         specifier: 0.7.1
-        version: 0.7.1
+        version: 0.7.1(patch_hash=ce9f4f28b7cb426f7ad6048b002752028a94ba5d9f22643b1fb0b254ffb2dcc1)
       mppx:
         specifier: 0.12.0
         version: 0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
@@ -3071,7 +3074,7 @@ snapshots:
       yaml: 2.9.0
       zod: 4.4.3
 
-  incur@0.7.1:
+  incur@0.7.1(patch_hash=ce9f4f28b7cb426f7ad6048b002752028a94ba5d9f22643b1fb0b254ffb2dcc1):
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/server': 2.0.0-alpha.4
