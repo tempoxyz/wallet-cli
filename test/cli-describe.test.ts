@@ -58,6 +58,33 @@ describe("generated CLI metadata", () => {
     );
   });
 
+  it.each([
+    { name: "help", read: () => walletCli(["sessions", "close", "--help"]) },
+    {
+      name: "--describe",
+      read: async () => {
+        const description = JSON.parse(await walletCli(["--describe"])) as {
+          subcommands: { name: string; subcommands?: { name: string }[] | undefined }[];
+        };
+        const sessions = description.subcommands.find((command) => command.name === "sessions");
+        return JSON.stringify(sessions?.subcommands?.find((command) => command.name === "close"));
+      },
+    },
+  ])(
+    "documents sessions close as a request followed by a withdrawal in $name",
+    async ({ read }) => {
+      const output = await read();
+
+      expect(output).toContain(
+        "Request a session close, then withdraw after the grace period with --finalize",
+      );
+      expect(output).toContain("Withdraw channels whose close grace period has ended");
+      expect(output).toContain(
+        "Close now through the session's server instead of waiting out the grace period",
+      );
+    },
+  );
+
   it("documents request payment intent selection", async () => {
     const help = await requestCli(["--help"]);
     expect(help).toContain("--payment-intent <auto|session|charge>");
