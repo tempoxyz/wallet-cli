@@ -187,7 +187,6 @@ export async function swapTokens(
   };
 
   if (input.options["dry-run"]) {
-    const network = { network: input.options.network };
     const next = !requiresAccessKeyUpdate
       ? nextStep(
           exactOut
@@ -207,7 +206,7 @@ export async function swapTokens(
             ...(input.options["fee-token"] ? ["--fee-token", feeToken] : []),
             "--yes",
           ],
-          network,
+          { network },
         )
       : key && metadataIn.decimals !== tokenDecimals()
         ? // keys update reads --limit with a fixed decimal count, so a generated command would set the wrong raw limit.
@@ -227,12 +226,12 @@ export async function swapTokens(
                 "--limit",
                 output.max_amount_in,
               ],
-              network,
+              { network },
             )
           : nextStep(
               "No usable access key for this wallet and network. Run the next command to log in, then rerun this dry run to review the swap.",
               ["wallet", "login"],
-              network,
+              { network },
             );
     return { status: "dry_run" as const, ...output, ...next };
   }

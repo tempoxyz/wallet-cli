@@ -90,8 +90,6 @@ const continuations: {
   argv: string[];
   until?: string;
   poll_interval_seconds?: number;
-  /** The command acts on the wallet's stored chain, so its continuation always names it. */
-  storedChain?: boolean;
 }[] = [
   {
     name: "swap --dry-run reruns the swap with the reviewed minimum output and --yes",
@@ -219,8 +217,9 @@ const continuations: {
   },
   {
     name: "MACH transfer --dry-run reruns with the challenge inline",
-    run: async ({ option, chain }) =>
-      transferMach({
+    run: async ({ option, chain }) => {
+      await writeWalletState(stateFor(chain));
+      return transferMach({
         options: {
           network: option,
           "dry-run": true,
@@ -228,7 +227,8 @@ const continuations: {
           "mpp-challenge": `WWW-Authenticate: ${machChallenge(chain)}`,
           "mpp-client-id": "agent 1",
         },
-      }),
+      });
+    },
     argv: [
       "wallet",
       "transfer",
@@ -248,7 +248,6 @@ const continuations: {
       return revokeHandler({ accessKey: testAccessKey2 }, { network: option, "dry-run": true });
     },
     argv: ["wallet", "revoke", testAccessKey2.toLowerCase()],
-    storedChain: true,
   },
   {
     name: "keys update confirms the new limit with keys list",
@@ -259,7 +258,6 @@ const continuations: {
       }));
     },
     argv: ["wallet", "keys", "list"],
-    storedChain: true,
   },
   {
     name: "fresh login confirms readiness with whoami",
@@ -284,45 +282,39 @@ const continuations: {
   },
 ];
 
+// The wallet is logged in on `chain`; every continuation names the network the command resolved.
 describe.each([
-  { name: "the default network", option: undefined, env: undefined, network: [] },
-  { name: "--network", option: "testnet", env: undefined, network: ["--network", "testnet"] },
-  {
-    name: "TEMPO_WALLET_NETWORK",
-    option: undefined,
-    env: "testnet",
-    network: ["--network", "testnet"],
-  },
-])("continuations on $name", ({ option, env, network }) => {
-  it.each(continuations)(
-    "$name",
-    async ({ run, argv, until, poll_interval_seconds, storedChain }) => {
-      vi.useFakeTimers({ now: now * 1000, toFake: ["Date"] });
-      vi.stubEnv("TEMPO_WALLET_NETWORK", env);
-      vi.stubEnv("TEMPO_MAX_SPEND", undefined);
-      await useTempHome();
-      const chain = (option ?? env) ? 42431 : 4217;
+  { name: "the default network", option: undefined, env: undefined, chain: 4217 },
+  { name: "the logged-in chain", option: undefined, env: undefined, chain: 42431 },
+  { name: "--network", option: "tempo-moderato", env: undefined, chain: 42431 },
+  { name: "TEMPO_WALLET_NETWORK", option: undefined, env: "moderato", chain: 42431 },
+])("continuations on $name", ({ option, env, chain }) => {
+  it.each(continuations)("$name", async ({ run, argv, until, poll_interval_seconds }) => {
+    vi.useFakeTimers({ now: now * 1000, toFake: ["Date"] });
+    vi.stubEnv("TEMPO_WALLET_NETWORK", env);
+    vi.stubEnv("TEMPO_MAX_SPEND", undefined);
+    await useTempHome();
 
-      const result = (await run({ option, chain })) as {
-        instruction?: unknown;
-        _next?: { argv: string[]; command: string };
-      };
+    const result = (await run({ option, chain })) as {
+      instruction?: unknown;
+      _next?: { argv: string[]; command: string };
+    };
 
-      const expected = [
-        "tempo",
-        ...argv.map((arg) => (arg === "<challenge>" ? machChallenge(chain) : arg)),
-        ...(storedChain ? ["--network", chain === 42431 ? "tempo-moderato" : "tempo"] : network),
-      ];
-      expect(result.instruction).toEqual(expect.any(String));
-      expect(result._next).toEqual({
-        argv: expected,
-        command: expect.any(String),
-        ...(until ? { until } : {}),
-        ...(poll_interval_seconds ? { poll_interval_seconds } : {}),
-      });
-      expect(await shellWords(result._next!.command)).toEqual(expected);
-    },
-  );
+    const expected = [
+      "tempo",
+      ...argv.map((arg) => (arg === "<challenge>" ? machChallenge(chain) : arg)),
+      "--network",
+      chain === 42431 ? "testnet" : "mainnet",
+    ];
+    expect(result.instruction).toEqual(expect.any(String));
+    expect(result._next).toEqual({
+      argv: expected,
+      command: expect.any(String),
+      ...(until ? { until } : {}),
+      ...(poll_interval_seconds ? { poll_interval_seconds } : {}),
+    });
+    expect(await shellWords(result._next!.command)).toEqual(expected);
+  });
 });
 
 it("states when a pending session close becomes withdrawable", async () => {
@@ -338,7 +330,7 @@ it("states when a pending session close becomes withdrawable", async () => {
   expect(result).toMatchObject({
     pending: 1,
     instruction: expect.stringContaining("after 2026-10-13T12:13:20Z (in 800s)"),
-    _next: { command: `tempo wallet sessions close ${channelId}` },
+    _next: { command: `tempo wallet sessions close ${channelId} --network mainnet` },
   });
 });
 
@@ -416,7 +408,7 @@ it.each([
     for (const id of [channelId, otherChannelId])
       expect(result).toHaveProperty(
         "instruction",
-        expect.stringContaining(`'tempo wallet sessions close ${id}'`),
+        expect.stringContaining(`'tempo wallet sessions close ${id} --network mainnet'`),
       );
     expect(result).not.toHaveProperty("_next");
   },

@@ -9,7 +9,6 @@ import {
   createTempoPublicClient,
   explicitNetwork,
   networkFields,
-  networkName,
   resolveNetwork,
   storedChainId,
   tokenAddress,
@@ -60,7 +59,7 @@ export async function loginHandler(options: {
     accounts: result.accounts.map((account) => account.address),
     chainId: network.chainId,
     ...nextStep("Run the next command to confirm the wallet is ready.", ["wallet", "whoami"], {
-      network: options.network,
+      network,
     }),
   };
 }
@@ -234,7 +233,7 @@ export async function updateAccessKeyHandler(
     token: tokenAddress_resolved.toLowerCase(),
     limit: formatUnits(limit, tokenDecimals()),
     ...nextStep("Run the next command to confirm the new limit.", ["wallet", "keys", "list"], {
-      network: networkName(selectedChainId),
+      network,
     }),
   };
 }
@@ -307,7 +306,7 @@ export async function revokeHandler(
       ...nextStep(
         `Run the next command to revoke access key ${output.access_key} on-chain. Revocation cannot be undone.`,
         ["wallet", "revoke", output.access_key],
-        { network: networkName(selectedChainId) },
+        { network },
       ),
     };
 

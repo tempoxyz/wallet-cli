@@ -266,7 +266,7 @@ export async function closeSessions(options: {
         closeOneSession(target, { finalize: true, network }),
         target,
       );
-    return withPendingCloseNextStep(summary, options.network);
+    return withPendingCloseNextStep(summary, network);
   }
 
   for (const target of targets)
@@ -275,14 +275,14 @@ export async function closeSessions(options: {
       closeOneSession(target, { cooperative: options.cooperative, network }),
       target,
     );
-  return withPendingCloseNextStep(summary, options.network);
+  return withPendingCloseNextStep(summary, network);
 }
 
 /**
  * Points pending closes at a rerun of the same scope, which reports them as pending without a
  * transaction until the grace period ends and then withdraws exactly those channels.
  */
-function withPendingCloseNextStep(summary: CloseSummaryOutput, network: string | undefined) {
+function withPendingCloseNextStep(summary: CloseSummaryOutput, network: Network) {
   const pending = summary.results.filter((result) => result.status === "pending");
   if (pending.length === 0) return summary;
   const waitSecs = Math.max(...pending.map((result) => result.remaining_secs ?? 0));

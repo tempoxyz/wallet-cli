@@ -187,7 +187,7 @@ describe("session close process exit status", () => {
               "close",
               channelId,
               "--network",
-              "tempo",
+              "mainnet",
             ]);
           } else expect(summary).not.toHaveProperty("_next");
         }

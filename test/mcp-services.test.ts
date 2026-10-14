@@ -112,10 +112,14 @@ describe("MCP tools", () => {
     expect(JSON.parse(output)).toEqual([]);
   });
 
-  it("wraps MCP list results in a top-level services object", async () => {
+  it.each([
+    { name: "a search", options: {} },
+    // No network applies to services; the injected network option must pass through harmlessly.
+    { name: "refresh and network options", options: { refresh: true, network: "testnet" } },
+  ])("wraps MCP list results in a top-level services object for $name", async ({ options }) => {
     const response = await mcpCall({
       name: "services",
-      arguments: { serviceId: "list", search: "__no_match__" },
+      arguments: { serviceId: "list", search: "__no_match__", ...options },
     });
 
     expect(response.error).toBeUndefined();

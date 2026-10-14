@@ -100,7 +100,7 @@ export async function transferTokens(options: {
           ...(options.options["fee-token"] ? ["--fee-token", options.options["fee-token"]] : []),
           ...(options.options.address ? ["--address", options.options.address] : []),
         ],
-        { network: options.options.network },
+        { network },
       ),
     };
   }
@@ -236,7 +236,7 @@ export async function transferMach(options: {
               ...(flags["mpp-client-id"] ? ["--mpp-client-id", flags["mpp-client-id"]] : []),
               ...(flags.address ? ["--address", flags.address] : []),
             ],
-            { network: flags.network },
+            { network },
           )
         : {}),
     };
