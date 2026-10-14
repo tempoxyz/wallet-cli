@@ -98,7 +98,7 @@ type CloseOptions = {
 
 type CloseResultRecord = {
   channel_id: string;
-  status: "closed" | "pending" | "not_found" | "error";
+  status: "closed" | "pending" | "requested" | "not_found" | "error";
   origin?: string | undefined;
   remaining_secs?: number | undefined;
   error?: string | undefined;
@@ -206,7 +206,8 @@ export async function closeSessions(options: CloseOptions) {
 
   const network = await resolveNetwork(options.network, state);
   const summary = closeSummary();
-  for (const target of await closeTargets(options, network))
+  const targets = await closeTargets(options, network);
+  for (const target of targets)
     await recordCloseResult(
       summary,
       closeOneSession(target, {
@@ -216,14 +217,48 @@ export async function closeSessions(options: CloseOptions) {
       }),
       target,
     );
-  return withPendingCloseNextStep(summary, network);
+  return options.cooperative
+    ? withCloseConfirmationNextStep(summary, network)
+    : withPendingCloseNextStep(summary, network, targets);
+}
+
+/**
+ * Points cooperative closes the chain does not show yet at a plain rerun, which removes the
+ * record once the close is on-chain and otherwise requests the close on-chain itself.
+ */
+function withCloseConfirmationNextStep(summary: CloseSummaryOutput, network: Network) {
+  const requested = summary.results.filter((result) => result.status === "requested");
+  if (requested.length === 0) return summary;
+  const single = requested.length === 1 ? requested[0] : undefined;
+  if (!single)
+    return {
+      ...summary,
+      instruction: `${requested.length} cooperative closes were accepted by the server, but the chain does not show them closed yet, so their local records were kept. Confirm each with ${requested
+        .map(
+          (result) =>
+            `'${continuationCommand(["wallet", "sessions", "close", result.channel_id], network)}'`,
+        )
+        .join(", ")}; a channel that is still open has its close requested on-chain instead.`,
+    };
+  return {
+    ...summary,
+    ...nextStep(
+      `The server accepted the cooperative close of channel ${single.channel_id}, but the chain does not show it closed yet, so its local record was kept. Run the next command to confirm the close and remove the record; if the channel is still open, it requests the close on-chain instead.`,
+      ["wallet", "sessions", "close", single.channel_id],
+      { network, until: ".pending == 0 and .failed == 0" },
+    ),
+  };
 }
 
 /**
  * Points pending closes at a rerun of the same scope, which reports them as pending without a
  * transaction until the grace period ends and then withdraws exactly those channels.
  */
-function withPendingCloseNextStep(summary: CloseSummaryOutput, network: Network) {
+function withPendingCloseNextStep(
+  summary: CloseSummaryOutput,
+  network: Network,
+  targets: readonly ChannelRecord[],
+) {
   const pending = summary.results.filter((result) => result.status === "pending");
   if (pending.length === 0) return summary;
   const waitSecs = Math.max(...pending.map((result) => result.remaining_secs ?? 0));
@@ -232,12 +267,21 @@ function withPendingCloseNextStep(summary: CloseSummaryOutput, network: Network)
   const status = single
     ? `Close pending for channel ${single.channel_id}; its deposit can be withdrawn after ${readyAt} (in ${waitSecs}s).`
     : `${pending.length} session closes are pending; their deposits can be withdrawn after ${readyAt} (in ${waitSecs}s).`;
-  // A cooperative close goes through the session's server, which discovered channels lack.
-  const cooperative = single?.origin
-    ? ` To close it now through its server instead, run '${continuationCommand(["wallet", "sessions", "close", single.channel_id, "--cooperative"], network)}'.`
-    : !single && pending.some((result) => result.origin)
-      ? " To close one now through its server instead, add --cooperative to its command."
-      : "";
+  // Discovered channels have no server to ask, and session servers refuse a cooperative close of
+  // a precompile channel once its close is requested.
+  const offersCooperative = (result: CloseResultRecord) =>
+    targets.some(
+      (record) =>
+        record.channel_id === result.channel_id &&
+        record.origin !== "" &&
+        !isPrecompileEscrow(record.escrow_contract),
+    );
+  const cooperative =
+    single && offersCooperative(single)
+      ? ` To close it now through its server instead, run '${continuationCommand(["wallet", "sessions", "close", single.channel_id, "--cooperative"], network)}'.`
+      : !single && pending.some(offersCooperative)
+        ? " To close one now through its server instead, add --cooperative to its command."
+        : "";
   // Rerunning a broad scope (--all, an origin, or a state filter) could pick up channels opened
   // or closed since, so several pending channels are named one by one instead.
   if (!single)
@@ -390,6 +434,14 @@ async function closeOneSession(
       network: options.network,
       record,
     });
+    // The server's response is not proof: the record, and a v2 descriptor needed to withdraw,
+    // stay until the chain shows the close.
+    const closed = await getOnChainChannel({
+      channelId,
+      escrowContract: escrow,
+      network: options.network,
+    });
+    if (!closed?.finalized) return closeResult(record, "requested");
     await deleteChannelRecord(record.channel_id);
     return closeResult(record, "closed");
   }
@@ -610,7 +662,7 @@ export function buildSessionManagementTransactionRequest(options: {
   functionName: "requestClose" | "withdraw";
   record: ChannelRecord;
 }) {
-  const isPrecompile = options.escrowContract.toLowerCase() === TempoChannel.address.toLowerCase();
+  const isPrecompile = isPrecompileEscrow(options.escrowContract);
   const descriptor = isPrecompile ? requireSessionDescriptor(options.record) : undefined;
   return {
     feeToken: options.record.token as Address,
@@ -636,7 +688,7 @@ async function recordCloseResult(
     const result = await operation;
     summary.results.push(result);
     if (result.status === "closed") summary.closed += 1;
-    else if (result.status === "pending") summary.pending += 1;
+    else if (result.status === "pending" || result.status === "requested") summary.pending += 1;
     else summary.failed += 1;
   } catch (error) {
     summary.failed += 1;
@@ -872,7 +924,7 @@ async function getOnChainChannel(options: {
   escrowContract: Address;
   network: Network;
 }) {
-  if (options.escrowContract.toLowerCase() === TempoChannel.address.toLowerCase()) {
+  if (isPrecompileEscrow(options.escrowContract)) {
     const state = (await createTempoPublicClient(options.network.chainId).readContract({
       address: TempoChannel.address,
       abi: TempoAbis.tip20ChannelReserve,
@@ -884,10 +936,12 @@ async function getOnChainChannel(options: {
     const deposit = parseOnChainBigInt(record.deposit ?? tuple[1]);
     const settled = parseOnChainBigInt(record.settled ?? tuple[0]);
     const closeRequestedAt = parseOnChainBigInt(record.closeRequestedAt ?? tuple[2]);
-    // The precompile reports a closed channel like a missing one, with a zero deposit.
-    if (deposit === 0n) return null;
+    // The precompile clears a closed channel's state, so only its ChannelClosed event tells a
+    // closed channel from one that never existed.
+    if (deposit === 0n && !(await precompileChannelClosed(options.channelId, options.network)))
+      return null;
     return {
-      finalized: false,
+      finalized: deposit === 0n,
       token: tokenAddress(options.network.chainId),
       deposit,
       settled,
@@ -910,6 +964,37 @@ async function getOnChainChannel(options: {
   const settled = parseOnChainBigInt(record.settled ?? tuple[7]);
   if (!finalized && deposit === 0n) return null;
   return { finalized, token, deposit, settled, closeRequestedAt };
+}
+
+const channelClosedEvent = parseAbiItem(
+  "event ChannelClosed(bytes32 indexed channelId, address indexed payer, address indexed payee, uint96 settledToPayee, uint96 refundedToPayer)",
+);
+
+/** Whether the precompile emitted ChannelClosed for the channel within the log scan depth. */
+async function precompileChannelClosed(channelId: Hex, network: Network) {
+  const publicClient = createTempoPublicClient(network.chainId);
+  // Include the head block: a cooperative close checks for a close mined moments ago.
+  const latest = await publicClient.getBlockNumber();
+  const earliest = latest > logScanDepth ? latest - logScanDepth : 0n;
+  let end = latest;
+  while (end >= earliest) {
+    const start = end > earliest + logQueryBlockRange ? end - logQueryBlockRange : earliest;
+    const logs = await publicClient.getLogs({
+      address: TempoChannel.address,
+      event: channelClosedEvent,
+      args: { channelId },
+      fromBlock: start,
+      toBlock: end,
+    });
+    if (logs.length > 0) return true;
+    if (start === earliest) break;
+    end = start - 1n;
+  }
+  return false;
+}
+
+function isPrecompileEscrow(address: string) {
+  return address.toLowerCase() === TempoChannel.address.toLowerCase();
 }
 
 async function readGracePeriod(options: { escrowContract: Address; network: Network }) {

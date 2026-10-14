@@ -1,8 +1,10 @@
+import { Challenge } from "mppx";
 import { decodeFunctionData, type Hex } from "viem";
 import { Channel as TempoChannel } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  getLogs: vi.fn(),
   readContract: vi.fn(),
   request: vi.fn(),
 }));
@@ -12,6 +14,7 @@ vi.mock("viem", async (importOriginal) => ({
   // A zero block height leaves orphaned-channel discovery with nothing to scan.
   createPublicClient: vi.fn(({ chain }: { chain: { id: number } }) => ({
     getBlockNumber: async () => 0n,
+    getLogs: (call: object) => mocks.getLogs({ ...call, chainId: chain.id }),
     readContract: (call: object) => mocks.readContract({ ...call, chainId: chain.id }),
   })),
 }));
@@ -22,7 +25,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 }));
 
 import { closeSessions, dryRunCloseSessions, listSessions } from "../src/commands/sessions.js";
-import { upsertSessionRecord } from "../src/payment/session-store.js";
+import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
 import { escrowAbi, mainnetEscrow, moderatoEscrow, usdcToken } from "../src/shared/constants.js";
 import {
   testAccessKey,
@@ -47,12 +50,15 @@ const testnet = 42431;
 beforeEach(async () => {
   vi.useFakeTimers({ now: now * 1000, toFake: ["Date"] });
   vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+  mocks.getLogs.mockResolvedValue([]);
   await useTempHome();
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  mocks.getLogs.mockReset();
   mocks.readContract.mockReset();
   mocks.request.mockReset();
 });
@@ -166,17 +172,27 @@ describe("closing a channel the escrow no longer holds", () => {
       kept: [channelId],
     },
     {
-      name: "a zero-deposit precompile channel keeps the record",
+      name: "a closed precompile channel removes the record",
       escrow: TempoChannel.address,
-      onChain: { settled: 0n, deposit: 0n, closeRequestedAt: 0 },
+      onChain: precompileState(0n),
+      closedLog: true,
+      summary: { closed: 1, pending: 0, failed: 0 },
+      result: { channel_id: channelId, status: "closed", origin },
+      kept: [],
+    },
+    {
+      name: "a zero-deposit precompile channel without ChannelClosed keeps the record",
+      escrow: TempoChannel.address,
+      onChain: precompileState(0n),
       summary: { closed: 0, pending: 0, failed: 1 },
       result: expect.objectContaining({ channel_id: channelId, status: "not_found" }),
       kept: [channelId],
     },
-  ])("$name", async ({ escrow, onChain, summary, result, kept }) => {
+  ])("$name", async ({ escrow, onChain, closedLog, summary, result, kept }) => {
     await writeWalletState(stateFor(mainnet));
     await saveSession(channelId, mainnet, { escrow_contract: escrow });
     mockEscrow({ [channelId]: onChain });
+    if (closedLog) mocks.getLogs.mockResolvedValue([channelClosedLog()]);
 
     const output = await closeSessions({ target: channelId });
 
@@ -264,26 +280,136 @@ describe("--finalize", () => {
   });
 });
 
+describe("--cooperative", () => {
+  const v2Session = {
+    descriptor_json: JSON.stringify(sessionDescriptor()),
+    escrow_contract: TempoChannel.address,
+    session_protocol: "v2",
+  };
+
+  it.each([
+    {
+      name: "removes a v1 record once the escrow shows the channel finalized",
+      v2: false,
+      after: escrowChannel({ finalized: true }),
+      closedLog: false,
+      status: "closed",
+    },
+    {
+      name: "keeps a v1 record while the escrow still shows the channel open",
+      v2: false,
+      after: escrowChannel(),
+      closedLog: false,
+      status: "requested",
+    },
+    {
+      name: "removes a v2 record once the precompile logs ChannelClosed",
+      v2: true,
+      after: precompileState(0n),
+      closedLog: true,
+      status: "closed",
+    },
+    {
+      name: "keeps a v2 record and its descriptor while the precompile still holds the deposit",
+      v2: true,
+      after: precompileState(10_000n),
+      closedLog: false,
+      status: "requested",
+    },
+    {
+      name: "keeps a v2 record and its descriptor when the cleared channel logged no ChannelClosed",
+      v2: true,
+      after: precompileState(0n),
+      closedLog: false,
+      status: "requested",
+    },
+  ])("$name after the server accepts the close", async ({ v2, after, closedLog, status }) => {
+    await writeWalletState(stateFor(mainnet));
+    await saveSession(channelId, mainnet, {
+      challenge_echo: sessionChallenge(),
+      ...(v2 ? v2Session : {}),
+    });
+    let acceptedByServer = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const authorized = Boolean(
+          (init?.headers as Record<string, string> | undefined)?.Authorization,
+        );
+        acceptedByServer ||= authorized;
+        return new Response(null, { status: authorized ? 204 : 503 });
+      }),
+    );
+    const before = v2 ? precompileState(10_000n) : escrowChannel();
+    mocks.readContract.mockImplementation(async ({ functionName }: { functionName: string }) =>
+      functionName === "CLOSE_GRACE_PERIOD" ? 900n : acceptedByServer ? after : before,
+    );
+    mocks.getLogs.mockImplementation(async ({ address, args }) =>
+      acceptedByServer &&
+      closedLog &&
+      address === TempoChannel.address &&
+      args.channelId === channelId
+        ? [channelClosedLog()]
+        : [],
+    );
+
+    const result = await closeSessions({ cooperative: true, target: channelId });
+    const [stored] = await readSessionRecordsByOrigin(origin);
+
+    expect(acceptedByServer).toBe(true);
+    expect(mocks.request).not.toHaveBeenCalled();
+    if (status === "closed") {
+      expect(result).toEqual({
+        closed: 1,
+        pending: 0,
+        failed: 0,
+        results: [{ channel_id: channelId, status, origin }],
+      });
+      expect(stored).toBeUndefined();
+    } else {
+      expect(result).toMatchObject({
+        closed: 0,
+        pending: 1,
+        failed: 0,
+        results: [{ channel_id: channelId, status, origin }],
+        instruction: expect.stringContaining("its local record was kept"),
+        _next: {
+          argv: ["tempo", "wallet", "sessions", "close", channelId, "--network", "mainnet"],
+          until: ".pending == 0 and .failed == 0",
+        },
+      });
+      expect(stored?.channel_id).toBe(channelId);
+      expect(stored?.descriptor_json).toBe(v2 ? v2Session.descriptor_json : undefined);
+    }
+  });
+});
+
 describe("pending close instructions", () => {
   it.each([
     {
       name: "offer the cooperative close for a session with its server",
-      sessions: [{ id: channelId, origin }],
+      sessions: [{ id: channelId, origin, escrow: mainnetEscrow }],
       target: channelId,
       cooperative: `To close it now through its server instead, run 'tempo wallet sessions close ${channelId} --cooperative --network mainnet'.`,
     },
     {
       name: "offer the cooperative close for several sessions with their server",
       sessions: [
-        { id: channelId, origin },
-        { id: otherChannelId, origin },
+        { id: channelId, origin, escrow: mainnetEscrow },
+        { id: otherChannelId, origin, escrow: mainnetEscrow },
       ],
       target: origin,
       cooperative: "To close one now through its server instead, add --cooperative to its command.",
     },
     {
       name: "omit the cooperative close for a discovered channel without a server",
-      sessions: [{ id: channelId, origin: "" }],
+      sessions: [{ id: channelId, origin: "", escrow: mainnetEscrow }],
+      target: channelId,
+      cooperative: undefined,
+    },
+    {
+      name: "omit the cooperative close for a v2 session, which servers refuse once a close is requested",
+      sessions: [{ id: channelId, origin, escrow: TempoChannel.address }],
       target: channelId,
       cooperative: undefined,
     },
@@ -293,23 +419,29 @@ describe("pending close instructions", () => {
       await saveSession(session.id, mainnet, {
         origin: session.origin,
         request_url: session.origin && `${session.origin}/session`,
+        escrow_contract: session.escrow,
+        descriptor_json: JSON.stringify(sessionDescriptor()),
       });
     mockEscrow(
       Object.fromEntries(
-        sessions.map((session) => [session.id, escrowChannel({ closeRequestedAt: now - 100 })]),
+        sessions.map((session) => [
+          session.id,
+          session.escrow === TempoChannel.address
+            ? precompileState(10_000n, now - 100)
+            : escrowChannel({ closeRequestedAt: now - 100 }),
+        ]),
       ),
     );
 
-    const result = (await closeSessions({ target })) as {
-      pending: number;
-      instruction: string;
-      _next?: { argv: string[] };
-    };
+    const result = await closeSessions({ target });
 
-    expect(result.pending).toBe(sessions.length);
-    if (cooperative) expect(result.instruction).toContain(cooperative);
-    else expect(result.instruction).not.toContain("--cooperative");
-    expect(result._next?.argv ?? []).not.toContain("--cooperative");
+    expect(result).toMatchObject({
+      pending: sessions.length,
+      instruction: cooperative
+        ? expect.stringContaining(cooperative)
+        : expect.not.stringContaining("--cooperative"),
+    });
+    expect(result).not.toHaveProperty(["_next", "argv"], expect.arrayContaining(["--cooperative"]));
   });
 });
 
@@ -374,6 +506,39 @@ function escrowChannel(
     options.deposit ?? 10_000n,
     2_000n,
   ];
+}
+
+/** The precompile's `getChannelState`, which clears a closed channel to a zero deposit. */
+function precompileState(deposit: bigint, closeRequestedAt = 0) {
+  return { settled: deposit === 0n ? 0n : 2_000n, deposit, closeRequestedAt };
+}
+
+function channelClosedLog() {
+  return { address: TempoChannel.address, args: { channelId }, eventName: "ChannelClosed" };
+}
+
+function sessionDescriptor() {
+  return {
+    authorizedSigner: testAccessKey,
+    expiringNonceHash: `0x${"3".repeat(64)}`,
+    operator: zeroAddress,
+    payee: testWallet2,
+    payer: testWallet,
+    salt: `0x${"4".repeat(64)}`,
+    token: usdcToken,
+  };
+}
+
+function sessionChallenge() {
+  return JSON.stringify(
+    Challenge.from({
+      id: "close-test",
+      realm: origin,
+      method: "tempo",
+      intent: "session",
+      request: { amount: "1000", currency: usdcToken, recipient: testWallet2 },
+    }),
+  );
 }
 
 /** Escrow reads with a 900s grace period; channels not listed read as never opened. */
