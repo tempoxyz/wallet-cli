@@ -407,12 +407,22 @@ async function closeOneSession(
     network: options.network,
   });
   // Only a channel the escrow reports as finalized proves the close; a missing one keeps its record.
-  if (!onChain)
+  if (!onChain) {
+    // The precompile clears a closed channel, whose ChannelClosed log can be past the scan depth.
+    // A record whose close was requested saw the channel open on this chain, so for it the
+    // cleared state means the channel closed, not that it never existed.
+    const closeRequested =
+      record.close_requested_at > 0 || record.state === "closing" || record.state === "finalizable";
+    if (isPrecompileEscrow(escrow) && closeRequested) {
+      await deleteChannelRecord(record.channel_id);
+      return closeResult(record, "closed");
+    }
     return closeResult(record, "not_found", {
       error: record.virtual
         ? `channel not found on ${networkName(options.network.chainId)}`
         : `channel not found on ${networkName(options.network.chainId)}; kept the local session record (if the channel was already closed, '${continuationCommand(["wallet", "sessions", "sync"], options.network)}' removes it)`,
     });
+  }
   if (onChain.finalized) {
     await deleteChannelRecord(record.channel_id);
     return closeResult(record, "closed");

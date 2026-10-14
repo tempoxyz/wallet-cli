@@ -217,16 +217,34 @@ describe("closing a channel the escrow no longer holds", () => {
       kept: [],
     },
     {
-      name: "a zero-deposit precompile channel without ChannelClosed keeps the record",
+      name: "an active zero-deposit precompile channel without ChannelClosed keeps the record",
       escrow: TempoChannel.address,
       onChain: precompileState(0n),
       summary: { closed: 0, pending: 0, failed: 1 },
       result: expect.objectContaining({ channel_id: channelId, status: "not_found" }),
       kept: [channelId],
     },
-  ])("$name", async ({ escrow, onChain, closedLog, summary, result, kept }) => {
+    {
+      name: "a cleared precompile channel whose cooperative close was requested removes the record",
+      escrow: TempoChannel.address,
+      session: { state: "closing", close_requested_at: now - 100, grace_ready_at: 0 },
+      onChain: precompileState(0n),
+      summary: { closed: 1, pending: 0, failed: 0 },
+      result: { channel_id: channelId, status: "closed", origin },
+      kept: [],
+    },
+    {
+      name: "a cleared precompile channel past its grace period removes the record",
+      escrow: TempoChannel.address,
+      session: { state: "finalizable", close_requested_at: now - 1000, grace_ready_at: now - 100 },
+      onChain: precompileState(0n),
+      summary: { closed: 1, pending: 0, failed: 0 },
+      result: { channel_id: channelId, status: "closed", origin },
+      kept: [],
+    },
+  ])("$name", async ({ escrow, session, onChain, closedLog, summary, result, kept }) => {
     await writeWalletState(stateFor(mainnet));
-    await saveSession(channelId, mainnet, { escrow_contract: escrow });
+    await saveSession(channelId, mainnet, { escrow_contract: escrow, ...session });
     mockEscrow({ [channelId]: onChain });
     if (closedLog) mocks.getLogs.mockResolvedValue([channelClosedLog()]);
 
@@ -236,6 +254,32 @@ describe("closing a channel the escrow no longer holds", () => {
     expect(chainsRead()).toEqual([mainnet]);
     expect(mocks.request).not.toHaveBeenCalled();
     expect(await sessionIds(mainnet)).toEqual(kept);
+  });
+
+  it("removes a v2 record whose payee closed the channel after its close was requested", async () => {
+    await writeWalletState(stateFor(mainnet));
+    await saveSession(channelId, mainnet, {
+      descriptor_json: JSON.stringify(sessionDescriptor()),
+      escrow_contract: TempoChannel.address,
+      session_protocol: "v2",
+    });
+    mockEscrow({ [channelId]: precompileState(10_000n) });
+    mocks.request.mockResolvedValue({ transactionHash: `0x${"c".repeat(64)}`, status: "0x1" });
+
+    const requested = await closeSessions({ target: channelId });
+    // The payee closes the channel: the precompile clears it, and no ChannelClosed log is found.
+    mockEscrow({ [channelId]: precompileState(0n) });
+    const rerun = await closeSessions({ target: channelId });
+
+    expect(requested).toMatchObject({ pending: 1, results: [{ status: "pending" }] });
+    expect(rerun).toEqual({
+      closed: 1,
+      pending: 0,
+      failed: 0,
+      results: [{ channel_id: channelId, status: "closed", origin }],
+    });
+    expect(mocks.request).toHaveBeenCalledOnce();
+    expect(await sessionIds(mainnet)).toEqual([]);
   });
 
   it("reports an unknown channel id as not found instead of closed", async () => {
