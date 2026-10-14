@@ -436,17 +436,37 @@ describe("wallet CLI login and access key checks", () => {
     if ("request" in ran) expect(requests).toContain(ran.request);
   });
 
-  // The wallet app approves on the chain the wallet is logged in on, so the swap needs a login on
-  // the selected network before it reads a quote or sends anything.
+  // Wallet-app approval, the provider's fallback whenever no key can sign, is on the chain the
+  // wallet is logged in on, so a swap needs a login on the selected network before it reads a
+  // quote or sends anything, even with a key there.
   it.each([
-    { network: "testnet", state: walletState({ accessKeys: [expiredKey] }) },
     {
+      name: "without a key there",
+      network: "testnet",
+      state: walletState({ accessKeys: [expiredKey] }),
+      interactive: true,
+    },
+    {
+      name: "without a key there",
       network: "mainnet",
       state: walletState({ chainId: 42431, accessKeys: [{ ...testnetKey, expiry: 1 }] }),
+      interactive: true,
+    },
+    {
+      name: "with a key there",
+      network: "testnet",
+      state: walletState({ accessKeys: [key, testnetKey] }),
+      interactive: false,
+    },
+    {
+      name: "with a key there",
+      network: "mainnet",
+      state: walletState({ chainId: 42431, accessKeys: [key, testnetKey] }),
+      interactive: false,
     },
   ])(
-    "interactive swap --network $network without a key there returns a login cta",
-    async ({ network, state }) => {
+    "swap --network $network $name over another login returns a login cta (interactive: $interactive)",
+    async ({ network, state, interactive }) => {
       const home = await useTempHome();
       await writeWalletState(state);
       requests.length = 0;
@@ -454,14 +474,21 @@ describe("wallet CLI login and access key checks", () => {
       const result = await wallet(
         ["swap", "1", "pathUSD", "USDC.e", "--network", network, "--yes"],
         { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
-        { interactive: true },
+        { interactive },
       );
 
+      const command = `tempo wallet login --network ${network}`;
       expect(result.code).toBe(2);
-      expect(result.stdout).toContain("E_USAGE");
-      expect(result.stdout).toContain(
-        `Suggested command:\n  tempo wallet login --network ${network}`,
-      );
+      if (interactive) {
+        expect(result.stdout).toContain("E_USAGE");
+        expect(result.stdout).toContain(`Suggested command:\n  ${command}`);
+      } else
+        expect(JSON.parse(result.stdout)).toEqual({
+          code: "E_USAGE",
+          message: expect.stringContaining(`log in with '${command}', then rerun the swap.`),
+          retryable: false,
+          cta: { description: "Suggested command:", commands: [{ command }] },
+        });
       expect(requests).toEqual([]);
     },
   );

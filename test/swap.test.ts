@@ -25,7 +25,6 @@ import {
   expectUsageError,
   invalidTokenInputs,
   readyWallet,
-  testnetUsdc,
   testWallet,
   tokenInputs,
   unlistedToken,
@@ -379,82 +378,40 @@ describe("swapTokens", () => {
     expect(mocks.getAccount).toHaveBeenCalledWith({ address: testWallet });
   });
 
-  // The provider sends on the wallet's saved chain unless the request names one.
-  it.each([
-    { name: "the saved chain", stored: 4217, network: "mainnet" },
-    { name: "--network testnet over a mainnet login", stored: 4217, network: "testnet" },
-    { name: "--network mainnet over a testnet login", stored: 42431, network: "mainnet" },
-  ] as const)("sends on the reviewed network with $name", async ({ stored, network }) => {
-    await useTempHome();
-    const key = { ...walletState().accessKeys[0]!, limits: undefined };
-    await writeWalletState(
-      walletState({ chainId: stored, accessKeys: [key, { ...key, chainId: 42431 }] }),
-    );
-    const { chainId } = parseNetwork(network);
-    const { submit: _submit, ...lookups } = dependencies();
-    mocks.request.mockClear();
-
-    const result = await swapTokens(
-      await readyWallet(network),
+  // The provider sends on the wallet's saved chain unless the request names one, and falls back
+  // to wallet-app approval on that chain when no access key can sign, so a swap on another
+  // network is refused whether or not it has a key there. A dry run only reads the quote.
+  it.each(
+    [
+      { stored: 4217, network: "mainnet", refusal: undefined },
+      { stored: 42431, network: "testnet", refusal: undefined },
       {
-        args: { amount: "10", tokenIn: "pathUSD", tokenOut: "USDC.e" },
-        options: { "slippage-bps": 50, yes: true },
+        stored: 4217,
+        network: "testnet",
+        refusal: "wallet is logged in on tempo, not tempo-moderato",
       },
-      lookups,
-    );
-
-    expect(result).toMatchObject({ status: "success", chain_id: chainId });
-    expect(mocks.request).toHaveBeenCalledExactlyOnceWith({
-      method: "eth_sendTransactionSync",
-      params: [
-        {
-          from: testWallet,
-          calls: [
-            expect.objectContaining({ to: moderatoToken }),
-            expect.objectContaining({ to: Addresses.stablecoinDex }),
-          ],
-          chainId: toHex(chainId),
-          feeToken: moderatoToken,
-        },
-      ],
-    });
-  });
-
-  // Without an access key for the selected network the wallet app signs, and only on the chain
-  // the wallet is logged in on. A dry run only reads the quote, so it is never refused.
-  const keyless = [
-    {
-      name: "--network testnet over a mainnet login",
-      stored: 4217,
-      network: "testnet",
-      refusal:
-        "wallet is logged in on tempo, not tempo-moderato, and has no access key for tempo-moderato",
-    },
-    {
-      name: "--network mainnet over a testnet login",
-      stored: 42431,
-      network: "mainnet",
-      refusal: "wallet is logged in on tempo-moderato, not tempo, and has no access key for tempo",
-    },
-    { name: "the logged-in mainnet chain", stored: 4217, network: "mainnet", refusal: undefined },
-    { name: "the logged-in testnet chain", stored: 42431, network: "testnet", refusal: undefined },
-  ] as const;
-
-  it.each(keyless)(
-    "a swap without an access key, on $name",
-    async ({ stored, network, refusal }) => {
+      {
+        stored: 42431,
+        network: "mainnet",
+        refusal: "wallet is logged in on tempo-moderato, not tempo",
+      },
+    ].flatMap((chains) => [
+      { ...chains, key: "a usable access key", expiry: 2_000_000_000 },
+      { ...chains, key: "no usable access key", expiry: 1 },
+    ]),
+  )(
+    "swaps --network $network over a $stored login with $key: $refusal",
+    async ({ stored, network, refusal, expiry }) => {
       await useTempHome();
-      const expired = { ...walletState().accessKeys[0]!, chainId: stored, expiry: 1 };
-      await writeWalletState(walletState({ chainId: stored, accessKeys: [expired] }));
+      const key = { ...walletState().accessKeys[0]!, expiry, limits: undefined };
+      await writeWalletState(
+        walletState({ chainId: stored, accessKeys: [key, { ...key, chainId: 42431 }] }),
+      );
       const { chainId } = parseNetwork(network);
       // Interactive runs reach the swap without a usable key.
       const wallet = await readyWallet(network, false);
       const { submit: _submit, ...lookups } = dependencies();
-      const args = {
-        amount: "10",
-        tokenIn: moderatoToken,
-        tokenOut: network === "testnet" ? testnetUsdc : usdcToken,
-      };
+      const args = { amount: "10", tokenIn: "pathUSD", tokenOut: "USDC.e" };
       mocks.request.mockClear();
 
       const dryRun = await swapTokens(
@@ -488,7 +445,17 @@ describe("swapTokens", () => {
               [
                 {
                   method: "eth_sendTransactionSync",
-                  params: [expect.objectContaining({ chainId: toHex(chainId) })],
+                  params: [
+                    {
+                      from: testWallet,
+                      calls: [
+                        expect.objectContaining({ to: moderatoToken }),
+                        expect.objectContaining({ to: Addresses.stablecoinDex }),
+                      ],
+                      chainId: toHex(chainId),
+                      feeToken: moderatoToken,
+                    },
+                  ],
                 },
               ],
             ],

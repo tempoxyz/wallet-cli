@@ -88,14 +88,14 @@ export async function swapTokens(
     throw usageError(
       "MACH cannot be swapped. Use 'tempo request --mach' to pay for supported services.",
     );
-  // Without an access key for the selected network, the wallet app approves the swap, and it
-  // signs only on the chain the wallet is logged in on.
+  // The provider falls back to wallet-app approval, on the chain the wallet is logged in on,
+  // whenever no access key can sign the calls locally, so a swap is sent only on that chain.
   const walletChainId = storedChainId(state);
-  if (!input.options["dry-run"] && !key && walletChainId !== selectedChainId) {
+  if (!input.options["dry-run"] && walletChainId !== selectedChainId) {
     const command = continuationCommand(["wallet", "login"], network);
     return commandError(
       "E_USAGE",
-      `Swap not submitted: wallet is logged in on ${networkName(walletChainId)}, not ${networkName(selectedChainId)}, and has no access key for ${networkName(selectedChainId)}; log in with '${command}', then rerun the swap.`,
+      `Swap not submitted: wallet is logged in on ${networkName(walletChainId)}, not ${networkName(selectedChainId)}; log in with '${command}', then rerun the swap.`,
       command,
     );
   }
