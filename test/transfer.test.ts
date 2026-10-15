@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
       throw new Error("no metadata");
     },
   ),
+  // The provider holds every wallet it is asked for unless a test says otherwise.
+  getAccount: vi.fn(({ address }: { address: string }) => ({ address })),
+  request: vi.fn(async () => ({ transactionHash: `0x${"ab".repeat(32)}` })),
 }));
 
 vi.mock("viem/tempo", async (importOriginal) => {
@@ -21,6 +24,15 @@ vi.mock("viem/tempo", async (importOriginal) => {
     },
   };
 });
+
+vi.mock("../src/provider.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/provider.js")>()),
+  createProvider: vi.fn(async () => ({
+    getAccount: mocks.getAccount,
+    getClient: () => ({}),
+    request: mocks.request,
+  })),
+}));
 
 import { transferTokens } from "../src/commands/transfer.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
@@ -256,4 +268,39 @@ describe("transferTokens", () => {
       expect(containsSymbol(result, symbol)).toBe(false);
     },
   );
+
+  it.each([
+    { name: "sends from the wallet it checked", replaced: false },
+    { name: "sends nothing once another login replaced the wallet", replaced: true },
+  ])("$name", async ({ replaced }) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    if (replaced)
+      mocks.getAccount.mockImplementationOnce(() => {
+        throw new Error(`Account "${testWallet}" not found.`);
+      });
+
+    const result = transferTokens(await readyWallet(), {
+      args: { amount: "1", token: usdcToken, to: recipient },
+      options: {},
+    });
+
+    if (replaced) {
+      await expect(result).rejects.toThrow(
+        `Wallet ${testWallet.toLowerCase()} is no longer logged in, so nothing was sent. Check the login with 'tempo wallet whoami', then retry.`,
+      );
+      await expect(result).rejects.toMatchObject({ code: "E_NOT_AUTHENTICATED" });
+      expect(mocks.request).not.toHaveBeenCalled();
+    } else {
+      await expect(result).resolves.toMatchObject({
+        status: "success",
+        from: testWallet.toLowerCase(),
+      });
+      expect(mocks.request).toHaveBeenCalledWith({
+        method: "eth_sendTransactionSync",
+        params: [expect.objectContaining({ from: testWallet, calls: [expect.any(Object)] })],
+      });
+    }
+    expect(mocks.getAccount).toHaveBeenCalledWith({ address: testWallet });
+  });
 });

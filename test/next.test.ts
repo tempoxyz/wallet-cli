@@ -20,7 +20,7 @@ vi.mock("viem", async (importOriginal) => ({
 
 vi.mock("../src/provider.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/provider.js")>()),
-  createProvider: vi.fn(() => ({ request: mocks.request })),
+  createProvider: vi.fn(async () => ({ request: mocks.request })),
 }));
 
 import { revokeHandler, updateAccessKeyHandler } from "../src/commands/identity.js";
@@ -254,7 +254,7 @@ const continuations: {
       return updateAccessKeyHandler(
         await readyWallet(option),
         { limit: "250", token: moderatoToken },
-        () => ({ request: vi.fn() }),
+        async () => ({ request: vi.fn() }),
       );
     },
     argv: ["wallet", "keys", "list"],

@@ -8,7 +8,7 @@ import { nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
-import { createProvider } from "../provider.js";
+import { createProvider, requireSender } from "../provider.js";
 
 const slippageScale = 10_000n;
 
@@ -28,6 +28,7 @@ type SwapDependencies = {
   submit: (options: {
     calls: readonly { data: `0x${string}`; to: `0x${string}` }[];
     feeToken: `0x${string}`;
+    from: `0x${string}`;
     network: Network;
   }) => Promise<string>;
 };
@@ -216,7 +217,12 @@ export async function swapTokens(
       `Active access key cannot spend ${formatUnits(maxAmountIn, metadataIn.decimals)} ${nameIn}. Ask the wallet owner to run 'tempo wallet keys update --token ${tokenIn} --limit ${formatUnits(maxAmountIn, metadataIn.decimals)}' and retry.`,
     );
 
-  const txHash = await runtime.submit({ calls, feeToken, network });
+  const txHash = await runtime.submit({
+    calls,
+    feeToken,
+    from: account.address as `0x${string}`,
+    network,
+  });
   return { status: "success" as const, tx_hash: txHash, ...output };
 }
 
@@ -267,10 +273,16 @@ function defaultDependencies(network: Network): SwapDependencies {
       return Actions.dex.getSellQuote(client, options);
     },
     async submit(options) {
-      const provider = createProvider({ network: options.network });
+      const provider = await createProvider({ network: options.network });
       const receipt = await provider.request({
         method: "eth_sendTransactionSync",
-        params: [{ calls: options.calls, feeToken: options.feeToken }],
+        params: [
+          {
+            from: requireSender(provider, options.from),
+            calls: options.calls,
+            feeToken: options.feeToken,
+          },
+        ],
       });
       const record = getRecord(receipt);
       const txHash = stringValue(record.transactionHash ?? record.transaction_hash ?? record.hash);

@@ -80,11 +80,11 @@ export async function refreshHandler(
   createRefreshProvider: (options: {
     network: Network;
     noBrowser?: boolean | undefined;
-  }) => Pick<CoreProvider.Provider, "request"> = createProvider,
+  }) => Promise<Pick<CoreProvider.Provider, "request">> = createProvider,
 ) {
   const network = await resolveNetwork(options.network);
   const result = await connect(
-    createRefreshProvider({ network, noBrowser: options.browser === false }),
+    await createRefreshProvider({ network, noBrowser: options.browser === false }),
     network,
   );
 
@@ -169,7 +169,7 @@ export async function updateAccessKeyHandler(
   createUpdateProvider: (options: {
     network: Network;
     noBrowser?: boolean | undefined;
-  }) => UpdateAccessKeyProvider = createProvider,
+  }) => Promise<UpdateAccessKeyProvider> = createProvider,
   updateAccessKey: AccessKeyUpdater = updateAccessKeyThroughWallet,
 ) {
   const { account, network, state } = wallet;
@@ -210,7 +210,7 @@ export async function updateAccessKeyHandler(
   const limit = parseLimit(options.limit, decimals);
   const walletAddress = account.address as Address;
   const accessKeyAddress = key.address as Address;
-  const provider = createUpdateProvider({ network, noBrowser: options.browser === false });
+  const provider = await createUpdateProvider({ network, noBrowser: options.browser === false });
 
   await updateAccessKey({
     provider,
@@ -331,7 +331,7 @@ export async function revokeHandler(
     createProvider?: (options: {
       network: Network;
       noBrowser?: boolean | undefined;
-    }) => RevokeProvider;
+    }) => Promise<RevokeProvider>;
     readKey?: OnChainKeyReader;
   } = {},
 ) {
@@ -426,7 +426,7 @@ export async function revokeHandler(
     (await readKey(target)).status === "missing"
       ? stored.keyAuthorization
       : undefined;
-  const provider = (dependencies.createProvider ?? createProvider)({
+  const provider = await (dependencies.createProvider ?? createProvider)({
     network,
     noBrowser: options.browser === false,
   });

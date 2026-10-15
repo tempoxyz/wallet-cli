@@ -24,7 +24,7 @@ vi.mock("viem", async (importOriginal) => {
 
 vi.mock("../src/provider.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/provider.js")>()),
-  createProvider: vi.fn(() => ({ request: mocks.request })),
+  createProvider: vi.fn(async () => ({ request: mocks.request })),
 }));
 
 import {
@@ -334,7 +334,7 @@ const keyManagementCommands = [
       updateAccessKeyHandler(
         await readyWallet(network),
         { limit: "1" },
-        () => ({ request: vi.fn() }),
+        async () => ({ request: vi.fn() }),
         vi.fn(),
       ),
   },

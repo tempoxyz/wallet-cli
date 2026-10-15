@@ -2,6 +2,17 @@ import { decodeFunctionData, erc20Abi, formatUnits, type Hex } from "viem";
 import { Abis } from "viem/tempo";
 import { describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  // The provider holds every wallet it is asked for unless a test says otherwise.
+  getAccount: vi.fn(({ address }: { address: string }) => ({ address })),
+  request: vi.fn(async () => ({ transactionHash: `0x${"cd".repeat(32)}` })),
+}));
+
+vi.mock("../src/provider.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/provider.js")>()),
+  createProvider: vi.fn(async () => ({ getAccount: mocks.getAccount, request: mocks.request })),
+}));
+
 import { swapTokens } from "../src/commands/swap.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { machToken } from "../src/shared/mach.js";
@@ -320,8 +331,48 @@ describe("swapTokens", () => {
     expect(runtime.submit).toHaveBeenCalledWith({
       calls: expect.any(Array),
       feeToken: usdcToken,
+      from: testWallet,
       network: { name: "mainnet", chainId: 4217 },
     });
+  });
+
+  it.each([
+    { name: "sends from the wallet it checked", replaced: false },
+    { name: "sends nothing once another login replaced the wallet", replaced: true },
+  ])("the wallet provider $name", async ({ replaced }) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const { submit: _submit, ...lookups } = dependencies();
+    if (replaced)
+      mocks.getAccount.mockImplementationOnce(() => {
+        throw new Error(`Account "${testWallet}" not found.`);
+      });
+
+    const result = swapTokens(
+      await readyWallet(),
+      {
+        args: { amount: "10", tokenIn: usdcToken, tokenOut: moderatoToken },
+        options: { "slippage-bps": 50, yes: true },
+      },
+      lookups,
+    );
+
+    if (replaced) {
+      await expect(result).rejects.toThrow(
+        `Wallet ${testWallet.toLowerCase()} is no longer logged in, so nothing was sent. Check the login with 'tempo wallet whoami', then retry.`,
+      );
+      await expect(result).rejects.toMatchObject({ code: "E_NOT_AUTHENTICATED" });
+      expect(mocks.request).not.toHaveBeenCalled();
+    } else {
+      await expect(result).resolves.toMatchObject({ status: "success" });
+      expect(mocks.request).toHaveBeenCalledWith({
+        method: "eth_sendTransactionSync",
+        params: [expect.objectContaining({ from: testWallet, feeToken: usdcToken })],
+      });
+    }
+    // The balance and the sender are the same wallet.
+    expect(lookups.getBalance).toHaveBeenCalledWith({ account: testWallet, token: usdcToken });
+    expect(mocks.getAccount).toHaveBeenCalledWith({ address: testWallet });
   });
 
   it("rejects quotes that exceed the available input balance", async () => {

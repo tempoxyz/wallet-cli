@@ -13,7 +13,10 @@ const mocks = vi.hoisted(() => ({
       open: (url: string, prompt: { userCode: string }) => Promise<void> | void;
     }) => Object.assign(() => ({ actions: {} }), { rdns: "xyz.tempo.cli" }),
   ),
-  create: vi.fn((_options: Record<string, unknown>) => ({ request: vi.fn() })),
+  create: vi.fn((_options: Record<string, unknown>) => ({
+    request: vi.fn(),
+    store: { persist: { hasHydrated: () => true } },
+  })),
   filesystem: vi.fn(() => ({ key: "storage" })),
 }));
 
@@ -42,8 +45,8 @@ afterEach(() => {
 });
 
 describe("provider", () => {
-  it("targets the configured wallet device auth endpoint", () => {
-    createProvider({ network: { name: "testnet", chainId: 42431 }, noBrowser: true });
+  it("targets the configured wallet device auth endpoint", async () => {
+    await createProvider({ network: { name: "testnet", chainId: 42431 }, noBrowser: true });
 
     expect(mocks.cli).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -60,7 +63,7 @@ describe("provider", () => {
 
   it("prints the device confirmation code", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    createProvider({ network: { name: "mainnet", chainId: 4217 }, noBrowser: true });
+    await createProvider({ network: { name: "mainnet", chainId: 4217 }, noBrowser: true });
     const options = mocks.cli.mock.calls[0]![0];
 
     await options.open("https://wallet.tempo.xyz/api/auth/device/verify?user_code=ABCDEFGH", {

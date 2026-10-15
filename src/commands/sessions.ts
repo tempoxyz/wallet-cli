@@ -50,7 +50,7 @@ import {
 } from "../shared/utils.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
-import { createProvider } from "../provider.js";
+import { createProvider, requireSender } from "../provider.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import { loadWalletState } from "../wallet/store.js";
 
@@ -194,7 +194,7 @@ export async function dryRunCloseSessions({ network }: Wallet, options: CloseOpt
   };
 }
 
-export async function closeSessions({ network, state }: Wallet, options: CloseOptions) {
+export async function closeSessions({ account, network, state }: Wallet, options: CloseOptions) {
   validateCloseOptions(options);
   const summary = closeSummary();
   const targets = await closeTargets(options, network, { walletChainId: storedChainId(state) });
@@ -204,6 +204,7 @@ export async function closeSessions({ network, state }: Wallet, options: CloseOp
       closeOneSession(target, {
         cooperative: options.cooperative,
         finalize: options.finalize,
+        from: account.address,
         network,
       }),
       target,
@@ -392,6 +393,8 @@ async function closeOneSession(
   options: {
     cooperative?: boolean | undefined;
     finalize?: boolean | undefined;
+    /** The logged-in wallet that sends the close transactions. */
+    from: string;
     network: Network;
   },
 ): Promise<CloseResultRecord> {
@@ -475,6 +478,7 @@ async function closeOneSession(
     await sendSessionManagementTransaction({
       channelId,
       escrowContract: escrow,
+      from: options.from,
       functionName: "requestClose",
       network: options.network,
       record,
@@ -502,6 +506,7 @@ async function closeOneSession(
   await sendSessionManagementTransaction({
     channelId,
     escrowContract: escrow,
+    from: options.from,
     functionName: "withdraw",
     network: options.network,
     record,
@@ -662,6 +667,7 @@ function credentialSource(payer: string, chain: number) {
 async function sendSessionManagementTransaction(options: {
   channelId: Hex;
   escrowContract: Address;
+  from: string;
   functionName: "requestClose" | "withdraw";
   network: Network;
   record: ChannelRecord;
@@ -674,11 +680,11 @@ async function sendSessionManagementTransaction(options: {
       `wallet is logged in on ${networkName(walletChainId)}, not ${networkName(options.record.chain_id)}; log in with '${continuationCommand(["wallet", "login"], options.network)}', then rerun the close`,
     );
 
-  const provider = createProvider({ network: options.network });
+  const provider = await createProvider({ network: options.network });
   const request = buildSessionManagementTransactionRequest(options);
   const receipt = await provider.request({
     method: "eth_sendTransactionSync",
-    params: [request],
+    params: [{ ...request, from: requireSender(provider, options.from) }],
   });
   const record = getRecord(receipt);
   const txHash = stringValue(record.transactionHash ?? record.transaction_hash ?? record.hash);

@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   createCredential: vi.fn(),
+  // The provider holds every wallet it is asked for unless a test says otherwise.
+  getAccount: vi.fn(({ address }: { address: string }) => ({ address })),
   getLogs: vi.fn(),
   readContract: vi.fn(),
   request: vi.fn(),
@@ -55,7 +57,7 @@ vi.mock("viem/tempo", async (importOriginal) => {
 
 vi.mock("../src/provider.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/provider.js")>()),
-  createProvider: vi.fn(() => ({ request: mocks.request })),
+  createProvider: vi.fn(async () => ({ getAccount: mocks.getAccount, request: mocks.request })),
 }));
 
 import { runRequest } from "../src/commands/request.js";
@@ -452,10 +454,11 @@ describe("close transactions", () => {
         },
       ],
     });
-    // The transaction names the session's chain instead of relying on the wallet's.
+    // The transaction names the session's chain and the logged-in wallet instead of relying on
+    // the provider's.
     expect(mocks.request).toHaveBeenCalledWith({
       method: "eth_sendTransactionSync",
-      params: [expect.objectContaining({ chainId: toHex(mainnet) })],
+      params: [expect.objectContaining({ chainId: toHex(mainnet), from: testWallet })],
     });
     expect(withdrawals()).toEqual([{ functionName, args: [channelId] }]);
     expect(await readSessionRecordsByOrigin(origin)).toEqual([
@@ -467,6 +470,43 @@ describe("close transactions", () => {
       }),
     ]);
   });
+
+  it.each([
+    { functionName: "requestClose", onChain: escrowChannel(), session: {} },
+    {
+      functionName: "withdraw",
+      onChain: escrowChannel({ closeRequestedAt: now - 1000 }),
+      session: closing,
+    },
+  ])(
+    "sends no $functionName once another login replaced the wallet",
+    async ({ onChain, session }) => {
+      await writeWalletState(stateFor(mainnet));
+      await saveSession(channelId, mainnet, session);
+      mockEscrow({ [channelId]: onChain });
+      mocks.getAccount.mockImplementationOnce(() => {
+        throw new Error(`Account "${testWallet}" not found.`);
+      });
+
+      const result = await closeSessions({ target: channelId });
+
+      expect(result).toMatchObject({
+        failed: 1,
+        results: [
+          {
+            channel_id: channelId,
+            status: "error",
+            error: `Wallet ${testWallet.toLowerCase()} is no longer logged in, so nothing was sent. Check the login with 'tempo wallet whoami', then retry.`,
+          },
+        ],
+      });
+      expect(mocks.getAccount).toHaveBeenCalledWith({ address: testWallet });
+      expect(mocks.request).not.toHaveBeenCalled();
+      expect(await readSessionRecordsByOrigin(origin)).toEqual([
+        expect.objectContaining({ channel_id: channelId, ...session }),
+      ]);
+    },
+  );
 });
 
 describe("--cooperative", () => {
