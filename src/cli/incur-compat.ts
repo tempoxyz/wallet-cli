@@ -1,4 +1,14 @@
+/**
+ * Workarounds for incur bugs. `patches/incur@0.7.1.patch` is another: it keeps a cta naming the
+ * program of a multi-word CLI (`tempo wallet ...` from `tempo request`) unprefixed. Upstream:
+ * https://github.com/wevm/incur/pull/252, merged but unreleased. Remove the patch and its
+ * `pnpm-workspace.yaml` entry once incur > 0.7.1 includes wevm/incur#252.
+ */
 import type { z } from "incur";
+
+import { cliGlobalAlias, cliGlobals } from "../schemas/shared.js";
+import { commandTokens } from "./argv.js";
+import { isCommandGroup, isRunnableCommand, type RunnableCommand } from "./command.js";
 
 /** An option schema and its short aliases, as passed to incur. */
 export type OptionSpec = {
@@ -11,6 +21,11 @@ export type OptionSpec = {
  * splits stacked short flags (`-sn testnet` becomes `-s --network=testnet`). incur extracts CLI
  * globals from the whole argv before parsing command options, so an unbound value such as `-n`
  * or `--network=testnet` would otherwise be taken as the global `--network`. Stops at `--`.
+ *
+ * Upstream: https://github.com/wevm/incur/pull/258 parses globals with the command's option
+ * arity; built-in flags such as `--json` and `--help` are still open upstream. Remove once
+ * incur > 0.7.1 includes wevm/incur#258 and parses built-in flags the same way, keeping curl's
+ * `--json <body>` in `normalizeIncurArgv`.
  */
 export function bindOptionValues(argv: readonly string[], specs: readonly OptionSpec[]) {
   const long = new Map<string, boolean>();
@@ -66,4 +81,39 @@ function takesValue(field: z.ZodType) {
   let def = field.def as { innerType?: z.ZodType; type: string };
   while (def.innerType) def = def.innerType.def as typeof def;
   return def.type !== "boolean";
+}
+
+/**
+ * Binds the target command's option values before incur extracts globals; see bindOptionValues.
+ *
+ * Upstream: https://github.com/wevm/incur/pull/258. Remove with `bindOptionValues`.
+ */
+export function bindCommandOptions(args: readonly string[], commands: Map<string, unknown>) {
+  const [name, subcommand] = commandTokens(args);
+  const entry = name === undefined ? undefined : commands.get(name);
+  // A group without a known subcommand runs its root command (bare `sessions`).
+  const command = isCommandGroup(entry)
+    ? ((subcommand === undefined ? undefined : entry.commands.get(subcommand)) ?? entry.root)
+    : entry;
+  return bindOptionValues(args, [
+    ...(isRunnableCommand(command) ? [command] : []),
+    { options: cliGlobals, alias: cliGlobalAlias },
+  ]);
+}
+
+/**
+ * MCP tool calls carry no CLI globals, so accept `network` as a tool option and pass it on.
+ *
+ * Upstream: https://github.com/wevm/incur/pull/260. Remove once incur > 0.7.1 includes
+ * wevm/incur#260, passing `cliGlobals` to `Mcp.serve` as `globals` instead.
+ */
+export function withMcpGlobal<command extends RunnableCommand>(entry: command) {
+  return {
+    ...entry,
+    options: entry.options ? entry.options.extend(cliGlobals.shape) : cliGlobals,
+    run(context: { options: Record<string, unknown> }) {
+      const { network, ...options } = context.options;
+      return entry.run({ ...context, globals: { network }, options });
+    },
+  };
 }

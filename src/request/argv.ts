@@ -1,4 +1,4 @@
-import { bindOptionValues, type OptionSpec } from "../shared/argv.js";
+import { bindOptionValues, type OptionSpec } from "../cli/incur-compat.js";
 
 export function normalizeIncurArgv(argv: readonly string[], optionSpecs: readonly OptionSpec[]) {
   // Binding also turns `--json <body>` into `--json=<body>`: incur reserves exact `--json` as an

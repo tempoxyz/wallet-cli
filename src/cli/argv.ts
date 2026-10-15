@@ -1,26 +1,8 @@
-import { cliGlobalAlias, cliGlobals } from "../schemas/shared.js";
-import { bindOptionValues } from "../shared/argv.js";
-import { isCommandGroup, isRunnableCommand } from "./command.js";
-
 /** `help [command...]` is shorthand for `[command...] --help`. */
 export function expandHelp(args: string[]) {
   const index = firstCommandIndex(args);
   if (index === undefined || args[index] !== "help") return args;
   return [...args.slice(0, index), ...args.slice(index + 1), "--help"];
-}
-
-/** Binds the target command's option values before incur extracts globals; see bindOptionValues. */
-export function bindCommandOptions(args: readonly string[], commands: Map<string, unknown>) {
-  const [name, subcommand] = commandTokens(args);
-  const entry = name === undefined ? undefined : commands.get(name);
-  // A group without a known subcommand runs its root command (bare `sessions`).
-  const command = isCommandGroup(entry)
-    ? ((subcommand === undefined ? undefined : entry.commands.get(subcommand)) ?? entry.root)
-    : entry;
-  return bindOptionValues(args, [
-    ...(isRunnableCommand(command) ? [command] : []),
-    { options: cliGlobals, alias: cliGlobalAlias },
-  ]);
 }
 
 /**

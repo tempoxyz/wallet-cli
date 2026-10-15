@@ -3,7 +3,8 @@ import { z } from "incur";
 import type { Address } from "viem";
 import { Actions } from "viem/tempo";
 
-import { networkError, usageError } from "../shared/errors.js";
+import { requireRevokeChain } from "../provider/accounts-compat.js";
+import { networkError } from "../shared/errors.js";
 import { createTempoPublicClient } from "../shared/network.js";
 import { localAccessKeyStatus } from "./access-key.js";
 import type { WalletState } from "./store.js";
@@ -43,11 +44,7 @@ export async function revokeThroughWallet(options: {
   return (await readKey(target)).status === "revoked";
 }
 
-/**
- * The wallet app signs the revocation, so the root account needs no local signer.
- * `wallet_revokeAccessKey` takes no chain: the wallet revokes on the provider's active chain,
- * which must be the key's.
- */
+/** The wallet app signs the revocation, so the root account needs no local signer. */
 async function revokeAccessKeyThroughWallet(options: {
   provider: RevokeProvider;
   walletAddress: Address;
@@ -55,11 +52,7 @@ async function revokeAccessKeyThroughWallet(options: {
   chainId: number;
   keyAuthorization: unknown;
 }) {
-  const activeChainId = Number(await options.provider.request({ method: "eth_chainId" }));
-  if (activeChainId !== options.chainId)
-    throw usageError(
-      "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
-    );
+  await requireRevokeChain(options);
   await options.provider.request({
     method: "wallet_revokeAccessKey",
     params: [
