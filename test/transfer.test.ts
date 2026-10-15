@@ -1025,14 +1025,9 @@ describe("tempo wallet transfer", () => {
     return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
       const child = execFile(
         process.execPath,
-        [
-          // The subprocess must stay offline too: only the loopback fixtures answer it.
-          "--import",
-          join(fixtures, "loopback-only.mjs"),
-          ...(terminal
-            ? ["--import", join(fixtures, fixture), cliBundle("wallet"), ...args]
-            : [cliBundle("wallet"), ...args, "--format", "json"]),
-        ],
+        terminal
+          ? ["--import", join(fixtures, fixture), cliBundle("wallet"), ...args]
+          : [cliBundle("wallet"), ...args, "--format", "json"],
         { env: childEnv, timeout: 20_000 },
         (error, stdout, stderr) => {
           if (error && typeof error.code !== "number") return reject(error);

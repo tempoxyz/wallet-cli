@@ -30,7 +30,7 @@ export default async function setup(project: TestProject) {
   process.env.TEMPO_AUTH_URL = "http://127.0.0.1:9";
   // Every Node process started from here on, vitest workers and the CLI subprocesses tests spawn,
   // preloads the guard that refuses connections to non-loopback hosts.
-  const guard = pathToFileURL(join(root, "test/fixtures/no-network.mjs")).href;
+  const guard = pathToFileURL(join(root, "test/fixtures/loopback-only.mjs")).href;
   process.env.NODE_OPTIONS = [process.env.NODE_OPTIONS, `--import=${guard}`]
     .filter(Boolean)
     .join(" ");

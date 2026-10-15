@@ -40,7 +40,7 @@ it.each([
     const url = redirected ? await redirectTo(outbound) : outbound;
 
     await expect(fetch(url)).rejects.toMatchObject({
-      cause: { message: expect.stringContaining("Tests must not connect to 192.0.2.1:80") },
+      cause: { message: expect.stringContaining("blocked outbound connection to 192.0.2.1:80") },
     });
     expect(expectOffline).toThrow(refusal);
   },
