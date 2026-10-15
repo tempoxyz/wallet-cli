@@ -46,7 +46,7 @@ import {
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { machToken } from "../src/shared/mach.js";
-import { parseNetwork } from "../src/shared/network.js";
+import { appUrl, parseNetwork } from "../src/shared/network.js";
 import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
 import { keysOutput, whoamiOutput } from "../src/schemas.js";
@@ -737,10 +737,7 @@ describe("identity commands", () => {
     const result = await whoamiHandler({});
 
     expect(mocks.fetch).toHaveBeenCalledWith(
-      new URL(
-        `/api/assets?address=${testWallet}&chainId=4217&fresh=true`,
-        "https://wallet.tempo.xyz",
-      ),
+      new URL(`/api/assets?address=${testWallet}&chainId=4217&fresh=true`, appUrl),
       { signal: expect.any(AbortSignal) },
     );
     expect("balances" in result ? result.balances : null).toEqual([

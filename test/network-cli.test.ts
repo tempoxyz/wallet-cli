@@ -161,15 +161,7 @@ async function walletJson(args: string[], network?: string | undefined) {
   const { stdout } = await execFileAsync(
     process.execPath,
     [cliBundle("wallet"), ...args, "--format", "json"],
-    {
-      env: {
-        ...process.env,
-        // Keep balance and asset lookups local so a logged-in whoami fails fast.
-        TEMPO_AUTH_URL: "http://127.0.0.1:9",
-        TEMPO_RPC_URL: "http://127.0.0.1:9",
-        TEMPO_WALLET_NETWORK: network,
-      },
-    },
+    { env: { ...process.env, TEMPO_WALLET_NETWORK: network } },
   );
   return JSON.parse(stdout) as unknown;
 }

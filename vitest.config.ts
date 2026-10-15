@@ -10,6 +10,7 @@ export default defineConfig({
     globals: false,
     include: ["test/**/*.test.ts"],
     pool: "forks",
+    setupFiles: ["test/setup.ts"],
     testTimeout: 10_000,
   },
 });
