@@ -439,6 +439,8 @@ async function closeTargets(
         ...(options.finalize ? ["--finalize"] : []),
         ...(options.cooperative ? ["--cooperative"] : []),
         ...(dryRun ? ["--dry-run"] : []),
+        // A confirmed close stays confirmed on the right network; an unconfirmed one still asks.
+        ...(options.yes ? ["--yes"] : []),
       ],
       walletChainId,
     );

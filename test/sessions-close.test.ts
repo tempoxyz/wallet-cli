@@ -121,7 +121,7 @@ afterEach(() => {
 });
 
 describe("closing a session from another network", () => {
-  it.each([
+  const targets = [
     {
       name: "a channel id from the logged-in network",
       chain: testnet,
@@ -130,7 +130,7 @@ describe("closing a session from another network", () => {
       target: channelId,
       message: `No session for ${channelId} on tempo; it is on tempo-moderato. Rerun with 'tempo wallet sessions close ${channelId}{flags} --network testnet'.`,
       // A close sends its transactions on the session's chain, which needs a login there.
-      closeMessage: `No session for ${channelId} on tempo; it is on tempo-moderato, where the wallet is not logged in. Run 'tempo wallet login --network testnet', then rerun with 'tempo wallet sessions close ${channelId} --network testnet'.`,
+      closeMessage: `No session for ${channelId} on tempo; it is on tempo-moderato, where the wallet is not logged in. Run 'tempo wallet login --network testnet', then rerun with 'tempo wallet sessions close ${channelId}{flags} --network testnet'.`,
     },
     {
       name: "a channel id from --network",
@@ -166,20 +166,39 @@ describe("closing a session from another network", () => {
       cooperative: true,
       message: `No session for ${channelId} on tempo; it is on tempo-moderato. Rerun with 'tempo wallet sessions close ${channelId}{flags} --network testnet'.`,
     },
-  ])(
-    "refuses $name before any on-chain call and keeps the record",
-    async ({ chain, network, wallet, target, finalize, cooperative, message, closeMessage }) => {
+  ];
+
+  it.each(
+    targets.flatMap((row) => [
+      { ...row, yes: true, confirmation: "with --yes" },
+      { ...row, yes: undefined, confirmation: "without --yes" },
+    ]),
+  )(
+    "refuses $name $confirmation before any on-chain call and keeps the record",
+    async ({
+      chain,
+      network,
+      wallet,
+      target,
+      finalize,
+      cooperative,
+      message,
+      closeMessage,
+      yes,
+    }) => {
       await writeWalletState(stateFor(wallet));
       await saveSession(channelId, chain);
 
-      // The rerun keeps the requested mode, so it performs the same operation on the right network.
+      // The rerun keeps the requested mode, so it performs the same operation on the right network,
+      // and carries --yes only when the close was confirmed.
       for (const close of [closeSessions, dryRunCloseSessions]) {
         const flags = [
           ...(finalize ? [" --finalize"] : []),
           ...(cooperative ? [" --cooperative"] : []),
           ...(close === dryRunCloseSessions ? [" --dry-run"] : []),
+          ...(yes ? [" --yes"] : []),
         ].join("");
-        await expect(close({ cooperative, finalize, network, target })).rejects.toMatchObject({
+        await expect(close({ cooperative, finalize, network, target, yes })).rejects.toMatchObject({
           code: "E_USAGE",
           exitCode: 2,
           message: (close === closeSessions && closeMessage ? closeMessage : message).replace(
