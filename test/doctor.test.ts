@@ -96,8 +96,9 @@ async function sqliteBin(sqlite: "present" | "hung" | "missing") {
   return bin;
 }
 
-function doctor(network?: string) {
-  return doctorHandler({ network }, { timeout: 500 });
+// Healthy checks get a budget a loaded CI runner can meet; only the hung cases pass a short one.
+function doctor(network?: string, timeout = 5_000) {
+  return doctorHandler({ network }, { timeout });
 }
 
 function check(report: Awaited<ReturnType<typeof doctor>>, name: string) {
@@ -341,7 +342,7 @@ describe("rpc", () => {
     await writeWalletState(walletState());
     rpc = mode;
 
-    const report = await doctor();
+    const report = await doctor(undefined, mode === "hung" ? 500 : undefined);
 
     expect(report.rpc).toEqual({ url: "https://rpc.mainnet.tempo.xyz", ...section });
     expect(check(report, "rpc")).toEqual({
