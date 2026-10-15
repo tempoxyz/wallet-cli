@@ -43,6 +43,7 @@ Provide:
 
 - Installation location and version (`$HOME/.tempo/bin/tempo --version`).
 - Wallet status from `tempo wallet whoami` (address, network, and balance; include key fields when present).
+- `ready: true` means the wallet can pay on the network. A `key.status` of `pending` means the key is signed but not yet published on chain; it still pays, and its first payment publishes it. Read limits from `key.spending_limits[]`: `remaining` comes from the chain, and is `null` when the key is not published (`published: false`) or the read failed; `spent` is always `null`. `key.spending_limit` is deprecated and will be removed in a future release.
 - Check MACH with `tempo wallet whoami --mach`. Fund with `tempo wallet fund --mach --amount <USD>`; MACH is an on-chain six-decimal token, not a legacy credit balance.
 - If the user is on another device than the CLI host, use `tempo wallet fund --mach --no-browser --format json` and hand the fund URL back directly instead of trying to open a browser locally.
 - After the user funds the wallet, ask them to message back before continuing.

@@ -54,8 +54,10 @@ import {
 } from "../wallet/store.js";
 import {
   accessKeyMatches,
+  isPaymentCapableStatus,
   localAccessKeyStatus,
   selectPaymentCapableAccessKey,
+  type LocalAccessKeyStatus,
 } from "../wallet/access-key.js";
 import { queryMachBalance } from "../shared/mach.js";
 import { queryCreditBalance, warnCreditsDeprecated } from "./credits.js";
@@ -903,7 +905,7 @@ export async function currentWhoamiOutput(options: {
         )
       : undefined);
   const token = key?.limits?.[0]?.token ?? tokenAddress(options.chain);
-  const [balance, assets, sessions, details] = await Promise.all([
+  const [balance, assets, sessions, details, chainKey] = await Promise.all([
     tokenBalance({ chain: options.chain, token, walletAddress: options.walletAddress }),
     fetchWalletAssets({
       chain: options.chain,
@@ -911,6 +913,8 @@ export async function currentWhoamiOutput(options: {
     }),
     sessionStats({ token, walletAddress: options.walletAddress }),
     tokenDetails(key ? keyTokens(key) : [{ chain: options.chain, token, read: true }]),
+    // `key` is always the logged-in wallet's.
+    key ? readChainKey(key, rpcChainCheck()) : undefined,
   ]);
   const symbol = details.get(tokenKey(options.chain, token))?.symbol ?? null;
   const balances = walletBalances({
@@ -920,8 +924,9 @@ export async function currentWhoamiOutput(options: {
     fallbackVerified: knownToken(token, options.chain) !== undefined,
     symbol,
   });
+  const keyOutput = key ? currentKeyOutput(key, balance, details, chainKey) : null;
   return {
-    ready: Boolean(options.walletAddress && paymentKey && balance),
+    ready: whoamiReady(options.walletAddress, keyOutput?.status, balance),
     wallet: options.walletAddress?.toLowerCase() ?? null,
     ...networkFields(options.chain),
     balance: {
@@ -929,14 +934,28 @@ export async function currentWhoamiOutput(options: {
       ...(options.walletAddress && !balance ? { error: balanceQueryError } : {}),
     },
     balances,
-    key: key ? currentKeyOutput(key, balance, details) : null,
+    key: keyOutput,
   };
 }
 
 /**
- * Labels each key from its own chain and wallet. Balances and unlisted tokens are queried only
- * for the active wallet's keys, so the RPC never learns the other stored wallets or their tokens;
- * their balances report `null`, and their unlisted tokens have no symbol or formatted limit.
+ * `whoami` is ready with a logged-in wallet, an access key on the network that can pay, and a
+ * balance query that succeeded. It reads the status the key output reports, so the two always
+ * agree; a `pending` key counts, since its authorization is published with its first payment.
+ */
+function whoamiReady(
+  walletAddress: string | null,
+  status: LocalAccessKeyStatus | undefined,
+  balance: TokenBalance | null,
+) {
+  return Boolean(walletAddress && balance && status && isPaymentCapableStatus(status));
+}
+
+/**
+ * Labels each key from its own chain and wallet, and reads it on that chain. Balances, unlisted
+ * tokens, and on-chain key state are queried only for the active wallet's keys, so the RPC never
+ * learns the other stored wallets or their tokens; their balances, `published`, and remaining
+ * limits report `null`, and their unlisted tokens have no symbol or formatted limit.
  */
 export async function currentKeysOutput(options: {
   walletAddress: string | null;
@@ -945,11 +964,15 @@ export async function currentKeysOutput(options: {
   const active = (key: WalletState["accessKeys"][number]) =>
     key.access.toLowerCase() === options.walletAddress?.toLowerCase();
   const balances = new Map<string, TokenBalance | null>();
-  const details = await tokenDetails(
-    options.accessKeys.flatMap((key) => keyTokens(key, active(key))),
-  );
+  const servesChain = rpcChainCheck();
+  const [details, chainKeys] = await Promise.all([
+    tokenDetails(options.accessKeys.flatMap((key) => keyTokens(key, active(key)))),
+    Promise.all(
+      options.accessKeys.map((key) => (active(key) ? readChainKey(key, servesChain) : undefined)),
+    ),
+  ]);
   const keys = [];
-  for (const key of options.accessKeys) {
+  for (const [index, key] of options.accessKeys.entries()) {
     if (!active(key)) {
       keys.push(currentKeyOutput(key, undefined, details));
       continue;
@@ -960,7 +983,7 @@ export async function currentKeysOutput(options: {
       ? (balances.get(balanceKey) ?? null)
       : await tokenBalance({ chain: key.chainId, token, walletAddress: key.access });
     balances.set(balanceKey, balance);
-    keys.push(currentKeyOutput(key, balance, details));
+    keys.push(currentKeyOutput(key, balance, details, chainKeys[index]));
   }
 
   return {
@@ -969,18 +992,25 @@ export async function currentKeysOutput(options: {
   };
 }
 
-/** `balance` is `undefined` when it was not queried and `null` when the query failed. */
+/**
+ * `balance` is `undefined` when it was not queried and `null` when the query failed; `chainKey` is
+ * `undefined` when the key was not read on chain.
+ */
 function currentKeyOutput(
   key: WalletState["accessKeys"][number],
   balance: TokenBalance | null | undefined,
   details: TokenDetails,
+  chainKey?: ChainKey,
 ) {
   const limit = key.limits?.[0];
   const spendingMode = permissionMode(key.limits, key.permissionSemantics);
   const callMode = permissionMode(key.scopes, key.permissionSemantics);
   const token = limit?.token ?? tokenAddress(key.chainId);
   const tokenDetail = details.get(tokenKey(key.chainId, token));
-  const spendingLimits = accessKeyLimitsOutput(key, details);
+  const spendingLimits = accessKeyLimitsOutput(key, details, chainKey);
+  const first = spendingLimits[0];
+  const published = chainKey?.published ?? null;
+  const status = localAccessKeyStatus(key);
   return {
     address: key.address.toLowerCase(),
     ...networkFields(key.chainId),
@@ -990,29 +1020,22 @@ function currentKeyOutput(
     balance:
       balance && balance.token.toLowerCase() === token.toLowerCase() ? balance.formatted : null,
     ...(balance === null ? { balance_error: balanceQueryError } : {}),
+    // Deprecated: the key's permission mode with `spending_limits[0]`.
     spending_limit: {
       mode: spendingMode,
       unlimited: spendingMode === "unknown" ? null : spendingMode === "unrestricted",
-      limit:
-        spendingMode === "none"
-          ? "0.000000"
-          : spendingMode === "restricted" && limit
-            ? formatLimit(limit.limit, tokenDetail)
-            : null,
-      raw_limit:
-        spendingMode === "none"
-          ? "0"
-          : spendingMode === "restricted" && limit
-            ? cleanStoredScalar(limit.limit)
-            : null,
-      period_seconds: limit?.period ?? null,
-      remaining: null,
-      spent: null,
+      limit: spendingMode === "none" ? "0.000000" : (first?.limit ?? null),
+      raw_limit: spendingMode === "none" ? "0" : (first?.raw_limit ?? null),
+      period_seconds: first?.period_seconds ?? null,
+      remaining: first?.remaining ?? null,
+      spent: first?.spent ?? null,
     },
     spending_limits: spendingLimits,
     call_permissions: callMode,
     scopes: accessKeyScopesOutput(key),
-    status: localAccessKeyStatus(key),
+    // The stored authorization of a key the chain holds was already published.
+    status: status === "pending" && published ? "ready" : status,
+    published,
     expires_at: formatUnixTimestamp(key.expiry),
   };
 }
@@ -1025,9 +1048,19 @@ export async function keySpendingLimits(key: WalletState["accessKeys"][number]) 
   return accessKeyLimitsOutput(key, await tokenDetails(keyTokens(key, false)));
 }
 
-function accessKeyLimitsOutput(key: WalletState["accessKeys"][number], details: TokenDetails) {
+/**
+ * `remaining` is the chain's, when `chainKey` has it. `spent` is always `null`: the chain exposes
+ * only what remains, not the limit it counts down from, and another wallet client can change that
+ * limit, so the stored one cannot be proven current.
+ */
+function accessKeyLimitsOutput(
+  key: WalletState["accessKeys"][number],
+  details: TokenDetails,
+  chainKey?: ChainKey,
+) {
   return (key.limits ?? []).map((limit) => {
     const detail = details.get(tokenKey(key.chainId, limit.token));
+    const remaining = chainKey?.remaining.get(limit.token.toLowerCase()) ?? null;
     return {
       unlimited: false,
       symbol: detail?.symbol ?? null,
@@ -1035,10 +1068,76 @@ function accessKeyLimitsOutput(key: WalletState["accessKeys"][number], details: 
       limit: formatLimit(limit.limit, detail),
       raw_limit: cleanStoredScalar(limit.limit),
       period_seconds: limit.period ?? null,
-      remaining: null,
+      remaining: remaining === null ? null : formatLimit(remaining.toString(), detail),
       spent: null,
     };
   });
+}
+
+/**
+ * A key as the AccountKeychain precompile holds it. `published` is whether the chain holds the key
+ * unrevoked, `null` when the read failed or reached another chain. Remaining limits are keyed by
+ * lowercase token.
+ */
+type ChainKey = { published: boolean | null; remaining: Map<string, bigint | null> };
+
+/**
+ * Whether reads for a chain reach it. `TEMPO_RPC_URL` serves every network, so with it set each
+ * distinct chain asks the endpoint's `eth_chainId` once, bounded and without retries, and a failed
+ * call counts as another chain. The per-chain default URLs need no check.
+ */
+function rpcChainCheck() {
+  const checks = new Map<number, Promise<boolean>>();
+  return (chain: number) => {
+    if (!process.env.TEMPO_RPC_URL) return Promise.resolve(true);
+    let check = checks.get(chain);
+    if (!check) {
+      const client = createTempoPublicClient(chain, { timeout: statusQueryTimeout, retryCount: 0 });
+      check = (async () => (await client.getChainId()) === chain)().catch(() => false);
+      checks.set(chain, check);
+    }
+    return check;
+  };
+}
+
+/**
+ * Reads a key on its own chain, trusting the reads only once `servesChain` confirms the RPC is on
+ * it. Remaining limits are read only for a published key whose limits the chain enforces, since a
+ * key the chain does not hold reads as zero remaining. Each read is bounded and not retried, and a
+ * failed one is `null`.
+ */
+async function readChainKey(
+  key: WalletState["accessKeys"][number],
+  servesChain: (chain: number) => Promise<boolean>,
+): Promise<ChainKey> {
+  const client = createTempoPublicClient(key.chainId, {
+    timeout: statusQueryTimeout,
+    retryCount: 0,
+  });
+  const account = key.access as Address;
+  const accessKey = key.address as Address;
+  const [onChain, metadata] = await Promise.all([
+    servesChain(key.chainId),
+    Actions.accessKey.getMetadata(client, { account, accessKey }).catch(() => undefined),
+  ]);
+  const published =
+    onChain && metadata
+      ? !metadata.isRevoked && metadata.address.toLowerCase() === accessKey.toLowerCase()
+      : null;
+  if (!published || metadata?.spendPolicy !== "limited") return { published, remaining: new Map() };
+  const tokens = new Set((key.limits ?? []).map((limit) => limit.token.toLowerCase() as Address));
+  const remaining = await Promise.all(
+    [...tokens].map(async (token) => {
+      const value = await Actions.accessKey
+        .getRemainingLimit(client, { account, accessKey, token })
+        .then(
+          (result) => result.remaining,
+          () => null,
+        );
+      return [token, value] as const;
+    }),
+  );
+  return { published, remaining: new Map(remaining) };
 }
 
 /**

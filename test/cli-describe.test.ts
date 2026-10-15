@@ -247,6 +247,38 @@ describe("generated CLI metadata", () => {
     expect(keys.output.properties.keys.items.properties).toHaveProperty("balance_error");
   });
 
+  it("marks the singular spending_limit deprecated in schemas and --describe", async () => {
+    type Properties = Record<string, { description?: string } | undefined>;
+    const whoami = JSON.parse(await walletCli(["whoami", "--schema", "--format", "json"])) as {
+      output: { anyOf: { properties?: { key?: { anyOf: { properties?: Properties }[] } } }[] };
+    };
+    const keys = JSON.parse(await walletCli(["keys", "list", "--schema", "--format", "json"])) as {
+      output: { properties: { keys: { items: { properties: Properties } } } };
+    };
+    const whoamiKey = whoami.output.anyOf.find((item) => item.properties?.key)?.properties?.key
+      ?.anyOf[0]?.properties;
+    for (const key of [whoamiKey, keys.output.properties.keys.items.properties]) {
+      expect(key?.spending_limit?.description).toContain(
+        "Deprecated, and will be removed in a future release: use spending_limits",
+      );
+      expect(key?.published?.description).toContain("not yet published");
+    }
+
+    const description = JSON.parse(await walletCli(["--describe"])) as {
+      subcommands: {
+        name: string;
+        about: string;
+        subcommands?: { name: string; about: string }[];
+      }[];
+    };
+    const list = description.subcommands
+      .find((command) => command.name === "keys")
+      ?.subcommands?.find((command) => command.name === "list");
+    const whoamiCommand = description.subcommands.find((command) => command.name === "whoami");
+    for (const command of [whoamiCommand, list])
+      expect(command?.about).toContain("spending_limit is deprecated");
+  });
+
   it.each([
     ["long json", ["services", "--json-output", "--schema"]],
     ["short json", ["services", "-j", "--schema"]],

@@ -460,8 +460,8 @@ describe("revoke", () => {
         spending_limit: {
           mode: "unknown",
           unlimited: null,
-          limit: null,
-          raw_limit: null,
+          limit: "100.000000",
+          raw_limit: "100000000",
           period_seconds: null,
           remaining: null,
           spent: null,
@@ -481,6 +481,7 @@ describe("revoke", () => {
         call_permissions: "unknown",
         scopes: [],
         status: "ready",
+        published: null,
         expires_at: "2033-05-18T03:33:20Z",
       },
       instruction:

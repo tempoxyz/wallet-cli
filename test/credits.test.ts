@@ -742,7 +742,9 @@ describe("legacy credit balances", () => {
   ])("reads the credit ledger instead of MACH: %j", async (credits, balance, rawBalance) => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ credits }));
     const result = await whoamiHandler({ credits: true });
-    expect(result).toEqual({ credits: { wallet: testWallet, balance, rawBalance } });
+    expect(result).toEqual({
+      credits: { wallet: testWallet.toLowerCase(), balance, rawBalance },
+    });
     expect(whoamiOutput.parse(result)).toEqual(result);
     expect(console.error).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining("--credits is deprecated"),

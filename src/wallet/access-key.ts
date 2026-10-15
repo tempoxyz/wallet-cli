@@ -4,6 +4,12 @@ export type LocalAccessKeyStatus = "expired" | "pending" | "ready" | "unusable";
 
 type AccessKey = WalletState["accessKeys"][number];
 
+/**
+ * A key's status from the wallet store alone. `pending` means it carries the wallet's signed
+ * authorization: signed, but not yet published on chain when it was stored. Its first payment
+ * publishes it, and the store can keep the authorization after that, so only the chain tells
+ * whether a pending key is published.
+ */
 export function localAccessKeyStatus(
   key: AccessKey,
   now = Math.floor(Date.now() / 1000),
@@ -18,9 +24,13 @@ export function localAccessKeyStatus(
   return "pending";
 }
 
-export function isPaymentCapableAccessKey(key: AccessKey) {
-  const status = localAccessKeyStatus(key);
+/** A pending key can pay: its signed authorization is published with its first payment. */
+export function isPaymentCapableStatus(status: LocalAccessKeyStatus) {
   return status === "ready" || status === "pending";
+}
+
+export function isPaymentCapableAccessKey(key: AccessKey) {
+  return isPaymentCapableStatus(localAccessKeyStatus(key));
 }
 
 export function selectPaymentCapableAccessKey(
