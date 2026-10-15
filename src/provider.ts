@@ -43,7 +43,7 @@ const chainHolds = new WeakMap<object, ChainHold>();
 async function walletProvider(adapter: Adapter.Adapter, network: Network) {
   const hold: ChainHold = { held: false };
   const provider = CoreProvider.create({
-    adapter: withoutRetries(adapter),
+    adapter: releaseOnApproval(withoutRetries(adapter), hold),
     // Pull mode is the local-account-friendly MPP path for a CLI.
     mpp: { mode: "pull" },
     storage: walletStorage(hold),
@@ -72,6 +72,29 @@ function walletStorage(hold: ChainHold): ReturnType<typeof Storage.filesystem> {
       });
     },
   };
+}
+
+/**
+ * `adapter`, releasing `hold` as soon as the wallet app returns the accounts for a `wallet_connect`.
+ * The SDK saves those accounts in the same turn, so the chain switches in that write rather than in
+ * a later write of its own.
+ */
+function releaseOnApproval(adapter: Adapter.Adapter, hold: ChainHold): Adapter.Adapter {
+  return Adapter.define(adapter, (parameters) => {
+    const instance = adapter(parameters);
+    const { loadAccounts } = instance.actions;
+    return {
+      ...instance,
+      actions: {
+        ...instance.actions,
+        loadAccounts: async (...args) => {
+          const result = await loadAccounts(...args);
+          hold.held = false;
+          return result;
+        },
+      },
+    };
+  });
 }
 
 /**
@@ -214,8 +237,8 @@ function withoutRetries(adapter: Adapter.Adapter): Adapter.Adapter {
 
 /**
  * Sends `wallet_connect` for `network`. For a provider `walletProvider` made, the wallet store keeps
- * its chain until the wallet app approves, and then switches to `network`; a request that fails
- * leaves it, and so does any later write from the same provider.
+ * its chain until the wallet app approves, and switches to `network` as the SDK saves the approved
+ * accounts; a request that fails leaves it, and so does any later write from the same provider.
  */
 export async function connect(provider: Pick<CoreProvider.Provider, "request">, network: Network) {
   const hold = chainHolds.get(provider);
@@ -224,7 +247,7 @@ export async function connect(provider: Pick<CoreProvider.Provider, "request">, 
     hold.held = true;
   }
   try {
-    const result = await provider.request({
+    return await provider.request({
       method: "wallet_connect",
       params: [
         {
@@ -239,25 +262,10 @@ export async function connect(provider: Pick<CoreProvider.Provider, "request">, 
         },
       ],
     });
-    if (hold) {
-      hold.held = false;
-      if (hold.chainId !== network.chainId) await saveChain(network.chainId);
-    }
-    return result;
   } finally {
     // Wait for the SDK to save the wallet store, so later reads in this process see the result.
     await settleWalletStore();
   }
-}
-
-/** Saves `chainId` as the wallet store's chain, after the SDK's queued writes. */
-async function saveChain(chainId: number) {
-  const store = getRecord(await settleWalletStore());
-  if (!store.state) return;
-  await Storage.filesystem().setItem("store", {
-    ...store,
-    state: { ...getRecord(store.state), chainId },
-  });
 }
 
 /**

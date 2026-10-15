@@ -42,7 +42,7 @@ vi.mock("accounts/cli", async (importOriginal) => {
 });
 
 import { connect, createLoginProvider, createProvider, requireSender } from "../src/provider.js";
-import { loadWalletState } from "../src/wallet/store.js";
+import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
 import { deviceCodeHost } from "./device-code-host.js";
 import {
   testAccessKey,
@@ -206,6 +206,41 @@ describe("provider with a slow wallet store", () => {
 
       if ("resolves" in expected) await expect(result).resolves.toEqual(expected.resolves);
       else await expect(result).rejects.toThrow(expected.rejects);
+    },
+  );
+
+  it.each([
+    { name: "logout", other: emptyWalletState() },
+    { name: "login", other: walletState({ accounts: [{ address: testWallet2 }] }) },
+  ])(
+    "keeps another process's $name that lands as an approved login on another network finishes",
+    async ({ other }) => {
+      await writeWalletState(walletState());
+      const testnet = { name: "testnet", chainId: 42431 } as const;
+      let approved = false;
+      let written = false;
+      // The other process writes the store during the first read after the wallet approves.
+      store.answer = async (_n, read) => {
+        const value = await read();
+        if (approved && !written) {
+          written = true;
+          await saveWalletState(other);
+        }
+        return value;
+      };
+      const provider = await createLoginProvider({
+        network: testnet,
+        fetch: deviceCodeHost(() => {
+          approved = true;
+          return "approve";
+        }).fetch,
+        keystore: Keystore.webCryptoP256({ extractable: true }),
+      });
+
+      await connect(provider, testnet);
+
+      expect(written).toBe(true);
+      expect((await loadWalletState()).accounts).toEqual(other.accounts);
     },
   );
 
