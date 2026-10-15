@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { platform } from "node:process";
+import { env, platform } from "node:process";
 import { createInterface } from "node:readline/promises";
 
+/** Opens `url` in the default browser, unless `TEMPO_NO_BROWSER` is set (headless hosts, agents). */
 export function openExternal(url: string) {
+  if (env.TEMPO_NO_BROWSER) return;
   const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
   const args = platform === "win32" ? ["/c", "start", "", url] : [url];
   const child = spawn(command, args, {

@@ -20,6 +20,9 @@ export default async function setup(project: TestProject) {
   // installed skills from adding a "Skills are out of date" notice to test output.
   const dataHome = await mkdtemp(join(tmpdir(), "wallet-cli-data-"));
   process.env.XDG_DATA_HOME = dataHome;
+  // Device-code and fund tests must never open the developer's browser, in workers or in the
+  // CLI subprocesses they spawn.
+  process.env.TEMPO_NO_BROWSER = "1";
   const outdir = await mkdtemp(join(tmpdir(), "wallet-cli-bundle-"));
   const { version, dependencies } = JSON.parse(
     await readFile(join(root, "package.json"), "utf8"),
