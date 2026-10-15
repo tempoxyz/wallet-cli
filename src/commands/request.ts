@@ -1,22 +1,7 @@
-import { createWriteStream } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { basename, dirname } from "node:path";
-import { Writable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { setTimeout as sleep } from "node:timers/promises";
-
 import { Errors, type z } from "incur";
 import { Challenge, Constants, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession, tempo } from "mppx/client";
 import { machineTokenDeployments, Session as TempoSession } from "mppx/tempo";
-import {
-  Agent,
-  EnvHttpProxyAgent,
-  type Dispatcher,
-  fetch as undiciFetch,
-  FormData as UndiciFormData,
-  ProxyAgent,
-} from "undici";
 import {
   encodeFunctionData,
   erc20Abi,
@@ -30,7 +15,6 @@ import { Abis as TempoAbis, Actions, Channel as TempoChannel } from "viem/tempo"
 
 import {
   paymentReceipt,
-  type PaymentReceipt,
   receiptSummary,
   receiptTxHash,
   transactionHash,
@@ -47,10 +31,9 @@ import {
   upsertSessionRecord,
 } from "../payment/session-store.js";
 import type { requestDryRunOutput } from "../schemas/request.js";
-import { escrowAbi, version } from "../shared/constants.js";
+import { escrowAbi } from "../shared/constants.js";
 import {
   accessKeyLimitError,
-  networkError,
   httpError,
   paymentOutcomeUnknownError,
   paymentError,
@@ -69,22 +52,18 @@ import {
   sanitizeText,
   stringValue,
 } from "../shared/utils.js";
+import { parseRequestArgs, paymentTokenValue, validateRequestOptions } from "../request/args.js";
 import {
-  appendFormField,
-  appendQuery,
-  parseRequestArgs,
-  parseRetryStatuses,
-  parseSimpleToon,
-  paymentTokenValue,
-  readDataValue,
-  urlEncodeField,
-  validateMethod,
-  validateRequestOptions,
-  validateUrl,
-} from "../request/args.js";
+  buildFetchRequest,
+  cloneRequestInit,
+  type FetchPlan,
+  fetchWithRetries,
+  replaySafeMethods,
+  type RequestInitWithDispatcher,
+  responseBodyNetworkError,
+} from "../request/fetch.js";
 import {
   type PaymentIdentity,
-  privateKeyFlagWarning,
   privateKeyIdentity,
   privateKeySigner,
   requestNetwork,
@@ -102,6 +81,20 @@ import {
 } from "../request/mach.js";
 import type { RequestOptions, RequestRunOptions } from "../request/options.js";
 import {
+  remoteNamePath,
+  write,
+  writeHeadersFile,
+  writeMetaFile,
+  writeOutput,
+  writeResponseBody,
+} from "../request/output.js";
+import {
+  fetchPaidRequest,
+  paidResponseFailures,
+  paymentReceipts,
+  paymentReferences,
+} from "../request/paid.js";
+import {
   assertWithinMaxSpend,
   enforceMaxSpend,
   formatTokenAmount,
@@ -115,15 +108,6 @@ export { parseRequestArgs } from "../request/args.js";
 export { resolvePaymentIdentity, resolvePaymentNetwork } from "../request/identity.js";
 export { machChargeParameters } from "../request/mach.js";
 export { resolveMaxSpend } from "../request/spend.js";
-
-type FetchPlan = {
-  init: RequestInitWithDispatcher;
-  url: string;
-};
-
-type RequestInitWithDispatcher = RequestInit & {
-  dispatcher?: Dispatcher | undefined;
-};
 
 export async function runRequest(argv: readonly string[], io: RequestRunOptions = {}) {
   const options = parseRequestArgs(argv);
@@ -414,222 +398,6 @@ function dryRunBalance(payer: string, token: string, chainId: number) {
       args: [payer as Address],
     })
     .catch(() => null);
-}
-
-async function buildFetchRequest(options: RequestOptions) {
-  validateUrl(options.url);
-  const url = new URL(options.url);
-  const headers = new Headers();
-  let body: BodyInit | undefined;
-  let method = options.method ?? (options.head ? "HEAD" : undefined);
-
-  headers.set("user-agent", `tempo/${version}`);
-  if (options.userAgent) headers.set("user-agent", options.userAgent);
-  if (options.bearer) headers.set("authorization", `Bearer ${options.bearer}`);
-  if (options.user)
-    headers.set("authorization", `Basic ${Buffer.from(options.user).toString("base64")}`);
-  if (options.referer) headers.set("referer", options.referer);
-  if (options.compressed) headers.set("accept-encoding", "gzip, deflate, br");
-
-  for (const header of options.headers) {
-    const separator = header.indexOf(":");
-    if (separator <= 0) throw usageError(`Invalid header: ${header}`);
-    headers.set(header.slice(0, separator).trim(), header.slice(separator + 1).trim());
-  }
-
-  if (options.json !== undefined) {
-    try {
-      JSON.parse(options.json);
-    } catch (error) {
-      throw usageError(
-        `Invalid JSON passed to --json: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    body = options.json;
-    headers.set("content-type", headers.get("content-type") ?? "application/json");
-    method ??= "POST";
-  } else if (options.toon !== undefined) {
-    // Minimal TOON input compatibility for common "key: value" agent prompts.
-    body = JSON.stringify(parseSimpleToon(options.toon));
-    headers.set("content-type", headers.get("content-type") ?? "application/json");
-    method ??= "POST";
-  } else if (options.form.length > 0) {
-    const form = new UndiciFormData();
-    for (const field of options.form) await appendFormField(form, field);
-    body = form as unknown as BodyInit;
-    method ??= "POST";
-  } else if (options.data.length > 0 || options.dataUrlencode.length > 0) {
-    const data = [
-      ...(await Promise.all(options.data.map(readDataValue))),
-      ...options.dataUrlencode.map(urlEncodeField),
-    ].join("&");
-    if (options.get) appendQuery(url, data);
-    else {
-      body = data;
-      headers.set(
-        "content-type",
-        headers.get("content-type") ?? "application/x-www-form-urlencoded",
-      );
-      method ??= "POST";
-    }
-  }
-
-  method ??= "GET";
-  validateMethod(method);
-
-  const init: RequestInitWithDispatcher = {
-    headers,
-    method,
-    redirect: "manual",
-  };
-  if (body !== undefined) init.body = body;
-  if (options.maxTime) init.signal = AbortSignal.timeout(Math.ceil(options.maxTime * 1000));
-  init.dispatcher = buildDispatcher(options);
-
-  return { init, url: url.toString() };
-}
-
-async function fetchWithRetries(
-  request: FetchPlan,
-  options: RequestOptions,
-  fetchImpl: typeof fetch = undiciFetch as unknown as typeof fetch,
-) {
-  const retryStatuses = parseRetryStatuses(options.retryHttp, options.retries);
-  const attempts = (options.retries ?? 0) + 1;
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      const result = await fetchWithRedirects(request, options, fetchImpl);
-      const { response } = result;
-      if (attempt + 1 < attempts && retryStatuses.has(response.status)) {
-        await response.body?.cancel();
-        await waitBeforeRetry(response, options, attempt, request.init.signal);
-        continue;
-      }
-      return result;
-    } catch (error) {
-      lastError = error;
-      if (request.init.signal?.aborted || attempt + 1 >= attempts) break;
-      try {
-        await waitBeforeRetry(undefined, options, attempt, request.init.signal);
-      } catch (error) {
-        lastError = error;
-        break;
-      }
-    }
-  }
-
-  // Redirect-limit refusals keep their code.
-  if (lastError instanceof Errors.IncurError) throw lastError;
-  throw transportError(lastError, request.init.method ?? "GET");
-}
-
-// Credentials may authorize payment even when the response never arrives. Never
-// include the credential itself (or transport error text that might echo it).
-export async function fetchPaidRequest(
-  request: FetchPlan,
-  options: RequestOptions,
-  credential: string,
-  fetchImpl: typeof fetch = undiciFetch as unknown as typeof fetch,
-) {
-  const reference = paymentRecoveryReference(credential);
-  try {
-    const { response } = await fetchWithRedirects(request, options, fetchImpl, true);
-    paymentReferences.set(response, reference);
-    return response;
-  } catch {
-    throw paymentOutcomeUnknownError(
-      `A payment credential was sent or attempted, but no final response was received; payment may have completed.${reference} Check with the provider before creating another payment.`,
-    );
-  }
-}
-
-const paymentReferences = new WeakMap<Response, string>();
-const paidResponseFailures = new WeakSet<Response>();
-/** What the payment behind each paid response spent; reported once the response succeeds. */
-const paymentReceipts = new WeakMap<Response, PaymentReceipt>();
-
-function paymentRecoveryReference(credential: string) {
-  let reference = "";
-  try {
-    const parsed = Credential.deserialize<Record<string, unknown>>(credential);
-    reference = ` Challenge ID: ${recoveryReferenceValue(parsed.challenge.id)}. Intent: ${recoveryReferenceValue(parsed.challenge.intent)}.`;
-    const hash = parsed.payload.hash;
-    if (
-      parsed.payload.type === "hash" &&
-      typeof hash === "string" &&
-      /^0x[0-9a-fA-F]{64}$/.test(hash)
-    )
-      reference += ` Transaction hash: ${hash}.`;
-    const channelId = parsed.payload.channelId;
-    if (typeof channelId === "string" && /^0x[0-9a-fA-F]{64}$/.test(channelId))
-      reference += ` Channel ID: ${channelId}.`;
-  } catch {
-    // Recovery hints must never replace the original outcome classification.
-  }
-  return reference;
-}
-
-function recoveryReferenceValue(value: unknown) {
-  return escapeInvisible(JSON.stringify(String(value).slice(0, 200)));
-}
-
-async function fetchWithRedirects(
-  request: FetchPlan,
-  options: RequestOptions,
-  fetchImpl: typeof fetch,
-  sameOriginOnly = false,
-) {
-  let current = { init: cloneRequestInit(request.init), url: request.url };
-  const limit = options.followRedirects ? (options.maxRedirs ?? 10) : 0;
-
-  for (let redirects = 0; ; redirects++) {
-    const response = await fetchImpl(current.url, cloneRequestInit(current.init));
-    if (!options.followRedirects || !isRedirectStatus(response.status))
-      return { request: current, response };
-
-    const location = response.headers.get("location");
-    if (!location) return { request: current, response };
-    if (redirects >= limit) throw networkError(`Too many redirects: exceeded ${limit}`);
-
-    const nextUrl = new URL(location, current.url);
-    if (sameOriginOnly && nextUrl.origin !== new URL(current.url).origin)
-      throw networkError("Refusing to forward a payment credential to another origin");
-
-    current = redirectRequest(current, response.status, nextUrl.toString());
-  }
-}
-
-function redirectRequest(request: FetchPlan, status: number, location: string): FetchPlan {
-  const nextUrl = new URL(location, request.url);
-  const init = cloneRequestInit(request.init);
-  const headers = new Headers(init.headers);
-  const method = init.method?.toUpperCase() ?? "GET";
-
-  if (new URL(request.url).origin !== nextUrl.origin) {
-    headers.delete("authorization");
-    headers.delete("cookie");
-    headers.delete("proxy-authorization");
-  }
-
-  if (
-    (status === 301 || status === 302 || status === 303) &&
-    method !== "GET" &&
-    method !== "HEAD"
-  ) {
-    init.method = "GET";
-    delete init.body;
-    headers.delete("content-length");
-    headers.delete("content-type");
-  }
-
-  init.headers = headers;
-  return { init, url: nextUrl.toString() };
-}
-
-function isRedirectStatus(status: number) {
-  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
 async function payAndRetryRequest(
@@ -1621,168 +1389,6 @@ function offeredTempoCurrencies(header: string | null) {
   }
 }
 
-const replaySafeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
-
-// Rerunning the command resends the original method, so only safe methods are retryable.
-function transportError(error: unknown, method: string) {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalized = method.toUpperCase();
-  if (replaySafeMethods.has(normalized)) return networkError(message, { retryable: true });
-  return networkError(
-    `${message}. The ${normalized} request may have reached the server; check before retrying.`,
-  );
-}
-
-function responseBodyNetworkError(method: string) {
-  return (error: unknown): never => {
-    throw transportError(error, method);
-  };
-}
-
-async function* readResponseBody(
-  body: ReadableStream<Uint8Array>,
-  method: string,
-  signal?: AbortSignal,
-) {
-  const reader = body.getReader();
-  const cancel = () => {
-    void reader.cancel().catch(() => undefined);
-  };
-  signal?.addEventListener("abort", cancel, { once: true });
-  if (signal?.aborted) cancel();
-  try {
-    while (true) {
-      const { done, value } = await reader.read().catch(responseBodyNetworkError(method));
-      if (done) return;
-      yield value;
-    }
-  } finally {
-    signal?.removeEventListener("abort", cancel);
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
-  }
-}
-
-async function writeResponseBody(
-  response: Response,
-  options: RequestOptions,
-  stdout: Pick<NodeJS.WriteStream, "write">,
-  method: string,
-) {
-  const outputPath =
-    options.output ?? (options.remoteName ? remoteNamePath(options.url) : undefined);
-  const includeHeaders = options.includeHeaders || options.head;
-  const headerText = includeHeaders ? responseHeaderText(response) : "";
-
-  if (options.head) {
-    await writeOutput(outputPath, headerText, stdout);
-    return;
-  }
-
-  if (options.sseJson) {
-    if (outputPath) {
-      try {
-        await mkdir(dirname(outputPath), { recursive: true });
-      } catch (error) {
-        await response.body?.cancel().catch(() => undefined);
-        throw error;
-      }
-      await pipeline(
-        (options) => sseToNdjson(response, headerText, options?.signal),
-        createWriteStream(outputPath),
-      );
-    } else if (stdout instanceof Writable) {
-      await pipeline((options) => sseToNdjson(response, headerText, options?.signal), stdout, {
-        end: false,
-      });
-    } else {
-      for await (const chunk of sseToNdjson(response, headerText)) write(stdout, chunk);
-    }
-    return;
-  }
-
-  if (options.stream || options.sse) {
-    const body = response.body;
-    if (!body) return;
-    if (outputPath) {
-      await mkdir(dirname(outputPath), { recursive: true });
-      if (headerText) await writeFile(outputPath, headerText);
-      await pipeline(
-        ({ signal } = {}) => readResponseBody(body, method, signal),
-        createWriteStream(outputPath, { flags: headerText ? "a" : "w" }),
-      );
-    } else {
-      await write(stdout, headerText);
-      await pipeline(({ signal } = {}) => readResponseBody(body, method, signal), process.stdout);
-    }
-    return;
-  }
-
-  const body = Buffer.from(await response.arrayBuffer().catch(responseBodyNetworkError(method)));
-  await writeOutput(
-    outputPath,
-    headerText ? Buffer.concat([Buffer.from(headerText), body]) : body,
-    stdout,
-  );
-}
-
-async function writeOutput(
-  path: string | undefined,
-  text: string | Uint8Array,
-  stdout: Pick<NodeJS.WriteStream, "write">,
-) {
-  if (!path) {
-    await write(stdout, text);
-    return;
-  }
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, text);
-}
-
-async function writeHeadersFile(path: string, response: Response) {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, responseHeaderText(response));
-}
-
-async function writeMetaFile(
-  path: string,
-  response: Response,
-  started: number,
-  signer?: ReturnType<typeof privateKeySigner>,
-  payment?: PaymentReceipt & { outcome?: "unknown" },
-) {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(
-    path,
-    `${JSON.stringify(
-      {
-        status: response.status,
-        url: response.url,
-        elapsed_ms: Date.now() - started,
-        headers: Object.fromEntries(response.headers.entries()),
-        ...(signer
-          ? {
-              signer: {
-                address: signer.account.address,
-                source: signer.source,
-                ...(signer.source === "flag" ? { warning: privateKeyFlagWarning } : {}),
-              },
-            }
-          : {}),
-        ...(payment ? { payment } : {}),
-      },
-      null,
-      2,
-    )}\n`,
-  );
-}
-
-function responseHeaderText(response: Response) {
-  const lines = [`HTTP ${response.status}`];
-  for (const [name, value] of response.headers.entries()) lines.push(`${name}: ${value}`);
-  return `${lines.join("\n")}\n\n`;
-}
-
 export function tempoPaymentChallengeResponse(response: Response) {
   if (!response.headers.has("www-authenticate") || !response.headers.has("payment-required"))
     return response;
@@ -1858,161 +1464,4 @@ function validatePaymentAddresses(challenge: Challenge.Challenge) {
   const isProof = challenge.intent === "charge" && BigInt(request.amount as string) === 0n;
   if (!isProof && !isAddress(stringValue(request.recipient)))
     throw paymentError("Payment challenge is missing a valid recipient address");
-}
-
-function cloneRequestInit(init: RequestInitWithDispatcher): RequestInitWithDispatcher {
-  const out: RequestInitWithDispatcher = { headers: new Headers(init.headers) };
-  if (init.method !== undefined) out.method = init.method;
-  if (init.redirect !== undefined) out.redirect = init.redirect;
-  if (init.body !== undefined && init.body !== null) out.body = init.body;
-  if (init.signal !== undefined && init.signal !== null) out.signal = init.signal;
-  if (init.dispatcher !== undefined) out.dispatcher = init.dispatcher;
-  return out;
-}
-
-function buildDispatcher(options: RequestOptions): Dispatcher {
-  const connect = {
-    ...(options.connectTimeout ? { timeout: options.connectTimeout * 1000 } : {}),
-    ...(options.insecure ? { rejectUnauthorized: false } : {}),
-    ...(options.requestHttp2 ? { allowH2: true, preferH2: true } : {}),
-  };
-  const agentOptions = {
-    ...(options.connectTimeout ? { connectTimeout: options.connectTimeout * 1000 } : {}),
-    ...(options.requestHttp1 ? { allowH2: false } : {}),
-    ...(options.requestHttp2 ? { allowH2: true } : {}),
-    ...(Object.keys(connect).length > 0 ? { connect } : {}),
-  };
-
-  if (options.proxy && !options.noProxy)
-    return new ProxyAgent({ ...agentOptions, uri: options.proxy });
-  if (options.noProxy) return new Agent(agentOptions);
-  if (isLoopbackUrl(options.url)) return new Agent(agentOptions);
-  return new EnvHttpProxyAgent(agentOptions);
-}
-
-function isLoopbackUrl(value: string) {
-  const host = new URL(value).hostname.toLowerCase();
-  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
-}
-
-function remoteNamePath(value: string) {
-  const name = basename(new URL(value).pathname);
-  if (!name || name === "." || name === ".." || name.includes("/"))
-    throw usageError("Could not derive a safe remote filename from URL");
-  return name;
-}
-
-async function waitBeforeRetry(
-  response: Response | undefined,
-  options: RequestOptions,
-  attempt: number,
-  signal: AbortSignal | null | undefined,
-) {
-  const retryAfter =
-    response && (options.retryAfter || options.retries !== undefined)
-      ? retryAfterMs(response.headers.get("retry-after"))
-      : undefined;
-  const base = options.retryBackoffMs ?? 250;
-  const exponential = Math.min(base * 2 ** attempt, 10_000);
-  const jitter = options.retryJitter
-    ? Math.floor(exponential * ((Math.random() * options.retryJitter) / 100))
-    : 0;
-  await sleep(retryAfter ?? exponential + jitter, undefined, { signal: signal ?? undefined });
-}
-
-function retryAfterMs(value: string | null) {
-  if (!value) return undefined;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
-  const date = Date.parse(value);
-  if (Number.isFinite(date)) return Math.max(0, date - Date.now());
-  return undefined;
-}
-
-async function* sseToNdjson(response: Response, headerText: string, signal?: AbortSignal) {
-  if (!response.body) {
-    if (headerText) yield headerText;
-    return;
-  }
-  const reader = response.body.getReader();
-  const cancel = () => void reader.cancel(signal?.reason).catch(() => undefined);
-  if (signal?.aborted) cancel();
-  else signal?.addEventListener("abort", cancel, { once: true });
-  const decoder = new TextDecoder();
-  let pending = "";
-  let skipLeadingLf = false;
-  let eventName = "data";
-  let data: string[] = [];
-  try {
-    if (headerText) yield headerText;
-    while (true) {
-      const { value, done } = await reader.read();
-      pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
-      while (true) {
-        if (skipLeadingLf) {
-          if (pending.length === 0) break;
-          if (pending[0] === "\n") pending = pending.slice(1);
-          skipLeadingLf = false;
-        }
-        const boundary = pending.search(/[\r\n]/);
-        if (boundary < 0) break;
-        const line = pending.slice(0, boundary);
-        skipLeadingLf = pending[boundary] === "\r";
-        pending = pending.slice(boundary + 1);
-        if (line === "") {
-          if (data.length > 0)
-            yield `${JSON.stringify({ event: eventName, data: parseSseData(data.join("\n")), ts: new Date().toISOString() })}\n`;
-          eventName = "data";
-          data = [];
-        } else {
-          const separator = line.indexOf(":");
-          const field = separator < 0 ? line : line.slice(0, separator);
-          const raw = separator < 0 ? "" : line.slice(separator + 1);
-          const value = raw.startsWith(" ") ? raw.slice(1) : raw;
-          if (field === "event") eventName = value || "data";
-          else if (field === "data") data.push(value);
-        }
-      }
-      // SSE dispatches only events terminated by a blank line.
-      if (done) break;
-    }
-  } finally {
-    signal?.removeEventListener("abort", cancel);
-    try {
-      await reader.cancel();
-    } finally {
-      reader.releaseLock();
-    }
-  }
-}
-
-function parseSseData(data: string) {
-  try {
-    return JSON.parse(data) as unknown;
-  } catch {
-    return data;
-  }
-}
-
-function write(stdout: Pick<NodeJS.WriteStream, "write">, text: string | Uint8Array) {
-  const stream = stdout as Pick<NodeJS.WriteStream, "write"> & {
-    off?: NodeJS.WriteStream["off"];
-    once?: NodeJS.WriteStream["once"];
-  };
-  if (!stream.once || !stream.off) {
-    stream.write(text);
-    return Promise.resolve();
-  }
-  return new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => reject(error);
-    stream.once?.("error", onError);
-    stream.write(text, (error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      stream.off?.("error", onError);
-      resolve();
-    });
-  });
 }

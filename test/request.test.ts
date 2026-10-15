@@ -18,7 +18,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildTopUpTransactionRequest,
-  fetchPaidRequest,
   chargeFallbackError,
   isSessionInvalidationResponse,
   runRequest,
@@ -28,6 +27,7 @@ import {
 } from "../src/commands/request.js";
 import { parseRequestArgs } from "../src/request/args.js";
 import { resolvePaymentIdentity, storedAccessKeyIdentity } from "../src/request/identity.js";
+import { fetchPaidRequest } from "../src/request/paid.js";
 import {
   findReusableSessions,
   preserveSessionCumulative,
