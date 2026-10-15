@@ -900,6 +900,23 @@ describe("confirming a close", () => {
       ],
     },
     {
+      // The confirmed command repeats the reviewed scope rather than a snapshot of its channels.
+      name: "an origin with several sessions",
+      options: { target: origin },
+      sessions: [
+        [channelId, { last_used_at: 2 }],
+        [otherChannelId, {}],
+      ],
+      command: `tempo wallet sessions close ${origin} --yes --network mainnet`,
+      prompt: [
+        "Close 2 sessions:",
+        ...entry(channelId, origin),
+        ...entry(otherChannelId, origin),
+        closeOutcome,
+        "Close these sessions? This cannot be undone.",
+      ],
+    },
+    {
       name: "--all",
       options: { all: true },
       sessions: [
