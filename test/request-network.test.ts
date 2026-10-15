@@ -7,8 +7,9 @@ import { prepareTransactionRequest, signTransaction } from "viem/actions";
 import { Account } from "viem/tempo";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { preparePaymentChallenge, runRequest } from "../src/commands/request.js";
+import { runRequest } from "../src/commands/request.js";
 import { parseRequestArgs } from "../src/request/args.js";
+import { preparePaymentChallenge } from "../src/request/challenge.js";
 import { resolvePaymentIdentity } from "../src/request/identity.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import {
