@@ -59,11 +59,9 @@ import {
   updateSessionReceipt,
   upsertSessionRecord,
 } from "../payment/session-store.js";
-import { connect, createProvider } from "../provider.js";
 import type { requestDryRunOutput } from "../schemas.js";
 import { escrowAbi, version } from "../shared/constants.js";
 import {
-  authRefreshRequiredError,
   errorCodes,
   networkError,
   httpError,
@@ -82,7 +80,13 @@ import {
   rpcUrl,
   type Network,
 } from "../shared/network.js";
-import { continuationCommand } from "../shared/next.js";
+import { continuationCommand, nextStep } from "../shared/next.js";
+import {
+  loadWallet,
+  walletFix,
+  walletProblem,
+  WalletRequiredError,
+} from "../shared/require-wallet.js";
 import {
   knownToken,
   listedSymbol,
@@ -99,12 +103,8 @@ import {
   sanitizeText,
   stringValue,
 } from "../shared/utils.js";
-import {
-  accessKeyMatches,
-  isPaymentCapableAccessKey,
-  localAccessKeyStatus,
-} from "../wallet/access-key.js";
-import { emptyWalletState, loadWalletState, type WalletState } from "../wallet/store.js";
+import { isPaymentCapableAccessKey } from "../wallet/access-key.js";
+import { emptyWalletState, type WalletState } from "../wallet/store.js";
 
 export type RequestOptions = {
   allowInsecurePayment?: boolean | undefined;
@@ -642,7 +642,8 @@ const dryRunRpc = { timeout: 3_000, retryCount: 0 };
 /**
  * The 402 `--dry-run` quote. Session reuse and the deposit come from `planSessionPayment`, as for
  * a payment; nothing is signed, opened, or written. A payer, balance, token metadata, or session
- * read that fails is reported as `null`.
+ * read that fails is reported as `null`. A wallet that cannot pay has `null` payer fields, and
+ * `instruction` and `_next` name the login or refresh command that fixes it.
  */
 async function paymentQuote(
   challenge: Challenge.Challenge,
@@ -657,11 +658,10 @@ async function paymentQuote(
   const debited = isMachPaymentToken(options.paymentToken)
     ? machineTokenDeployments[chainId as keyof typeof machineTokenDeployments]?.token
     : token;
-  const payer =
-    privateKeyIdentity(options) ??
-    (await loadWalletState()
-      .then((state) => storedAccessKeyIdentity(state, options))
-      .catch(() => undefined));
+  const wallet = signer ? undefined : await walletIdentity(options).catch(() => undefined);
+  const fix =
+    wallet && "code" in wallet ? walletFix(wallet.code, requestNetwork(options)) : undefined;
+  const payer = privateKeyIdentity(options) ?? (wallet && !("code" in wallet) ? wallet : undefined);
   const [metadata, balance, plan] = await Promise.all([
     tokenMetadata(token.toLowerCase() as Address, chainId, (address) =>
       readTokenMetadata(address, chainId, dryRunRpc),
@@ -710,6 +710,13 @@ async function paymentQuote(
     signer: signer
       ? { address: signer.account.address, source: signer.source }
       : { address: null, source: "wallet" },
+    ...(fix
+      ? nextStep(
+          `${fix.reason} Run the next command, then rerun this request without --dry-run to pay.`,
+          fix.argv,
+          { network: requestNetwork(options) },
+        )
+      : {}),
   };
 }
 
@@ -1000,8 +1007,6 @@ async function payAndRetryRequest(
 
   try {
     const identity = await resolvePaymentIdentity(options);
-    const provider = "provider" in identity ? identity.provider : undefined;
-    const providerState = "providerState" in identity ? identity.providerState : undefined;
     const getClient = identity.getClient;
     const methodOptions = {
       ...identity.methodOptions,
@@ -1017,11 +1022,9 @@ async function payAndRetryRequest(
       polyfill: false,
     });
 
-    payment.onChallengeReceived(async ({ challenge, createCredential }) => {
-      if (provider && providerState!.store.getState().accounts.length === 0)
-        await ensureProviderAccounts(provider, requestNetwork(options));
-      return await createCredential(paymentContext(challenge, options) as never);
-    });
+    payment.onChallengeReceived(async ({ challenge, createCredential }) =>
+      createCredential(paymentContext(challenge, options) as never),
+    );
 
     const credential = await payment.createCredential(challengeResponse);
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
@@ -1199,65 +1202,10 @@ export async function resolvePaymentIdentity(options: RequestOptions) {
   const privateKeyPayer = privateKeyIdentity(options);
   if (privateKeyPayer) return privateKeyPayer;
 
-  const walletState = await loadWalletState();
-  const storedIdentity = await storedAccessKeyIdentity(walletState, options);
-  if (storedIdentity) return storedIdentity;
-
-  const network = requestNetwork(options);
-  const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
-  if (activeAccount) {
-    const staleKey = walletState.accessKeys.find((key) =>
-      accessKeyMatches(key, {
-        chainId: network.chainId,
-        walletAddress: activeAccount.address,
-      }),
-    );
-    const status = staleKey ? localAccessKeyStatus(staleKey) : "missing";
-    throw authRefreshRequiredError(
-      status === "pending" || status === "ready" ? "unusable" : status,
-      network.name,
-    );
-  }
-
-  const provider = await createProvider({ network });
-  const providerState = provider as unknown as {
-    store: { getState(): { accounts: { address: string }[]; activeAccount: number } };
-  };
-  await ensureProviderAccounts(provider, network);
-  const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) => {
-    const client = provider.getClient({ chainId: requestedChainId ?? network.chainId });
-    const state = providerState.store.getState();
-    const account = state.accounts[state.activeAccount];
-    if (!account)
-      throw walletError({
-        code: "E_NOT_AUTHENTICATED",
-        message: "No active account. Run 'tempo wallet login'.",
-      });
-    return Object.assign(client, {
-      account: {
-        address: account.address,
-        type: "json-rpc" as const,
-      },
-    });
-  };
-  const state = providerState.store.getState();
-  const account = state.accounts[state.activeAccount];
-  if (!account)
-    throw walletError({
-      code: "E_NOT_AUTHENTICATED",
-      message: "No active account. Run 'tempo wallet login'.",
-    });
-  return {
-    address: account.address,
-    getClient,
-    provider,
-    providerState,
-    signerAddress: account.address,
-    methodOptions: {
-      getClient,
-      maxDeposit: spendCap(options),
-    },
-  };
+  // Paying never starts a login or key refresh; the error names the command that does.
+  const identity = await walletIdentity(options);
+  if ("code" in identity) throw new WalletRequiredError(identity);
+  return identity;
 }
 
 /** The payer when a private key replaces the logged-in wallet; it signs for itself. */
@@ -1282,10 +1230,14 @@ function privateKeyIdentity(options: RequestOptions) {
   };
 }
 
-async function ensureProviderAccounts(provider: Parameters<typeof connect>[0], network: Network) {
-  const accounts = (await provider.request({ method: "eth_accounts" })) as unknown[];
-  if (accounts.length > 0) return;
-  await connect(provider, network);
+/** The logged-in wallet's access-key payer, or the login or key problem that stops it paying. */
+async function walletIdentity(options: RequestOptions) {
+  const wallet = await loadWallet(requestNetwork(options).name);
+  if ("code" in wallet) return wallet;
+  return (
+    (await storedAccessKeyIdentity(wallet.state, options)) ??
+    walletProblem("E_AUTH_REFRESH_REQUIRED", wallet.network)
+  );
 }
 
 /**
@@ -1327,29 +1279,35 @@ export async function storedAccessKeyIdentity(walletState: WalletState, options:
       );
     }
 
-    const account = key.privateKey
-      ? key.keyType === "p256"
-        ? TempoAccount.fromP256(key.privateKey as `0x${string}`, {
-            access: activeAccount.address as `0x${string}`,
-            keyAuthorizationManager,
-          })
-        : TempoAccount.fromSecp256k1(key.privateKey as `0x${string}`, {
-            access: activeAccount.address as `0x${string}`,
-            keyAuthorizationManager,
-          })
-      : key.keyType === "p256" && key.handle && key.publicKey
-        ? await Keystore.webCryptoP256({ extractable: true }).toAccount(
-            {
-              handle: key.handle as Keystore.Handle,
-              keyType: key.keyType,
-              publicKey: key.publicKey as `0x${string}`,
-            },
-            {
+    let account;
+    try {
+      account = key.privateKey
+        ? key.keyType === "p256"
+          ? TempoAccount.fromP256(key.privateKey as `0x${string}`, {
               access: activeAccount.address as `0x${string}`,
               keyAuthorizationManager,
-            },
-          )
-        : undefined;
+            })
+          : TempoAccount.fromSecp256k1(key.privateKey as `0x${string}`, {
+              access: activeAccount.address as `0x${string}`,
+              keyAuthorizationManager,
+            })
+        : key.keyType === "p256" && key.handle && key.publicKey
+          ? await Keystore.webCryptoP256({ extractable: true }).toAccount(
+              {
+                handle: key.handle as Keystore.Handle,
+                keyType: key.keyType,
+                publicKey: key.publicKey as `0x${string}`,
+              },
+              {
+                access: activeAccount.address as `0x${string}`,
+                keyAuthorizationManager,
+              },
+            )
+          : undefined;
+    } catch {
+      // Signing material the signer rejects is as unusable as missing material.
+      continue;
+    }
     if (!account) continue;
     if (key.address.toLowerCase() !== account.accessKeyAddress.toLowerCase()) continue;
 

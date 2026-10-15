@@ -96,6 +96,16 @@ const quote = {
   signer: { address: null, source: "wallet" },
 };
 
+// Without a logged-in wallet, the quote also points at the login that lets it pay.
+const loginNext = {
+  instruction:
+    "No wallet is logged in. Run the next command, then rerun this request without --dry-run to pay.",
+  _next: {
+    argv: ["tempo", "wallet", "login", "--network", "mainnet"],
+    command: "tempo wallet login --network mainnet",
+  },
+};
+
 async function fixture(status: number) {
   const methods: string[] = [];
   const server = createServer((req, res) => {
@@ -121,7 +131,7 @@ async function fixture(status: number) {
 }
 
 function expected(method: string, status: number, warns: boolean) {
-  if (status === 402) return quote;
+  if (status === 402) return { ...quote, ...loginNext };
   return {
     payment_required: false,
     status,
@@ -465,6 +475,7 @@ it.each<{
       balance: null,
       access_key_limit: null,
       within_budget: null,
+      ...loginNext,
     },
   },
   {

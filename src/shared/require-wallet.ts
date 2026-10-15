@@ -1,3 +1,5 @@
+import { Errors } from "incur";
+
 import {
   accessKeyMatches,
   localAccessKeyStatus,
@@ -17,13 +19,15 @@ export type Wallet = {
   key: WalletState["accessKeys"][number] | undefined;
 };
 
+type WalletProblemCode = "E_AUTH_REFRESH_REQUIRED" | "E_KEY_EXPIRED" | "E_NOT_AUTHENTICATED";
+
 /** A login or key problem, shaped for incur's `c.error`. */
-type WalletRequiredError = ReturnType<typeof walletRequiredError>;
+type WalletProblem = ReturnType<typeof walletProblem>;
 
 type RunContext = {
   agent: boolean;
   globals: { network?: string | undefined };
-  error: (error: WalletRequiredError) => never;
+  error: (error: WalletProblem) => never;
 };
 
 /**
@@ -60,18 +64,18 @@ export function withWallet<context extends RunContext, result>(
 export async function loadWallet(
   networkFlag: string | undefined,
   requireKey = true,
-): Promise<Wallet | WalletRequiredError> {
+): Promise<Wallet | WalletProblem> {
   const state = await loadWalletState();
   const network = await resolveNetwork(networkFlag, state);
   const account = state.accounts[state.activeAccount ?? 0];
-  if (!account) return walletRequiredError("E_NOT_AUTHENTICATED", network);
+  if (!account) return walletProblem("E_NOT_AUTHENTICATED", network);
 
   const match = { chainId: network.chainId, walletAddress: account.address };
   const key = selectPaymentCapableAccessKey(state.accessKeys, match);
   if (key || !requireKey) return { state, network, account, key };
 
   const stale = state.accessKeys.find((candidate) => accessKeyMatches(candidate, match));
-  return walletRequiredError(
+  return walletProblem(
     stale && localAccessKeyStatus(stale) === "expired"
       ? "E_KEY_EXPIRED"
       : "E_AUTH_REFRESH_REQUIRED",
@@ -79,24 +83,42 @@ export async function loadWallet(
   );
 }
 
-function walletRequiredError(
-  code: "E_AUTH_REFRESH_REQUIRED" | "E_KEY_EXPIRED" | "E_NOT_AUTHENTICATED",
-  network: Network,
-) {
-  const command = continuationCommand(
-    ["wallet", code === "E_NOT_AUTHENTICATED" ? "login" : "refresh"],
-    network,
-  );
-  const problem = {
-    E_AUTH_REFRESH_REQUIRED: `No usable access key is configured for this wallet on ${network.name}.`,
-    E_KEY_EXPIRED: `The access key for this wallet on ${network.name} has expired.`,
-    E_NOT_AUTHENTICATED: "No wallet is logged in.",
-  }[code];
+/**
+ * A login or key problem found below a command's `run`, such as when `tempo request` meets a
+ * 402. incur drops the `cta` of thrown errors, so `run` catches this and returns
+ * `c.error(error.problem)`.
+ */
+export class WalletRequiredError extends Errors.IncurError {
+  readonly problem: WalletProblem;
+
+  constructor(problem: WalletProblem) {
+    super(problem);
+    this.problem = problem;
+  }
+}
+
+/** The login or key problem `code` on `network`, with the command that fixes it as its `cta`. */
+export function walletProblem(code: WalletProblemCode, network: Network) {
+  const { reason, argv } = walletFix(code, network);
+  const command = continuationCommand(argv, network);
   return {
     code,
-    message: `${problem} Run '${command}' before retrying.`,
+    message: `${reason} Run '${command}' before retrying.`,
     exitCode: errorCodes[code].exitCode,
     retryable: errorCodes[code].retryable,
     cta: { commands: [{ command }] },
   };
+}
+
+/**
+ * What `code` means on `network`, and the argv after `tempo` that fixes it: `wallet login` when
+ * no wallet is logged in, otherwise `wallet refresh`.
+ */
+export function walletFix(code: WalletProblemCode, network: Network) {
+  const reason = {
+    E_AUTH_REFRESH_REQUIRED: `No usable access key is configured for this wallet on ${network.name}.`,
+    E_KEY_EXPIRED: `The access key for this wallet on ${network.name} has expired.`,
+    E_NOT_AUTHENTICATED: "No wallet is logged in.",
+  }[code];
+  return { reason, argv: ["wallet", code === "E_NOT_AUTHENTICATED" ? "login" : "refresh"] };
 }

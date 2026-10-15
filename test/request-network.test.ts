@@ -476,6 +476,9 @@ it.each([
     resolvePaymentIdentity(parseRequestArgs(["-n", scenario.network, "https://example.com"])),
   ).rejects.toMatchObject({
     code: "E_AUTH_REFRESH_REQUIRED",
-    message: `No usable access key is configured. Run 'tempo wallet refresh --network ${scenario.network}' before retrying.`,
+    message: `No usable access key is configured for this wallet on ${scenario.network}. Run 'tempo wallet refresh --network ${scenario.network}' before retrying.`,
+    problem: {
+      cta: { commands: [{ command: `tempo wallet refresh --network ${scenario.network}` }] },
+    },
   });
 });

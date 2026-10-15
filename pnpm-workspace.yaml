@@ -16,3 +16,6 @@ minimumReleaseAgeExclude:
   - incur@0.7.1
   - mppx@0.12.0
   - viem@2.57.1
+
+patchedDependencies:
+  incur@0.7.1: patches/incur@0.7.1.patch

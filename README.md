@@ -146,6 +146,13 @@ a cumulative cap, so the default cap does not apply to them: `--payment-intent a
 accept a subscription offer. Set `--max-spend`, or pass `--payment-intent charge` or `session`,
 to refuse subscriptions.
 
+`tempo request` never starts a login or key refresh. Responses other than 402 need no login.
+A 402 without a logged-in wallet exits 4 with `E_NOT_AUTHENTICATED` and a `cta` naming
+`tempo wallet login` with the payment `--network`; an expired, missing or unusable access key
+exits 4 with `E_KEY_EXPIRED` or `E_AUTH_REFRESH_REQUIRED` and a `cta` naming
+`tempo wallet refresh`. In those cases a `--dry-run` quote reports its payer fields as `null`
+and adds `instruction` and `_next` with the same command instead of failing. `--private-key` and `TEMPO_PRIVATE_KEY` pay without a login.
+
 Every `tempo wallet` and `tempo request` command selects its network the same way:
 `--network`/`-n` (anywhere on the command line), then `TEMPO_WALLET_NETWORK`, then the
 network of the logged-in wallet, then mainnet. After `tempo wallet login -n testnet`, later

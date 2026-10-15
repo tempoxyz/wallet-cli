@@ -1144,10 +1144,11 @@ describe("request command", () => {
     await expect(
       runRequest([server.url("/paid")], { stdout: captureStdout() }),
     ).rejects.toMatchObject({
-      code: "E_AUTH_REFRESH_REQUIRED",
+      code: "E_KEY_EXPIRED",
       exitCode: 4,
       message:
-        "The configured access key is expired. Run 'tempo wallet refresh --network mainnet' before retrying.",
+        "The access key for this wallet on mainnet has expired. Run 'tempo wallet refresh --network mainnet' before retrying.",
+      problem: { cta: { commands: [{ command: "tempo wallet refresh --network mainnet" }] } },
     });
     expect(requests).toBe(1);
   });

@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import { executeRequest, parseRequestArgs } from "../src/commands/request.js";
 import { requireSessionDescriptor } from "../src/payment/session-descriptor.js";
 import {
-  authRefreshRequiredError,
   errorCodes,
   httpError,
   networkError,
@@ -16,6 +15,7 @@ import {
   walletError,
   type WalletErrorCode,
 } from "../src/shared/errors.js";
+import { walletProblem, WalletRequiredError } from "../src/shared/require-wallet.js";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -72,9 +72,9 @@ describe("errorCodes", () => {
       "E_PAYMENT_OUTCOME_UNKNOWN",
     ],
     [
-      "authRefreshRequiredError",
-      authRefreshRequiredError("expired", "testnet"),
-      "E_AUTH_REFRESH_REQUIRED",
+      "WalletRequiredError",
+      new WalletRequiredError(walletProblem("E_KEY_EXPIRED", { name: "testnet", chainId: 42431 })),
+      "E_KEY_EXPIRED",
     ],
   ] as const)("%s builds %s", (_name, error, code) => {
     expect(error).toMatchObject({
