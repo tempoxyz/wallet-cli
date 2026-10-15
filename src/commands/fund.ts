@@ -1,24 +1,54 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { erc20Abi, formatUnits } from "viem";
+import { erc20Abi, formatUnits, type Address } from "viem";
+import { ousd } from "viem/tokens";
 
-import { usageError, walletError } from "../shared/errors.js";
+import { commandError, networkError, usageError } from "../shared/errors.js";
+import { continuationCommand, nextStep } from "../shared/next.js";
 import {
+  appUrl,
   createTempoPublicClient,
+  explicitNetwork,
   networkFields,
+  parseNetwork,
   resolveNetwork,
   tokenAddress,
+  tokenDecimals,
 } from "../shared/network.js";
 import {
   fundingAmount,
+  machCheckoutMinimum,
   machFundingAmount,
   machFundingToken,
   requireWalletAddress,
 } from "../shared/mach.js";
 import { openExternal } from "../shared/process.js";
-import { loadWalletState } from "../wallet/store.js";
+import { tokenSymbol } from "../shared/tokens.js";
+import { formatUnixTimestamp, nowSeconds } from "../shared/utils.js";
+import {
+  clearPendingFund,
+  loadPendingFund,
+  loadWalletState,
+  parsePendingFund,
+  savePendingFund,
+  type PendingFund,
+} from "../wallet/store.js";
 
 export type FundAction = "fund" | "mach" | "crypto" | "credits" | "claim";
 
+/** How long `fund status` can resume a funding: long enough for a card or bridge checkout. */
+const pendingFundSeconds = 3600;
+
+/** The `fund status` a pending funding's `_next` and a timed-out wait name. */
+const statusIntervalSeconds = 5;
+const resumeArgv = ["wallet", "fund", "status", "--interval", String(statusIntervalSeconds)];
+
+/**
+ * Opens a wallet funding flow and saves it as the pending funding, with the starting balance of
+ * each token the flow can deliver. By default returns at once with a `_next` to `fund status`;
+ * with `noWait: false`, waits here. The link is printed before any RPC read, so a failing RPC never
+ * hides it: without a starting balance the handoff is still returned, but cannot be resumed. The
+ * browser opens only after that read.
+ */
 export async function runFundingFlow(options: {
   action: FundAction;
   address?: string | undefined;
@@ -33,10 +63,9 @@ export async function runFundingFlow(options: {
   if (options.action === "credits") throw creditsFundingError();
   const action = options.action;
   const state = await loadWalletState();
-  const chain = (await resolveNetwork(options.network, state)).chainId;
-  const token = action === "mach" ? machFundingToken(chain) : tokenAddress(chain);
-  if (action === "mach") machFundingAmount(options.amount);
-  else fundingAmount(options.amount);
+  const network = await resolveNetwork(options.network, state);
+  const chain = network.chainId;
+  const assets = fundingAssets(action, chain, options.amount);
   const address = options.address ?? state.accounts[state.activeAccount ?? 0]?.address;
   if (!address && action !== "claim")
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
@@ -47,45 +76,320 @@ export async function runFundingFlow(options: {
     chainId: chain,
     code: options.code,
   });
-  const base = {
+  const wait = options.noWait === false && wallet ? waitSettings(options.timeout) : undefined;
+
+  console.error(`Open this link on your device: ${url}`);
+  // This funding replaces the pending one, even when it cannot be resumed itself.
+  await clearPendingFund();
+  const open = () => {
+    if (!options.noBrowser) openExternal(url);
+  };
+  const handoff = {
+    status: "pending" as const,
     wallet,
     action,
     url,
     ...networkFields(chain),
-    token,
-    ...(action === "mach" ? { symbol: "MACH" } : {}),
+    token: assets[0]!.token,
+    // Every watched token has a symbol, so it is never rendered as null.
+    symbol: assets[0]!.symbol,
     amount: options.amount ?? null,
+    balance: null,
+    raw_balance: null,
   };
-  // A handoff works without RPC access or a locally installed browser.
-  if (options.noWait !== false || !wallet) {
-    if (!options.noBrowser) openExternal(url);
-    return { status: "pending" as const, ...base, balance: null, raw_balance: null };
+  if (!wallet) {
+    open();
+    return handoff;
   }
-  const timeoutMs = finiteDuration(
-    options.timeout === undefined
-      ? Number(process.env.TEMPO_WALLET_FUND_TIMEOUT_MS ?? 600_000)
-      : options.timeout * 1000,
-    "Funding timeout",
-  );
-  const pollMs = finiteDuration(
-    Number(process.env.TEMPO_WALLET_FUND_POLL_MS ?? 2_000),
-    "Funding poll interval",
-  );
+
+  // The flow opens after the read, so funds it delivers quickly are not in the starting balance.
+  // `--timeout` bounds the whole wait, starting balance read included; the read keeps its own
+  // RPC bound, so a `--timeout` shorter than it still saves a funding `fund status` can resume.
+  const deadline = Date.now() + (wait?.timeoutMs ?? 0);
+  const baselines = await readBalances(
+    chain,
+    wallet,
+    assets.map((asset) => asset.token),
+    AbortSignal.timeout(10_000),
+  ).catch(() => undefined);
+  open();
+  if (!baselines) {
+    // `whoami` reads only the logged-in wallet, so it cannot check an `--address` recipient.
+    const whoami = options.address
+      ? undefined
+      : continuationCommand(
+          ["wallet", "whoami", ...(action === "mach" ? ["--mach"] : [])],
+          network,
+        );
+    const check = whoami ? `the balance with '${whoami}'` : `the balance of ${wallet}`;
+    const message = `Could not read the wallet's starting balance (check TEMPO_RPC_URL), so 'tempo wallet fund status' cannot tell when funds arrive. Finish funding at ${url}, then check ${check}.`;
+    if (wait && whoami) return commandError("E_NETWORK", message, whoami);
+    if (wait) throw networkError(message);
+    console.error(message);
+    return { ...handoff, instruction: message };
+  }
+
+  const pending = parsePendingFund({
+    network: network.name,
+    action,
+    wallet,
+    activeWallet: !options.address,
+    url,
+    amount: options.amount ?? null,
+    assets: assets.map((asset, index) => ({
+      token: asset.token,
+      symbol: asset.symbol,
+      baseline: baselines[index]!.toString(),
+      minimum: asset.minimum.toString(),
+    })),
+    expiresAt:
+      nowSeconds() + Math.max(pendingFundSeconds, Math.ceil((wait?.timeoutMs ?? 0) / 1000)),
+  });
+  // A logout during the read must not leave the logged-out wallet's checkout for the next login.
+  if (pending.activeWallet && (await activeWallet()) !== wallet)
+    throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
+  await savePendingFund(pending);
+  if (!wait)
+    return {
+      ...handoff,
+      ...nextStep(
+        "Have the user open url and finish funding. Then run the next command to wait for the funds to arrive.",
+        resumeArgv,
+        { network, until: '.status != "pending"', pollIntervalSeconds: statusIntervalSeconds },
+      ),
+    };
+
+  console.error(`Waiting for ${action === "mach" ? "MACH" : "funding"}...`);
+  return await finishFunding(pending, {
+    intervalMs: wait.intervalMs,
+    timeoutMs: Math.max(0, deadline - Date.now()),
+    signal: options.signal,
+    status: resumeArgv,
+  });
+}
+
+type StatusOptions = {
+  /** Seconds between balance checks; defaults to `TEMPO_WALLET_FUND_POLL_MS`, or 2 seconds. */
+  interval?: number | undefined;
+  /** Checks that may find no funds before giving up; defaults to until the funding expires. */
+  maxAttempts?: number | undefined;
+};
+
+/** Resumes waiting on the pending funding until its funds arrive, it expires, or out of attempts. */
+export async function fundStatusHandler(
+  options: { network?: string | undefined; signal?: AbortSignal | undefined } & StatusOptions,
+) {
+  let pending = await loadPendingFund();
+  // A funding for the logged-in wallet ends once a logout, login, or refresh switches wallets, so
+  // the next wallet never sees its checkout.
+  if (pending?.activeWallet && (await activeWallet()) !== pending.wallet) {
+    await clearPendingFund(pending);
+    pending = undefined;
+  }
+  const requested = explicitNetwork(options.network);
+  if (!pending || (requested && requested.name !== pending.network)) {
+    const network = requested ?? (await resolveNetwork(undefined));
+    const command = continuationCommand(["wallet", "fund"], network);
+    return commandError(
+      "E_USAGE",
+      `No funding is pending on ${network.name}. Run '${command}' to start one.`,
+      command,
+    );
+  }
+  return await finishFunding(pending, {
+    intervalMs:
+      options.interval === undefined
+        ? pollInterval()
+        : finiteDuration(options.interval * 1000, "--interval"),
+    timeoutMs: Math.max(0, pending.expiresAt * 1000 - Date.now()),
+    maxAttempts: options.maxAttempts,
+    signal: options.signal,
+    status: [
+      "wallet",
+      "fund",
+      "status",
+      ...(options.interval !== undefined ? ["--interval", String(options.interval)] : []),
+      ...(options.maxAttempts !== undefined ? ["--max-attempts", String(options.maxAttempts)] : []),
+    ],
+  });
+}
+
+type PollOptions = {
+  intervalMs: number;
+  /** How long this process waits; reaching it after the funding expires ends the funding. */
+  timeoutMs: number;
+  maxAttempts?: number | undefined;
+  signal?: AbortSignal | undefined;
+  /** The `fund status` argv that resumes this wait. */
+  status: readonly string[];
+};
+
+/**
+ * Waits for `pending` to arrive and reports how the wait ended. Every outcome but arrival and
+ * expiry keeps the pending funding, with a `cta` to the `fund status` that resumes it.
+ */
+async function finishFunding(pending: PendingFund, options: PollOptions) {
+  const expired = () => nowSeconds() >= pending.expiresAt;
+  let result = await pollFunding(pending, options);
+  // Expiry ends the funding only once a completed read shows the funds have not arrived.
+  if (result === "timeout" && expired())
+    result = await pollFunding(pending, { ...options, timeoutMs: 10_000, maxAttempts: 1 });
+  const network = parseNetwork(pending.network);
+  const status = continuationCommand(options.status, network);
+  const resume = `Continue at ${pending.url}, then run '${status}' to keep waiting.`;
+  if (result === "network")
+    return commandError(
+      "E_NETWORK",
+      `Could not read the wallet's balance (check TEMPO_RPC_URL). ${resume}`,
+      status,
+      { retryable: true },
+    );
+  if (result === "cancelled")
+    return commandError("E_POLL_TIMEOUT", `Funding wait cancelled. ${resume}`, status);
+  if (result === "timeout")
+    return commandError("E_POLL_TIMEOUT", `Timed out waiting for funding. ${resume}`, status);
+  if (result === "exhausted" && !expired())
+    return commandError("E_POLL_TIMEOUT", `Funding has not arrived yet. ${resume}`, status);
+
+  await clearPendingFund(pending);
+  if (result === "exhausted") {
+    const restart = continuationCommand(restartArgv(pending), network);
+    // `whoami` reads only the logged-in wallet, so it cannot check an `--address` recipient.
+    const check = pending.activeWallet
+      ? `the balance with 'tempo wallet whoami'`
+      : `the balance of ${pending.wallet}`;
+    return commandError(
+      "E_POLL_TIMEOUT",
+      `No funds arrived before the funding expired at ${formatUnixTimestamp(pending.expiresAt)}. Check ${check}, or run '${restart}' to start a new funding.`,
+      restart,
+      { retryable: false },
+    );
+  }
+  const asset = pending.assets[result.asset]!;
+  return {
+    status: "success" as const,
+    wallet: pending.wallet,
+    action: pending.action,
+    url: pending.url,
+    ...networkFields(network.chainId),
+    token: asset.token,
+    symbol: asset.symbol,
+    amount: pending.amount,
+    balance: formatUnits(result.balance, tokenDecimals()),
+    raw_balance: result.balance.toString(),
+  };
+}
+
+/** The logged-in wallet's lowercase address, if any. */
+async function activeWallet() {
+  const state = await loadWalletState();
+  return state.accounts[state.activeAccount ?? 0]?.address.toLowerCase();
+}
+
+/** The `fund` that starts `pending` again: the same flow, wallet, amount, and referral code. */
+function restartArgv(pending: PendingFund) {
+  const code = new URL(pending.url).searchParams.get("claim");
+  return [
+    "wallet",
+    "fund",
+    ...(pending.action === "mach" || pending.action === "crypto" ? [`--${pending.action}`] : []),
+    ...(pending.action === "claim" && code ? ["--referral-code", code] : []),
+    // A logged-in wallet's funding restarts for that wallet, keeping its logged-in binding.
+    ...(pending.activeWallet ? [] : ["--address", pending.wallet]),
+    ...(pending.amount !== null ? ["--amount", pending.amount] : []),
+  ];
+}
+
+/** The asset whose increase reached its minimum, or why polling stopped without one. */
+async function pollFunding(
+  pending: PendingFund,
+  options: PollOptions,
+): Promise<{ asset: number; balance: bigint } | "exhausted" | "network" | "timeout" | "cancelled"> {
   const controller = new AbortController();
   const cancel = () => controller.abort(new Error("Funding wait cancelled"));
   process.once("SIGINT", cancel);
   process.once("SIGTERM", cancel);
   const signal = AbortSignal.any([
     controller.signal,
-    AbortSignal.timeout(timeoutMs),
+    AbortSignal.timeout(options.timeoutMs),
     ...(options.signal ? [options.signal] : []),
   ]);
+  const chain = parseNetwork(pending.network).chainId;
+  const tokens = pending.assets.map((asset) => asset.token);
   try {
-    const client = createTempoPublicClient(chain, {
-      timeout: Math.min(10_000, Math.max(1, timeoutMs)),
-      retryCount: 0,
-    });
-    const balance = () =>
+    for (let attempt = 1; ; attempt++) {
+      const balances = await readBalances(chain, pending.wallet, tokens, signal, options.timeoutMs);
+      const asset = pending.assets.findIndex(
+        (item, index) => balances[index]! - BigInt(item.baseline) >= BigInt(item.minimum),
+      );
+      if (asset >= 0) return { asset, balance: balances[asset]! };
+      if (attempt >= (options.maxAttempts ?? Infinity)) return "exhausted";
+      await sleep(options.intervalMs, undefined, { signal });
+    }
+  } catch {
+    if (!signal.aborted) return "network";
+    return signal.reason?.name === "TimeoutError" ? "timeout" : "cancelled";
+  } finally {
+    process.removeListener("SIGINT", cancel);
+    process.removeListener("SIGTERM", cancel);
+  }
+}
+
+type FundingAsset = { token: Address; symbol: string; minimum: bigint };
+
+/**
+ * The tokens a funding flow can deliver to the wallet, each with the raw balance increase that
+ * counts as the funding arriving, so an unrelated small transfer does not. MACH checkout mints
+ * exactly the amount bought, and at least $5. Card onramps take their fees out of the purchase
+ * amount, so stablecoin funding counts from 95% of `--amount`, as the wallet app's own deposit
+ * check does. Without `--amount` the wallet UI picks the amount, so stablecoin funding counts from
+ * $1, which a dust or address-poisoning transfer does not reach.
+ */
+function fundingAssets(
+  action: Exclude<FundAction, "credits">,
+  chain: number,
+  amount: string | undefined,
+): FundingAsset[] {
+  if (action === "mach")
+    return [
+      {
+        token: machFundingToken(chain),
+        symbol: "MACH",
+        minimum: machFundingAmount(amount) ?? machCheckoutMinimum,
+      },
+    ];
+  const raw = fundingAmount(amount);
+  const minimum = raw === undefined ? 1_000_000n : (raw * 95n) / 100n || 1n;
+  return stablecoins(action, chain).map((token) => ({
+    token,
+    symbol: tokenSymbol(token, chain) ?? token,
+    minimum,
+  }));
+}
+
+/**
+ * Where each stablecoin flow settles. On mainnet, card onramps and bridged deposits settle OUSD,
+ * and MoonPay settles USDC.e. A referral claim pays USDC.e, and testnet funding pays pathUSD.
+ */
+function stablecoins(action: "fund" | "crypto" | "claim", chain: number) {
+  if (chain !== 4217 || action === "claim") return [tokenAddress(chain)];
+  return [ousd.addresses[4217].toLowerCase() as Address, tokenAddress(chain)];
+}
+
+/** Raw balances of `tokens` for `wallet`, failing once `signal` aborts. */
+async function readBalances(
+  chain: number,
+  wallet: Address,
+  tokens: readonly Address[],
+  signal: AbortSignal,
+  timeoutMs = 10_000,
+) {
+  const client = createTempoPublicClient(chain, {
+    timeout: Math.min(10_000, Math.max(1, timeoutMs)),
+    retryCount: 0,
+  });
+  return await Promise.all(
+    tokens.map((token) =>
       bounded(
         client.readContract({
           abi: erc20Abi,
@@ -94,41 +398,28 @@ export async function runFundingFlow(options: {
           args: [wallet],
         }),
         signal,
-      );
-    const initial = await balance();
-    console.error(`Open this link on your device: ${url}`);
-    if (!options.noBrowser) openExternal(url);
-    console.error(`Waiting for ${action === "mach" ? "MACH" : "funding"}...`);
-    for (;;) {
-      await sleep(pollMs, undefined, { signal });
-      const current = await balance();
-      // The amount prefills checkout; users can choose a different amount there.
-      if (current > initial) {
-        return {
-          status: "success" as const,
-          ...base,
-          balance: formatUnits(current, 6),
-          raw_balance: current.toString(),
-        };
-      }
-    }
-  } catch (error) {
-    if (signal.aborted) {
-      // A rerun waits for a new deposit from a fresh baseline, so neither case is retryable.
-      throw walletError({
-        code: "E_POLL_TIMEOUT",
-        retryable: false,
-        message:
-          signal.reason?.name === "TimeoutError"
-            ? `Timed out waiting for funding. Continue at ${url}`
-            : `Funding wait cancelled. Continue at ${url}`,
-      });
-    }
-    throw error;
-  } finally {
-    process.removeListener("SIGINT", cancel);
-    process.removeListener("SIGTERM", cancel);
-  }
+      ),
+    ),
+  );
+}
+
+function waitSettings(timeout: number | undefined) {
+  return {
+    timeoutMs: finiteDuration(
+      timeout === undefined
+        ? Number(process.env.TEMPO_WALLET_FUND_TIMEOUT_MS ?? 600_000)
+        : timeout * 1000,
+      "Funding timeout",
+    ),
+    intervalMs: pollInterval(),
+  };
+}
+
+function pollInterval() {
+  return finiteDuration(
+    Number(process.env.TEMPO_WALLET_FUND_POLL_MS ?? 2_000),
+    "Funding poll interval",
+  );
 }
 
 function finiteDuration(value: number, name: string) {
@@ -169,6 +460,7 @@ export function fundAction(options: {
   return "fund";
 }
 
+/** The wallet app's `/agent` funding page, on the same app as the rest of the CLI (`TEMPO_AUTH_URL`). */
 export function fundUrl(
   action: FundAction,
   options: {
@@ -179,7 +471,7 @@ export function fundUrl(
   } = {},
 ) {
   if (action === "credits") throw creditsFundingError();
-  const url = new URL("https://wallet.tempo.xyz/agent");
+  const url = new URL("/agent", appUrl);
   if (action === "claim" && options.code) url.searchParams.set("claim", options.code);
   else {
     const mach = action === "mach";

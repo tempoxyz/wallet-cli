@@ -469,6 +469,7 @@ export const fundOutput = z.object({
   amount: z.string().nullable(),
   balance: z.string().nullable(),
   raw_balance: z.string().nullable(),
+  ...nextOutputShape,
 });
 
 export const loginOptions = z.object({
@@ -660,6 +661,22 @@ export const fundOptions = z.object({
   timeout: z.coerce.number().optional().describe("Timeout in seconds with --wait (default: 600)"),
   "referral-code": z.string().optional().describe("Open referral-code redeem flow"),
   claim: z.string().optional().describe("Alias for --referral-code"),
+});
+
+export const fundStatusOptions = z.object({
+  ...globalOptionShape,
+  interval: z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Seconds between balance checks (default: 2)"),
+  "max-attempts": z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Checks before giving up with E_POLL_TIMEOUT (default: until the funding expires)"),
 });
 
 export const sessionsListOptions = z.object({

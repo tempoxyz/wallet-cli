@@ -5,22 +5,30 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { cliBundle } from "./cli-bundle.js";
+import { appUrl } from "../src/shared/network.js";
+import { loadPendingFund } from "../src/wallet/store.js";
 import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
 
 const execFileAsync = promisify(execFile);
 
 const address = "0x1111111111111111111111111111111111111111";
 const handoff = ["--address", address, "--no-browser", "--no-wait"];
+/** The wallet app's funding page, on the app `TEMPO_AUTH_URL` names for these subprocesses. */
+const agent = new URL("/agent", appUrl).toString();
+const fundUrl = `${agent}?action=fund&address=${address}&chainId=42431`;
+// The test RPC is unreachable, so the handoff carries an instruction instead of a `_next`.
 const fundToon = `status: pending
 wallet: ${address}
 action: fund
-url: "https://wallet.tempo.xyz/agent?action=fund&address=${address}&chainId=42431"
+url: "${fundUrl}"
 chain_id: 42431
 network: tempo-moderato
 token: 0x20c0000000000000000000000000000000000000
+symbol: pathUSD
 amount: null
 balance: null
 raw_balance: null
+instruction: "Could not read the wallet's starting balance (check TEMPO_RPC_URL), so 'tempo wallet fund status' cannot tell when funds arrive. Finish funding at ${fundUrl}, then check the balance of ${address}."
 `;
 const sessionsToon = `chain_id: 42431
 network: tempo-moderato
@@ -45,13 +53,16 @@ describe("wallet flags parse the same in any position", () => {
       status: "pending",
       wallet: address,
       action: "fund",
-      url: `https://wallet.tempo.xyz/agent?action=fund&address=${address}&chainId=42431`,
+      url: fundUrl,
       chain_id: 42431,
       network: "tempo-moderato",
       token: "0x20c0000000000000000000000000000000000000",
+      symbol: "pathUSD",
       amount: null,
       balance: null,
       raw_balance: null,
+      // The default RPC is unreachable, so the handoff cannot be resumed.
+      instruction: expect.stringContaining(`Finish funding at ${fundUrl}`),
     });
   });
 
@@ -149,7 +160,7 @@ describe("help", () => {
 
 describe("fund", () => {
   it.each([{ flags: [] }, { flags: ["--no-wait"] }, { flags: ["--wait", "--no-wait"] }])(
-    "returns a handoff without balance RPC calls with $flags",
+    "returns a handoff with only its starting balance read with $flags",
     async ({ flags }) => {
       await useTempHome();
       await writeWalletState(walletState({ chainId: 42431 }));
@@ -172,9 +183,11 @@ describe("fund", () => {
           amount: "17.43",
           balance: null,
           raw_balance: null,
+          _next: { command: "tempo wallet fund status --interval 5 --network testnet" },
         });
         expect(result.stderr).not.toContain("Waiting");
-        expect(rpc.calls()).toBe(0);
+        expect(rpc.calls()).toBe(1);
+        expect(await loadPendingFund()).toMatchObject({ network: "testnet", amount: "17.43" });
       } finally {
         await rpc.close();
       }
@@ -206,21 +219,28 @@ describe("fund", () => {
 
   it.each([
     {
-      name: "a deposit",
-      balances: [0n, 1_000_000n],
+      name: "the requested deposit",
+      balances: [0n, 17_430_000n],
       code: 0,
       output: {
         status: "success",
         wallet: testWallet.toLowerCase(),
         chain_id: 42431,
-        balance: "1",
+        balance: "17.43",
       },
     },
     {
-      name: "a timeout",
-      balances: [0n],
+      name: "a timeout after an unrelated deposit",
+      balances: [0n, 1_000_000n],
       code: 3,
-      output: { code: "E_POLL_TIMEOUT", retryable: false },
+      output: {
+        code: "E_POLL_TIMEOUT",
+        retryable: true,
+        message: expect.stringContaining(`${agent}?action=fund`),
+        cta: {
+          commands: [{ command: "tempo wallet fund status --interval 5 --network testnet" }],
+        },
+      },
     },
   ])("waits for funding and renders $name through incur", async ({ balances, code, output }) => {
     await useTempHome();
@@ -255,6 +275,52 @@ describe("fund", () => {
 
   it.each([
     {
+      name: "funds that arrived",
+      balances: [0n, 17_430_000n],
+      code: 0,
+      output: { status: "success", action: "fund", balance: "17.43", symbol: "pathUSD" },
+    },
+    {
+      name: "funds still on their way",
+      balances: [0n],
+      code: 3,
+      output: {
+        code: "E_POLL_TIMEOUT",
+        retryable: true,
+        cta: {
+          commands: [{ command: "tempo wallet fund status --max-attempts 1 --network testnet" }],
+        },
+      },
+    },
+  ])("fund status resumes in a later process with $name", async ({ balances, code, output }) => {
+    await useTempHome();
+    await writeWalletState(walletState({ chainId: 42431 }));
+    const rpc = await balanceRpc(balances);
+    const env = { TEMPO_RPC_URL: rpc.url, TEMPO_AUTH_URL: "https://wallet-preview.tempo.local" };
+    try {
+      const fund = await wallet(
+        ["fund", "--no-browser", "--amount", "17.43", "-n", "testnet", "--format", "json"],
+        env,
+      );
+      const status = await wallet(
+        ["fund", "status", "--max-attempts", "1", "-n", "testnet", "--format", "json"],
+        env,
+      );
+
+      expect(fund.code, fund.stderr).toBe(0);
+      expect(JSON.parse(fund.stdout)).toMatchObject({
+        status: "pending",
+        url: `https://wallet-preview.tempo.local/agent?action=fund&address=${testWallet.toLowerCase()}&chainId=42431&amount=17.43`,
+      });
+      expect(status.code, status.stderr).toBe(code);
+      expect(JSON.parse(status.stdout)).toMatchObject(output);
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it.each([
+    {
       args: ["fund", "--no-browser", "--no-wait"],
       code: 2,
       output: {
@@ -267,6 +333,20 @@ describe("fund", () => {
       args: ["fund", "--not-a-real-option"],
       code: 1,
       output: { code: "UNKNOWN", message: "Unknown flag: --not-a-real-option" },
+    },
+    {
+      args: ["fund", "status", "-n", "testnet"],
+      code: 2,
+      output: {
+        code: "E_USAGE",
+        message:
+          "No funding is pending on testnet. Run 'tempo wallet fund --network testnet' to start one.",
+        retryable: false,
+        cta: {
+          description: "Suggested command:",
+          commands: [{ command: "tempo wallet fund --network testnet" }],
+        },
+      },
     },
   ])("reports $output.code for $args", async ({ args, code, output }) => {
     await useTempHome();

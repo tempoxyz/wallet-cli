@@ -45,8 +45,10 @@ import {
 import { supportedShells } from "../completions.js";
 import { connect, createProvider, settleWalletStore } from "../provider.js";
 import {
+  clearPendingFund,
   clearPendingLogin,
   emptyWalletState,
+  loadPendingFund,
   loadPendingLogin,
   loadWalletState,
   saveWalletState,
@@ -149,6 +151,7 @@ export async function logoutHandler(
     : state.accounts.length > 0 || state.accessKeys.length > 0;
   if (!wasLoggedIn) {
     await clearLoggedOutPendingLogin(network);
+    await clearLoggedOutPendingFund(network);
     return {
       was_logged_in: false,
       disconnected: false,
@@ -295,8 +298,10 @@ export async function logoutHandler(
     ...(unchecked ? [unchecked] : []),
   ].join("; ");
   await saveWalletState(next);
-  // A pending login must not bring the wallet back after logout.
+  // A pending login must not bring the wallet back after logout, and the logged-in wallet's pending
+  // funding must not hand its checkout to whoever logs in next.
   await clearLoggedOutPendingLogin(network);
+  await clearLoggedOutPendingFund(network);
 
   return {
     was_logged_in: true,
@@ -336,6 +341,16 @@ async function clearLoggedOutPendingLogin(network: Network | undefined) {
   if (!network) return await clearPendingLogin();
   const pending = await loadPendingLogin();
   if (pending?.network === network.name) await clearPendingLogin(pending.registration.device_code);
+}
+
+/**
+ * Cancels the logged-in wallet's pending funding when it is for a network logged out. An
+ * `--address` funding is not tied to the login, so it is kept.
+ */
+async function clearLoggedOutPendingFund(network: Network | undefined) {
+  const pending = await loadPendingFund();
+  if (pending?.activeWallet && (!network || pending.network === network.name))
+    await clearPendingFund(pending);
 }
 
 /** A logout command; without a network it logs out of every network, so it has no `--network`. */

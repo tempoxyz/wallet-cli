@@ -1,0 +1,5 @@
+---
+wallet-cli: minor
+---
+
+Add `tempo wallet fund status`, which resumes waiting on a funding after the default handoff, a timed-out `--wait`, or Ctrl-C (`--interval`, `--max-attempts`). `fund` now prints and returns the funding URL before any RPC read, then saves the pending funding with each delivered token's starting balance to `~/.tempo/wallet/pending-fund.json` (mode 0600; a `logout` of its network cancels the logged-in wallet's funding) and returns a `_next` naming `fund status`. A funding completes only when the token its flow delivers rises by the requested amount: MACH by the full `--amount` (or the $5 checkout minimum), and stablecoins by 95% of it to allow for card onramp fees (or $1 without one, so dust transfers do not count), watching OUSD and USDC.e for general and crypto funding, USDC.e for referral claims, and pathUSD on testnet. A timed-out or cancelled wait returns retryable `E_POLL_TIMEOUT` naming the URL with a `cta` to `fund status`. Funding URLs now use `TEMPO_AUTH_URL` like the rest of the CLI, and every `fund` result names the watched token's `symbol`.

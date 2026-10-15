@@ -27,12 +27,15 @@ export function fundingAmount(value: string | undefined) {
   return raw;
 }
 
+/** The smallest hosted MACH checkout, $5, as raw MACH. */
+export const machCheckoutMinimum = 5_000_000n;
+
 /** Hosted MACH checkout accepts $5–$100 with cent precision. */
 export function machFundingAmount(value: string | undefined) {
   const raw = fundingAmount(value);
   if (
     value !== undefined &&
-    (raw! < 5_000_000n || raw! > 100_000_000n || !/^\d+(?:\.\d{1,2})?$/.test(value))
+    (raw! < machCheckoutMinimum || raw! > 100_000_000n || !/^\d+(?:\.\d{1,2})?$/.test(value))
   )
     throw usageError(
       "MACH funding --amount must be between 5 and 100 USD with at most 2 decimal places",

@@ -16,10 +16,13 @@ vi.mock("../src/wallet/store.js", async (original) => ({
 import { fundAction, fundUrl, runFundingFlow } from "../src/commands/fund.js";
 import { whoamiHandler } from "../src/commands/identity.js";
 import { fundingAmount, machToken, machFundingToken } from "../src/shared/mach.js";
+import { appUrl } from "../src/shared/network.js";
+import { useTempHome } from "./helpers.js";
 
 const wallet = "0x1111111111111111111111111111111111111111";
 const token = "0x20c000000000000000000000f37de3740adec032";
-beforeEach(() => {
+beforeEach(async () => {
+  await useTempHome();
   mocks.state.mockResolvedValue({
     accounts: [{ address: wallet }],
     activeAccount: 0,
@@ -79,11 +82,12 @@ describe("MACH funding", () => {
   });
   it("builds the shared funding protocol", () => {
     expect(fundUrl("mach", { address: wallet, chainId: 4217, amount: "12.34" })).toBe(
-      `https://wallet.tempo.xyz/agent?action=fund&intent=mach&address=${wallet}&chainId=4217&amount=12.34`,
+      `${new URL("/agent", appUrl)}?action=fund&intent=mach&address=${wallet}&chainId=4217&amount=12.34`,
     );
   });
-  it("returns a machine handoff without RPC, browser, or login", async () => {
+  it("returns a machine handoff without a browser or login", async () => {
     mocks.state.mockResolvedValue({ accounts: [] });
+    mocks.readContract.mockResolvedValue(0n);
     expect(
       await runFundingFlow({
         action: "mach",
@@ -97,10 +101,15 @@ describe("MACH funding", () => {
       action: "mach",
       wallet,
       chain_id: 4217,
+      token: machToken(4217),
+      symbol: "MACH",
       amount: "5",
       balance: null,
+      _next: { command: "tempo wallet fund status --interval 5 --network mainnet" },
     });
-    expect(mocks.readContract).not.toHaveBeenCalled();
+    expect(mocks.readContract).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ address: machToken(4217), args: [wallet] }),
+    );
     expect(mocks.open).not.toHaveBeenCalled();
   });
   it.each(["invalid", `0x${"0".repeat(40)}`])(
@@ -117,69 +126,19 @@ describe("MACH funding", () => {
     ).rejects.toThrow("not supported");
     expect(mocks.readContract).not.toHaveBeenCalled();
   });
-  it("uses the MACH amount as a prefill, not a minimum funding delta", async () => {
-    mocks.readContract
-      .mockResolvedValueOnce(10_000_000n)
-      .mockResolvedValueOnce(10_000_000n)
-      .mockResolvedValueOnce(9_000_000n)
-      .mockResolvedValueOnce(15_000_000n);
-    const result = await runFundingFlow({
-      action: "mach",
-      address: wallet,
-      amount: "10",
-      noBrowser: true,
-      noWait: false,
-    });
-    expect(result).toMatchObject({ status: "success", balance: "15", raw_balance: "15000000" });
-    expect(result.url).toContain("amount=10");
-    expect(mocks.readContract).toHaveBeenCalledTimes(4);
-    expect(mocks.readContract).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        address: machToken(4217),
-        functionName: "balanceOf",
-        args: [wallet],
-      }),
-    );
-  });
-  it("does not convert an RPC failure to a zero or success balance", async () => {
-    mocks.readContract.mockRejectedValue(new Error("RPC down"));
-    await expect(
-      runFundingFlow({ action: "mach", noBrowser: true, noWait: false }),
-    ).rejects.toThrow("RPC down");
-  });
-  it("bounds a stalled balance RPC", async () => {
-    mocks.readContract.mockImplementation(() => new Promise(() => {}));
-    await expect(
-      runFundingFlow({ action: "mach", noBrowser: true, noWait: false, timeout: 0.01 }),
-    ).rejects.toMatchObject({
-      code: "E_POLL_TIMEOUT",
-      exitCode: 3,
-      retryable: false,
-      message: `Timed out waiting for funding. Continue at ${fundUrl("mach", { address: wallet, chainId: 4217 })}`,
-    });
-  });
-  it("cancels a waiting operation", async () => {
-    const controller = new AbortController();
-    controller.abort();
-    await expect(
-      runFundingFlow({ action: "mach", noBrowser: true, noWait: false, signal: controller.signal }),
-    ).rejects.toMatchObject({
-      code: "E_POLL_TIMEOUT",
-      retryable: false,
-      message: expect.stringContaining("Funding wait cancelled. Continue at https://"),
-    });
-  });
   it.each([NaN, Infinity, -1])("rejects unbounded timeout %s", async (timeout) => {
     await expect(
       runFundingFlow({ action: "mach", noBrowser: true, noWait: false, timeout }),
     ).rejects.toThrow("finite");
+    expect(mocks.open).not.toHaveBeenCalled();
   });
 });
 
 describe("default funding", () => {
   it.each(["fund", "mach", "crypto", "claim"] as const)(
-    "opens %s and returns a pending handoff without reading balances by default",
+    "opens %s and returns a pending handoff that fund status resumes",
     async (action) => {
+      mocks.readContract.mockResolvedValue(0n);
       const result = await runFundingFlow({ action, amount: "17.43", code: "REF123" });
       expect(result).toMatchObject({
         status: "pending",
@@ -187,14 +146,15 @@ describe("default funding", () => {
         amount: "17.43",
         balance: null,
         raw_balance: null,
+        _next: { command: "tempo wallet fund status --interval 5 --network mainnet" },
       });
-      expect(mocks.open).toHaveBeenCalledExactlyOnceWith(result.url);
-      expect(mocks.readContract).not.toHaveBeenCalled();
+      expect(mocks.open).toHaveBeenCalledExactlyOnceWith("url" in result ? result.url : "");
     },
   );
   it("returns a handoff without opening a browser and ignores unused wait settings", async () => {
     process.env.TEMPO_WALLET_FUND_TIMEOUT_MS = "invalid";
     process.env.TEMPO_WALLET_FUND_POLL_MS = "invalid";
+    mocks.readContract.mockResolvedValue(0n);
     const result = await runFundingFlow({ action: "fund", noBrowser: true, timeout: 1 });
     expect(result).toMatchObject({
       status: "pending",
@@ -203,52 +163,20 @@ describe("default funding", () => {
       raw_balance: null,
     });
     expect(mocks.open).not.toHaveBeenCalled();
-    expect(mocks.readContract).not.toHaveBeenCalled();
   });
-  it("returns a testnet handoff without polling", async () => {
+  it("returns a testnet handoff after reading the pathUSD balance once", async () => {
+    mocks.readContract.mockResolvedValue(0n);
     const result = await runFundingFlow({ action: "fund", network: "testnet", amount: "0.000001" });
     expect(result).toMatchObject({
       status: "pending",
       chain_id: 42431,
       amount: "0.000001",
       token: "0x20c0000000000000000000000000000000000000",
+      symbol: "pathUSD",
     });
-    expect(result.url).toContain("chainId=42431&amount=0.000001");
-    expect(mocks.readContract).not.toHaveBeenCalled();
+    expect("url" in result && result.url).toContain("chainId=42431&amount=0.000001");
+    expect(mocks.readContract).toHaveBeenCalledOnce();
   });
-  it.each([
-    ["mainnet", 4217, "0x20c000000000000000000000b9537d11c60e8b50"],
-    ["testnet", 42431, "0x20c0000000000000000000000000000000000000"],
-  ])(
-    "opens general funding and waits for stablecoins on %s",
-    async (network, chain, stablecoin) => {
-      mocks.readContract
-        .mockResolvedValueOnce(3_000_000n)
-        .mockResolvedValueOnce(3_000_000n)
-        .mockResolvedValueOnce(8_000_000n);
-      const result = await runFundingFlow({
-        action: fundAction({}),
-        network,
-        amount: "10",
-        noWait: false,
-      });
-      const url = `https://wallet.tempo.xyz/agent?action=fund&address=${wallet}&chainId=${chain}&amount=10`;
-      expect(result).toMatchObject({
-        action: "fund",
-        status: "success",
-        chain_id: chain,
-        token: stablecoin,
-        url,
-        amount: "10",
-        raw_balance: "8000000",
-      });
-      expect(mocks.readContract).toHaveBeenCalledTimes(3);
-      expect(mocks.open).toHaveBeenCalledWith(url);
-      expect(mocks.readContract).toHaveBeenLastCalledWith(
-        expect.objectContaining({ address: stablecoin, args: [wallet] }),
-      );
-    },
-  );
 });
 
 describe("MACH whoami", () => {

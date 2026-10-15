@@ -25,6 +25,7 @@ const toolHints = [
   ["debug", true, false, true, true],
   ["doctor", true, false, true, true],
   ["fund", false, false, false, true],
+  ["fund_status", false, false, true, true],
   ["keys_list", true, false, true, true],
   ["keys_update", false, true, false, true],
   ["login", false, true, false, true],
@@ -148,6 +149,8 @@ describe("MCP tools", () => {
     const names = response.result.tools.map((tool) => tool.name);
     expect(names).toEqual(
       expect.arrayContaining([
+        "fund",
+        "fund_status",
         "keys_list",
         "keys_update",
         "login",

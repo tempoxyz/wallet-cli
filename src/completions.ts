@@ -51,9 +51,9 @@ _tempo_wallet() {
     fi
     local words=("\${COMP_WORDS[@]:1}")
     local IFS=$'\\013'
-    COMPREPLY=($(COMPLETE=bash _COMPLETE_INDEX=$((COMP_CWORD - 1)) tempo wallet -- "\${words[@]}" 2>/dev/null))
+    # Drop the no-space marker incur appends to groups; bash 3.2 cannot strip it after splitting.
+    COMPREPLY=($(COMPLETE=bash _COMPLETE_INDEX=$((COMP_CWORD - 1)) tempo wallet -- "\${words[@]}" 2>/dev/null | tr -d '\\001'))
     IFS=$' \\t\\n'
-    COMPREPLY=("\${COMPREPLY[@]%$'\\001'}")
 }
 complete -o default -o bashdefault -F _tempo_wallet tempo`;
 

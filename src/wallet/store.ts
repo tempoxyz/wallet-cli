@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { z } from "incur";
 
@@ -263,6 +264,84 @@ export async function clearPendingLogin(deviceCode?: string | undefined) {
   )
     return;
   await unlink(pendingLoginPath()).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+}
+
+const rawAmount = z.string().regex(/^\d+$/);
+
+const pendingFundSchema = z.object({
+  network: z.enum(["mainnet", "testnet"]),
+  action: z.enum(["fund", "mach", "crypto", "claim"]),
+  /** The wallet the funding URL credits. */
+  wallet: z.templateLiteral(["0x", z.string()]),
+  /**
+   * Whether `wallet` was the logged-in wallet rather than an `--address`; such a funding ends
+   * once that wallet is no longer the logged-in one.
+   */
+  activeWallet: z.boolean(),
+  url: z.string(),
+  /** The `--amount` the URL prefills, if any. */
+  amount: z.string().nullable(),
+  /**
+   * Each token the funding flow can deliver, with its raw balance when funding started and the
+   * raw increase that counts as the funding arriving.
+   */
+  assets: z
+    .array(
+      z.object({
+        token: z.templateLiteral(["0x", z.string()]),
+        symbol: z.string(),
+        baseline: rawAmount,
+        minimum: rawAmount,
+      }),
+    )
+    .min(1),
+  /** Unix time in seconds after which `fund status` stops waiting. */
+  expiresAt: z.number(),
+});
+
+/** A funding that `tempo wallet fund` started and `fund status` can keep waiting on. */
+export type PendingFund = z.infer<typeof pendingFundSchema>;
+
+export function parsePendingFund(value: unknown): PendingFund {
+  return pendingFundSchema.parse(value);
+}
+
+export function pendingFundPath() {
+  return join(homedir(), ".tempo", "wallet", "pending-fund.json");
+}
+
+/** The pending funding, or `undefined` when there is none or the file is not a valid one. */
+export async function loadPendingFund(): Promise<PendingFund | undefined> {
+  let text: string;
+  try {
+    text = await readFile(pendingFundPath(), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  try {
+    return parsePendingFund(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Replaces any pending funding. The file names the wallet, so only the owner can read it. */
+export async function savePendingFund(pending: PendingFund) {
+  const path = pendingFundPath();
+  await ensurePrivateWalletDirectory(path);
+  await writePrivateFile(path, JSON.stringify(pending, null, 2));
+}
+
+/**
+ * Removes the pending funding. With `pending`, removes it only while it is still that funding,
+ * so a process finishing an older funding leaves a newer one in place.
+ */
+export async function clearPendingFund(pending?: PendingFund | undefined) {
+  if (pending !== undefined && !isDeepStrictEqual(await loadPendingFund(), pending)) return;
+  await unlink(pendingFundPath()).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });
 }

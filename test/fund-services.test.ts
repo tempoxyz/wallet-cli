@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fundAction, fundUrl, runFundingFlow } from "../src/commands/fund.js";
+import { appUrl } from "../src/shared/network.js";
 import {
   fetchServices,
   fetchServiceList,
@@ -13,6 +14,9 @@ import {
 import { expectUsageError, useTempHome } from "./helpers.js";
 
 type ServiceSummary = Awaited<ReturnType<typeof fetchServiceList>>[number];
+
+/** The wallet app's funding page, on the app `TEMPO_AUTH_URL` names. */
+const agent = new URL("/agent", appUrl).toString();
 
 describe("fundAction", () => {
   it('returns "fund" by default', () => {
@@ -43,13 +47,30 @@ describe("fundAction", () => {
 });
 
 describe("fundUrl", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it.each([
+    { authUrl: undefined, expected: "https://wallet.tempo.xyz/agent?action=fund" },
+    {
+      authUrl: "https://wallet-preview.tempo.local",
+      expected: "https://wallet-preview.tempo.local/agent?action=fund",
+    },
+    { authUrl: "http://127.0.0.1:5173/", expected: "http://127.0.0.1:5173/agent?action=fund" },
+  ])("uses the CLI's wallet app for TEMPO_AUTH_URL=$authUrl", async ({ authUrl, expected }) => {
+    vi.stubEnv("TEMPO_AUTH_URL", authUrl);
+    vi.resetModules();
+    const fund = await import("../src/commands/fund.js");
+    expect(fund.fundUrl("fund")).toBe(expected);
+  });
+
   it("routes every funding handoff to the /agent page", () => {
-    expect(fundUrl("fund")).toBe("https://wallet.tempo.xyz/agent?action=fund");
-    expect(fundUrl("crypto")).toBe("https://wallet.tempo.xyz/agent?action=crypto");
-    expect(fundUrl("mach")).toBe("https://wallet.tempo.xyz/agent?action=fund&intent=mach");
-    expect(fundUrl("claim", { code: "ABC123" })).toBe(
-      "https://wallet.tempo.xyz/agent?claim=ABC123",
-    );
+    expect(fundUrl("fund")).toBe(`${agent}?action=fund`);
+    expect(fundUrl("crypto")).toBe(`${agent}?action=crypto`);
+    expect(fundUrl("mach")).toBe(`${agent}?action=fund&intent=mach`);
+    expect(fundUrl("claim", { code: "ABC123" })).toBe(`${agent}?claim=ABC123`);
   });
 });
 
@@ -86,8 +107,11 @@ describe("runFundingFlow", () => {
   it("returns a claim handoff without waiting when no wallet is configured", async () => {
     await useTempHome();
     const result = await runFundingFlow({ action: "claim", code: "REF123", noBrowser: true });
-    expect(result.status).toBe("pending");
-    expect(result.url).toContain("https://wallet.tempo.xyz/agent?claim=REF123");
+    expect(result).toMatchObject({
+      status: "pending",
+      url: `${agent}?claim=REF123&chainId=4217`,
+    });
+    expect(result).not.toHaveProperty("_next");
   });
 });
 
