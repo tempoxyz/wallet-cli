@@ -253,9 +253,14 @@ cli.command("swap", {
       options: { "dry-run": true },
     },
   ],
-  run: withWallet(({ args, options }, wallet) => swapTokens(wallet, { args, options }), {
-    requireKey: "agent",
-  }),
+  // A refusal that needs a login on the selected network is returned, keeping its `cta`.
+  run: withWallet(
+    async ({ args, error, options }, wallet) => {
+      const result = await swapTokens(wallet, { args, options });
+      return "code" in result ? error(result) : result;
+    },
+    { requireKey: "agent" },
+  ),
 });
 
 cli.command("fund", {

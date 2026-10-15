@@ -1,11 +1,13 @@
-import { decodeFunctionData, erc20Abi, formatUnits, type Hex } from "viem";
-import { Abis } from "viem/tempo";
+import { decodeFunctionData, erc20Abi, formatUnits, toHex, type Hex } from "viem";
+import { Abis, Addresses } from "viem/tempo";
 import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   // The provider holds every wallet it is asked for unless a test says otherwise.
   getAccount: vi.fn(({ address }: { address: string }) => ({ address })),
-  request: vi.fn(async () => ({ transactionHash: `0x${"cd".repeat(32)}` })),
+  request: vi.fn(async (_request: { method: string; params: unknown[] }) => ({
+    transactionHash: `0x${"cd".repeat(32)}`,
+  })),
 }));
 
 vi.mock("../src/provider.js", async (importOriginal) => ({
@@ -221,6 +223,7 @@ describe("swapTokens", () => {
       access_key_limit: "100",
       requires_access_key_update: false,
     });
+    if ("code" in result) throw new Error(result.message);
     expect(result.calls).toHaveLength(2);
     expect(result.calls.every((call) => /^0x[0-9a-f]+$/i.test(call.data))).toBe(true);
     expect(runtime.submit).not.toHaveBeenCalled();
@@ -375,6 +378,91 @@ describe("swapTokens", () => {
     expect(mocks.getAccount).toHaveBeenCalledWith({ address: testWallet });
   });
 
+  // The provider sends on the wallet's saved chain unless the request names one, and falls back
+  // to wallet-app approval on that chain when no access key can sign, so a swap on another
+  // network is refused whether or not it has a key there. A dry run only reads the quote.
+  it.each(
+    [
+      { stored: 4217, network: "mainnet", refusal: undefined },
+      { stored: 42431, network: "testnet", refusal: undefined },
+      {
+        stored: 4217,
+        network: "testnet",
+        refusal: "wallet is logged in on tempo, not tempo-moderato",
+      },
+      {
+        stored: 42431,
+        network: "mainnet",
+        refusal: "wallet is logged in on tempo-moderato, not tempo",
+      },
+    ].flatMap((chains) => [
+      { ...chains, key: "a usable access key", expiry: 2_000_000_000 },
+      { ...chains, key: "no usable access key", expiry: 1 },
+    ]),
+  )(
+    "swaps --network $network over a $stored login with $key: $refusal",
+    async ({ stored, network, refusal, expiry }) => {
+      await useTempHome();
+      const key = { ...walletState().accessKeys[0]!, expiry, limits: undefined };
+      await writeWalletState(
+        walletState({ chainId: stored, accessKeys: [key, { ...key, chainId: 42431 }] }),
+      );
+      const { chainId } = parseNetwork(network);
+      // Interactive runs reach the swap without a usable key.
+      const wallet = await readyWallet(network, false);
+      const { submit: _submit, ...lookups } = dependencies();
+      const args = { amount: "10", tokenIn: "pathUSD", tokenOut: "USDC.e" };
+      mocks.request.mockClear();
+
+      const dryRun = await swapTokens(
+        wallet,
+        { args, options: { "dry-run": true, "slippage-bps": 50 } },
+        lookups,
+      );
+      const result = await swapTokens(
+        wallet,
+        { args, options: { "slippage-bps": 50, yes: true } },
+        lookups,
+      );
+
+      const command = `tempo wallet login --network ${network}`;
+      expect(dryRun).toMatchObject({ status: "dry_run", chain_id: chainId });
+      expect(result).toEqual(
+        refusal
+          ? {
+              code: "E_USAGE",
+              message: `Swap not submitted: ${refusal}; log in with '${command}', then rerun the swap.`,
+              exitCode: 2,
+              retryable: false,
+              cta: { commands: [{ command }] },
+            }
+          : expect.objectContaining({ status: "success", chain_id: chainId }),
+      );
+      expect(mocks.request.mock.calls).toEqual(
+        refusal
+          ? []
+          : [
+              [
+                {
+                  method: "eth_sendTransactionSync",
+                  params: [
+                    {
+                      from: testWallet,
+                      calls: [
+                        expect.objectContaining({ to: moderatoToken }),
+                        expect.objectContaining({ to: Addresses.stablecoinDex }),
+                      ],
+                      chainId: toHex(chainId),
+                      feeToken: moderatoToken,
+                    },
+                  ],
+                },
+              ],
+            ],
+      );
+    },
+  );
+
   it("rejects quotes that exceed the available input balance", async () => {
     await useTempHome();
     await writeWalletState(walletState());
@@ -429,6 +517,7 @@ describe("swapTokens", () => {
         },
         runtime,
       );
+      if ("code" in result) throw new Error(result.message);
       const [approve, swap] = result.calls;
       const { args } = decodeFunctionData({ abi: Abis.stablecoinDex, data: swap!.data as Hex });
 

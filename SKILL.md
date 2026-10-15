@@ -139,6 +139,7 @@ tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --min-amount-out <MIN_AMOUNT_O
 - Default maximum slippage is 50 basis points; override it with `--slippage-bps <BPS>`.
 - Submission re-quotes. Pass the reviewed `min_amount_out` as `--min-amount-out` (or `max_amount_in` as `--max-amount-in` with `--exact-out`) so a worse quote is refused; the dry run's `_next` already includes it.
 - If `requires_access_key_update` is true, ask the wallet owner to approve the printed `tempo wallet keys update` command before retrying.
+- A swap is sent only on the network the wallet is logged in on. On another `--network`, submission returns `E_USAGE` with a `tempo wallet login --network <NETWORK>` `cta`; run it, then rerun the swap.
 - Always run `--dry-run` first and preserve full token addresses in the approval request.
 
 ## Common Issues
