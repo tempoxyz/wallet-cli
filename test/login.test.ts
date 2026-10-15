@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logoutHandler, refreshHandler } from "../src/commands/identity.js";
 import { loginHandler, loginStatusHandler } from "../src/commands/login.js";
 import { settleWalletStore } from "../src/provider.js";
+import { appUrl } from "../src/shared/network.js";
 import {
   loadPendingLogin,
   loadWalletState,
@@ -62,7 +63,7 @@ describe("login", () => {
 
     expect(await loginHandler({ network: "testnet", browser: false, wait: false })).toEqual({
       status: "pending",
-      verification_url: "https://wallet.tempo.xyz/api/auth/device/verify?user_code=ABCDEFG1",
+      verification_url: `${appUrl}/api/auth/device/verify?user_code=ABCDEFG1`,
       user_code: "ABCD-EFG1",
       expires_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/),
       instruction: expect.stringContaining("ABCD-EFG1"),
@@ -75,7 +76,7 @@ describe("login", () => {
     });
     expect(stderr).toEqual([
       "Device confirmation code: ABCD-EFG1",
-      "Continue at: https://wallet.tempo.xyz/api/auth/device/verify?user_code=ABCDEFG1",
+      `Continue at: ${appUrl}/api/auth/device/verify?user_code=ABCDEFG1`,
     ]);
     expect(host.polls).toEqual([]);
     expect(registeredKey(host).chainId).toBe("0xa5bf");

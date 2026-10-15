@@ -295,6 +295,7 @@ it("uses MACH automatically for an ordinary machine-enabled charge", async () =>
 it.each([{ flags: [] }, { flags: ["--mach"] }])(
   "routes testnet MACH settlement through Moderato $flags",
   async ({ flags }) => {
+    vi.stubEnv("TEMPO_RPC_URL", undefined);
     const testnetDeployment = machineTokenDeployments[42431];
     const selected = offer({
       currency: moderatoToken,

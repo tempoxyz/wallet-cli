@@ -23,6 +23,10 @@ export default async function setup(project: TestProject) {
   // Device-code and fund tests must never open the developer's browser, in workers or in the
   // CLI subprocesses they spawn.
   process.env.TEMPO_NO_BROWSER = "1";
+  // Tests and the CLI subprocesses they spawn inherit these, so an RPC or wallet app call a test
+  // does not serve itself hits a dead loopback port instead of the public network.
+  process.env.TEMPO_RPC_URL = "http://127.0.0.1:9";
+  process.env.TEMPO_AUTH_URL = "http://127.0.0.1:9";
   const outdir = await mkdtemp(join(tmpdir(), "wallet-cli-bundle-"));
   const { version, dependencies } = JSON.parse(
     await readFile(join(root, "package.json"), "utf8"),
