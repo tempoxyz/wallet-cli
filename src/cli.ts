@@ -355,17 +355,23 @@ sessions.command("close", {
   output: sessionsCloseCommandOutput,
   // Close and withdraw transactions fall back to wallet app approval, so channel funds stay
   // recoverable without a usable access key.
+  // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
   run: withWallet(
-    async ({ args, options }, wallet) => {
+    async (context, wallet) => {
+      const { args, options } = context;
       const close = {
         all: options.all,
         cooperative: options.cooperative,
         finalize: options.finalize,
         orphaned: options.orphaned,
         target: args.url,
+        yes: options.yes,
       };
       if (options["dry-run"]) return dryRunCloseSessions(wallet, close);
-      const summary = await closeSessions(wallet, close);
+      const summary = await closeSessions(wallet, close, {
+        ...context,
+        agent: !canPrompt(context.agent),
+      });
       closeCommandFailed = summary.failed > 0;
       return summary;
     },
@@ -1110,6 +1116,11 @@ function describeCli() {
                 "Close now through the session's server instead of waiting out the grace period",
               ),
               flag("dry_run", "--dry-run", "Show what would be closed without executing"),
+              flag(
+                "yes",
+                "--yes",
+                "Close without the confirmation prompt; required for agent runs",
+              ),
             ],
           },
           {

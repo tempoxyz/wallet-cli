@@ -108,6 +108,7 @@ describe("generated CLI metadata", () => {
       expect(output).toContain(
         "Close now through the session's server instead of waiting out the grace period",
       );
+      expect(output).toContain("Close without the confirmation prompt; required for agent runs");
     },
   );
 
@@ -403,6 +404,7 @@ describe("generated CLI metadata", () => {
     { command: ["keys", "update"], flags: ["--no-browser"] },
     { command: ["revoke"], flags: ["--dry-run", "--yes", "--no-browser"] },
     { command: ["logout"], flags: ["--revoke", "--yes", "--no-browser"] },
+    { command: ["sessions", "close"], flags: ["--dry-run", "--yes"] },
   ])("describes $flags for $command", async ({ command, flags }) => {
     type Command = {
       name: string;

@@ -192,6 +192,11 @@ describe("MCP tools", () => {
       arguments: { accessKey: testAccessKey },
       message: "Revocation cannot be undone, so it needs confirmation.",
     },
+    {
+      name: "sessions_close",
+      arguments: { url: `0x${"a".repeat(64)}` },
+      message: "Closing a session cannot be undone, so it needs confirmation.",
+    },
   ])("sends nothing for $name without yes", async ({ name, arguments: args, message }) => {
     await writeWalletState(walletState());
     const stored = await readWalletStoreJson();

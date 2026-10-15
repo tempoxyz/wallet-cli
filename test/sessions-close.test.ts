@@ -73,6 +73,8 @@ import {
   testWallet,
   testWallet2,
   readyWallet,
+  runContext,
+  testnetUsdc,
   useTempHome,
   walletState,
   writeWalletState,
@@ -81,8 +83,9 @@ import {
 type CloseInput = Parameters<typeof closeWithWallet>[1] & { network?: string | undefined };
 
 // `sessions close` loads the wallet the way the command does, without requiring a usable key.
+// These closes are confirmed; "confirming a close" covers runs without --yes.
 const closeSessions = async ({ network, ...options }: CloseInput) =>
-  closeWithWallet(await readyWallet(network, false), options);
+  closeWithWallet(await readyWallet(network, false), { yes: true, ...options }, runContext());
 const dryRunCloseSessions = async ({ network, ...options }: CloseInput) =>
   dryRunWithWallet(await readyWallet(network, false), options);
 
@@ -606,7 +609,16 @@ describe("--cooperative", () => {
         results: [{ channel_id: channelId, status, origin }],
         instruction: expect.stringContaining("its local record was kept"),
         _next: {
-          argv: ["tempo", "wallet", "sessions", "close", channelId, "--network", "mainnet"],
+          argv: [
+            "tempo",
+            "wallet",
+            "sessions",
+            "close",
+            channelId,
+            "--yes",
+            "--network",
+            "mainnet",
+          ],
           until: ".pending == 0 and .failed == 0",
         },
       });
@@ -722,7 +734,7 @@ describe("pending close instructions", () => {
       name: "offer the cooperative close for a session with its server",
       sessions: [{ id: channelId, origin, escrow: mainnetEscrow }],
       target: channelId,
-      cooperative: `To close it now through its server instead, run 'tempo wallet sessions close ${channelId} --cooperative --network mainnet'.`,
+      cooperative: `To close it now through its server instead, run 'tempo wallet sessions close ${channelId} --cooperative --yes --network mainnet'.`,
     },
     {
       name: "offer the cooperative close for several sessions with their server",
@@ -805,6 +817,273 @@ describe("orphaned channel discovery", () => {
           request_url: `${hidden}/session`,
         }),
       ]);
+    },
+  );
+});
+
+describe("confirming a close", () => {
+  const closing = { state: "closing", close_requested_at: now - 1000, grace_ready_at: now - 100 };
+  const closeOutcome =
+    "Each close is requested on-chain; its unspent deposit returns to the wallet once withdrawn after the grace period.";
+  const entry = (id: string, origin: string, deposit = "0.010000 USDC.e", network = "mainnet") => [
+    `  - channel: ${id}`,
+    `    origin:  ${origin}`,
+    `    network: ${network} (chain ${network === "testnet" ? testnet : mainnet})`,
+    `    deposit: ${deposit}`,
+  ];
+
+  // Each scope closes the stored sessions it lists; `command` is what confirms it.
+  const scopes: {
+    name: string;
+    chain?: number;
+    network?: string;
+    options: CloseInput;
+    sessions: [string, Partial<Parameters<typeof upsertSessionRecord>[0]>][];
+    command: string;
+    prompt: string[];
+  }[] = [
+    {
+      name: "a channel id",
+      options: { target: channelId },
+      sessions: [[channelId, {}]],
+      command: `tempo wallet sessions close ${channelId} --yes --network mainnet`,
+      prompt: [
+        "Close 1 session:",
+        ...entry(channelId, origin),
+        closeOutcome,
+        "Close this session? This cannot be undone.",
+      ],
+    },
+    {
+      name: "a channel id without a local record",
+      options: { target: channelId },
+      sessions: [],
+      command: `tempo wallet sessions close ${channelId} --yes --network mainnet`,
+      prompt: [
+        "Close 1 session:",
+        ...entry(channelId, "none", "unknown (no local record)"),
+        closeOutcome,
+        "Close this session? This cannot be undone.",
+      ],
+    },
+    {
+      name: "a channel id on testnet",
+      chain: testnet,
+      network: "testnet",
+      options: { target: channelId },
+      sessions: [[channelId, { token: testnetUsdc }]],
+      command: `tempo wallet sessions close ${channelId} --yes --network testnet`,
+      prompt: [
+        "Close 1 session:",
+        ...entry(channelId, origin, "0.010000 USDC.e", "testnet"),
+        closeOutcome,
+        "Close this session? This cannot be undone.",
+      ],
+    },
+    {
+      name: "--all",
+      options: { all: true },
+      sessions: [
+        [channelId, { last_used_at: 2 }],
+        [otherChannelId, { origin: otherOrigin }],
+      ],
+      command: "tempo wallet sessions close --all --yes --network mainnet",
+      prompt: [
+        "Close 2 sessions:",
+        ...entry(channelId, origin),
+        ...entry(otherChannelId, otherOrigin),
+        closeOutcome,
+        "Close these sessions? This cannot be undone.",
+      ],
+    },
+    {
+      name: "--orphaned",
+      options: { orphaned: true },
+      sessions: [[channelId, { state: "orphaned", origin: "", request_url: "" }]],
+      command: "tempo wallet sessions close --orphaned --yes --network mainnet",
+      prompt: [
+        "Close 1 session:",
+        ...entry(channelId, "none"),
+        closeOutcome,
+        "Close this session? This cannot be undone.",
+      ],
+    },
+    {
+      name: "--finalize",
+      options: { finalize: true },
+      sessions: [[channelId, closing]],
+      command: "tempo wallet sessions close --finalize --yes --network mainnet",
+      prompt: [
+        "Withdraw 1 session:",
+        ...entry(channelId, origin),
+        "Each withdrawal returns the channel's unspent deposit to the wallet.",
+        "Withdraw this session? This cannot be undone.",
+      ],
+    },
+    {
+      name: "--cooperative",
+      options: { cooperative: true, target: origin },
+      sessions: [[channelId, {}]],
+      command: `tempo wallet sessions close ${origin} --cooperative --yes --network mainnet`,
+      prompt: [
+        "Close 1 session through its server:",
+        ...entry(channelId, origin),
+        "The session's server closes the channel now, and its unspent deposit returns to the wallet.",
+        "Close this session? This cannot be undone.",
+      ],
+    },
+  ];
+
+  async function setUp({ chain = mainnet, sessions }: (typeof scopes)[number]) {
+    await writeWalletState(stateFor(chain));
+    for (const [id, overrides] of sessions) await saveSession(id, chain, overrides);
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    return fetch;
+  }
+
+  it.each(scopes)(
+    "refuses an agent run without --yes for $name with its dry run's command, sending nothing",
+    async (scope) => {
+      const fetch = await setUp(scope);
+      const confirm = vi.fn();
+      const context = runContext(true);
+      const wallet = await readyWallet(scope.network, false);
+
+      const dryRun = await dryRunWithWallet(wallet, scope.options);
+      const result = await closeWithWallet(wallet, scope.options, context, { confirm });
+
+      expect(dryRun).toMatchObject({ _next: { command: scope.command } });
+      expect(result).toEqual({
+        code: "E_USAGE",
+        message: `Closing a session cannot be undone, so it needs confirmation. Review the sessions with --dry-run, then run '${scope.command}'.`,
+        exitCode: 2,
+        retryable: false,
+        cta: { commands: [{ command: scope.command }] },
+      });
+      expect(context.error).toHaveBeenCalledOnce();
+      expect(confirm).not.toHaveBeenCalled();
+      expect(mocks.request).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+      expect(await sessionIds(scope.chain ?? mainnet)).toEqual(
+        scope.sessions.map(([id]) => id).sort(),
+      );
+    },
+  );
+
+  it.each(scopes)(
+    "lists each session for $name at the prompt and sends nothing when declined",
+    async (scope) => {
+      const fetch = await setUp(scope);
+      const confirm = vi.fn(async () => false);
+      const context = runContext(false);
+
+      const result = await closeWithWallet(
+        await readyWallet(scope.network, false),
+        scope.options,
+        context,
+        { confirm },
+      ).catch((error: unknown) => error);
+
+      expect(confirm.mock.calls).toEqual([[scope.prompt.join("\n")]]);
+      expect(result).toMatchObject({
+        code: "E_USAGE",
+        exitCode: 2,
+        message: "Sessions not closed: not confirmed at the prompt",
+      });
+      expect(context.error).not.toHaveBeenCalled();
+      expect(mocks.request).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+      expect(await sessionIds(scope.chain ?? mainnet)).toEqual(
+        scope.sessions.map(([id]) => id).sort(),
+      );
+    },
+  );
+
+  it.each([
+    { name: "an agent run with --yes closes without a prompt", agent: true, yes: true },
+    { name: "an interactive run confirmed at the prompt closes", agent: false, answer: true },
+    { name: "an interactive run with --yes closes without a prompt", agent: false, yes: true },
+    {
+      name: "an interactive run declined at the prompt sends nothing",
+      agent: false,
+      answer: false,
+    },
+  ])("$name", async ({ agent, yes, answer }) => {
+    await writeWalletState(stateFor(mainnet));
+    await saveSession(channelId, mainnet);
+    mockEscrow({ [channelId]: escrowChannel() });
+    mocks.request.mockResolvedValue({ transactionHash: `0x${"c".repeat(64)}`, status: "0x1" });
+    const confirm = vi.fn(async () => answer ?? false);
+    const context = runContext(agent);
+
+    const result = await closeWithWallet(
+      await readyWallet(undefined, false),
+      { target: channelId, yes },
+      context,
+      { confirm },
+    ).catch((error: unknown) => error);
+
+    expect(confirm).toHaveBeenCalledTimes(answer === undefined ? 0 : 1);
+    expect(context.error).not.toHaveBeenCalled();
+    if (answer === false) {
+      expect(result).toMatchObject({
+        code: "E_USAGE",
+        message: "Sessions not closed: not confirmed at the prompt",
+      });
+      expect(withdrawals()).toEqual([]);
+    } else {
+      expect(result).toMatchObject({
+        pending: 1,
+        results: [{ channel_id: channelId, status: "pending" }],
+      });
+      expect(withdrawals()).toEqual([{ functionName: "requestClose", args: [channelId] }]);
+    }
+  });
+
+  it.each([
+    {
+      name: "an origin without a session",
+      options: { target: otherOrigin },
+      sessions: [],
+      summary: {
+        closed: 0,
+        pending: 0,
+        failed: 1,
+        results: [
+          { channel_id: "", status: "error", origin: otherOrigin, error: "no active session" },
+        ],
+      },
+    },
+    {
+      name: "--all without sessions",
+      options: { all: true },
+      sessions: [],
+      summary: { closed: 0, pending: 0, failed: 0, results: [] },
+    },
+    {
+      name: "--finalize without a finalizable session",
+      options: { finalize: true },
+      sessions: [channelId],
+      summary: { closed: 0, pending: 0, failed: 0, results: [] },
+    },
+  ])(
+    "runs $name without asking or refusing, as there is nothing to close",
+    async ({ options, sessions, summary }) => {
+      await writeWalletState(stateFor(mainnet));
+      for (const id of sessions) await saveSession(id, mainnet);
+      const wallet = await readyWallet(undefined, false);
+
+      for (const agent of [true, false]) {
+        const confirm = vi.fn();
+        const context = runContext(agent);
+
+        expect(await closeWithWallet(wallet, options, context, { confirm })).toEqual(summary);
+        expect(confirm).not.toHaveBeenCalled();
+        expect(context.error).not.toHaveBeenCalled();
+      }
+      expect(await dryRunWithWallet(wallet, options)).not.toHaveProperty("_next");
+      expect(mocks.request).not.toHaveBeenCalled();
     },
   );
 });

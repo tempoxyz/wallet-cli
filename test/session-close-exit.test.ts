@@ -1,12 +1,12 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { Challenge } from "mppx";
 import { decodeFunctionData, encodeFunctionResult, type Hex } from "viem";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { upsertSessionRecord } from "../src/payment/session-store.js";
+import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
 import { escrowAbi, mainnetEscrow } from "../src/shared/constants.js";
 import {
   testAccessKey,
@@ -143,7 +143,7 @@ describe("session close process exit status", () => {
           "--format",
           "json",
           ...(scenario === "pending" ? [] : ["--cooperative"]),
-          ...(scenario === "dry-run" ? ["--dry-run"] : []),
+          ...(scenario === "dry-run" ? ["--dry-run"] : ["--yes"]),
         ];
         const result = await new Promise<{ code: number; stdout: string; stderr: string }>(
           (resolve, reject) => {
@@ -199,6 +199,7 @@ describe("session close process exit status", () => {
               "sessions",
               "close",
               channelId,
+              "--yes",
               "--network",
               "mainnet",
             ]);
@@ -211,4 +212,176 @@ describe("session close process exit status", () => {
       }
     },
   );
+});
+
+describe("session close confirmation", () => {
+  const prompt = "Close this session? This cannot be undone. [y/N] ";
+  const confirmed = `tempo wallet sessions close ${channelId} --yes --network mainnet`;
+  const declined = "Sessions not closed: not confirmed at the prompt";
+  // The escrow reports the channel finalized, so a close that goes ahead removes the record
+  // after one read and sends no transaction.
+  let rpcCalls = 0;
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const rpc = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { id: number };
+    rpcCalls += 1;
+    response.setHeader("content-type", "application/json");
+    response.end(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: rpc.id,
+        result: encodeFunctionResult({
+          abi: escrowAbi,
+          functionName: "getChannel",
+          result: [true, 0n, testWallet, testWallet2, usdc, testAccessKey, 10_000n, 2_000n],
+        }),
+      }),
+    );
+  });
+  let origin = "";
+
+  beforeAll(async () => {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw Error("Missing fixture address");
+    origin = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it.each<{
+    name: string;
+    args?: string[];
+    terminal?: "stdout" | "stdin and stdout";
+    input?: string;
+    prompted?: boolean;
+    refused?: string;
+    output?: string;
+    closed?: boolean;
+  }>([
+    { name: "an agent run without --yes refuses with the confirmed command", refused: confirmed },
+    { name: "an agent run with --yes closes", args: ["--yes"], closed: true },
+    // Piped input is not a person answering, even when output goes to a terminal.
+    {
+      name: "a terminal run with piped stdin refuses without --yes, ignoring the input",
+      terminal: "stdout",
+      input: "y\n",
+      refused: confirmed,
+    },
+    {
+      name: "an interactive run declined at the prompt closes nothing",
+      terminal: "stdin and stdout",
+      input: "n\n",
+      prompted: true,
+      refused: declined,
+    },
+    {
+      name: "an interactive run confirmed at the prompt closes",
+      terminal: "stdin and stdout",
+      input: "y\n",
+      prompted: true,
+      closed: true,
+    },
+    {
+      name: "an interactive dry run does not prompt and continues with --yes",
+      args: ["--dry-run"],
+      terminal: "stdin and stdout",
+      output: confirmed,
+    },
+  ])(
+    "$name",
+    async ({ args = [], terminal, input = "", prompted = false, refused, output, closed }) => {
+      const home = await useTempHome();
+      await writeWalletState(walletState());
+      await upsertSessionRecord({
+        accepted_cumulative: 2_000n,
+        authorized_signer: testAccessKey,
+        chain_id: 4217,
+        challenge_echo: "{}",
+        channel_id: channelId,
+        close_requested_at: 0,
+        created_at: 1,
+        cumulative_amount: 2_000n,
+        deposit: 10_000n,
+        escrow_contract: mainnetEscrow,
+        grace_ready_at: 0,
+        last_used_at: 1,
+        network: "tempo",
+        origin: "https://service.example",
+        payee: testWallet2,
+        payer: testWallet,
+        request_url: "https://service.example/session",
+        salt: `0x${"0".repeat(64)}`,
+        server_spent: 2_000n,
+        session_protocol: "v1",
+        state: "active",
+        token: usdc,
+      });
+      rpcCalls = 0;
+
+      const result = await walletCli(["sessions", "close", channelId, ...args], {
+        home,
+        input,
+        rpc: origin,
+        terminal,
+      });
+
+      expect(result.stderr.includes(prompt), JSON.stringify(result)).toBe(prompted);
+      if (prompted) expect(result.stderr).toContain(`  - channel: ${channelId}\n`);
+      if (refused) {
+        expect(result.code).toBe(2);
+        expect(result.stdout).toContain(refused);
+      } else expect(result.code).toBe(0);
+      if (output) expect(result.stdout).toContain(output);
+      expect(rpcCalls > 0).toBe(Boolean(closed));
+      expect(
+        (await readSessionRecordsByOrigin("https://service.example")).map(
+          (record) => record.channel_id,
+        ),
+      ).toEqual(closed ? [] : [channelId]);
+    },
+    30_000,
+  );
+
+  /**
+   * Runs the wallet CLI as an agent (`--format json`), or with output to a `terminal`, and with
+   * stdin a terminal too when it names both.
+   */
+  function walletCli(
+    args: string[],
+    options: {
+      home: string;
+      input: string;
+      rpc: string;
+      terminal: "stdout" | "stdin and stdout" | undefined;
+    },
+  ) {
+    const fixture =
+      options.terminal === "stdout" ? "interactive-stdout.mjs" : "interactive-terminal.mjs";
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: options.home,
+      NO_COLOR: "1",
+      TEMPO_RPC_URL: options.rpc,
+    };
+    delete env.TEMPO_PRIVATE_KEY;
+    delete env.TEMPO_WALLET_NETWORK;
+    return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = execFile(
+        process.execPath,
+        options.terminal
+          ? ["--import", join(root, "test", "fixtures", fixture), cliBundle("wallet"), ...args]
+          : [cliBundle("wallet"), ...args, "--format", "json"],
+        { cwd: root, env, timeout: 20_000 },
+        (error, stdout, stderr) => {
+          if (error && typeof error.code !== "number") return reject(error);
+          resolve({ code: typeof error?.code === "number" ? error.code : 0, stdout, stderr });
+        },
+      );
+      child.stdin?.end(options.input);
+    });
+  }
 });
