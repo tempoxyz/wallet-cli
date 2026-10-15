@@ -25,7 +25,7 @@ import {
 } from "../shared/errors.js";
 import { continuationCommand, nextStep, shellQuote } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
-import { confirm as confirmPrompt, querySql } from "../shared/process.js";
+import { channelsDbPath, confirm as confirmPrompt, querySql } from "../shared/process.js";
 import {
   knownToken,
   readTokenMetadata,
