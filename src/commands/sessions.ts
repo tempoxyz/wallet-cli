@@ -1,7 +1,7 @@
 import { Cli } from "incur";
-import { encodeFunctionData, getAddress, parseAbiItem, toHex, type Address, type Hex } from "viem";
+import { encodeFunctionData, toHex, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
+import { Abis as TempoAbis } from "viem/tempo";
 import { Challenge, Credential } from "mppx";
 
 import { destructive, nonDestructive, type WalletCommand } from "../cli/command.js";
@@ -15,13 +15,7 @@ import {
   sessionsSyncOptions,
 } from "../schemas/sessions.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
-import {
-  defaultGracePeriodSeconds,
-  escrowAbi,
-  logHeadMargin,
-  logQueryBlockRange,
-  logScanDepth,
-} from "../shared/constants.js";
+import { escrowAbi } from "../shared/constants.js";
 import {
   commandError,
   paymentError,
@@ -31,7 +25,6 @@ import {
   type CommandContext,
 } from "../shared/errors.js";
 import {
-  createTempoPublicClient,
   escrowContract,
   networkFields,
   networkName,
@@ -59,7 +52,6 @@ import {
   isChannelId,
   normalizeOrigin,
   nowSeconds,
-  parseOnChainBigInt,
   parseStoredBigInt,
   safeNumber,
   sanitizeText,
@@ -68,6 +60,13 @@ import {
 import { continuationCommand, nextStep } from "../shared/next.js";
 import { withWallet, type Wallet } from "../shared/require-wallet.js";
 import { createProvider, requireSender } from "../provider.js";
+import {
+  findAllChannelsForPayer,
+  getOnChainChannel,
+  isPrecompileEscrow,
+  readGracePeriod,
+  type OnChainDiscoveredChannel,
+} from "../payment/channel.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import { ensureChannelsTable } from "../payment/session-store.js";
 import { loadWalletState } from "../wallet/store.js";
@@ -217,15 +216,6 @@ export type ChannelRecord = {
   created_at: number;
   last_used_at: number;
   virtual?: boolean | undefined;
-};
-
-type OnChainDiscoveredChannel = {
-  channelId: string;
-  escrowContract: Address;
-  token: Address;
-  deposit: bigint;
-  settled: bigint;
-  closeRequestedAt: bigint;
 };
 
 type CloseResultRecord = {
@@ -1167,149 +1157,6 @@ async function discoverAndPersistOrphanedChannels(network: Network) {
   }
 
   return readChannelRecords();
-}
-
-async function findAllChannelsForPayer(options: { network: Network; payer: Address }) {
-  const chain = options.network.chainId;
-  const publicClient = createTempoPublicClient(chain);
-  const latest = (await publicClient.getBlockNumber()).valueOf() - logHeadMargin;
-  const earliest = latest > logScanDepth ? latest - logScanDepth : 0n;
-  const escrow = escrowContract(chain);
-  const results: OnChainDiscoveredChannel[] = [];
-  const event = parseAbiItem(
-    "event ChannelOpened(bytes32 indexed channelId, address indexed payer, address indexed payee, address token, address authorizedSigner, bytes32 salt, uint256 deposit)",
-  );
-
-  let end = latest;
-  while (end >= earliest) {
-    const start = end > earliest + logQueryBlockRange ? end - logQueryBlockRange : earliest;
-    const logs = await publicClient.getLogs({
-      address: escrow,
-      event,
-      args: { payer: getAddress(options.payer) },
-      fromBlock: start,
-      toBlock: end,
-    });
-
-    for (const log of logs) {
-      const channelId = log.args.channelId?.toLowerCase();
-      if (!channelId || results.some((result) => result.channelId === channelId)) continue;
-      const onChain = await getOnChainChannel({
-        channelId: channelId as Hex,
-        escrowContract: escrow,
-        network: options.network,
-      });
-      if (!onChain || onChain.finalized) continue;
-      results.push({
-        channelId,
-        escrowContract: escrow,
-        token: onChain.token,
-        deposit: onChain.deposit,
-        settled: onChain.settled,
-        closeRequestedAt: onChain.closeRequestedAt,
-      });
-    }
-
-    if (start === earliest) break;
-    end = start - 1n;
-  }
-
-  return results;
-}
-
-/** The channel's escrow state on `network`, or null when the escrow has no such channel. */
-async function getOnChainChannel(options: {
-  channelId: Hex;
-  escrowContract: Address;
-  network: Network;
-}) {
-  if (isPrecompileEscrow(options.escrowContract)) {
-    const state = (await createTempoPublicClient(options.network.chainId).readContract({
-      address: TempoChannel.address,
-      abi: TempoAbis.tip20ChannelReserve,
-      functionName: "getChannelState",
-      args: [options.channelId],
-    })) as unknown;
-    const record = getRecord(state);
-    const tuple = Array.isArray(state) ? state : [];
-    const deposit = parseOnChainBigInt(record.deposit ?? tuple[1]);
-    const settled = parseOnChainBigInt(record.settled ?? tuple[0]);
-    const closeRequestedAt = parseOnChainBigInt(record.closeRequestedAt ?? tuple[2]);
-    // The precompile clears a closed channel's state, so only its ChannelClosed event tells a
-    // closed channel from one that never existed.
-    if (deposit === 0n && !(await precompileChannelClosed(options.channelId, options.network)))
-      return null;
-    return {
-      finalized: deposit === 0n,
-      token: tokenAddress(options.network.chainId),
-      deposit,
-      settled,
-      closeRequestedAt,
-    };
-  }
-
-  const value = (await createTempoPublicClient(options.network.chainId).readContract({
-    address: options.escrowContract,
-    abi: escrowAbi,
-    functionName: "getChannel",
-    args: [options.channelId],
-  })) as unknown;
-  const record = getRecord(value);
-  const tuple = Array.isArray(value) ? value : [];
-  const finalized = Boolean(record.finalized ?? tuple[0]);
-  const closeRequestedAt = parseOnChainBigInt(record.closeRequestedAt ?? tuple[1]);
-  const token = stringValue(record.token ?? tuple[4]).toLowerCase() as Address;
-  const deposit = parseOnChainBigInt(record.deposit ?? tuple[6]);
-  const settled = parseOnChainBigInt(record.settled ?? tuple[7]);
-  if (!finalized && deposit === 0n) return null;
-  return { finalized, token, deposit, settled, closeRequestedAt };
-}
-
-const channelClosedEvent = parseAbiItem(
-  "event ChannelClosed(bytes32 indexed channelId, address indexed payer, address indexed payee, uint96 settledToPayee, uint96 refundedToPayer)",
-);
-
-/** Whether the precompile emitted ChannelClosed for the channel within the log scan depth. */
-async function precompileChannelClosed(channelId: Hex, network: Network) {
-  const publicClient = createTempoPublicClient(network.chainId);
-  // Include the head block: a cooperative close checks for a close mined moments ago.
-  const latest = await publicClient.getBlockNumber();
-  const earliest = latest > logScanDepth ? latest - logScanDepth : 0n;
-  let end = latest;
-  while (end >= earliest) {
-    const start = end > earliest + logQueryBlockRange ? end - logQueryBlockRange : earliest;
-    const logs = await publicClient.getLogs({
-      address: TempoChannel.address,
-      event: channelClosedEvent,
-      args: { channelId },
-      fromBlock: start,
-      toBlock: end,
-    });
-    if (logs.length > 0) return true;
-    if (start === earliest) break;
-    end = start - 1n;
-  }
-  return false;
-}
-
-function isPrecompileEscrow(address: string) {
-  return address.toLowerCase() === TempoChannel.address.toLowerCase();
-}
-
-async function readGracePeriod(options: { escrowContract: Address; network: Network }) {
-  try {
-    const value = (await createTempoPublicClient(options.network.chainId).readContract({
-      address: options.escrowContract,
-      abi: escrowAbi,
-      functionName: "CLOSE_GRACE_PERIOD",
-      args: [],
-    })) as unknown;
-    const grace = parseOnChainBigInt(value);
-    if (grace > 0n && grace <= BigInt(Number.MAX_SAFE_INTEGER)) return Number(grace);
-  } catch {
-    // Match the current wallet: grace-period lookup failure falls back to the protocol default.
-  }
-  return defaultGracePeriodSeconds;
 }
 
 async function saveDiscoveredChannel(options: {

@@ -2,8 +2,9 @@ import { Errors } from "incur";
 import { type Challenge, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession } from "mppx/client";
 import { parseUnits } from "viem";
-import { Abis as TempoAbis, Actions, Channel as TempoChannel } from "viem/tempo";
+import { Actions, Channel as TempoChannel } from "viem/tempo";
 
+import { readOnChainChannel } from "../payment/channel.js";
 import { paymentReceipt, receiptTxHash } from "../payment/receipt.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import {
@@ -13,16 +14,9 @@ import {
   preserveSessionCumulative,
   upsertSessionRecord,
 } from "../payment/session-store.js";
-import { escrowAbi } from "../shared/constants.js";
 import { paymentError } from "../shared/errors.js";
 import { createTempoPublicClient, networkName } from "../shared/network.js";
-import {
-  getRecord,
-  nowSeconds,
-  parseOnChainBigInt,
-  sanitizeText,
-  stringValue,
-} from "../shared/utils.js";
+import { getRecord, nowSeconds, sanitizeText, stringValue } from "../shared/utils.js";
 import { sessionDetails, type SessionDetails, tempoPaymentChallengeResponse } from "./challenge.js";
 import { cloneRequestInit, type FetchPlan } from "./fetch.js";
 import { type PaymentIdentity, requestNetwork, resolvePaymentIdentity } from "./identity.js";
@@ -30,8 +24,6 @@ import type { RequestOptions } from "./options.js";
 import { fetchPaidRequest, paidResponseFailures, paymentReceipts } from "./paid.js";
 import { persistSessionReceipt, sessionShortfall, tryTopUpAndRetry } from "./session-topup.js";
 import { assertWithinMaxSpend, formatTokenAmount, spendCap } from "./spend.js";
-
-type RpcOptions = Parameters<typeof createTempoPublicClient>[1];
 
 // Dry-run reads only inform the quote, so a stalled RPC must not hold it up.
 export const dryRunRpc = { timeout: 3_000, retryCount: 0 };
@@ -344,52 +336,6 @@ function sessionProtocol(challenge: Challenge.Challenge) {
   const request = challenge.request as Record<string, unknown>;
   const methodDetails = getRecord(request.methodDetails);
   return stringValue(methodDetails.sessionProtocol) || undefined;
-}
-
-async function readOnChainChannel(record: PersistedSessionRecord, rpc: RpcOptions = {}) {
-  const client = createTempoPublicClient(record.chain_id, rpc);
-  if (record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase()) {
-    const state = (await client.readContract({
-      address: TempoChannel.address,
-      abi: TempoAbis.tip20ChannelReserve,
-      functionName: "getChannelState",
-      args: [record.channel_id as `0x${string}`],
-    })) as unknown;
-    const object = getRecord(state);
-    const tuple = Array.isArray(state) ? state : [];
-    const deposit = parseOnChainBigInt(object.deposit ?? tuple[1]);
-    const settled = parseOnChainBigInt(object.settled ?? tuple[0]);
-    const closeRequestedAt = parseOnChainBigInt(object.closeRequestedAt ?? tuple[2]);
-    if (deposit === 0n) return null;
-    return {
-      authorizedSigner: record.authorized_signer,
-      closeRequestedAt,
-      deposit,
-      payee: record.payee,
-      payer: record.payer,
-      settled,
-      token: record.token,
-    };
-  }
-
-  const value = (await client.readContract({
-    address: record.escrow_contract as `0x${string}`,
-    abi: escrowAbi,
-    functionName: "getChannel",
-    args: [record.channel_id as `0x${string}`],
-  })) as unknown;
-  const object = getRecord(value);
-  const tuple = Array.isArray(value) ? value : [];
-  if (object.finalized ?? tuple[0]) return null;
-  return {
-    authorizedSigner: stringValue(object.authorizedSigner ?? tuple[5]),
-    closeRequestedAt: parseOnChainBigInt(object.closeRequestedAt ?? tuple[1]),
-    deposit: parseOnChainBigInt(object.deposit ?? tuple[6]),
-    payee: stringValue(object.payee ?? tuple[3]),
-    payer: stringValue(object.payer ?? tuple[2]),
-    settled: parseOnChainBigInt(object.settled ?? tuple[7]),
-    token: stringValue(object.token ?? tuple[4]),
-  };
 }
 
 function challengeEchoJson(challenge: Challenge.Challenge) {
