@@ -16,9 +16,18 @@ const mocks = vi.hoisted(() => ({
   request: vi.fn(async (_request: { method: string; params: unknown[] }): Promise<unknown> => ({})),
 }));
 
+// The provider is on the chain the wallet store holds, as the SDK's store would be.
 vi.mock("../src/provider.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/provider.js")>()),
-  createProvider: vi.fn(async () => ({ getAccount: mocks.getAccount, request: mocks.request })),
+  createProvider: vi.fn(async () => {
+    const { loadWalletState } = await import("../src/wallet/store.js");
+    const { chainId = 4217 } = await loadWalletState();
+    return {
+      getAccount: mocks.getAccount,
+      request: mocks.request,
+      store: { getState: () => ({ chainId }) },
+    };
+  }),
 }));
 
 import { swapTokens } from "../src/commands/swap.js";
