@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { build } from "esbuild";
 import type { TestProject } from "vitest/node";
@@ -27,6 +28,12 @@ export default async function setup(project: TestProject) {
   // does not serve itself hits a dead loopback port instead of the public network.
   process.env.TEMPO_RPC_URL = "http://127.0.0.1:9";
   process.env.TEMPO_AUTH_URL = "http://127.0.0.1:9";
+  // Every Node process started from here on, vitest workers and the CLI subprocesses tests spawn,
+  // preloads the guard that refuses connections to non-loopback hosts.
+  const guard = pathToFileURL(join(root, "test/fixtures/no-network.mjs")).href;
+  process.env.NODE_OPTIONS = [process.env.NODE_OPTIONS, `--import=${guard}`]
+    .filter(Boolean)
+    .join(" ");
   const outdir = await mkdtemp(join(tmpdir(), "wallet-cli-bundle-"));
   const { version, dependencies } = JSON.parse(
     await readFile(join(root, "package.json"), "utf8"),

@@ -1,38 +1,25 @@
-import net from "node:net";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { afterEach } from "vitest";
+import { afterAll, afterEach } from "vitest";
 
-// Tests must stay offline: sockets only reach loopback servers a test starts itself. Guarding the
-// connection rather than `fetch` also covers redirects and the undici fetch `tempo request` uses.
-// A connection to any other host is refused and fails the test, even when the code under test
-// swallows the error.
-const loopback = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
-const connect = net.Socket.prototype.connect;
+import "./fixtures/no-network.mjs";
 
-/** `host:port` targets refused since the last test; a test that expects a refusal drains it. */
-export const blockedHosts: string[] = [];
+// Tests must stay offline. The guard refuses connections to non-loopback hosts in this worker and in
+// the CLI subprocesses it spawns, which inherit this log path; a refusal recorded there fails the
+// test, even when the code under test swallows the error.
+const log = join(tmpdir(), `wallet-cli-refused-${process.pid}.log`);
+process.env.TEMPO_TEST_REFUSED_LOG = log;
+writeFileSync(log, "");
+afterAll(() => rmSync(log, { force: true }));
 
-net.Socket.prototype.connect = function (this: net.Socket, ...args: unknown[]) {
-  // `net.connect` and `tls.connect` pass their normalized arguments as one array.
-  const target = tcpTarget(Array.isArray(args[0]) ? args[0] : args);
-  if (target === undefined || loopback.has(target.host)) return connect.apply(this, args as never);
-  const host = `${target.host}:${target.port}`;
-  blockedHosts.push(host);
-  const error = new Error(`Tests must not connect to ${host}; mock it or serve it from loopback`);
-  process.nextTick(() => this.destroy(error));
-  return this;
-} as typeof connect;
-
-afterEach(() => {
-  const hosts = blockedHosts.splice(0);
-  if (hosts.length > 0) throw new Error(`Test opened outbound connections to ${hosts.join(", ")}`);
-});
-
-/** The TCP host and port a `connect` call dials, or undefined for an IPC path, as Node reads them. */
-function tcpTarget([first, second]: unknown[]) {
-  if (typeof first === "number" || (typeof first === "string" && /^\d+$/.test(first)))
-    return { host: typeof second === "string" ? second : "localhost", port: first };
-  if (typeof first !== "object" || first === null) return undefined;
-  const { host, path, port } = first as { host?: string; path?: string; port?: number | string };
-  return path ? undefined : { host: host || "localhost", port };
+/** Fails with every `host:port` the guard refused since the last check, then clears the log. */
+export function expectOffline() {
+  const hosts = new Set(readFileSync(log, "utf8").split("\n").filter(Boolean));
+  writeFileSync(log, "");
+  if (hosts.size > 0)
+    throw new Error(`Test opened outbound connections to ${[...hosts].join(", ")}`);
 }
+
+afterEach(expectOffline);
