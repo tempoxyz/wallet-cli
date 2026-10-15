@@ -432,7 +432,8 @@ const mcpToolHints: Record<string, Mcp.ToolAnnotations> = {
   // login, and once approved, stores the approved account in place of the current one.
   login: { ...destructive, idempotentHint: false, openWorldHint: true },
   login_status: { ...destructive, idempotentHint: true, openWorldHint: true },
-  logout: { ...destructive, idempotentHint: true, openWorldHint: false },
+  // With `revoke`, asks the wallet app to revoke the keys and reads them on-chain.
+  logout: { ...destructive, idempotentHint: true, openWorldHint: true },
   // Saves the requested network to the wallet store before approval, like `login`.
   refresh: { ...destructive, idempotentHint: false, openWorldHint: true },
   revoke: { ...destructive, idempotentHint: true, openWorldHint: true },
