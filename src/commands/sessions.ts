@@ -5,6 +5,7 @@ import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
 import { Challenge, Credential } from "mppx";
 
 import { destructive, nonDestructive, type WalletCommand } from "../cli/command.js";
+import { flag, option, positional } from "../cli/describe.js";
 import {
   sessionsCloseArgs,
   sessionsCloseCommandOutput,
@@ -149,6 +150,46 @@ export default {
     sessions_list: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
     // Deletes stored sessions whose channel the chain shows finalized or does not hold.
     sessions_sync: { ...destructive, idempotentHint: true, openWorldHint: true },
+  },
+  describe: {
+    name: "sessions",
+    about: "Manage payment sessions",
+    subcommands: [
+      {
+        name: "list",
+        about: "List payment sessions",
+        args: [
+          flag("orphaned", "--orphaned", "Include on-chain orphaned discovery"),
+          flag("all", "--all", "Include local sessions and orphaned discovery"),
+        ],
+      },
+      {
+        name: "close",
+        about: "Request a session close, then withdraw after the grace period with --finalize",
+        args: [
+          positional("url", "URL, origin, or channel ID (0x...) to close"),
+          flag("all", "--all", "Close all active sessions and on-chain channels"),
+          flag("orphaned", "--orphaned", "Close only orphaned on-chain channels"),
+          flag("finalize", "--finalize", "Withdraw channels whose close grace period has ended"),
+          flag(
+            "cooperative",
+            "--cooperative",
+            "Close now through the session's server instead of waiting out the grace period",
+          ),
+          flag("dry_run", "--dry-run", "Show what would be closed without executing"),
+          flag("yes", "--yes", "Close without the confirmation prompt; required for agent runs"),
+        ],
+      },
+      {
+        name: "sync",
+        about: "Sync local sessions with on-chain state",
+        args: [
+          option("origin", "--origin", "Re-sync a specific origin's close state from on-chain", {
+            valueName: "ORIGIN",
+          }),
+        ],
+      },
+    ],
   },
 } satisfies WalletCommand;
 

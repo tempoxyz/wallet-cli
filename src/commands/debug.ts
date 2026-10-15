@@ -17,6 +17,7 @@ export default {
     },
   }),
   annotations: { debug: { ...readOnly, openWorldHint: true } },
+  describe: { name: "debug", about: "Deprecated: use 'doctor'" },
 } satisfies WalletCommand;
 
 export async function debugHandler(options: { network?: string | undefined }) {

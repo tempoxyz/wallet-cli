@@ -1,4 +1,7 @@
-import type { Completions } from "incur";
+import { Completions } from "incur";
+
+import { cliGlobalAlias, cliGlobals } from "../schemas/shared.js";
+import { commandTokens, firstCommandIndex } from "./argv.js";
 
 type Candidate = Completions.Candidate;
 
@@ -19,6 +22,28 @@ const builtinFlags: Candidate[] = [
   { value: "--token-offset", description: "Skip first n tokens of output" },
   { value: "--version", description: "Show version" },
 ];
+
+/** Wallet-owned `completions` output; see `completionScript` for which shells stay with incur. */
+export function walletCompletions(args: readonly string[], commands: Map<string, unknown>) {
+  const index = firstCommandIndex(args);
+  if (index === undefined || args[index] !== "completions") return undefined;
+  if (args.includes("--help") || args.includes("-h")) return undefined;
+  // The first positional after `completions`, skipping flags and their values.
+  const [shell] = commandTokens(args.slice(index + 1));
+  return completionScript(shell, () => {
+    const entries = commands as Parameters<typeof Completions.complete>[0];
+    return [
+      ...Completions.complete(entries, undefined, [""], 0),
+      { value: "mcp", description: "Register as MCP server" },
+      { value: "skills", description: "Sync skill files to agents" },
+      { value: "help", description: "Show help for a command" },
+      ...Completions.complete(entries, undefined, ["-"], 0, {
+        schema: cliGlobals,
+        alias: cliGlobalAlias,
+      }),
+    ];
+  });
+}
 
 /**
  * Output of `tempo wallet completions [shell]` where incur's builtin falls short: it cannot

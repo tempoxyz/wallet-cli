@@ -1,7 +1,7 @@
 import { Cli } from "incur";
 
 import { readOnly, type WalletCommand } from "../cli/command.js";
-import { supportedShells } from "../completions.js";
+import { supportedShells } from "../cli/completions.js";
 import { completionsArgs, completionsOutput } from "../schemas/completions.js";
 import { globalAlias, globalOptions } from "../schemas/shared.js";
 

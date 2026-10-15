@@ -2,6 +2,7 @@ import { Cli } from "incur";
 import { isAddress, type Address } from "viem";
 
 import { destructive, type WalletCommand } from "../cli/command.js";
+import { flag, positional } from "../cli/describe.js";
 import { revokeArgs, revokeOptions, revokeOutput } from "../schemas/revoke.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { networkFields, type Network } from "../shared/network.js";
@@ -40,6 +41,16 @@ export default {
     ),
   }),
   annotations: { revoke: { ...destructive, idempotentHint: true, openWorldHint: true } },
+  describe: {
+    name: "revoke",
+    about: "Revoke an access key",
+    args: [
+      positional("access_key", "Access key address to revoke (0x...)"),
+      flag("dry_run", "--dry-run", "Show the key that would be revoked without revoking it"),
+      flag("yes", "--yes", "Revoke without a confirmation prompt"),
+      flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
+    ],
+  },
 } satisfies WalletCommand;
 
 /**

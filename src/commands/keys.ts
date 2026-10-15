@@ -3,6 +3,7 @@ import { Cli } from "incur";
 import { formatUnits, isAddress, parseUnits, toHex, type Address } from "viem";
 
 import { destructive, readOnly, type WalletCommand } from "../cli/command.js";
+import { flag, option, positional } from "../cli/describe.js";
 import {
   keysOutput,
   updateAccessKeyArgs,
@@ -59,6 +60,34 @@ export default {
   annotations: {
     keys_list: { ...readOnly, openWorldHint: true },
     keys_update: { ...destructive, idempotentHint: false, openWorldHint: true },
+  },
+  describe: {
+    name: "keys",
+    about: "Manage access keys",
+    subcommands: [
+      {
+        name: "list",
+        about:
+          "List keys and their spending limits (spending_limit is deprecated; use spending_limits)",
+      },
+      {
+        name: "update",
+        about: "Update an access key spending limit",
+        args: [
+          positional(
+            "access_key",
+            "Access key address (defaults to the only key for this wallet and network)",
+          ),
+          option("limit", "--limit", "New remaining limit in human token units", {
+            valueName: "AMOUNT",
+          }),
+          option("token", "--token", "Token address or symbol (defaults to current limit token)", {
+            valueName: "TOKEN",
+          }),
+          flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
+        ],
+      },
+    ],
   },
 } satisfies WalletCommand;
 

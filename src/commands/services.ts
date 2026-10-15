@@ -7,6 +7,7 @@ import { Cli } from "incur";
 import { formatUnits } from "viem";
 
 import { readOnly, type WalletCommand } from "../cli/command.js";
+import { flag, option, positional } from "../cli/describe.js";
 import { servicesArgs, servicesOptions, servicesOutput } from "../schemas/services.js";
 import { globalAlias } from "../schemas/shared.js";
 import { version } from "../shared/constants.js";
@@ -31,6 +32,20 @@ export default {
     },
   }),
   annotations: { services: { ...readOnly, openWorldHint: true } },
+  describe: {
+    name: "services",
+    about: "Browse the MPP service directory",
+    args: [
+      positional("service_id", "Service ID to show details for"),
+      option(
+        "search",
+        "--search",
+        "Search by name, id, description, tags, or category; every word must match",
+        { valueName: "QUERY" },
+      ),
+      flag("refresh", "--refresh", "Fetch the service directory instead of using the cached copy"),
+    ],
+  },
 } satisfies WalletCommand;
 
 type ServiceSummary = {

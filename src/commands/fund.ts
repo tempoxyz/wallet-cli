@@ -4,6 +4,7 @@ import { erc20Abi, formatUnits, type Address } from "viem";
 import { ousd } from "viem/tokens";
 
 import { nonDestructive, type WalletCommand } from "../cli/command.js";
+import { flag, option } from "../cli/describe.js";
 import { fundOptions, fundOutput, fundStatusOptions } from "../schemas/fund.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { commandError, networkError, usageError } from "../shared/errors.js";
@@ -83,6 +84,46 @@ export default {
     fund: { ...nonDestructive, idempotentHint: false, openWorldHint: true },
     // Reads balances and clears the pending funding once it arrives or expires; reruns add nothing.
     fund_status: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
+  },
+  describe: {
+    name: "fund",
+    about: "Open add-funds flows in the wallet app",
+    args: [
+      option("address", "--address", "Wallet address to fund (defaults to current wallet)", {
+        valueName: "ADDRESS",
+      }),
+      flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
+      flag(
+        "crypto",
+        "--crypto",
+        "Open the direct crypto funding flow (bridge on mainnet, faucet on testnet)",
+      ),
+      flag("mach", "--mach", "Open MACH funding"),
+      flag("credits", "--credits", "Unavailable; use --mach to buy MACH"),
+      option("amount", "--amount", "USD amount to prefill", { valueName: "AMOUNT" }),
+      flag("wait", "--wait", "Wait for a balance increase; otherwise return immediately"),
+      flag("no_wait", "--no-wait", "Return the funding handoff immediately (default)"),
+      option("timeout", "--timeout", "Timeout in seconds with --wait (default: 600)", {
+        valueName: "SECONDS",
+      }),
+      option("referral_code", "--referral-code", "Referral code to claim while funding", {
+        valueName: "CODE",
+      }),
+    ],
+    subcommands: [
+      {
+        name: "status",
+        about: "Wait for a pending funding's balance increase",
+        args: [
+          option("interval", "--interval", "Seconds between balance checks", {
+            valueName: "SECONDS",
+          }),
+          option("max_attempts", "--max-attempts", "Checks before giving up", {
+            valueName: "COUNT",
+          }),
+        ],
+      },
+    ],
   },
 } satisfies WalletCommand;
 
