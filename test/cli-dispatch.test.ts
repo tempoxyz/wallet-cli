@@ -11,6 +11,22 @@ const execFileAsync = promisify(execFile);
 
 const address = "0x1111111111111111111111111111111111111111";
 const handoff = ["--address", address, "--no-browser", "--no-wait"];
+const fundToon = `status: pending
+wallet: ${address}
+action: fund
+url: "https://wallet.tempo.xyz/agent?action=fund&address=${address}&chainId=42431"
+chain_id: 42431
+network: tempo-moderato
+token: 0x20c0000000000000000000000000000000000000
+amount: null
+balance: null
+raw_balance: null
+`;
+const sessionsToon = `chain_id: 42431
+network: tempo-moderato
+sessions: []
+total: 0
+`;
 
 describe("wallet flags parse the same in any position", () => {
   it.each([
@@ -39,33 +55,36 @@ describe("wallet flags parse the same in any position", () => {
     });
   });
 
-  it.each([
-    {
-      name: "fund",
-      variants: [
-        ["-n", "testnet", "fund", ...handoff],
-        ["fund", ...handoff, "-n", "testnet"],
-      ],
-    },
-    {
-      name: "sessions",
-      variants: [
-        ["-n", "testnet", "sessions"],
-        ["sessions", "-n", "testnet"],
-        ["sessions", "list", "-t", "-n", "testnet"],
-      ],
-    },
-  ])("renders $name with --format toon wherever it appears", async ({ variants }) => {
+  it.each(
+    [
+      {
+        output: fundToon,
+        variants: [
+          ["-n", "testnet", "fund", ...handoff],
+          ["fund", ...handoff, "-n", "testnet"],
+        ],
+      },
+      {
+        output: sessionsToon,
+        variants: [
+          ["-n", "testnet", "sessions"],
+          ["sessions", "-n", "testnet"],
+          ["sessions", "list", "-t", "-n", "testnet"],
+        ],
+      },
+    ].flatMap(({ output, variants }) =>
+      variants.flatMap((args) =>
+        [["--format", "toon", ...args], [...args, "--format", "toon"], args].map(
+          (argv) => [argv, output] as const,
+        ),
+      ),
+    ),
+  )("%j renders toon", async (argv, output) => {
     await useTempHome();
-    // Run one at a time: concurrent runs would contend for the session database.
-    const outputs = [];
-    for (const args of variants)
-      for (const argv of [["--format", "toon", ...args], [...args, "--format", "toon"], args])
-        outputs.push(await wallet(argv));
+    const result = await wallet(argv);
 
-    expect(outputs.map((output) => output.code)).toEqual(outputs.map(() => 0));
-    expect(new Set(outputs.map((output) => output.stdout)).size).toBe(1);
-    expect(outputs[0]?.stdout).not.toContain("{");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe(output);
   });
 });
 
