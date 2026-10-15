@@ -1,7 +1,13 @@
-import { readdir, stat, utimes, writeFile } from "node:fs/promises";
+import { readdir, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+
+// Passes through, so a test can act between a prune's read and its delete.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, unlink: vi.fn(actual.unlink) };
+});
 
 const mocks = vi.hoisted(() => ({
   // The provider holds every wallet it is asked for.
@@ -19,11 +25,12 @@ import { swapTokens } from "../src/commands/swap.js";
 import { transferTokens } from "../src/commands/transfer.js";
 import type { TxState } from "../src/commands/tx.js";
 import { paymentOutcomeUnknownError, walletError } from "../src/shared/errors.js";
-import type { Wallet } from "../src/shared/require-wallet.js";
-import { nowSeconds } from "../src/shared/utils.js";
+import { missingKeyError, type Wallet } from "../src/shared/require-wallet.js";
+import { nowSeconds, sleep } from "../src/shared/utils.js";
 import {
   createIdempotencyRecord,
   idempotencyDir,
+  loadIdempotencyRecord,
   pruneIdempotencyRecords,
   type IdempotencyRecord,
 } from "../src/wallet/idempotency.js";
@@ -80,6 +87,7 @@ type Request = {
   exactOut?: boolean | undefined;
   dryRun?: boolean | undefined;
   yes?: boolean | undefined;
+  keyRequired?: ReturnType<typeof missingKeyError>;
 };
 
 const commands: Record<
@@ -101,6 +109,7 @@ const commands: Record<
           "idempotency-key": request.key,
           yes: request.yes ?? true,
         },
+        keyRequired: request.keyRequired,
       },
       runtime,
     ),
@@ -121,6 +130,7 @@ const commands: Record<
           "slippage-bps": 50,
           yes: request.yes ?? true,
         },
+        keyRequired: request.keyRequired,
       },
       runtime,
     ),
@@ -128,10 +138,20 @@ const commands: Record<
 
 const labels = { transfer: "Transfer", swap: "Swap" } as const;
 
-/** Logs `address` in on `network` with an unlimited access key there. */
-async function login(network: "mainnet" | "testnet" = "mainnet", address: string = testWallet) {
+/** Logs `address` in on `network` with an unlimited access key there, expiring at `expiry`. */
+async function login(
+  network: "mainnet" | "testnet" = "mainnet",
+  address: string = testWallet,
+  expiry = 2_000_000_000,
+) {
   const chainId = network === "testnet" ? 42431 : 4217;
-  const key = { ...walletState().accessKeys[0]!, access: address, chainId, limits: undefined };
+  const key = {
+    ...walletState().accessKeys[0]!,
+    access: address,
+    chainId,
+    expiry,
+    limits: undefined,
+  };
   await writeWalletState(walletState({ accounts: [{ address }], accessKeys: [key], chainId }));
   return readyWallet(network, false);
 }
@@ -324,6 +344,50 @@ describe.each(["transfer", "swap"] as const)("%s --idempotency-key", (name) => {
     expect(retry.submit).toHaveBeenCalledOnce();
   });
 
+  it.each<{
+    earlier: "sent" | "failed" | "none";
+    expected: (sent: unknown, refusal: unknown) => unknown;
+  }>([
+    {
+      earlier: "sent",
+      expected: (sent) => ({ ...(sent as object), status: "success", idempotent_replay: true }),
+    },
+    {
+      earlier: "failed",
+      expected: () =>
+        outcomeUnknown(
+          `${label} with idempotency key "k1" may have been sent: another run with this key is still sending, or stopped before recording its outcome. Check the wallet balance before retrying with a new key.`,
+          balanceCommand,
+        ),
+    },
+    { earlier: "none", expected: (_, refusal) => refusal },
+  ])(
+    "resolves a key without a usable access key (earlier send: $earlier)",
+    async ({ earlier, expected }) => {
+      await useTempHome();
+      const failed = vi.fn(async () => Promise.reject(new Error("socket hang up")));
+      const sent =
+        earlier === "none"
+          ? undefined
+          : await send(
+              await login(),
+              { key: "k1" },
+              lookups(earlier === "failed" ? { submit: failed } : {}),
+            ).catch(() => undefined);
+      // The access key expires before the rerun, which an agent would refuse up front.
+      const wallet = await login("mainnet", testWallet, 1);
+      const refusal = missingKeyError(wallet)!;
+      const rerun = rerunLookups();
+
+      const result = await send(wallet, { key: "k1", keyRequired: refusal }, rerun);
+
+      expect(refusal).toMatchObject({ code: "E_KEY_EXPIRED" });
+      expect(result).toEqual(expected(sent, refusal));
+      expect(rerun.submit).not.toHaveBeenCalled();
+      expect(await recordFiles()).toHaveLength(earlier === "none" ? 0 : 1);
+    },
+  );
+
   it("writes nothing on a dry run and carries the key into _next", async () => {
     await useTempHome();
     const wallet = await login();
@@ -448,6 +512,38 @@ describe("pruneIdempotencyRecords", () => {
     await pruneIdempotencyRecords(now);
 
     expect(await recordFiles()).toEqual(kept ? [file] : []);
+  });
+
+  it("keeps a claim another run makes while it prunes", async () => {
+    await useTempHome();
+    const now = nowSeconds();
+    // An expired claim for k1, which another run reuses.
+    await createIdempotencyRecord(
+      record({ created_at: now - 31 * day, status: "submitting", tx_hash: null, result: null }),
+    );
+    const claim = record({ created_at: now, request: { command: "transfer", amount: "2" } });
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    let other: Promise<boolean> | undefined;
+    // Between this prune reading the expired record and deleting it, the other run prunes it too
+    // and claims the key; unserialized, this prune's delete would remove that new claim.
+    vi.mocked(unlink).mockImplementation(async (path) => {
+      if (other === undefined && String(path).endsWith(".json")) {
+        other = pruneIdempotencyRecords(now).then(() => createIdempotencyRecord(claim));
+        await sleep(200);
+      }
+      return actual.unlink(path);
+    });
+    try {
+      await pruneIdempotencyRecords(now);
+      expect(await other).toBe(true);
+    } finally {
+      vi.mocked(unlink).mockImplementation(actual.unlink);
+    }
+
+    expect(await loadIdempotencyRecord({ key: "k1", wallet: testWallet, chainId: 4217 })).toEqual(
+      claim,
+    );
+    expect(await recordFiles()).toHaveLength(1);
   });
 
   it("does nothing before any record exists", async () => {

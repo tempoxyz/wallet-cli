@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
+import { readdir } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -258,25 +260,99 @@ describe("tempo wallet tx status", () => {
     expect(result.stdout).toContain("--idempotency-key applies only to token transfers");
     expect(methods).toEqual([]);
   });
-
-  function walletCli(args: string[], home: string) {
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: home,
-      NO_COLOR: "1",
-      TEMPO_RPC_URL: url,
-    };
-    delete env.TEMPO_WALLET_NETWORK;
-    return new Promise<{ code: number; stdout: string }>((resolve, reject) => {
-      execFile(
-        process.execPath,
-        [cliBundle("wallet"), ...args, "--format", "json"],
-        { env, timeout: 20_000 },
-        (error, stdout) => {
-          if (error && typeof error.code !== "number") return reject(error);
-          resolve({ code: typeof error?.code === "number" ? error.code : 0, stdout });
-        },
-      );
-    });
-  }
 });
+
+describe("keyed agent sends with an expired access key", () => {
+  const sends = {
+    transfer: {
+      argv: ["transfer", "1", "pathUSD", recipient, "--yes", "--idempotency-key", "k1"],
+      request: {
+        command: "transfer",
+        amount: "1000000",
+        token: moderatoToken,
+        to: recipient,
+        fee_token: null,
+      },
+    },
+    swap: {
+      argv: ["swap", "1", "pathUSD", "USDC.e", "--yes", "--idempotency-key", "k1"],
+      request: {
+        command: "swap",
+        mode: "exact_in",
+        amount: "1000000",
+        token_in: moderatoToken,
+        token_out: usdcToken,
+        fee_token: moderatoToken,
+      },
+    },
+  };
+  const refresh = "tempo wallet refresh --network mainnet";
+  const refused = {
+    code: "E_KEY_EXPIRED",
+    message: `The access key for this wallet on mainnet has expired. Run '${refresh}' before retrying.`,
+    cta: { commands: [{ command: refresh }] },
+  };
+
+  it.each([
+    { command: "transfer", recorded: true, dryRun: false },
+    { command: "swap", recorded: true, dryRun: false },
+    { command: "transfer", recorded: false, dryRun: false },
+    { command: "swap", recorded: false, dryRun: false },
+    { command: "transfer", recorded: false, dryRun: true },
+    { command: "swap", recorded: false, dryRun: true },
+  ] as const)(
+    "$command replays a recorded send but refuses to sign (recorded: $recorded, dry run: $dryRun)",
+    async ({ command, recorded, dryRun }) => {
+      const home = await useTempHome();
+      const key = { ...walletState().accessKeys[0]!, expiry: 1 };
+      await writeWalletState(walletState({ accessKeys: [key] }));
+      const { argv, request } = sends[command];
+      if (recorded)
+        await createIdempotencyRecord({
+          key: "k1",
+          wallet: sender,
+          chain_id: 4217,
+          request,
+          status: "success",
+          tx_hash: hash,
+          created_at: nowSeconds(),
+          result: { status: "success", tx_hash: hash, chain_id: 4217, network: "tempo" },
+        });
+      results = { eth_getTransactionReceipt: receipt("0x1") };
+
+      const result = await walletCli(
+        dryRun ? [...argv.filter((arg) => arg !== "--yes"), "--dry-run"] : [...argv],
+        home,
+      );
+
+      expect(result.code).toBe(recorded ? 0 : 4);
+      expect(JSON.parse(result.stdout)).toMatchObject(
+        recorded ? { status: "success", tx_hash: hash, idempotent_replay: true } : refused,
+      );
+      expect(methods).toEqual(recorded ? ["eth_getTransactionReceipt"] : []);
+      const records = await readdir(join(home, ".tempo", "wallet", "idempotency")).catch(() => []);
+      expect(records.filter((name) => name.endsWith(".json"))).toHaveLength(recorded ? 1 : 0);
+    },
+  );
+});
+
+function walletCli(args: string[], home: string) {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: home,
+    NO_COLOR: "1",
+    TEMPO_RPC_URL: url,
+  };
+  delete env.TEMPO_WALLET_NETWORK;
+  return new Promise<{ code: number; stdout: string }>((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [cliBundle("wallet"), ...args, "--format", "json"],
+      { env, timeout: 20_000 },
+      (error, stdout) => {
+        if (error && typeof error.code !== "number") return reject(error);
+        resolve({ code: typeof error?.code === "number" ? error.code : 0, stdout });
+      },
+    );
+  });
+}

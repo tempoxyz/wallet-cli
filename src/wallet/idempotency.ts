@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { z } from "incur";
 
+import { withFileLock } from "../payment/session-lock.js";
 import { nowSeconds } from "../shared/utils.js";
 import { writePrivateFile } from "./store.js";
 
@@ -58,17 +59,18 @@ export async function loadIdempotencyRecord(
  * create lets only one of several concurrent sends with the same key claim it.
  */
 export async function createIdempotencyRecord(record: IdempotencyRecord) {
-  await mkdir(idempotencyDir(), { recursive: true, mode: 0o700 });
-  try {
-    await writeFile(recordPath(scopeOf(record)), JSON.stringify(record, null, 2), {
-      flag: "wx",
-      mode: 0o600,
-    });
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
-    throw error;
-  }
+  return withRecordsLock(async () => {
+    try {
+      await writeFile(recordPath(scopeOf(record)), JSON.stringify(record, null, 2), {
+        flag: "wx",
+        mode: 0o600,
+      });
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
+    }
+  });
 }
 
 /** Replaces the record for `record`'s key. */
@@ -88,27 +90,35 @@ export async function deleteIdempotencyRecord(record: IdempotencyRecord) {
  */
 export async function pruneIdempotencyRecords(now = nowSeconds()) {
   const dir = idempotencyDir();
-  const names = await readdir(dir).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return [];
-    throw error;
-  });
   const cutoff = now - idempotencyRecordTtlSeconds;
-  await Promise.all(
-    names
-      .filter((name) => name.endsWith(".json"))
-      .map(async (name) => {
-        const path = join(dir, name);
-        const text = await readFile(path, "utf8").catch(() => undefined);
-        const createdAt =
-          (text === undefined ? undefined : parseRecord(text)?.created_at) ??
-          (await stat(path).then(
-            (info) => info.mtimeMs / 1000,
-            () => undefined,
-          ));
-        if (createdAt !== undefined && createdAt < cutoff)
-          await unlink(path).catch(() => undefined);
-      }),
-  );
+  await withRecordsLock(async () => {
+    const names = await readdir(dir);
+    await Promise.all(
+      names
+        .filter((name) => name.endsWith(".json"))
+        .map(async (name) => {
+          const path = join(dir, name);
+          const text = await readFile(path, "utf8").catch(() => undefined);
+          const createdAt =
+            (text === undefined ? undefined : parseRecord(text)?.created_at) ??
+            (await stat(path).then(
+              (info) => info.mtimeMs / 1000,
+              () => undefined,
+            ));
+          if (createdAt !== undefined && createdAt < cutoff)
+            await unlink(path).catch(() => undefined);
+        }),
+    );
+  });
+}
+
+/**
+ * Runs `fn` holding the records lock. Pruning and claims take it, so a prune cannot delete a key's
+ * expired record after another run has replaced it with a new claim.
+ */
+async function withRecordsLock<T>(fn: () => Promise<T>) {
+  await mkdir(idempotencyDir(), { recursive: true, mode: 0o700 });
+  return withFileLock(join(idempotencyDir(), ".lock"), "idempotency lock", fn);
 }
 
 function scopeOf(record: IdempotencyRecord): IdempotencyScope {

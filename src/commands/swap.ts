@@ -22,11 +22,12 @@ import {
   type Network,
 } from "../shared/network.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
-import { withWallet, type Wallet } from "../shared/require-wallet.js";
+import { missingKeyError, withWallet, type Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { createProvider, requireSender } from "../provider.js";
 import {
+  defersKeyCheck,
   idempotencyKey,
   idempotencyKeyArg,
   recordedSend,
@@ -52,13 +53,20 @@ export default {
     ],
     // A refusal that needs a login on the selected network, or an unknown outcome, is returned,
     // keeping its `cta`.
-    run: withWallet(
-      async ({ args, error, options }, wallet) => {
-        const result = await swapTokens(wallet, { args, options });
-        return "code" in result ? error(result) : result;
-      },
-      { requireKey: "agent" },
-    ),
+    async run(context) {
+      const deferKey = defersKeyCheck(context.options);
+      return withWallet(
+        async (_, wallet) => {
+          const result = await swapTokens(wallet, {
+            args: context.args,
+            options: context.options,
+            keyRequired: deferKey && context.agent ? missingKeyError(wallet) : undefined,
+          });
+          return "code" in result ? context.error(result) : result;
+        },
+        { requireKey: deferKey ? "never" : "agent" },
+      )(context);
+    },
   }),
   annotations: { swap: { ...destructive, idempotentHint: false, openWorldHint: true } },
   describe: {
@@ -134,6 +142,11 @@ export async function swapTokens(
       "slippage-bps": number;
       yes?: boolean | undefined;
     };
+    /**
+     * The refusal to return instead of sending, for a keyed send whose missing access key was not
+     * checked up front because a replay needs none.
+     */
+    keyRequired?: ReturnType<typeof missingKeyError>;
   },
   dependencies: Partial<SwapDependencies> = {},
 ) {
@@ -208,11 +221,12 @@ export async function swapTokens(
             getTxStatus: runtime.getTxStatus,
           },
   };
-  // A replay sends nothing, so it needs no confirmation, and it precedes the quote and balance
-  // checks, which the swap it replays may no longer pass.
+  // A replay sends nothing, so it needs no confirmation or access key, and it precedes the quote
+  // and balance checks, which the swap it replays may no longer pass.
   if (!input.options["dry-run"]) {
     const recorded = await recordedSend<z.infer<typeof swapSuccessOutput>>(tx);
     if (recorded) return recorded;
+    if (input.keyRequired) return input.keyRequired;
   }
   const reviewedMinOut = parseSwapBound(
     input.options["min-amount-out"],

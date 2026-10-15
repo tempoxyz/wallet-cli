@@ -42,7 +42,7 @@ import {
 } from "../shared/network.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
 import { canPrompt, confirm } from "../shared/process.js";
-import { withWallet, type Wallet } from "../shared/require-wallet.js";
+import { missingKeyError, withWallet, type Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata, tokenSymbol } from "../shared/tokens.js";
 import { escapeInvisible, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { version } from "../shared/constants.js";
@@ -62,6 +62,7 @@ import {
   resolveMaxSpend,
 } from "./request.js";
 import {
+  defersKeyCheck,
   idempotencyKey,
   idempotencyKeyArg,
   recordedSend,
@@ -106,6 +107,7 @@ export default {
       if (options.mach && process.env.TEMPO_PRIVATE_KEY) return transferMach({ options: flags });
       // MACH pays with the stored access key; a token transfer without one, run interactively,
       // is approved in the wallet app instead.
+      const deferKey = defersKeyCheck(options);
       return withWallet(
         async (_, wallet) => {
           if (options.mach)
@@ -114,13 +116,14 @@ export default {
             args,
             options,
             interactive: canPrompt(context.agent),
+            keyRequired: deferKey && context.agent ? missingKeyError(wallet) : undefined,
           });
           // A refusal that needs a login on the selected network, or an unknown outcome, is
           // returned, keeping its `cta`.
           return "code" in result ? context.error(result) : result;
         },
         {
-          requireKey: options.mach ? "always" : "agent",
+          requireKey: options.mach ? "always" : deferKey ? "never" : "agent",
           // That refusal also comes before the key check: a key there would not lift it.
           refuse: (_, wallet) =>
             options.mach || options["dry-run"] ? undefined : transferNetworkRefusal(wallet),
@@ -242,6 +245,11 @@ export async function transferTokens(
     };
     /** Whether a person answers at the terminal (stdin and stdout); only then is it prompted. */
     interactive?: boolean | undefined;
+    /**
+     * The refusal to return instead of sending, for a keyed send whose missing access key was not
+     * checked up front because a replay needs none.
+     */
+    keyRequired?: ReturnType<typeof missingKeyError>;
   },
   dependencies: Partial<TransferDependencies> = {},
 ) {
@@ -358,9 +366,10 @@ export async function transferTokens(
             getTxStatus: runtime.getTxStatus,
           },
   };
-  // A replay sends nothing, so it needs no confirmation.
+  // A replay sends nothing, so it needs no confirmation or access key.
   const recorded = await recordedSend<z.infer<typeof transferSuccessOutput>>(tx);
   if (recorded) return recorded;
+  if (options.keyRequired) return options.keyRequired;
 
   let sendFeeToken = feeToken;
   if (!options.options.yes) {

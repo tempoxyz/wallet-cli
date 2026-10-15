@@ -185,6 +185,17 @@ export function txOutcomeUnknown(message: string, network: Network, txHash?: str
   );
 }
 
+/**
+ * Whether a send checks its access key only after finding no recorded send for its idempotency
+ * key: a replay signs nothing, so it needs no usable key. Dry runs and unkeyed sends check it first.
+ */
+export function defersKeyCheck(options: {
+  "dry-run"?: boolean | undefined;
+  "idempotency-key"?: string | undefined;
+}) {
+  return options["idempotency-key"] !== undefined && !options["dry-run"];
+}
+
 /** The `--idempotency-key` value, checked to be 1 to 255 characters. */
 export function idempotencyKey(value: string | undefined) {
   if (value !== undefined && (value.length === 0 || value.length > 255))
