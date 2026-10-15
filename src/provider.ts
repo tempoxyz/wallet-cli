@@ -3,9 +3,10 @@ import { cli, Storage } from "accounts/cli";
 import { deviceCode } from "accounts/deviceCode";
 import { http, toHex, type Address, type Transport } from "viem";
 
-import { walletError } from "./shared/errors.js";
+import { commandError, CtaError, walletError } from "./shared/errors.js";
 import { openExternal } from "./shared/process.js";
-import { appUrl, parseNetwork, rpcUrl, type Network } from "./shared/network.js";
+import { appUrl, networkName, parseNetwork, rpcUrl, type Network } from "./shared/network.js";
+import { continuationCommand } from "./shared/next.js";
 import { getRecord } from "./shared/utils.js";
 
 export const accessKeyAuthorizationSeconds = 30 * 86_400;
@@ -190,6 +191,29 @@ export function requireSender(
       message: `Wallet ${address.toLowerCase()} is no longer logged in, so nothing was sent. Check the login with 'tempo wallet whoami', then retry.`,
     });
   }
+}
+
+/** The provider store's saved chain; see `HydratingProvider` for why it is typed here. */
+type ChainProvider = { store: { getState(): { chainId: number } } };
+
+/**
+ * Refuses with `E_USAGE` and a login `cta` unless `provider`'s wallet store is still logged in on `network`. A
+ * command checks the logged-in chain before it reviews a send, and another process can log in on
+ * another chain while it waits, for example at a confirmation prompt. The provider, which loads
+ * the store when it is created, falls back to wallet-app approval on its saved chain whenever no
+ * access key can sign, so the send would then go out on that chain.
+ */
+export function requireChain(provider: object, network: Network) {
+  const { chainId } = (provider as ChainProvider).store.getState();
+  if (chainId === network.chainId) return;
+  const command = continuationCommand(["wallet", "login"], network);
+  throw new CtaError(
+    commandError(
+      "E_USAGE",
+      `The wallet is now logged in on ${networkName(chainId)}, not ${networkName(network.chainId)}, so nothing was sent. Log in with '${command}', then retry.`,
+      command,
+    ),
+  );
 }
 
 /**

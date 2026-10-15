@@ -218,6 +218,45 @@ describe("withWallet", () => {
       });
     },
   );
+
+  // `refuse` runs after the login check and before the key check, so its remedy wins over a key's.
+  const refusal = {
+    code: "E_USAGE" as const,
+    message: "Refused.",
+    exitCode: 2,
+    retryable: false,
+    cta: { commands: [{ command: "tempo wallet login --network testnet" }] },
+  };
+  const usable = { name: "a usable key", state: walletState() };
+  it.each([
+    { refuses: true, ...loggedOut, result: "E_NOT_AUTHENTICATED", refuseCalled: false },
+    { refuses: true, ...expired, result: "E_USAGE", refuseCalled: true },
+    { refuses: true, ...usable, result: "E_USAGE", refuseCalled: true },
+    { refuses: false, ...expired, result: "E_KEY_EXPIRED", refuseCalled: true },
+    { refuses: false, ...usable, result: "run", refuseCalled: true },
+  ] as const)(
+    "refuse that refuses: $refuses with $name: $result",
+    async ({ refuses, state, result, refuseCalled }) => {
+      await useTempHome();
+      vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+      await writeWalletState(state);
+      const handler = vi.fn(async () => "done");
+      const refuse = vi.fn(() => (refuses ? refusal : undefined));
+      const { context, error } = runContext(undefined, true);
+
+      const output = await withWallet(handler, { requireKey: "agent", refuse })(context);
+
+      expect(refuse).toHaveBeenCalledTimes(refuseCalled ? 1 : 0);
+      if (result === "run") {
+        expect(output).toBe("done");
+        expect(handler).toHaveBeenCalledOnce();
+        return;
+      }
+      expect(output).toMatchObject(result === "E_USAGE" ? refusal : { code: result });
+      expect(error).toHaveBeenCalledOnce();
+      expect(handler).not.toHaveBeenCalled();
+    },
+  );
 });
 
 const recipient = "0x1111111111111111111111111111111111111111";
@@ -497,6 +536,35 @@ describe("wallet CLI login and access key checks", () => {
           retryable: false,
           cta: { description: "Suggested command:", commands: [{ command }] },
         });
+      expect(requests).toEqual([]);
+    },
+  );
+
+  // A key there would not let a transfer on another network through, so an agent run gets the
+  // login it needs rather than a refresh for that key.
+  it.each([
+    { network: "testnet", state: walletState({ accessKeys: [key] }) },
+    { network: "mainnet", state: walletState({ chainId: 42431, accessKeys: [testnetKey] }) },
+  ])(
+    "agent transfer --network $network without a key there over another login returns a login cta",
+    async ({ network, state }) => {
+      const home = await useTempHome();
+      await writeWalletState(state);
+      requests.length = 0;
+
+      const result = await wallet(
+        ["transfer", "1", "pathUSD", recipient, "--network", network, "--yes"],
+        { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
+      );
+
+      const command = `tempo wallet login --network ${network}`;
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.stdout)).toEqual({
+        code: "E_USAGE",
+        message: expect.stringContaining(`log in with '${command}', then rerun the transfer.`),
+        retryable: false,
+        cta: { description: "Suggested command:", commands: [{ command }] },
+      });
       expect(requests).toEqual([]);
     },
   );

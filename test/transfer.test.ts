@@ -34,11 +34,17 @@ vi.mock("viem/tempo", async (importOriginal) => {
 
 vi.mock("../src/provider.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/provider.js")>()),
-  createProvider: vi.fn(async () => ({
-    getAccount: mocks.getAccount,
-    getClient: () => ({}),
-    request: mocks.request,
-  })),
+  // Like the real provider, it loads the wallet store's chain when it is created.
+  createProvider: vi.fn(async () => {
+    const { loadWalletState } = await import("../src/wallet/store.js");
+    const { chainId = 4217 } = await loadWalletState();
+    return {
+      getAccount: mocks.getAccount,
+      getClient: () => ({}),
+      request: mocks.request,
+      store: { getState: () => ({ chainId }) },
+    };
+  }),
 }));
 
 import { transferTokens } from "../src/commands/transfer.js";
@@ -660,6 +666,45 @@ describe("transferTokens", () => {
       expect(lookups.confirm).toHaveBeenCalledTimes(refusal || mode === "--yes" ? 0 : 1);
     },
   );
+
+  // Another process can log in on another chain while the prompt is open; the provider loads that
+  // chain when the send creates it, so the send checks it again.
+  it.each([
+    { name: "the login is unchanged", switchTo: undefined },
+    { name: "another login switched to testnet", switchTo: 42431 },
+  ])("sends after the prompt only if $name", async ({ switchTo }) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const { submit: _submit, ...lookups } = dependencies({
+      confirm: vi.fn(async () => {
+        if (switchTo !== undefined) await writeWalletState(walletState({ chainId: switchTo }));
+        return true;
+      }),
+    });
+    mocks.request.mockClear();
+
+    const result = await transferTokens(
+      await readyWallet(),
+      { args: { amount: "1", token: usdcToken, to: recipient }, options: {}, interactive: true },
+      lookups,
+    ).catch((value: unknown) => value);
+
+    expect(lookups.confirm).toHaveBeenCalledOnce();
+    if (switchTo === undefined) {
+      expect(result).toMatchObject({ status: "success" });
+      expect(mocks.request).toHaveBeenCalledOnce();
+    } else {
+      expectUsageError(
+        result,
+        "The wallet is now logged in on tempo-moderato, not tempo, so nothing was sent. Log in with 'tempo wallet login --network mainnet', then retry.",
+      );
+      // `ctaErrors` returns the login it needs as the cta.
+      expect(result).toMatchObject({
+        payload: { cta: { commands: [{ command: "tempo wallet login --network mainnet" }] } },
+      });
+      expect(mocks.request).not.toHaveBeenCalled();
+    }
+  });
 
   it.each([
     { name: "a matching --address", address: testWallet, error: undefined },

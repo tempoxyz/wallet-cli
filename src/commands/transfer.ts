@@ -42,7 +42,7 @@ import {
   validateCreditPermit,
   warnCreditsDeprecated,
 } from "./credits.js";
-import { createProvider, requireSender } from "../provider.js";
+import { createProvider, requireChain, requireSender } from "../provider.js";
 import { loadWalletState } from "../wallet/store.js";
 import {
   machChargeParameters,
@@ -127,17 +127,8 @@ export async function transferTokens(
   const feeToken = options.options["fee-token"]
     ? resolveTokenAddress(options.options["fee-token"], network, "fee token")
     : undefined;
-  // The provider falls back to wallet-app approval, on the chain the wallet is logged in on,
-  // whenever no access key can sign the call locally, so a transfer is sent only on that chain.
-  const walletChainId = storedChainId(wallet.state);
-  if (!options.options["dry-run"] && walletChainId !== network.chainId) {
-    const command = continuationCommand(["wallet", "login"], network);
-    return commandError(
-      "E_USAGE",
-      `Transfer not sent: wallet is logged in on ${networkName(walletChainId)}, not ${networkName(network.chainId)}; log in with '${command}', then rerun the transfer.`,
-      command,
-    );
-  }
+  const refusal = options.options["dry-run"] ? undefined : transferNetworkRefusal(wallet);
+  if (refusal) return refusal;
   // An unlisted token's decimals are read on chain.
   const token = await tokenMetadata(requestedToken, network.chainId);
   const amount = parseTokenAmount(args.amount, token.decimals);
@@ -247,6 +238,22 @@ export async function transferTokens(
   };
 }
 
+/**
+ * The refusal of a token transfer on a network other than the one the wallet is logged in on. The
+ * provider falls back to wallet-app approval, on the logged-in chain, whenever no access key can
+ * sign the call locally, so a transfer is sent only on that chain, with or without a key there.
+ */
+export function transferNetworkRefusal({ network, state }: Pick<Wallet, "network" | "state">) {
+  const walletChainId = storedChainId(state);
+  if (walletChainId === network.chainId) return undefined;
+  const command = continuationCommand(["wallet", "login"], network);
+  return commandError(
+    "E_USAGE",
+    `Transfer not sent: wallet is logged in on ${networkName(walletChainId)}, not ${networkName(network.chainId)}; log in with '${command}', then rerun the transfer.`,
+    command,
+  );
+}
+
 function tokenWithAddress(symbol: string | null, address: string) {
   return symbol ? `${symbol} (${address})` : address;
 }
@@ -299,6 +306,7 @@ function defaultDependencies(network: Network): TransferDependencies {
     confirm,
     async submit({ call, feeToken, from, network }) {
       const provider = await createProvider({ network });
+      requireChain(provider, network);
       // Without a chain ID the provider sends on the wallet's saved chain, not the reviewed one.
       const receipt = await provider.request({
         method: "eth_sendTransactionSync",

@@ -18,7 +18,12 @@ import {
 import { debugHandler, doctorHandler } from "./commands/doctor.js";
 import { loginHandler, loginStatusHandler } from "./commands/login.js";
 import { swapTokens } from "./commands/swap.js";
-import { transferCredits, transferMach, transferTokens } from "./commands/transfer.js";
+import {
+  transferCredits,
+  transferMach,
+  transferNetworkRefusal,
+  transferTokens,
+} from "./commands/transfer.js";
 import { fundAction, fundStatusHandler, runFundingFlow } from "./commands/fund.js";
 import {
   closeSessions,
@@ -257,7 +262,12 @@ cli.command("transfer", {
         // A refusal that needs a login on the selected network is returned, keeping its `cta`.
         return "code" in result ? context.error(result) : result;
       },
-      { requireKey: options.mach ? "always" : "agent" },
+      {
+        requireKey: options.mach ? "always" : "agent",
+        // That refusal also comes before the key check: a key there would not lift it.
+        refuse: (_, wallet) =>
+          options.mach || options["dry-run"] ? undefined : transferNetworkRefusal(wallet),
+      },
     )(context);
   },
 });
