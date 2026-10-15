@@ -13,7 +13,7 @@ license: MIT OR Apache-2.0
 
 ## Networks
 
-- Tempo Mainnet (chain ID `4217`) is live and is the default. Commands use `--network`, then `TEMPO_WALLET_NETWORK`, then the logged-in wallet's network, then mainnet. A `--private-key` or `TEMPO_PRIVATE_KEY` payer skips the logged-in wallet's network. `tempo wallet whoami` reports `chain_id` and `network`; a paid quote reports `chain_id`.
+- Tempo Mainnet (chain ID `4217`) is live and is the default. Commands use `--network`, then `TEMPO_WALLET_NETWORK`, then the logged-in wallet's network, then mainnet. A `--private-key` or `TEMPO_PRIVATE_KEY` payer skips the logged-in wallet's network. `tempo wallet whoami` without `--mach` or `--credits` reports `chain_id` and `network`; a paid `--dry-run` quote reports only `chain_id`, and other `tempo request` output reports neither.
 - Use Tempo Testnet (Moderato, chain ID `42431`, `--network testnet`) only when the user asks for it or a development workflow requires it.
 - `pathUSD` is a live mainnet TIP-20 at `0x20c0000000000000000000000000000000000000`. The faucet-issued testnet token at the same address is a test token, not the production asset.
 
