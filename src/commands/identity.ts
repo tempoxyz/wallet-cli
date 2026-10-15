@@ -16,12 +16,7 @@ import {
 import { errorCodes, networkError, usageError } from "../shared/errors.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
-import {
-  channelsDbPath,
-  confirm as confirmPrompt,
-  runProcess,
-  sqlite3,
-} from "../shared/process.js";
+import { confirm as confirmPrompt, querySql } from "../shared/process.js";
 import {
   knownToken,
   readTokenMetadata,
@@ -915,8 +910,7 @@ async function sessionStats(options: {
              WHERE LOWER(payer) = LOWER('${options.walletAddress.replaceAll("'", "''")}')
                AND state IN ('active', 'closing', 'finalizable')`;
   try {
-    const stdout = await runProcess(sqlite3, ["-json", channelsDbPath(), query]);
-    const rows = getArray(JSON.parse(stdout || "[]") as unknown);
+    const rows = getArray(await querySql(query));
     let active = 0;
     let locked = 0n;
     let pendingRefund = 0n;

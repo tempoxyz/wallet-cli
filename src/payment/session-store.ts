@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { channelsDbPath, runProcess, runSql, sqlString } from "../shared/process.js";
+import { channelsDbPath, querySql, runSql, sqlString } from "../shared/process.js";
 import {
   getArray,
   getRecord,
@@ -78,9 +78,7 @@ export async function readSessionRecordsByOrigin(origin: string) {
              FROM channels
              WHERE origin = ${sqlString(origin)}
              ORDER BY last_used_at DESC`;
-  const stdout = await runProcess("sqlite3", ["-json", channelsDbPath(), query]);
-  const rows = JSON.parse(stdout || "[]") as unknown;
-  return getArray(rows).flatMap(decodeRecord);
+  return getArray(await querySql(query)).flatMap(decodeRecord);
 }
 
 export async function upsertSessionRecord(record: PersistedSessionRecord) {
@@ -156,6 +154,10 @@ export function originFromUrl(url: string) {
   return new URL(url).origin;
 }
 
+/**
+ * Creates or migrates the channels table. Safe to run from concurrent processes: each
+ * statement is idempotent and waits out another process's lock.
+ */
 export async function ensureChannelsTable() {
   await mkdir(dirname(channelsDbPath()), { recursive: true });
   await runSql(`CREATE TABLE IF NOT EXISTS channels (
