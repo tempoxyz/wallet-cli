@@ -82,7 +82,8 @@ it("reports unknown RPC balances separately from funded and verified zero balanc
       key: { balance: "0" },
     });
     expect(zero.balance).not.toHaveProperty("error");
-    expect(calls).toBe(3);
+    // Each run reads the balance and the access key once.
+    expect(calls).toBe(6);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));

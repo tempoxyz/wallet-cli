@@ -85,10 +85,76 @@ export const machOutput = z.object({
   }),
 });
 
+const spendingLimitOutput = z.object({
+  unlimited: z.boolean(),
+  symbol: z.string().nullable(),
+  token: z.string(),
+  limit: z.string().nullable(),
+  raw_limit: z.string(),
+  period_seconds: z.number().nullable(),
+  remaining: z
+    .string()
+    .nullable()
+    .describe(
+      "Remaining limit read from the chain, in token units; null when the key is not published, the read failed, or the token's decimals are unknown",
+    ),
+  spent: z.string().nullable().describe("limit minus remaining; null when either is unknown"),
+});
+
+/** One access key as `keys list` reports it. */
+const accessKeyOutput = z.object({
+  address: z.string(),
+  ...networkOutputShape,
+  wallet_address: z.string(),
+  symbol: z.string().nullable(),
+  token: z.string(),
+  balance: z.string().nullable(),
+  balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
+  spending_limit: z
+    .object({
+      mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
+      unlimited: z.boolean().nullable(),
+      limit: z.string().nullable(),
+      raw_limit: z.string().nullable(),
+      period_seconds: z.number().nullable(),
+      remaining: z.string().nullable(),
+      spent: z.string().nullable(),
+    })
+    .describe(
+      "Deprecated, and will be removed in a future release: use spending_limits. The key's spending mode with the values of spending_limits[0]",
+    ),
+  spending_limits: z.array(spendingLimitOutput),
+  call_permissions: z.enum(["unknown", "unrestricted", "none", "restricted"]),
+  scopes: z.array(
+    z.object({
+      address: z.string(),
+      selector: z.string().nullable(),
+      recipients: z.array(z.string()),
+    }),
+  ),
+  status: z
+    .string()
+    .nullable()
+    .describe(
+      "ready or pending: the key can pay. pending: signed but not yet published on chain; its first payment publishes it. expired or unusable: it cannot pay",
+    ),
+  published: z
+    .boolean()
+    .nullable()
+    .describe(
+      "Whether the chain holds the key unrevoked: false for a key not yet published, or revoked; null when not read, for another wallet's key or a failed read",
+    ),
+  expires_at: z.string().nullable(),
+});
+
 export const whoamiOutput = z.union([
   z.object({ ready: z.boolean() }),
   z.object({
-    ready: z.boolean(),
+    ready: z
+      .boolean()
+      .describe(
+        "Whether the wallet is logged in with an access key on this network that can pay (key.status ready or pending) and its balance query succeeded",
+      ),
     wallet: z.string().nullable(),
     ...networkOutputShape,
     balance: z.object({
@@ -110,93 +176,11 @@ export const whoamiOutput = z.union([
         access_key_limit: z.string().nullable(),
       }),
     ),
-    key: z
-      .object({
-        address: z.string(),
-        ...networkOutputShape,
-        symbol: z.string().nullable(),
-        token: z.string(),
-        balance: z.string().nullable(),
-        balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
-        spending_limit: z.object({
-          mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
-          unlimited: z.boolean().nullable(),
-          limit: z.string().nullable(),
-          raw_limit: z.string().nullable(),
-          period_seconds: z.number().nullable(),
-          remaining: z.string().nullable(),
-          spent: z.string().nullable(),
-        }),
-        spending_limits: z.array(
-          z.object({
-            unlimited: z.boolean(),
-            symbol: z.string().nullable(),
-            token: z.string(),
-            limit: z.string().nullable(),
-            raw_limit: z.string(),
-            period_seconds: z.number().nullable(),
-            remaining: z.string().nullable(),
-            spent: z.string().nullable(),
-          }),
-        ),
-        call_permissions: z.enum(["unknown", "unrestricted", "none", "restricted"]),
-        scopes: z.array(
-          z.object({
-            address: z.string(),
-            selector: z.string().nullable(),
-            recipients: z.array(z.string()),
-          }),
-        ),
-        status: z.string().nullable(),
-        expires_at: z.string().nullable(),
-      })
-      .nullable(),
+    key: accessKeyOutput.omit({ wallet_address: true }).nullable(),
   }),
   machOutput,
   creditsOutput,
 ]);
-
-/** One access key as `keys list` reports it. */
-const accessKeyOutput = z.object({
-  address: z.string(),
-  ...networkOutputShape,
-  wallet_address: z.string(),
-  symbol: z.string().nullable(),
-  token: z.string(),
-  balance: z.string().nullable(),
-  balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
-  spending_limit: z.object({
-    mode: z.enum(["unknown", "unrestricted", "none", "restricted"]),
-    unlimited: z.boolean().nullable(),
-    limit: z.string().nullable(),
-    raw_limit: z.string().nullable(),
-    period_seconds: z.number().nullable(),
-    remaining: z.string().nullable(),
-    spent: z.string().nullable(),
-  }),
-  spending_limits: z.array(
-    z.object({
-      unlimited: z.boolean(),
-      symbol: z.string().nullable(),
-      token: z.string(),
-      limit: z.string().nullable(),
-      raw_limit: z.string(),
-      period_seconds: z.number().nullable(),
-      remaining: z.string().nullable(),
-      spent: z.string().nullable(),
-    }),
-  ),
-  call_permissions: z.enum(["unknown", "unrestricted", "none", "restricted"]),
-  scopes: z.array(
-    z.object({
-      address: z.string(),
-      selector: z.string().nullable(),
-      recipients: z.array(z.string()),
-    }),
-  ),
-  status: z.string().nullable(),
-  expires_at: z.string().nullable(),
-});
 
 export const keysOutput = z.object({
   keys: z.array(accessKeyOutput),

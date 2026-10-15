@@ -262,7 +262,7 @@ describe("MACH whoami", () => {
           wallet,
           chain_id: 4217,
           network: "tempo",
-          token: machToken(4217),
+          token: machToken(4217).toLowerCase(),
           symbol: "MACH",
           decimals: 6,
           balance: "1.234567",
@@ -279,13 +279,13 @@ describe("MACH whoami", () => {
     });
     mocks.readContract.mockResolvedValue(123n);
     expect(await whoamiHandler({ mach: true, network: "testnet" })).toMatchObject({
-      mach: { chain_id: 42431, token: machToken(42431), raw_balance: "123" },
+      mach: { chain_id: 42431, token: machToken(42431).toLowerCase(), raw_balance: "123" },
     });
   });
   it("queries the requested MACH network independently of the stored selection", async () => {
     mocks.readContract.mockResolvedValue(123n);
     expect(await whoamiHandler({ mach: true, network: "testnet" })).toMatchObject({
-      mach: { chain_id: 42431, token: machToken(42431), raw_balance: "123" },
+      mach: { chain_id: 42431, token: machToken(42431).toLowerCase(), raw_balance: "123" },
     });
   });
 });

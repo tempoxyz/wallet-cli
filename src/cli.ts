@@ -858,7 +858,8 @@ function describeCli() {
       },
       {
         name: "whoami",
-        about: "Show who you are: wallet, balances, keys",
+        about:
+          "Show who you are: wallet, balances, keys (key.spending_limit is deprecated; use key.spending_limits)",
         args: [
           flag("mach", "--mach", "Show on-chain MACH balance"),
           flag("credits", "--credits", "Show existing MPP Credits balance (deprecated)"),
@@ -868,7 +869,11 @@ function describeCli() {
         name: "keys",
         about: "Manage access keys",
         subcommands: [
-          { name: "list", about: "List keys and their spending limits" },
+          {
+            name: "list",
+            about:
+              "List keys and their spending limits (spending_limit is deprecated; use spending_limits)",
+          },
           {
             name: "update",
             about: "Update an access key spending limit",

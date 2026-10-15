@@ -82,6 +82,8 @@ Token arguments (`swap`, `transfer`, `--fee-token`, `keys update --token`, and `
 
 If the balance RPC is unavailable, `whoami` reports `ready: false`, `balance.available: null`, `balance.total: null`, and a `balance.error` diagnostic. Wallet and key details remain available, along with locally recorded session reserves. An unavailable key balance is also `null`; key details in `whoami` and `keys` include a `balance_error` diagnostic when the query fails. A successful zero-balance query is reported as zero; `ready` checks wallet/key configuration and balance-query success, not whether a particular purchase is affordable.
 
+`ready` is `true` when a wallet is logged in, its access key on the network can pay (`key.status` `ready` or `pending`), and the balance query succeeded. A `pending` key is signed but not yet published on chain; its first payment publishes it, so it can pay. `whoami` and `keys list` read the logged-in wallet's keys from the AccountKeychain precompile, each on its own network, with a 3-second timeout and no retries. `published` is whether the chain holds the key unrevoked, `null` when it was not read (another stored wallet's key, or a failed read), and a pending key the chain already holds is reported `ready`. For a published key whose limits the chain enforces, each `spending_limits[]` entry reports the chain's `remaining` limit and `spent`, the limit less `remaining`. Both are `null` for a key that is not published, which the chain would read as zero remaining, when a read fails, or when the token's decimals are unknown. `key.spending_limit` is deprecated and will be removed in a future release: it repeats `spending_limits[0]` with the key's spending `mode`. Wallet, key, token, and scope addresses in `whoami` and `keys` output are lowercase.
+
 Make a paid HTTP request:
 
 ```sh
@@ -153,8 +155,9 @@ commands stay on testnet without repeating the flag. `tempo`/`mainnet` and
 `tempo-moderato`/`moderato`/`testnet` are aliases. Unknown networks and payment challenges for
 a different chain are rejected before payment. Network-scoped JSON output reports `chain_id`
 and `network`. `tempo wallet keys list` shows keys on every network, each labeled with its own
-chain and wallet, unless `--network` or `TEMPO_WALLET_NETWORK` selects one; balances are queried
-only for the logged-in wallet's keys, so other stored wallets are never sent to an RPC endpoint.
+chain and wallet, unless `--network` or `TEMPO_WALLET_NETWORK` selects one; balances and on-chain
+key state are queried only for the logged-in wallet's keys, each on the key's own network, so other
+stored wallets are never sent to an RPC endpoint.
 When `--private-key` or `TEMPO_PRIVATE_KEY` pays, the logged-in wallet's network does not apply:
 the network is `--network`, then `TEMPO_WALLET_NETWORK`, then mainnet.
 

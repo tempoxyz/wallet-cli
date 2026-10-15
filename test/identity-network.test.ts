@@ -459,10 +459,14 @@ it("keys list labels each key from its own record and prices only the active wal
   });
   // Another stored wallet's key is listed without disclosing that wallet to an RPC endpoint.
   expect(result.keys[2]).not.toHaveProperty("balance_error");
+  expect(result.keys[2]?.published).toBeNull();
+  // The active wallet's keys are read on chain, then priced, each on its own network.
   expect(vi.mocked(createPublicClient).mock.calls.map(([options]) => options.chain?.id)).toEqual([
-    4217, 42431,
+    4217, 42431, 4217, 42431,
   ]);
   expect(vi.mocked(http).mock.calls.map(([url]) => url)).toEqual([
+    "https://rpc.mainnet.tempo.xyz",
+    "https://rpc.moderato.tempo.xyz",
     "https://rpc.mainnet.tempo.xyz",
     "https://rpc.moderato.tempo.xyz",
   ]);
@@ -505,8 +509,9 @@ it("keys list caches balances per chain and token", async () => {
     [testWallet],
     [testWallet],
   ]);
+  // Each key is read on chain; balances once per chain and token.
   expect(vi.mocked(createPublicClient).mock.calls.map(([options]) => options.chain?.id)).toEqual([
-    4217, 42431,
+    4217, 4217, 42431, 4217, 42431,
   ]);
 });
 

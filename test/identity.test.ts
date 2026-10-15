@@ -139,25 +139,30 @@ describe("wallet store", () => {
     },
   );
 
-  it.each([undefined, [], [{ token: usdc, limit: "100000000#__bigint" }]])(
-    "keeps legacy permissions unknown through a round trip: %#",
-    async (limits) => {
-      await useTempHome();
-      await saveWalletState(
-        walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, limits, scopes: [] }] }),
-      );
-      const state = await loadWalletState();
-      expect(state.accessKeys[0]?.permissionSemantics).toBeUndefined();
-      const result = await currentKeysOutput({
-        walletAddress: testWallet,
-        accessKeys: state.accessKeys,
-      });
-      expect(result.keys[0]).toMatchObject({
-        spending_limit: { mode: "unknown", unlimited: null, limit: null },
-        call_permissions: "unknown",
-      });
+  it.each([
+    { name: "omitted", limits: undefined, limit: null },
+    { name: "empty", limits: [], limit: null },
+    {
+      name: "bounded",
+      limits: [{ token: usdc, limit: "100000000#__bigint" }],
+      limit: "100.000000",
     },
-  );
+  ])("keeps legacy $name permissions unknown through a round trip", async ({ limits, limit }) => {
+    await useTempHome();
+    await saveWalletState(
+      walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, limits, scopes: [] }] }),
+    );
+    const state = await loadWalletState();
+    expect(state.accessKeys[0]?.permissionSemantics).toBeUndefined();
+    const result = await currentKeysOutput({
+      walletAddress: testWallet,
+      accessKeys: state.accessKeys,
+    });
+    expect(result.keys[0]).toMatchObject({
+      spending_limit: { mode: "unknown", unlimited: null, limit },
+      call_permissions: "unknown",
+    });
+  });
 
   it("loads an empty store when none exists", async () => {
     await useTempHome();

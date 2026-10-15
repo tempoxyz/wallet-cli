@@ -61,7 +61,7 @@ export async function queryMachBalance(options: { chainId: number; walletAddress
   return {
     wallet,
     ...networkFields(options.chainId),
-    token,
+    token: token.toLowerCase(),
     symbol: "MACH" as const,
     decimals: machDecimals,
     balance: formatUnits(rawBalance, machDecimals),

@@ -147,7 +147,7 @@ export async function queryCreditBalance(options: {
   const rawBalance = parseCreditBalance(data);
 
   return {
-    wallet: options.walletAddress,
+    wallet: options.walletAddress.toLowerCase(),
     balance: formatCreditBalance(rawBalance),
     rawBalance: rawBalance.toString(),
   };
