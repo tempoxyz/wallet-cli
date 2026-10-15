@@ -5,8 +5,8 @@ import { createServer, type ServerResponse, type IncomingMessage } from "node:ht
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { executeRequest, runRequest } from "../src/commands/request.js";
 import { parseRequestArgs } from "../src/request/args.js";
+import { executeRequest, runRequest } from "../src/request/run.js";
 import { useTempHome } from "./helpers.js";
 import { cliBundle } from "./cli-bundle.js";
 

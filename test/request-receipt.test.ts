@@ -16,7 +16,7 @@ import {
 } from "viem/tempo";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { runRequest } from "../src/commands/request.js";
+import { runRequest } from "../src/request/run.js";
 import { paymentReceipt, receiptSummary, receiptTxHash } from "../src/payment/receipt.js";
 import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
 import { parseNetwork } from "../src/shared/network.js";

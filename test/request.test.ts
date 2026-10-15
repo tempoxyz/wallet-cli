@@ -16,7 +16,6 @@ import {
 } from "viem/tempo";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { runRequest } from "../src/commands/request.js";
 import { parseRequestArgs } from "../src/request/args.js";
 import {
   selectPaymentTokenResponse,
@@ -26,6 +25,7 @@ import {
 import { chargeFallbackError } from "../src/request/charge.js";
 import { resolvePaymentIdentity, storedAccessKeyIdentity } from "../src/request/identity.js";
 import { fetchPaidRequest } from "../src/request/paid.js";
+import { runRequest } from "../src/request/run.js";
 import { buildTopUpTransactionRequest } from "../src/request/session-topup.js";
 import { isSessionInvalidationResponse } from "../src/request/session.js";
 import {

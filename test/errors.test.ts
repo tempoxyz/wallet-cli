@@ -4,8 +4,8 @@ import { join, resolve } from "node:path";
 import { Errors } from "incur";
 import { describe, expect, it, vi } from "vitest";
 
-import { executeRequest } from "../src/commands/request.js";
 import { parseRequestArgs } from "../src/request/args.js";
+import { executeRequest } from "../src/request/run.js";
 import { requireSessionDescriptor } from "../src/payment/session-descriptor.js";
 import {
   accessKeyLimitError,

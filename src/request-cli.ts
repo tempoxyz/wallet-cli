@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { Cli, z } from "incur";
 
-import { executeRequest } from "./commands/request.js";
 import { normalizeIncurArgv, redacted, rerunArgs } from "./request/argv.js";
 import type { RequestOptions } from "./request/options.js";
+import { executeRequest } from "./request/run.js";
 import { defaultMaxSpend, MaxSpendExceededError } from "./request/spend.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";

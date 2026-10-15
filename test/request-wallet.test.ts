@@ -11,7 +11,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
   createProvider: vi.fn(),
 }));
 
-import { runRequest } from "../src/commands/request.js";
+import { runRequest } from "../src/request/run.js";
 import { connect, createProvider } from "../src/provider.js";
 import { requestDryRunOutput } from "../src/schemas/request.js";
 import { emptyWalletState, type WalletState } from "../src/wallet/store.js";

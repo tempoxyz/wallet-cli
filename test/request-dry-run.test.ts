@@ -11,7 +11,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { runRequest } from "../src/commands/request.js";
+import { runRequest } from "../src/request/run.js";
 import {
   readSessionRecordsByOrigin,
   upsertSessionRecord,

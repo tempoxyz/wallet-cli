@@ -8,7 +8,7 @@ import { encodeFunctionResult } from "viem";
 import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { runRequest } from "../src/commands/request.js";
+import { runRequest } from "../src/request/run.js";
 import { MaxSpendExceededError } from "../src/request/spend.js";
 import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
 import { cliBundle } from "./cli-bundle.js";
