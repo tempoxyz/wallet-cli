@@ -24,9 +24,12 @@ it("reports unknown RPC balances separately from funded and verified zero balanc
     });
     request.on("end", () => {
       const rpc = JSON.parse(body) as { id: number; method: string };
+      response.setHeader("content-type", "application/json");
+      // TEMPO_RPC_URL serves every network, so whoami checks its chain before trusting key reads.
+      if (rpc.method === "eth_chainId")
+        return response.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: "0x1079" }));
       expect(rpc.method).toBe("eth_call");
       calls++;
-      response.setHeader("content-type", "application/json");
       response.end(
         JSON.stringify({
           jsonrpc: "2.0",

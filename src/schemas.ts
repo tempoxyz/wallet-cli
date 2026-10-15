@@ -96,9 +96,14 @@ const spendingLimitOutput = z.object({
     .string()
     .nullable()
     .describe(
-      "Remaining limit read from the chain, in token units; null when the key is not published, the read failed, or the token's decimals are unknown",
+      "Remaining limit read from the chain, in token units; null when the key is not published, the read failed or reached another chain, or the token's decimals are unknown",
     ),
-  spent: z.string().nullable().describe("limit minus remaining; null when either is unknown"),
+  spent: z
+    .string()
+    .nullable()
+    .describe(
+      "Always null: the chain exposes only the remaining limit, not the limit it counts down from, so spending cannot be derived",
+    ),
 });
 
 /** One access key as `keys list` reports it. */
@@ -142,7 +147,7 @@ const accessKeyOutput = z.object({
     .boolean()
     .nullable()
     .describe(
-      "Whether the chain holds the key unrevoked: false for a key not yet published, or revoked; null when not read, for another wallet's key or a failed read",
+      "Whether the chain holds the key unrevoked: false for a key not yet published, or revoked; null when not read, for another wallet's key, a failed read, or a TEMPO_RPC_URL on another chain",
     ),
   expires_at: z.string().nullable(),
 });

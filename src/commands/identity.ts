@@ -543,7 +543,7 @@ export async function currentWhoamiOutput(options: {
     sessionStats({ token, walletAddress: options.walletAddress }),
     tokenDetails(key ? keyTokens(key) : [{ chain: options.chain, token, read: true }]),
     // `key` is always the logged-in wallet's.
-    key ? readChainKey(key) : undefined,
+    key ? readChainKey(key, rpcChainCheck()) : undefined,
   ]);
   const symbol = details.get(tokenKey(options.chain, token))?.symbol ?? null;
   const balances = walletBalances({
@@ -593,9 +593,12 @@ export async function currentKeysOutput(options: {
   const active = (key: WalletState["accessKeys"][number]) =>
     key.access.toLowerCase() === options.walletAddress?.toLowerCase();
   const balances = new Map<string, TokenBalance | null>();
+  const servesChain = rpcChainCheck();
   const [details, chainKeys] = await Promise.all([
     tokenDetails(options.accessKeys.flatMap((key) => keyTokens(key, active(key)))),
-    Promise.all(options.accessKeys.map((key) => (active(key) ? readChainKey(key) : undefined))),
+    Promise.all(
+      options.accessKeys.map((key) => (active(key) ? readChainKey(key, servesChain) : undefined)),
+    ),
   ]);
   const keys = [];
   for (const [index, key] of options.accessKeys.entries()) {
@@ -674,7 +677,11 @@ export async function keySpendingLimits(key: WalletState["accessKeys"][number]) 
   return accessKeyLimitsOutput(key, await tokenDetails(keyTokens(key, false)));
 }
 
-/** `remaining` is the chain's, when `chainKey` has it; `spent` is the stored limit less it. */
+/**
+ * `remaining` is the chain's, when `chainKey` has it. `spent` is always `null`: the chain exposes
+ * only what remains, not the limit it counts down from, and another wallet client can change that
+ * limit, so the stored one cannot be proven current.
+ */
 function accessKeyLimitsOutput(
   key: WalletState["accessKeys"][number],
   details: TokenDetails,
@@ -682,50 +689,70 @@ function accessKeyLimitsOutput(
 ) {
   return (key.limits ?? []).map((limit) => {
     const detail = details.get(tokenKey(key.chainId, limit.token));
-    const raw = cleanStoredScalar(limit.limit);
     const remaining = chainKey?.remaining.get(limit.token.toLowerCase()) ?? null;
-    // A chain limit above the stored one means the stored limit is stale.
-    const spent =
-      remaining !== null && /^\d+$/.test(raw) && BigInt(raw) >= remaining
-        ? BigInt(raw) - remaining
-        : null;
     return {
       unlimited: false,
       symbol: detail?.symbol ?? null,
       token: limit.token.toLowerCase(),
       limit: formatLimit(limit.limit, detail),
-      raw_limit: raw,
+      raw_limit: cleanStoredScalar(limit.limit),
       period_seconds: limit.period ?? null,
       remaining: remaining === null ? null : formatLimit(remaining.toString(), detail),
-      spent: spent === null ? null : formatLimit(spent.toString(), detail),
+      spent: null,
     };
   });
 }
 
 /**
  * A key as the AccountKeychain precompile holds it. `published` is whether the chain holds the key
- * unrevoked, `null` when the read failed. Remaining limits are keyed by lowercase token.
+ * unrevoked, `null` when the read failed or reached another chain. Remaining limits are keyed by
+ * lowercase token.
  */
 type ChainKey = { published: boolean | null; remaining: Map<string, bigint | null> };
 
 /**
- * Reads a key on its own chain. Remaining limits are read only for a published key whose limits
- * the chain enforces, since a key the chain does not hold reads as zero remaining. Each read is
- * bounded and not retried, and a failed one is `null`.
+ * Whether reads for a chain reach it. `TEMPO_RPC_URL` serves every network, so with it set each
+ * distinct chain asks the endpoint's `eth_chainId` once, bounded and without retries, and a failed
+ * call counts as another chain. The per-chain default URLs need no check.
  */
-async function readChainKey(key: WalletState["accessKeys"][number]): Promise<ChainKey> {
+function rpcChainCheck() {
+  const checks = new Map<number, Promise<boolean>>();
+  return (chain: number) => {
+    if (!process.env.TEMPO_RPC_URL) return Promise.resolve(true);
+    let check = checks.get(chain);
+    if (!check) {
+      const client = createTempoPublicClient(chain, { timeout: statusQueryTimeout, retryCount: 0 });
+      check = (async () => (await client.getChainId()) === chain)().catch(() => false);
+      checks.set(chain, check);
+    }
+    return check;
+  };
+}
+
+/**
+ * Reads a key on its own chain, trusting the reads only once `servesChain` confirms the RPC is on
+ * it. Remaining limits are read only for a published key whose limits the chain enforces, since a
+ * key the chain does not hold reads as zero remaining. Each read is bounded and not retried, and a
+ * failed one is `null`.
+ */
+async function readChainKey(
+  key: WalletState["accessKeys"][number],
+  servesChain: (chain: number) => Promise<boolean>,
+): Promise<ChainKey> {
   const client = createTempoPublicClient(key.chainId, {
     timeout: statusQueryTimeout,
     retryCount: 0,
   });
   const account = key.access as Address;
   const accessKey = key.address as Address;
-  const metadata = await Actions.accessKey
-    .getMetadata(client, { account, accessKey })
-    .catch(() => undefined);
-  const published = metadata
-    ? !metadata.isRevoked && metadata.address.toLowerCase() === accessKey.toLowerCase()
-    : null;
+  const [onChain, metadata] = await Promise.all([
+    servesChain(key.chainId),
+    Actions.accessKey.getMetadata(client, { account, accessKey }).catch(() => undefined),
+  ]);
+  const published =
+    onChain && metadata
+      ? !metadata.isRevoked && metadata.address.toLowerCase() === accessKey.toLowerCase()
+      : null;
   if (!published || metadata?.spendPolicy !== "limited") return { published, remaining: new Map() };
   const tokens = new Set((key.limits ?? []).map((limit) => limit.token.toLowerCase() as Address));
   const remaining = await Promise.all(

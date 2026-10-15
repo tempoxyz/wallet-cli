@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
     async (_client: Client, _parameters: { account: string; accessKey: string; token: string }) =>
       ({ remaining: 0n, periodEnd: undefined }) as { remaining: bigint; periodEnd: undefined },
   ),
+  /** The chain the RPC answers `eth_chainId` with, given the chain its client was built for. */
+  getChainId: vi.fn(async (chain: number) => chain),
 }));
 
 vi.mock("viem", async (importOriginal) => {
@@ -30,6 +32,7 @@ vi.mock("viem", async (importOriginal) => {
     createPublicClient: vi.fn((options: { chain: { id: number } }) => ({
       chainId: options.chain.id,
       readContract: mocks.readContract,
+      getChainId: () => mocks.getChainId(options.chain.id),
     })),
     http: vi.fn(actual.http),
   };
@@ -100,6 +103,9 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  mocks.getChainId.mockReset();
+  mocks.getChainId.mockImplementation(async (chain) => chain);
   mocks.readContract.mockReset();
   mocks.readContract.mockResolvedValue(0n);
   mocks.fetch.mockReset();
@@ -207,8 +213,8 @@ describe("remaining and spent limits", () => {
       remaining: [40_000_000n, 5_000_000n],
       published: true,
       limits: [
-        { remaining: "40.000000", spent: "60.000000" },
-        { remaining: "5.000000", spent: "0.000000" },
+        { remaining: "40.000000", spent: null },
+        { remaining: "5.000000", spent: null },
       ],
     },
     {
@@ -257,16 +263,7 @@ describe("remaining and spent limits", () => {
       published: true,
       limits: [
         { remaining: null, spent: null },
-        { remaining: "1.000000", spent: "4.000000" },
-      ],
-    },
-    {
-      name: "a chain limit above the stored one",
-      remaining: [150_000_000n, 5_000_000n],
-      published: true,
-      limits: [
-        { remaining: "150.000000", spent: null },
-        { remaining: "5.000000", spent: "0.000000" },
+        { remaining: "1.000000", spent: null },
       ],
     },
   ] as const)("reports $name", async (scenario) => {
@@ -302,6 +299,99 @@ describe("remaining and spent limits", () => {
     // Every read is bounded and never retried.
     for (const [, options] of vi.mocked(http).mock.calls)
       expect(options).toEqual({ timeout: 3_000, retryCount: 0 });
+  });
+});
+
+describe("stale stored limits", () => {
+  // The stored limit is 100 USDC.e; another wallet client may have changed the chain's since.
+  const stored: AccessKey = { ...key, limits: [{ token: usdc, limit: "100000000#__bigint" }] };
+
+  it.each([
+    { name: "spending from the stored limit", remaining: 60_000_000n, shown: "60.000000" },
+    // Lowered from 100 to 50 elsewhere, then 10 spent: 60 would be reported spent.
+    { name: "a limit lowered elsewhere, then spent", remaining: 40_000_000n, shown: "40.000000" },
+    { name: "a limit raised elsewhere", remaining: 150_000_000n, shown: "150.000000" },
+  ])("reports the chain's remaining and no spent for $name", async ({ remaining, shown }) => {
+    mocks.getRemainingLimit.mockResolvedValue({ remaining, periodEnd: undefined });
+
+    const { keys } = await currentKeysOutput({ walletAddress: testWallet, accessKeys: [stored] });
+
+    expect(keys[0]).toMatchObject({
+      spending_limit: { limit: "100.000000", remaining: shown, spent: null },
+      spending_limits: [{ limit: "100.000000", remaining: shown, spent: null }],
+    });
+  });
+});
+
+describe("TEMPO_RPC_URL chain check", () => {
+  const testnetKey: AccessKey = {
+    ...key,
+    address: testAccessKey2,
+    privateKey: testPrivateKey2,
+    chainId: 42431,
+    limits: [{ token: moderatoToken, limit: "1000000#__bigint" }],
+  };
+  const accessKeys = [key, { ...key, address: testAccessKey2 }, testnetKey];
+  const mainnetRead = { published: true, spending_limits: [{ remaining: "40.000000" }] };
+  const testnetRead = { published: true, spending_limits: [{ remaining: "40.000000" }] };
+  const unread = { published: null, spending_limits: [{ remaining: null, spent: null }] };
+
+  it.each([
+    {
+      name: "trusts an override on each key's chain",
+      override: "http://127.0.0.1:8545",
+      serves: (chain: number) => chain,
+      checks: [4217, 42431],
+      keys: [mainnetRead, mainnetRead, testnetRead],
+    },
+    {
+      name: "drops reads an override serves from another chain",
+      override: "http://127.0.0.1:8545",
+      serves: () => 4217,
+      checks: [4217, 42431],
+      keys: [mainnetRead, mainnetRead, unread],
+    },
+    {
+      name: "drops reads when the override does not answer eth_chainId",
+      override: "http://127.0.0.1:8545",
+      serves: (): number => {
+        throw new Error("RPC unavailable");
+      },
+      checks: [4217, 42431],
+      keys: [unread, unread, unread],
+    },
+    {
+      name: "skips the check without an override",
+      override: undefined,
+      serves: (chain: number) => chain,
+      checks: [],
+      keys: [mainnetRead, mainnetRead, testnetRead],
+    },
+  ])("$name", async ({ override, serves, checks, keys }) => {
+    vi.stubEnv("TEMPO_RPC_URL", override);
+    mocks.getChainId.mockImplementation(async (chain) => serves(chain));
+    mocks.getKey.mockImplementation(async (_client, { accessKey }) => ({
+      ...published,
+      address: accessKey,
+    }));
+
+    const output = await currentKeysOutput({ walletAddress: testWallet, accessKeys });
+
+    expect(output.keys).toMatchObject(keys);
+    // One eth_chainId per distinct chain, bounded and without retries.
+    expect(mocks.getChainId.mock.calls.map(([chain]) => chain)).toEqual(checks);
+    for (const [, options] of vi.mocked(http).mock.calls)
+      expect(options).toEqual({ timeout: 3_000, retryCount: 0 });
+  });
+
+  it("checks whoami's key chain once", async () => {
+    mocks.getChainId.mockResolvedValue(42431);
+
+    const output = await whoami([key]);
+
+    expect(output).toMatchObject({ ready: true, key: { status: "ready", published: null } });
+    expect(mocks.getChainId.mock.calls).toEqual([[4217]]);
+    expect(mocks.getRemainingLimit).not.toHaveBeenCalled();
   });
 });
 
