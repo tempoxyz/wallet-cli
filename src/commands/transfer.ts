@@ -29,6 +29,7 @@ import {
   networkError,
   paymentOutcomeUnknownError,
   usageError,
+  type CtaError,
 } from "../shared/errors.js";
 import {
   appUrl,
@@ -42,7 +43,7 @@ import {
 } from "../shared/network.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
 import { canPrompt, confirm } from "../shared/process.js";
-import { missingKeyError, withWallet, type Wallet } from "../shared/require-wallet.js";
+import { withWallet, type Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata, tokenSymbol } from "../shared/tokens.js";
 import { escapeInvisible, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { version } from "../shared/constants.js";
@@ -62,6 +63,7 @@ import {
   resolveMaxSpend,
 } from "./request.js";
 import {
+  deferredKeyRefusal,
   defersKeyCheck,
   idempotencyKey,
   idempotencyKeyArg,
@@ -116,10 +118,9 @@ export default {
             args,
             options,
             interactive: canPrompt(context.agent),
-            keyRequired: deferKey && context.agent ? missingKeyError(wallet) : undefined,
+            keyRequired: deferKey ? deferredKeyRefusal(context.agent, wallet) : undefined,
           });
-          // A refusal that needs a login on the selected network, or an unknown outcome, is
-          // returned, keeping its `cta`.
+          // A refusal that needs a login on the selected network is returned, keeping its `cta`.
           return "code" in result ? context.error(result) : result;
         },
         {
@@ -246,10 +247,10 @@ export async function transferTokens(
     /** Whether a person answers at the terminal (stdin and stdout); only then is it prompted. */
     interactive?: boolean | undefined;
     /**
-     * The refusal to return instead of sending, for a keyed send whose missing access key was not
+     * The refusal to throw instead of sending, for a keyed send whose missing access key was not
      * checked up front because a replay needs none.
      */
-    keyRequired?: ReturnType<typeof missingKeyError>;
+    keyRequired?: CtaError | undefined;
   },
   dependencies: Partial<TransferDependencies> = {},
 ) {
@@ -369,7 +370,7 @@ export async function transferTokens(
   // A replay sends nothing, so it needs no confirmation or access key.
   const recorded = await recordedSend<z.infer<typeof transferSuccessOutput>>(tx);
   if (recorded) return recorded;
-  if (options.keyRequired) return options.keyRequired;
+  if (options.keyRequired) throw options.keyRequired;
 
   let sendFeeToken = feeToken;
   if (!options.options.yes) {

@@ -12,6 +12,7 @@ import {
   paymentOutcomeUnknownError,
   usageError,
   walletError,
+  type CtaError,
 } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
 import {
@@ -22,11 +23,12 @@ import {
   type Network,
 } from "../shared/network.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
-import { missingKeyError, withWallet, type Wallet } from "../shared/require-wallet.js";
+import { withWallet, type Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { createProvider, requireSender } from "../provider.js";
 import {
+  deferredKeyRefusal,
   defersKeyCheck,
   idempotencyKey,
   idempotencyKeyArg,
@@ -51,8 +53,7 @@ export default {
         options: { "dry-run": true },
       },
     ],
-    // A refusal that needs a login on the selected network, or an unknown outcome, is returned,
-    // keeping its `cta`.
+    // A refusal that needs a login on the selected network is returned, keeping its `cta`.
     async run(context) {
       const deferKey = defersKeyCheck(context.options);
       return withWallet(
@@ -60,7 +61,7 @@ export default {
           const result = await swapTokens(wallet, {
             args: context.args,
             options: context.options,
-            keyRequired: deferKey && context.agent ? missingKeyError(wallet) : undefined,
+            keyRequired: deferKey ? deferredKeyRefusal(context.agent, wallet) : undefined,
           });
           return "code" in result ? context.error(result) : result;
         },
@@ -143,10 +144,10 @@ export async function swapTokens(
       yes?: boolean | undefined;
     };
     /**
-     * The refusal to return instead of sending, for a keyed send whose missing access key was not
+     * The refusal to throw instead of sending, for a keyed send whose missing access key was not
      * checked up front because a replay needs none.
      */
-    keyRequired?: ReturnType<typeof missingKeyError>;
+    keyRequired?: CtaError | undefined;
   },
   dependencies: Partial<SwapDependencies> = {},
 ) {
@@ -226,7 +227,7 @@ export async function swapTokens(
   if (!input.options["dry-run"]) {
     const recorded = await recordedSend<z.infer<typeof swapSuccessOutput>>(tx);
     if (recorded) return recorded;
-    if (input.keyRequired) return input.keyRequired;
+    if (input.keyRequired) throw input.keyRequired;
   }
   const reviewedMinOut = parseSwapBound(
     input.options["min-amount-out"],

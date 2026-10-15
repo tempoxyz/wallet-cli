@@ -5,7 +5,7 @@ import { readOnly, type WalletCommand } from "../cli/command.js";
 import { option, positional } from "../cli/describe.js";
 import { cliGlobals, globalAlias, globalOptions } from "../schemas/shared.js";
 import { txStatusArgs, txStatusOutput } from "../schemas/tx.js";
-import { commandError, networkError, usageError } from "../shared/errors.js";
+import { commandError, CtaError, networkError, usageError } from "../shared/errors.js";
 import {
   createTempoPublicClient,
   networkFields,
@@ -13,6 +13,7 @@ import {
   type Network,
 } from "../shared/network.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
+import { missingKeyError, type Wallet } from "../shared/require-wallet.js";
 import { escapeInvisible, getRecord, nowSeconds } from "../shared/utils.js";
 import {
   createIdempotencyRecord,
@@ -166,22 +167,26 @@ function unless(type: new (...args: never[]) => Error) {
 }
 
 /**
- * `E_PAYMENT_OUTCOME_UNKNOWN` for a transaction that may have been sent, shaped for incur's
- * `c.error`. With the transaction's hash, the message names it and the `cta` reads its status with
+ * `E_PAYMENT_OUTCOME_UNKNOWN` for a transaction that may have been sent, as a `CtaError` to throw.
+ * With the transaction's hash, the message names it and the `cta` reads its status with
  * `tx status`; without one, the `cta` shows the wallet's balances.
  */
 export function txOutcomeUnknown(message: string, network: Network, txHash?: string | undefined) {
   if (txHash === undefined)
-    return commandError(
-      "E_PAYMENT_OUTCOME_UNKNOWN",
-      message,
-      continuationCommand(["wallet", "whoami"], network),
+    return new CtaError(
+      commandError(
+        "E_PAYMENT_OUTCOME_UNKNOWN",
+        message,
+        continuationCommand(["wallet", "whoami"], network),
+      ),
     );
   const command = continuationCommand(["wallet", "tx", "status", txHash], network);
-  return commandError(
-    "E_PAYMENT_OUTCOME_UNKNOWN",
-    `${message} Check transaction ${txHash} with '${command}' before retrying.`,
-    command,
+  return new CtaError(
+    commandError(
+      "E_PAYMENT_OUTCOME_UNKNOWN",
+      `${message} Check transaction ${txHash} with '${command}' before retrying.`,
+      command,
+    ),
   );
 }
 
@@ -194,6 +199,12 @@ export function defersKeyCheck(options: {
   "idempotency-key"?: string | undefined;
 }) {
   return options["idempotency-key"] !== undefined && !options["dry-run"];
+}
+
+/** What a deferred key check throws in place of sending: an agent run without a usable key. */
+export function deferredKeyRefusal(agent: boolean, wallet: Wallet) {
+  const problem = agent ? missingKeyError(wallet) : undefined;
+  return problem && new CtaError(problem);
 }
 
 /** The `--idempotency-key` value, checked to be 1 to 255 characters. */
@@ -225,7 +236,7 @@ export type TxSend = {
  * or `tx` has none:
  * - a recorded send replays its result, with `status` read from the chain and `idempotent_replay`;
  * - a key claimed by a send whose outcome is not recorded, because that run is still sending or
- *   stopped first, is `E_PAYMENT_OUTCOME_UNKNOWN` naming its hash when known;
+ *   stopped first, throws `E_PAYMENT_OUTCOME_UNKNOWN` (a `CtaError`) naming its hash when known;
  * - a key sent with another request fails with `E_USAGE` naming the arguments that differ.
  * Records older than 30 days are pruned first, so their keys count as unused. `result` is the type
  * of the command's successful result. Call it before `submitTransaction`, and never on a dry run.
@@ -267,7 +278,7 @@ async function recordedOutcome<result extends object>(
     }
   }
   const txHash = record?.tx_hash ?? undefined;
-  return txOutcomeUnknown(
+  throw txOutcomeUnknown(
     txHash === undefined
       ? `${tx.label} with idempotency key ${key} may have been sent: another run with this key is still sending, or stopped before recording its outcome. Check the wallet balance before retrying with a new key.`
       : `${tx.label} with idempotency key ${key} was submitted, but its outcome was not recorded.`,
@@ -285,8 +296,8 @@ async function recordedOutcome<result extends object>(
  * such as a wallet that is no longer logged in, and frees the key; any other failure keeps the
  * claim, so a rerun with the key does not send again.
  *
- * A failure that may have sent the transaction is `E_PAYMENT_OUTCOME_UNKNOWN`, naming its hash when
- * the error carries one.
+ * A failure that may have sent the transaction throws `E_PAYMENT_OUTCOME_UNKNOWN` as a `CtaError`,
+ * naming its hash when the error carries one.
  */
 export async function submitTransaction<result extends object>(
   tx: TxSend,
@@ -327,12 +338,12 @@ export async function submitTransaction<result extends object>(
     else if (record && error instanceof Errors.IncurError && !unknown)
       await deleteIdempotencyRecord(record);
     if (sentHash)
-      return txOutcomeUnknown(
+      throw txOutcomeUnknown(
         `${tx.label} was submitted but did not confirm.`,
         tx.network,
         sentHash,
       );
-    if (unknown) return txOutcomeUnknown(error.message, tx.network);
+    if (unknown) throw txOutcomeUnknown(error.message, tx.network);
     throw error;
   }
   const value = result(txHash);

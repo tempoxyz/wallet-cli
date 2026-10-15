@@ -23,9 +23,9 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 
 import { swapTokens } from "../src/commands/swap.js";
 import { transferTokens } from "../src/commands/transfer.js";
-import type { TxState } from "../src/commands/tx.js";
-import { paymentOutcomeUnknownError, walletError } from "../src/shared/errors.js";
-import { missingKeyError, type Wallet } from "../src/shared/require-wallet.js";
+import { deferredKeyRefusal, type TxState } from "../src/commands/tx.js";
+import { CtaError, paymentOutcomeUnknownError, walletError } from "../src/shared/errors.js";
+import type { Wallet } from "../src/shared/require-wallet.js";
 import { nowSeconds, sleep } from "../src/shared/utils.js";
 import {
   createIdempotencyRecord,
@@ -87,7 +87,7 @@ type Request = {
   exactOut?: boolean | undefined;
   dryRun?: boolean | undefined;
   yes?: boolean | undefined;
-  keyRequired?: ReturnType<typeof missingKeyError>;
+  keyRequired?: CtaError | undefined;
 };
 
 const commands: Record<
@@ -163,6 +163,7 @@ async function recordFiles() {
   });
 }
 
+/** The `c.error` payload of an `E_PAYMENT_OUTCOME_UNKNOWN` thrown as a `CtaError`. */
 function outcomeUnknown(message: string, command: string) {
   return {
     code: "E_PAYMENT_OUTCOME_UNKNOWN",
@@ -171,6 +172,11 @@ function outcomeUnknown(message: string, command: string) {
     retryable: false,
     cta: { commands: [{ command }] },
   };
+}
+
+/** What `sent` resolves to, else the payload of the `CtaError` it throws, else what it throws. */
+function settle(sent: Promise<unknown>) {
+  return sent.catch((error: unknown) => (error instanceof CtaError ? error.payload : error));
 }
 
 const statusCommand = `tempo wallet tx status ${txHash} --network mainnet`;
@@ -319,13 +325,12 @@ describe.each(["transfer", "swap"] as const)("%s --idempotency-key", (name) => {
     const failure = error();
     const runtime = lookups({ submit: vi.fn(async () => Promise.reject(failure)) });
 
-    const result = await send(wallet, { key: "k1" }, runtime).catch((value: unknown) => value);
-    expect(result).toEqual(first ?? failure);
+    expect(await settle(send(wallet, { key: "k1" }, runtime))).toEqual(first ?? failure);
     const [file] = await recordFiles();
     if (truncate) await writeFile(join(idempotencyDir(), file!), "");
     const rerun = rerunLookups();
 
-    expect(await send(wallet, { key: "k1" }, rerun)).toEqual(expected);
+    expect(await settle(send(wallet, { key: "k1" }, rerun))).toEqual(expected);
     expect(rerun.submit).not.toHaveBeenCalled();
   });
 
@@ -346,7 +351,7 @@ describe.each(["transfer", "swap"] as const)("%s --idempotency-key", (name) => {
 
   it.each<{
     earlier: "sent" | "failed" | "none";
-    expected: (sent: unknown, refusal: unknown) => unknown;
+    expected: (sent: unknown, refusal: CtaError) => unknown;
   }>([
     {
       earlier: "sent",
@@ -360,7 +365,7 @@ describe.each(["transfer", "swap"] as const)("%s --idempotency-key", (name) => {
           balanceCommand,
         ),
     },
-    { earlier: "none", expected: (_, refusal) => refusal },
+    { earlier: "none", expected: (_, refusal) => refusal.payload },
   ])(
     "resolves a key without a usable access key (earlier send: $earlier)",
     async ({ earlier, expected }) => {
@@ -376,12 +381,12 @@ describe.each(["transfer", "swap"] as const)("%s --idempotency-key", (name) => {
             ).catch(() => undefined);
       // The access key expires before the rerun, which an agent would refuse up front.
       const wallet = await login("mainnet", testWallet, 1);
-      const refusal = missingKeyError(wallet)!;
+      const refusal = deferredKeyRefusal(true, wallet)!;
       const rerun = rerunLookups();
 
-      const result = await send(wallet, { key: "k1", keyRequired: refusal }, rerun);
+      const result = await settle(send(wallet, { key: "k1", keyRequired: refusal }, rerun));
 
-      expect(refusal).toMatchObject({ code: "E_KEY_EXPIRED" });
+      expect(refusal.payload).toMatchObject({ code: "E_KEY_EXPIRED" });
       expect(result).toEqual(expected(sent, refusal));
       expect(rerun.submit).not.toHaveBeenCalled();
       expect(await recordFiles()).toHaveLength(earlier === "none" ? 0 : 1);
@@ -475,7 +480,7 @@ describe.each(["transfer", "swap"] as const)("%s --idempotency-key", (name) => {
     await useTempHome();
     const { submit: _submit, ...runtime } = lookups();
 
-    expect(await send(await login(), {}, runtime)).toEqual(
+    expect(await settle(send(await login(), {}, runtime))).toEqual(
       outcomeUnknown(
         `${label} submitted but receipt did not include a transaction hash; check the wallet balance before retrying.`,
         balanceCommand,
