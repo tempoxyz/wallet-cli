@@ -3,6 +3,7 @@ import { cli, Storage } from "accounts/cli";
 import { deviceCode } from "accounts/deviceCode";
 import { http, toHex, type Address, type Transport } from "viem";
 
+import { providerReady, withoutRetries } from "./provider/accounts-compat.js";
 import { commandError, CtaError, walletError } from "./shared/errors.js";
 import { openExternal } from "./shared/process.js";
 import { appUrl, networkName, parseNetwork, rpcUrl, type Network } from "./shared/network.js";
@@ -114,66 +115,6 @@ function releaseOnApproval(adapter: Adapter.Adapter, hold: ChainHold): Adapter.A
 }
 
 /**
- * The provider store's persistence API. `accounts` types its store with zustand middleware types it
- * does not import, so `CoreProvider.Provider["store"]` is `never` here.
- */
-type HydratingProvider = {
-  store: { persist: { hasHydrated(): boolean; rehydrate(): Promise<void> | void } };
-};
-
-/** How long `providerReady` waits for the wallet store to load. */
-const storeLoadTimeout = 10_000;
-
-/**
- * Resolves with `provider` once its store holds the persisted wallet state, for a provider on the
- * default `Storage.filesystem()` wallet store.
- *
- * The SDK loads its store asynchronously and waits at most 100ms for it before a request, and
- * `getAccount` reads it without waiting. On a slow machine the provider then has no accounts: it
- * fails with "No accounts connected." or `Account "0x…" not found.`, `eth_accounts` returns none,
- * and `wallet_connect` saves the empty store over the stored accounts and keys. Call this on every
- * provider before using it.
- *
- * The store's first read exposes no promise, and a failed one never finishes hydrating. Starting a
- * second hydration while it runs would discard its result, so this waits for a read queued behind
- * it instead: `Storage.filesystem()` runs a file's reads and writes in order. Only when the first
- * read failed and that one succeeded does it hydrate again. A store that has not loaded within
- * `storeLoadTimeout` fails with `E_RUNTIME`, so no command runs on an empty store.
- */
-export async function providerReady<provider extends HydratingProvider>(
-  provider: provider,
-): Promise<provider> {
-  const { persist } = provider.store;
-  if (persist.hasHydrated()) return provider;
-  const read = await beforeStoreTimeout(
-    Promise.resolve(Storage.filesystem().getItem("store")).then(
-      () => ({ error: undefined }),
-      (error: unknown) => ({ error }),
-    ),
-  );
-  if (read && read.error === undefined && !persist.hasHydrated())
-    await beforeStoreTimeout(Promise.resolve(persist.rehydrate()));
-  if (persist.hasHydrated()) return provider;
-  throw walletError({
-    code: "E_RUNTIME",
-    message: "The wallet store could not be loaded. Run the command again.",
-    retryable: true,
-    ...(read?.error instanceof Error ? { cause: read.error } : {}),
-  });
-}
-
-/** Resolves with `promise`'s value, or with `undefined` once `storeLoadTimeout` has passed. */
-async function beforeStoreTimeout<value>(promise: Promise<value>): Promise<value | undefined> {
-  const timeout = Promise.withResolvers<undefined>();
-  const timer = setTimeout(() => timeout.resolve(undefined), storeLoadTimeout);
-  try {
-    return await Promise.race([promise, timeout.promise]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
  * Returns the address to send from: `address`, the wallet a command checked, as the provider
  * stores it. A command checks a wallet's balance and limits before sending, and another process
  * can log in a different wallet in between; a send without `from` would then go out from that
@@ -193,7 +134,10 @@ export function requireSender(
   }
 }
 
-/** The provider store's saved chain; see `HydratingProvider` for why it is typed here. */
+/**
+ * The provider store's saved chain. `accounts` types its store with zustand middleware types it
+ * does not import, so `CoreProvider.Provider["store"]` is `never` here.
+ */
 type ChainProvider = { store: { getState(): { chainId: number } } };
 
 /**
@@ -247,31 +191,6 @@ export async function createLoginProvider(options: {
 
 function deviceCodeUrl() {
   return new URL("/api/auth/device", appUrl).toString();
-}
-
-/**
- * The SDK sends wallet-account requests such as `wallet_revokeAccessKey` through viem's `custom`
- * transport, which retries a failed or timed-out request up to three times. Each attempt is a new
- * device-code approval, so the transport it returns is set to send each request once.
- */
-function withoutRetries(adapter: Adapter.Adapter): Adapter.Adapter {
-  return Adapter.define(adapter, (parameters) => {
-    const instance = adapter(parameters);
-    const { getAccount } = instance;
-    if (!getAccount) return instance;
-    return {
-      ...instance,
-      getAccount: (async (options) => {
-        const selected = await getAccount(options);
-        const { transport } = selected;
-        if (!transport) return selected;
-        return {
-          ...selected,
-          transport: ((config) => transport({ ...config, retryCount: 0 })) as Transport,
-        };
-      }) as typeof getAccount,
-    };
-  });
 }
 
 /**
