@@ -60,8 +60,28 @@ export function runProcess(
   });
 }
 
+// Concurrent CLI processes share channels.db. Like the Rust CLI's busy_timeout, wait this
+// long for another process's lock instead of failing at once with "database is locked".
+const sqliteBusyTimeoutMs = 5_000;
+
 export async function runSql(sql: string) {
-  await runProcess(sqlite3, [channelsDbPath(), sql]);
+  await runSqlite([], sql);
+}
+
+/** Runs a query against channels.db and returns its rows as parsed `sqlite3 -json` output. */
+export async function querySql(sql: string): Promise<unknown> {
+  return JSON.parse((await runSqlite(["-json"], sql)) || "[]");
+}
+
+function runSqlite(options: readonly string[], sql: string) {
+  // `.timeout` sets the busy timeout without printing a row, unlike `PRAGMA busy_timeout`.
+  return runProcess(sqlite3, [
+    ...options,
+    "-cmd",
+    `.timeout ${sqliteBusyTimeoutMs}`,
+    channelsDbPath(),
+    sql,
+  ]);
 }
 
 export function channelsDbPath() {
