@@ -30,6 +30,8 @@ vi.mock("accounts", async (importOriginal) => ({
   Provider: { create: mocks.create },
 }));
 
+import type { Transport } from "viem";
+
 import { createProvider } from "../src/provider.js";
 
 afterAll(() => {
@@ -39,6 +41,7 @@ afterAll(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   mocks.cli.mockClear();
   mocks.create.mockClear();
   mocks.filesystem.mockClear();
@@ -58,7 +61,33 @@ describe("provider", () => {
       mpp: { mode: "pull" },
       storage: expect.objectContaining({ key: "storage" }),
       testnet: true,
+      transports: { 4217: expect.any(Function), 42431: expect.any(Function) },
     });
+  });
+
+  // The provider fills, signs, and sends its transactions through these, not viem's default RPCs.
+  it.each([
+    {
+      name: "TEMPO_RPC_URL",
+      rpc: "http://127.0.0.1:8545",
+      urls: { 4217: "http://127.0.0.1:8545", 42431: "http://127.0.0.1:8545" },
+    },
+    {
+      name: "the default RPCs",
+      rpc: undefined,
+      urls: { 4217: "https://rpc.mainnet.tempo.xyz", 42431: "https://rpc.moderato.tempo.xyz" },
+    },
+  ])("sends each network's RPC requests to $name", async ({ rpc, urls }) => {
+    vi.stubEnv("TEMPO_RPC_URL", rpc);
+
+    await createProvider({ network: { name: "mainnet", chainId: 4217 }, noBrowser: true });
+
+    const { transports } = mocks.create.mock.calls[0]![0] as {
+      transports: Record<number, Transport>;
+    };
+    const target = (transport: Transport) =>
+      (transport({}) as { value?: { url?: string } }).value?.url;
+    expect({ 4217: target(transports[4217]!), 42431: target(transports[42431]!) }).toEqual(urls);
   });
 
   it("prints the device confirmation code", async () => {

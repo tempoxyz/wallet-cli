@@ -1,11 +1,11 @@
 import { Adapter, Keystore, Provider as CoreProvider } from "accounts";
 import { cli, Storage } from "accounts/cli";
 import { deviceCode } from "accounts/deviceCode";
-import { toHex, type Address, type Transport } from "viem";
+import { http, toHex, type Address, type Transport } from "viem";
 
 import { walletError } from "./shared/errors.js";
 import { openExternal } from "./shared/process.js";
-import { appUrl, type Network } from "./shared/network.js";
+import { appUrl, parseNetwork, rpcUrl, type Network } from "./shared/network.js";
 import { getRecord } from "./shared/utils.js";
 
 export const accessKeyAuthorizationSeconds = 30 * 86_400;
@@ -48,9 +48,24 @@ async function walletProvider(adapter: Adapter.Adapter, network: Network) {
     mpp: { mode: "pull" },
     storage: walletStorage(hold),
     testnet: network.name === "testnet",
+    transports: walletTransports(),
   });
   chainHolds.set(provider, hold);
   return await providerReady(provider);
+}
+
+/**
+ * The RPC transport for each network's chain, from `rpcUrl` like every other RPC the CLI makes.
+ * Without them, the provider's clients (which fill, sign, and send its transactions) use viem's
+ * default chain RPCs and ignore `TEMPO_RPC_URL`.
+ */
+function walletTransports(): Record<number, Transport> {
+  return Object.fromEntries(
+    ["mainnet", "testnet"].map((name) => {
+      const { chainId } = parseNetwork(name);
+      return [chainId, http(rpcUrl(chainId))];
+    }),
+  );
 }
 
 /**

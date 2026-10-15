@@ -893,8 +893,8 @@ describe("tempo wallet transfer", () => {
 
   const send = ["transfer", "1", usdcToken, recipient];
   const prompt = "Send this transfer? [y/N] ";
-  // A token transfer is sent through the wallet provider, which fails against this fixture: it
-  // registers a device.
+  // A token transfer is sent through the wallet provider. Its transaction fill fails against this
+  // fixture, so it falls back to the wallet app and registers a device, which fails too.
   const sent = /device-code \/register returned status 500/;
 
   it.each<{
@@ -980,6 +980,7 @@ describe("tempo wallet transfer", () => {
 
       const result = await walletCli(argv, { home, terminal, input });
 
+      expect(result.stderr).not.toContain("blocked outbound connection");
       expect(result.stderr.includes(prompt), JSON.stringify(result)).toBe(prompted);
       if (prompted)
         expect(result.stderr).toContain(
@@ -990,8 +991,11 @@ describe("tempo wallet transfer", () => {
         expect(result.stdout).toContain(refused);
       } else expect(result.stdout).not.toContain("Transfer not sent");
       if (expected.requests) expect(requests).toEqual(expected.requests);
-      if (expected.reached instanceof RegExp) expect(result.stdout).toMatch(expected.reached);
-      else if (expected.reached) expect(requests).toContain(expected.reached);
+      if (expected.reached instanceof RegExp) {
+        expect(result.stdout).toMatch(expected.reached);
+        // The provider fills the transaction through TEMPO_RPC_URL, not viem's default chain RPC.
+        expect(requests).toContain("POST / eth_fillTransaction");
+      } else if (expected.reached) expect(requests).toContain(expected.reached);
     },
     30_000,
   );
@@ -1021,9 +1025,14 @@ describe("tempo wallet transfer", () => {
     return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
       const child = execFile(
         process.execPath,
-        terminal
-          ? ["--import", join(fixtures, fixture), cliBundle("wallet"), ...args]
-          : [cliBundle("wallet"), ...args, "--format", "json"],
+        [
+          // The subprocess must stay offline too: only the loopback fixtures answer it.
+          "--import",
+          join(fixtures, "loopback-only.mjs"),
+          ...(terminal
+            ? ["--import", join(fixtures, fixture), cliBundle("wallet"), ...args]
+            : [cliBundle("wallet"), ...args, "--format", "json"]),
+        ],
         { env: childEnv, timeout: 20_000 },
         (error, stdout, stderr) => {
           if (error && typeof error.code !== "number") return reject(error);
