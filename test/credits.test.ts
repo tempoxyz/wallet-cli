@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("../src/provider.js", () => ({ createProvider: async () => ({ request: mocks.request }) }));
 
 import { whoamiHandler } from "../src/commands/whoami.js";
-import { transferCredits } from "../src/commands/transfer.js";
+import { transferCredits } from "../src/commands/transfer/credits.js";
 import { validateCreditPermit } from "../src/commands/credits.js";
 import { appUrl } from "../src/shared/network.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";

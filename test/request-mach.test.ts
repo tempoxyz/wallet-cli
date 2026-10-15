@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseRequestArgs } from "../src/request/args.js";
 import { preparePaymentChallenge } from "../src/request/challenge.js";
 import { runRequest } from "../src/request/run.js";
-import { transferMach } from "../src/commands/transfer.js";
+import { transferMach } from "../src/commands/transfer/mach.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { CtaError } from "../src/shared/errors.js";
 import {

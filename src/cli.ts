@@ -21,7 +21,7 @@ import services from "./commands/services.js";
 import { closeCommandFailed } from "./commands/sessions/close.js";
 import sessions from "./commands/sessions/index.js";
 import swap from "./commands/swap.js";
-import transfer from "./commands/transfer.js";
+import transfer from "./commands/transfer/index.js";
 import tx from "./commands/tx.js";
 import whoami from "./commands/whoami.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
