@@ -15,7 +15,7 @@ import {
   savePendingLogin,
   type PendingLogin,
 } from "../wallet/store.js";
-import { cachedLoginOutput } from "./identity.js";
+import { cachedLoginOutput } from "./whoami.js";
 
 /** RFC 8628 defaults for a `/register` response without `expires_in` or `interval`. */
 const defaultExpiresInSeconds = 600;

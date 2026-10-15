@@ -28,13 +28,10 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 }));
 
 import { doctorHandler } from "../src/commands/doctor.js";
-import {
-  keysHandler,
-  refreshHandler,
-  revokeHandler,
-  updateAccessKeyHandler,
-  whoamiHandler,
-} from "../src/commands/identity.js";
+import { keysHandler, updateAccessKeyHandler } from "../src/commands/keys.js";
+import { refreshHandler } from "../src/commands/refresh.js";
+import { revokeHandler } from "../src/commands/revoke.js";
+import { whoamiHandler } from "../src/commands/whoami.js";
 import { loginHandler } from "../src/commands/login.js";
 import { listSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";

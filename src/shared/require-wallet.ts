@@ -6,8 +6,8 @@ import {
   selectPaymentCapableAccessKey,
 } from "../wallet/access-key.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
-import { errorCodes, type CommandErrorPayload } from "./errors.js";
-import { resolveNetwork, type Network } from "./network.js";
+import { errorCodes, usageError, type CommandErrorPayload } from "./errors.js";
+import { resolveNetwork, storedChainId, type Network } from "./network.js";
 import { continuationCommand } from "./next.js";
 
 /** The logged-in wallet a command acts for, read from one wallet store snapshot. */
@@ -138,4 +138,12 @@ export function walletFix(code: WalletProblemCode, network: Network) {
     E_NOT_AUTHENTICATED: "No wallet is logged in.",
   }[code];
   return { reason, argv: ["wallet", code === "E_NOT_AUTHENTICATED" ? "login" : "refresh"] };
+}
+
+/** Key management signs through the wallet session, so it must target the logged-in chain. */
+export function requireWalletChain({ network, state }: Wallet) {
+  if (storedChainId(state) !== network.chainId)
+    throw usageError(
+      "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
+    );
 }

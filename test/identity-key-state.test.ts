@@ -53,7 +53,8 @@ vi.mock("viem/tempo", async (importOriginal) => {
   };
 });
 
-import { currentKeysOutput, currentWhoamiOutput, whoamiHandler } from "../src/commands/identity.js";
+import { currentKeysOutput } from "../src/commands/keys.js";
+import { currentWhoamiOutput, whoamiHandler } from "../src/commands/whoami.js";
 import { moderatoToken } from "../src/shared/constants.js";
 import { keysOutput } from "../src/schemas/keys.js";
 import { whoamiOutput } from "../src/schemas/whoami.js";

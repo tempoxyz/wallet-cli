@@ -29,7 +29,7 @@ import {
   walletStorePath,
   type WalletState,
 } from "../wallet/store.js";
-import { keySpendingLimits } from "./identity.js";
+import { keySpendingLimits } from "../wallet/key-output.js";
 
 /** How long the RPC request and the sqlite3 subprocess may take. */
 const requestTimeout = 3_000;

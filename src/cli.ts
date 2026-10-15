@@ -6,15 +6,12 @@ import { version } from "./shared/constants.js";
 import { ctaErrors, usageError } from "./shared/errors.js";
 import { canPrompt } from "./shared/process.js";
 import { withWallet } from "./shared/require-wallet.js";
-import {
-  completionsHandler,
-  keysHandler,
-  logoutHandler,
-  refreshHandler,
-  revokeHandler,
-  updateAccessKeyHandler,
-  whoamiHandler,
-} from "./commands/identity.js";
+import { completionsHandler } from "./commands/completions.js";
+import { keysHandler, updateAccessKeyHandler } from "./commands/keys.js";
+import { logoutHandler } from "./commands/logout.js";
+import { refreshHandler } from "./commands/refresh.js";
+import { revokeHandler } from "./commands/revoke.js";
+import { whoamiHandler } from "./commands/whoami.js";
 import { debugHandler, doctorHandler } from "./commands/doctor.js";
 import { loginHandler, loginStatusHandler } from "./commands/login.js";
 import { swapTokens } from "./commands/swap.js";
