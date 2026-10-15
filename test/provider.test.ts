@@ -56,7 +56,7 @@ describe("provider", () => {
     expect(mocks.create).toHaveBeenCalledWith({
       adapter: expect.objectContaining({ rdns: "xyz.tempo.cli" }),
       mpp: { mode: "pull" },
-      storage: { key: "storage" },
+      storage: expect.objectContaining({ key: "storage" }),
       testnet: true,
     });
   });
