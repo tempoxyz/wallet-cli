@@ -30,6 +30,7 @@ import {
   walletApp,
   walletState,
   writeWalletState,
+  type KeyStatus,
 } from "./helpers.js";
 
 const interactiveStdout = join(import.meta.dirname, "fixtures", "interactive-stdout.mjs");
@@ -658,30 +659,57 @@ describe("logout --revoke", () => {
     name: string;
     state: WalletState;
     options: { yes?: boolean };
+    /** The chain's answers in read order: expired keys are read first, then each revocation. */
+    statuses: KeyStatus[];
     revoked: WalletState["accessKeys"];
   }>([
     {
-      name: "an expired key next to a live one",
+      name: "an unpublished expired key next to a live one",
       state: walletState({ accessKeys: [expiredKey, key] }),
       options: { yes: true },
+      statuses: ["missing", "revoked"],
       revoked: [key],
     },
     {
-      name: "an only, expired key, with no confirmation",
+      name: "an only, unpublished expired key, with no confirmation",
       state: walletState({ accessKeys: [expiredKey] }),
       options: {},
+      statuses: ["missing"],
       revoked: [],
     },
     {
-      name: "an expired key on another network",
+      name: "an expired key the chain already shows revoked",
+      state: walletState({ accessKeys: [expiredKey] }),
+      options: {},
+      statuses: ["revoked"],
+      revoked: [],
+    },
+    {
+      name: "an unpublished expired key on another network",
       state: walletState({ accessKeys: [key, { ...expiredKey, chainId: testnet.chainId }] }),
       options: { yes: true },
+      statuses: ["missing", "revoked"],
       revoked: [key],
     },
-  ])("removes $name without revoking it", async ({ state, options, revoked }) => {
+    {
+      name: "a key expired by the local clock but still published",
+      state: walletState({ accessKeys: [expiredKey] }),
+      options: { yes: true },
+      statuses: ["published", "revoked"],
+      revoked: [expiredKey],
+    },
+    {
+      name: "a published key whose zero expiry the chain reads as none",
+      state: walletState({ accessKeys: [{ ...key2, expiry: 0 }] }),
+      options: { yes: true },
+      statuses: ["published", "revoked"],
+      revoked: [{ ...key2, expiry: 0 }],
+    },
+  ])("removes $name, revoking only what the chain shows published", async (scenario) => {
+    const { state, options, statuses, revoked } = scenario;
     await setup(state);
     const app = walletApp(mainnet.chainId, { dropsRevokedKey: true });
-    const readKey = keychain(...revoked.map(() => "revoked" as const));
+    const readKey = keychain(...statuses);
     const context = runContext(true);
 
     const output = await logoutHandler({ ...options, revoke: true }, context, {
@@ -696,14 +724,40 @@ describe("logout --revoke", () => {
         call.method === "wallet_revokeAccessKey" ? [call.params[0].accessKeyAddress] : [],
       ),
     ).toEqual(revoked.map((candidate) => candidate.address));
-    expect(readKey).toHaveBeenCalledTimes(revoked.length);
-    expect(logoutOutput.parse(output)).toMatchObject({
-      keys: state.accessKeys.map((candidate) => removed(candidate, revoked.includes(candidate))),
-      message: expect.stringContaining(
-        "; 1 expired access key removed without revoking, since an expired key cannot be used",
+    expect(readKey).toHaveBeenCalledTimes(statuses.length);
+    const result = logoutOutput.parse(output);
+    expect(result.keys).toEqual(
+      state.accessKeys.map((candidate) =>
+        removed(
+          candidate,
+          revoked.some((other) => other.address === candidate.address),
+        ),
       ),
-    });
+    );
+    expect(result.message.includes("expired access key removed without revoking")).toBe(
+      revoked.length < state.accessKeys.length,
+    );
     expect(await loadWalletState()).toMatchObject({ accounts: [], accessKeys: [] });
+  });
+
+  it("keeps everything when the chain cannot be read for an expired key", async () => {
+    await setup(walletState({ accessKeys: [{ ...key2, expiry: 1 }] }));
+    const app = walletApp(mainnet.chainId, { dropsRevokedKey: true });
+    const readKey = vi.fn(async () => {
+      throw new Error("Unable to read access key on-chain.");
+    });
+
+    const error = await logoutHandler({ revoke: true, yes: true }, runContext(true), {
+      createProvider: app.createProvider,
+      readKey,
+    }).catch((value: unknown) => value);
+
+    expect(error).toMatchObject({ message: "Unable to read access key on-chain." });
+    expect(app.createProvider).not.toHaveBeenCalled();
+    expect(await loadWalletState()).toMatchObject({
+      accounts: [{ address: testWallet }],
+      accessKeys: [{ ...key2, expiry: 1 }],
+    });
   });
 
   it("logs out without a prompt when the network has no keys to revoke", async () => {

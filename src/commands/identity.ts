@@ -158,10 +158,17 @@ export async function logoutHandler(
   }
 
   // An expired key can neither sign nor have its authorization published, so it has nothing to
-  // revoke; the wallet app cannot revoke one the chain does not hold.
-  const revocable = options.revoke
-    ? keys.filter((key) => localAccessKeyStatus(key) !== "expired")
-    : [];
+  // revoke, and the wallet app cannot revoke one the chain does not hold. A key only looks expired
+  // locally when the clock is ahead of the chain's or its stored expiry is zero, which the chain
+  // reads as none, so a locally expired key is revoked anyway while the chain shows it published.
+  const readKey = dependencies.readKey ?? readAccessKeyOnChain;
+  const revocable: WalletState["accessKeys"][number][] = [];
+  for (const key of options.revoke ? keys : [])
+    if (
+      localAccessKeyStatus(key) !== "expired" ||
+      (await readKey(keyTarget(key))).status === "published"
+    )
+      revocable.push(key);
   // `wallet_revokeAccessKey` takes no chain, so the wallet app revokes on the stored chain only.
   const walletChainId = storedChainId(state);
   const elsewhere = revocable.find((key) => key.chainId !== walletChainId);
@@ -225,7 +232,6 @@ export async function logoutHandler(
   const revoked: WalletState["accessKeys"][number][] = [];
   if (revocable.length > 0) {
     const walletNetwork = chainNetwork(walletChainId);
-    const readKey = dependencies.readKey ?? readAccessKeyOnChain;
     const provider = await (dependencies.createProvider ?? createProvider)({
       network: walletNetwork,
       noBrowser: options.browser === false,
@@ -279,7 +285,7 @@ export async function logoutHandler(
       ? []
       : options.revoke
         ? [
-            `${count(keys.length - revoked.length, "expired access key")} removed without revoking, since an expired key cannot be used`,
+            `${count(keys.length - revoked.length, "expired access key")} removed without revoking, since none is published on-chain`,
           ]
         : [
             `${count(keys.length, "access key")} removed locally but not revoked, so authorized on-chain until expiry (use --revoke to revoke)`,
