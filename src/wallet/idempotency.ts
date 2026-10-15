@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, stat, unlink, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -56,21 +56,39 @@ export async function loadIdempotencyRecord(
 
 /**
  * Creates `record` unless its key already has one, and returns whether it did. The exclusive
- * create lets only one of several concurrent sends with the same key claim it.
+ * create lets only one of several concurrent sends with the same key claim it. The record and its
+ * directory entry are flushed to disk before this returns, so a claim made before a send survives
+ * a host crash after it.
  */
 export async function createIdempotencyRecord(record: IdempotencyRecord) {
   return withRecordsLock(async () => {
+    let handle: FileHandle;
     try {
-      await writeFile(recordPath(scopeOf(record)), JSON.stringify(record, null, 2), {
-        flag: "wx",
-        mode: 0o600,
-      });
-      return true;
+      handle = await open(recordPath(scopeOf(record)), "wx", 0o600);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
       throw error;
     }
+    try {
+      await handle.writeFile(JSON.stringify(record, null, 2));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await syncDirectory(idempotencyDir());
+    return true;
   });
+}
+
+/** Flushes `dir`'s entries to disk; Windows cannot open a directory to do so. */
+async function syncDirectory(dir: string) {
+  if (process.platform === "win32") return;
+  const handle = await open(dir, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 }
 
 /** Replaces the record for `record`'s key. */

@@ -1,4 +1,4 @@
-import { readdir, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import { open, readdir, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -387,6 +387,24 @@ describe.each(["transfer", "swap"] as const)("%s --idempotency-key", (name) => {
       expect(await recordFiles()).toHaveLength(earlier === "none" ? 0 : 1);
     },
   );
+
+  it("flushes its claim to disk before sending", async () => {
+    await useTempHome();
+    const wallet = await login();
+    const probe = await open(idempotencyDir().replace(/idempotency$/, ""), "r");
+    const sync = vi.spyOn(Object.getPrototypeOf(probe) as { sync(): Promise<void> }, "sync");
+    await probe.close();
+    const runtime = lookups({
+      submit: vi.fn(async () => {
+        // The claim file, then its directory entry; Windows cannot sync a directory.
+        expect(sync).toHaveBeenCalledTimes(process.platform === "win32" ? 1 : 2);
+        return txHash;
+      }),
+    });
+
+    expect(await send(wallet, { key: "k1" }, runtime)).toMatchObject({ status: "success" });
+    expect(runtime.submit).toHaveBeenCalledOnce();
+  });
 
   it("writes nothing on a dry run and carries the key into _next", async () => {
     await useTempHome();
