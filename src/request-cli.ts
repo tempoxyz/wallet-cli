@@ -1,12 +1,9 @@
 #!/usr/bin/env node
 import { Cli, z } from "incur";
 
-import {
-  defaultMaxSpend,
-  executeRequest,
-  MaxSpendExceededError,
-  type RequestOptions,
-} from "./commands/request.js";
+import { executeRequest } from "./commands/request.js";
+import type { RequestOptions } from "./request/options.js";
+import { defaultMaxSpend, MaxSpendExceededError } from "./request/spend.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";

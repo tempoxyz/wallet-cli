@@ -8,7 +8,8 @@ import { Challenge, Credential } from "mppx";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { executeRequest, type RequestOptions, runRequest } from "../src/commands/request.js";
+import { executeRequest, runRequest } from "../src/commands/request.js";
+import type { RequestOptions } from "../src/request/options.js";
 import {
   expectUsageError,
   testPrivateKey,

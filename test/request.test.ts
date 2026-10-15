@@ -22,13 +22,12 @@ import {
   chargeFallbackError,
   isSessionInvalidationResponse,
   parseRequestArgs,
-  resolvePaymentIdentity,
   runRequest,
   selectPaymentTokenResponse,
   sessionChallengeFromHeader,
-  storedAccessKeyIdentity,
   tempoPaymentChallengeResponse,
 } from "../src/commands/request.js";
+import { resolvePaymentIdentity, storedAccessKeyIdentity } from "../src/request/identity.js";
 import {
   findReusableSessions,
   preserveSessionCumulative,

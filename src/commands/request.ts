@@ -9,7 +9,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Errors, type z } from "incur";
 import { Challenge, Constants, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession, tempo } from "mppx/client";
-import { Keystore } from "accounts";
 import { machineTokenDeployments, Session as TempoSession } from "mppx/tempo";
 import {
   Agent,
@@ -20,28 +19,15 @@ import {
   ProxyAgent,
 } from "undici";
 import {
-  createWalletClient,
   encodeFunctionData,
   erc20Abi,
   formatUnits,
-  http,
-  HttpRequestError,
   isAddress,
   parseUnits,
-  TimeoutError,
   type Address,
 } from "viem";
-import { call, prepareTransactionRequest, readContract, signTransaction } from "viem/actions";
-import { privateKeyToAccount } from "viem/accounts";
-import {
-  Abis as TempoAbis,
-  Account as TempoAccount,
-  Actions,
-  Chain,
-  Channel as TempoChannel,
-  KeyAuthorizationManager,
-  Transaction as TempoTransaction,
-} from "viem/tempo";
+import { prepareTransactionRequest, signTransaction } from "viem/actions";
+import { Abis as TempoAbis, Actions, Channel as TempoChannel } from "viem/tempo";
 
 import {
   paymentReceipt,
@@ -65,9 +51,6 @@ import type { requestDryRunOutput } from "../schemas/request.js";
 import { escrowAbi, version } from "../shared/constants.js";
 import {
   accessKeyLimitError,
-  commandError,
-  CtaError,
-  errorCodes,
   networkError,
   httpError,
   paymentOutcomeUnknownError,
@@ -75,24 +58,14 @@ import {
   usageError,
   walletError,
 } from "../shared/errors.js";
-import { machToken } from "../shared/mach.js";
 import {
   createTempoPublicClient,
   escrowContract,
   explicitNetwork,
   networkName,
-  parseNetwork,
-  resolveNetwork,
-  rpcUrl,
-  type Network,
 } from "../shared/network.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
-import {
-  loadWallet,
-  walletFix,
-  walletProblem,
-  WalletRequiredError,
-} from "../shared/require-wallet.js";
+import { walletFix } from "../shared/require-wallet.js";
 import {
   knownToken,
   listedSymbol,
@@ -102,7 +75,6 @@ import {
   tokenMetadata,
 } from "../shared/tokens.js";
 import {
-  cleanStoredScalar,
   escapeInvisible,
   getRecord,
   nowSeconds,
@@ -110,64 +82,39 @@ import {
   sanitizeText,
   stringValue,
 } from "../shared/utils.js";
-import { isPaymentCapableAccessKey } from "../wallet/access-key.js";
-import { emptyWalletState, type WalletState } from "../wallet/store.js";
+import {
+  type PaymentIdentity,
+  privateKeyFlagWarning,
+  privateKeyIdentity,
+  privateKeySigner,
+  requestNetwork,
+  resolvePaymentIdentity,
+  resolvePaymentNetwork,
+  storedAccessKeyLimit,
+  walletIdentity,
+  writePrivateKeyNotice,
+} from "../request/identity.js";
+import {
+  type ChargeParameters,
+  isMachPaymentToken,
+  machChargeParameters,
+  runsMachRoute,
+} from "../request/mach.js";
+import type { PaymentIntent, RequestOptions, RequestRunOptions } from "../request/options.js";
+import {
+  assertWithinMaxSpend,
+  enforceMaxSpend,
+  formatTokenAmount,
+  MaxSpendExceededError,
+  resolveMaxSpend,
+  spendCap,
+  spendCapLabel,
+} from "../request/spend.js";
 
-export type RequestOptions = {
-  allowInsecurePayment?: boolean | undefined;
-  bearer?: string | undefined;
-  compressed?: boolean | undefined;
-  data: string[];
-  dataUrlencode: string[];
-  dumpHeader?: string | undefined;
-  dryRun?: boolean | undefined;
-  followRedirects?: boolean | undefined;
-  form: string[];
-  get?: boolean | undefined;
-  head?: boolean | undefined;
-  headers: string[];
-  includeHeaders?: boolean | undefined;
-  insecure?: boolean | undefined;
-  json?: string | undefined;
-  connectTimeout?: number | undefined;
-  maxRedirs?: number | undefined;
-  maxTime?: number | undefined;
-  method?: string | undefined;
-  /** `--max-spend`, then `TEMPO_MAX_SPEND`; payments apply `defaultMaxSpend` when unset. */
-  maxSpend?: string | undefined;
-  mach?: boolean | undefined;
-  network?: string | undefined;
-  noProxy?: boolean | undefined;
-  output?: string | undefined;
-  paymentIntent: PaymentIntent;
-  paymentToken?: string | undefined;
-  privateKey?: string | undefined;
-  proxy?: string | undefined;
-  referer?: string | undefined;
-  remoteName?: boolean | undefined;
-  requestHttp1?: boolean | undefined;
-  requestHttp2?: boolean | undefined;
-  retries?: number | undefined;
-  retryAfter?: boolean | undefined;
-  retryBackoffMs?: number | undefined;
-  retryHttp?: string | undefined;
-  retryJitter?: number | undefined;
-  sse?: boolean | undefined;
-  sseJson?: boolean | undefined;
-  stream?: boolean | undefined;
-  toon?: string | undefined;
-  url: string;
-  user?: string | undefined;
-  userAgent?: string | undefined;
-  writeMeta?: string | undefined;
-};
-
-export type PaymentIntent = "auto" | "session" | "charge";
-
-export type RequestRunOptions = {
-  stdout?: Pick<NodeJS.WriteStream, "write"> | undefined;
-  stderr?: Pick<NodeJS.WriteStream, "write"> | undefined;
-};
+// `tempo wallet transfer` imports these from this path.
+export { resolvePaymentIdentity, resolvePaymentNetwork } from "../request/identity.js";
+export { machChargeParameters } from "../request/mach.js";
+export { resolveMaxSpend } from "../request/spend.js";
 
 type FetchPlan = {
   init: RequestInitWithDispatcher;
@@ -179,12 +126,6 @@ type RequestInitWithDispatcher = RequestInit & {
 };
 
 const defaultRetryStatuses = new Set([408, 429, 500, 502, 503, 504]);
-
-/**
- * Spending cap, in payment token units, when neither `--max-spend` nor `TEMPO_MAX_SPEND` is set.
- * It bounds each charge, each session deposit, and a session's cumulative vouchers.
- */
-export const defaultMaxSpend = "10";
 
 export async function runRequest(argv: readonly string[], io: RequestRunOptions = {}) {
   const options = parseRequestArgs(argv);
@@ -388,15 +329,6 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
   const result = { ...options, url };
   validateRequestOptions(result);
   return result;
-}
-
-export function resolveMaxSpend(value?: string) {
-  const maxSpend = value ?? (process.env.TEMPO_MAX_SPEND?.trim() || undefined);
-  if (maxSpend !== undefined && !/^\d+(?:\.\d{1,6})?$/.test(maxSpend))
-    throw usageError(
-      "--max-spend (or TEMPO_MAX_SPEND) must be a non-negative amount with at most 6 decimal places",
-    );
-  return maxSpend;
 }
 
 function validateRequestOptions(options: RequestOptions) {
@@ -727,20 +659,6 @@ async function paymentQuote(
   };
 }
 
-/**
- * The key's stored raw limit for `token`. Exact stored limits (`permissionSemantics: 1`) that
- * leave the token out allow it no spending; otherwise a missing limit is unknown or unrestricted.
- */
-function storedAccessKeyLimit(
-  key: WalletState["accessKeys"][number] | undefined,
-  token: string | undefined,
-) {
-  const stored = key?.limits?.find((entry) => entry.token.toLowerCase() === token?.toLowerCase());
-  if (!stored) return key?.permissionSemantics === 1 && key.limits !== undefined ? 0n : null;
-  const raw = cleanStoredScalar(stored.limit);
-  return /^\d+$/.test(raw) ? BigInt(raw) : null;
-}
-
 /** The payer's raw balance of `token`, or `null` when the read fails. */
 function dryRunBalance(payer: string, token: string, chainId: number) {
   return createTempoPublicClient(chainId, dryRunRpc)
@@ -1053,8 +971,6 @@ async function payAndRetryRequest(
   }
 }
 
-type ChargeParameters = NonNullable<Parameters<typeof tempo.charge>[0]>;
-
 /**
  * `tempo.charge` options for paying `challenge` as `identity`, and the E_LIMIT_EXCEEDED error for
  * a credential the access key's spending limit refuses. The SDK signs the calls it resolves an
@@ -1227,175 +1143,6 @@ async function paySessionAndRetryRequest(
     throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
   }
 }
-
-/** Private key that replaces the logged-in wallet as payer. Errors never echo the key. */
-function privateKeySigner(options: RequestOptions) {
-  const source: "flag" | "env" = options.privateKey !== undefined ? "flag" : "env";
-  const key = options.privateKey ?? (process.env.TEMPO_PRIVATE_KEY || undefined);
-  if (key === undefined) return undefined;
-  try {
-    if (/^0x[0-9a-fA-F]{64}$/.test(key))
-      return { account: privateKeyToAccount(key as `0x${string}`), source };
-  } catch {
-    // Out-of-range keys fall through; signer errors include the key value.
-  }
-  throw usageError(
-    `${privateKeySourceName(source)} must be a valid private key (0x followed by 64 hex characters)`,
-  );
-}
-
-function privateKeySourceName(source: "flag" | "env") {
-  return source === "flag" ? "--private-key" : "TEMPO_PRIVATE_KEY";
-}
-
-const privateKeyFlagWarning =
-  "--private-key can leak through shell history and process listings; set TEMPO_PRIVATE_KEY instead";
-
-function writePrivateKeyNotice(stderr: Pick<NodeJS.WriteStream, "write">, options: RequestOptions) {
-  const signer = privateKeySigner(options);
-  if (!signer) return;
-  stderr.write(
-    `Paying with key from ${privateKeySourceName(signer.source)} (${signer.account.address}), not the logged-in wallet\n`,
-  );
-  if (signer.source === "flag") stderr.write(`Warning: ${privateKeyFlagWarning}\n`);
-}
-
-export async function resolvePaymentIdentity(options: RequestOptions) {
-  const privateKeyPayer = privateKeyIdentity(options);
-  if (privateKeyPayer) return privateKeyPayer;
-
-  // Paying never starts a login or key refresh; the error names the command that does.
-  const identity = await walletIdentity(options);
-  if ("code" in identity) throw new WalletRequiredError(identity);
-  return identity;
-}
-
-/** The payer when a private key replaces the logged-in wallet; it signs for itself. */
-function privateKeyIdentity(options: RequestOptions) {
-  const signer = privateKeySigner(options);
-  if (!signer) return undefined;
-  const { account } = signer;
-  const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) =>
-    createWalletClient({
-      account,
-      chain:
-        (requestedChainId ?? requestNetwork(options).chainId) === 42431
-          ? Chain.tempoModerato
-          : Chain.tempo,
-      transport: http(rpcUrl(requestedChainId ?? requestNetwork(options).chainId)),
-    });
-  return {
-    address: account.address,
-    getClient,
-    methodOptions: { account, mode: "pull" as const },
-    signerAddress: account.address,
-  };
-}
-
-/** The logged-in wallet's access-key payer, or the login or key problem that stops it paying. */
-async function walletIdentity(options: RequestOptions) {
-  const wallet = await loadWallet(requestNetwork(options).name);
-  if ("code" in wallet) return wallet;
-  return (
-    (await storedAccessKeyIdentity(wallet.state, options)) ??
-    walletProblem("E_AUTH_REFRESH_REQUIRED", wallet.network)
-  );
-}
-
-/**
- * The network a payment uses. A private-key payer is unrelated to the logged-in wallet, so that
- * wallet's chain never applies: only `--network`, `TEMPO_WALLET_NETWORK`, or the mainnet default.
- */
-export function resolvePaymentNetwork(options: RequestOptions) {
-  return resolveNetwork(
-    options.network,
-    privateKeySigner(options) ? emptyWalletState() : undefined,
-  );
-}
-
-/** executeRequest resolves this before payment; mainnet only backs direct callers. */
-function requestNetwork(options: RequestOptions) {
-  return parseNetwork(options.network ?? "mainnet");
-}
-
-export async function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptions) {
-  const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
-  if (!activeAccount) return undefined;
-
-  const expectedChain = requestNetwork(options).chainId;
-  for (const key of walletState.accessKeys) {
-    if (key.chainId !== expectedChain) continue;
-    if (key.keyType && key.keyType !== "secp256k1" && key.keyType !== "p256") continue;
-    if (key.access.toLowerCase() !== activeAccount.address.toLowerCase()) continue;
-    if (!isPaymentCapableAccessKey(key)) continue;
-
-    const keyAuthorizationManager = KeyAuthorizationManager.memory();
-    if (key.keyAuthorization) {
-      await keyAuthorizationManager.set(
-        {
-          address: activeAccount.address as `0x${string}`,
-          accessKey: key.address as `0x${string}`,
-          chainId: expectedChain,
-        },
-        key.keyAuthorization as never,
-      );
-    }
-
-    let account;
-    try {
-      account = key.privateKey
-        ? key.keyType === "p256"
-          ? TempoAccount.fromP256(key.privateKey as `0x${string}`, {
-              access: activeAccount.address as `0x${string}`,
-              keyAuthorizationManager,
-            })
-          : TempoAccount.fromSecp256k1(key.privateKey as `0x${string}`, {
-              access: activeAccount.address as `0x${string}`,
-              keyAuthorizationManager,
-            })
-        : key.keyType === "p256" && key.handle && key.publicKey
-          ? await Keystore.webCryptoP256({ extractable: true }).toAccount(
-              {
-                handle: key.handle as Keystore.Handle,
-                keyType: key.keyType,
-                publicKey: key.publicKey as `0x${string}`,
-              },
-              {
-                access: activeAccount.address as `0x${string}`,
-                keyAuthorizationManager,
-              },
-            )
-          : undefined;
-    } catch {
-      // Signing material the signer rejects is as unusable as missing material.
-      continue;
-    }
-    if (!account) continue;
-    if (key.address.toLowerCase() !== account.accessKeyAddress.toLowerCase()) continue;
-
-    const getClient = ({ chainId: requestedChainId }: { chainId?: number | undefined }) =>
-      createWalletClient({
-        account,
-        chain:
-          (requestedChainId ?? requestNetwork(options).chainId) === 42431
-            ? Chain.tempoModerato
-            : Chain.tempo,
-        transport: http(rpcUrl(requestedChainId ?? requestNetwork(options).chainId)),
-      });
-    return {
-      account,
-      address: account.address,
-      getClient,
-      key,
-      methodOptions: { account, getClient, mode: "pull" as const },
-      signerAddress: account.accessKeyAddress,
-    };
-  }
-
-  return undefined;
-}
-
-type PaymentIdentity = Awaited<ReturnType<typeof resolvePaymentIdentity>>;
 
 function sessionDetails(
   challenge: Challenge.Challenge,
@@ -1937,26 +1684,6 @@ function credentialPayload(credential: string) {
   }
 }
 
-/** Whether a charge credential's signed transaction approves and swaps MACH, the MACH route. */
-function runsMachRoute(
-  payload: Record<string, unknown>,
-  deployment: { token: string; swap: string },
-) {
-  try {
-    if (payload.type !== "transaction") return false;
-    const { calls } = TempoTransaction.deserialize(
-      stringValue(payload.signature) as `0x76${string}`,
-    );
-    return (
-      calls?.length === 2 &&
-      calls[0]?.to?.toLowerCase() === deployment.token.toLowerCase() &&
-      calls[1]?.to?.toLowerCase() === deployment.swap.toLowerCase()
-    );
-  } catch {
-    return false;
-  }
-}
-
 async function readOnChainChannel(record: PersistedSessionRecord, rpc: RpcOptions = {}) {
   const client = createTempoPublicClient(record.chain_id, rpc);
   if (record.escrow_contract.toLowerCase() === TempoChannel.address.toLowerCase()) {
@@ -2134,164 +1861,6 @@ function maxBigInt(...values: bigint[]) {
 function paymentIntentValue(value: string): PaymentIntent {
   if (value === "auto" || value === "session" || value === "charge") return value;
   throw usageError("--payment-intent must be one of: auto, session, charge");
-}
-
-function isMachPaymentToken(token: string | undefined) {
-  return (
-    token !== undefined &&
-    (token.toLowerCase() === "mach" ||
-      Object.values(machineTokenDeployments).some(
-        (deployment) => deployment.token.toLowerCase() === token.toLowerCase(),
-      ))
-  );
-}
-
-/**
- * Holds an explicit MACH selection to the canonical SDK route, so it never silently spends
- * stablecoins. When the route cannot pay `payment.amount`, the error names the cause: the access
- * key's stored MACH limit is below it, its stored call scopes leave out a route call, the payer's
- * MACH balance is below it, or else the route did not simulate.
- */
-export function machChargeParameters(
-  options: RequestOptions,
-  payment: { amount: bigint; key?: WalletState["accessKeys"][number] | undefined },
-): ChargeParameters {
-  if (!isMachPaymentToken(options.paymentToken)) return {};
-  const network = requestNetwork(options);
-  // machToken refuses a chain without a MACH deployment.
-  const token = machToken(network.chainId).toLowerCase();
-  const deployment =
-    machineTokenDeployments[network.chainId as keyof typeof machineTokenDeployments];
-  const swapper = deployment.swap.toLowerCase();
-  const { key } = payment;
-  const limit = storedAccessKeyLimit(key, token);
-  // The SDK resolves the route's calls first, and the direct transfer only once it gives up on
-  // the route; that second call reports why, checking the route's calls again.
-  let route: readonly MachRouteCall[] | undefined;
-  return {
-    autoSwap: false,
-    async resolveAccount({ account, chainId, operation }) {
-      const calls = operation.kind === "executeCalls" ? operation.calls : undefined;
-      const isRoute =
-        chainId === network.chainId &&
-        calls?.length === 2 &&
-        calls[0]?.to.toLowerCase() === token &&
-        calls[1]?.to.toLowerCase() === swapper;
-      if (isRoute) route = calls;
-      // The route needs a key that can spend the MACH and call both contracts. The SDK skips a
-      // route this refuses and resolves the direct transfer, which reports it.
-      if (key && limit !== null && limit < payment.amount)
-        throw accessKeyLimitError({
-          key: key.address,
-          token,
-          label: "MACH",
-          amount: formatTokenAmount(payment.amount),
-          network,
-        });
-      const blocked = route?.find((call) => !storedScopesAllow(key, call));
-      if (blocked)
-        throw paymentError(
-          `MACH settlement is unavailable: the access key's call scopes do not allow its call to the MACH ${blocked.to.toLowerCase() === token ? "token" : "swapper"} (${blocked.to.toLowerCase()}), and 'tempo wallet keys update' cannot change call scopes; the wallet owner must authorize a key that may make that call. ${noMachFallback}`,
-        );
-      if (isRoute) return account;
-      throw await machRouteError({
-        payer: account.address,
-        amount: payment.amount,
-        network,
-        route,
-        scoped: key !== undefined,
-      });
-    },
-  };
-}
-
-type MachRouteCall = { to: Address; data: `0x${string}` };
-
-const noMachFallback = "No stablecoin fallback was authorized.";
-
-/**
- * Whether `key`'s stored call scopes allow `call`: a scope must name its address and, if it names
- * one, its selector. Recipient rules are not checked. Scopes stored without exact semantics are
- * unknown and allow every call.
- */
-function storedScopesAllow(
-  key: WalletState["accessKeys"][number] | undefined,
-  call: MachRouteCall,
-) {
-  if (key?.permissionSemantics !== 1 || key.scopes === undefined) return true;
-  const selector = call.data.slice(0, 10).toLowerCase();
-  return key.scopes.some(
-    (scope) =>
-      scope.address.toLowerCase() === call.to.toLowerCase() &&
-      (scope.selector === undefined || scope.selector.toLowerCase() === selector),
-  );
-}
-
-/**
- * Why the MACH route cannot settle `amount`: the payer's MACH balance is below it, with the
- * funding command as its `cta` on mainnet, or else the route did not simulate. The SDK keeps its
- * simulation error, so the route is simulated again to tell a transient failure apart.
- */
-async function machRouteError(options: {
-  payer: Address;
-  amount: bigint;
-  network: Network;
-  route: readonly MachRouteCall[] | undefined;
-  /** Whether an access key pays, whose call scopes may refuse the route. */
-  scoped: boolean;
-}) {
-  const { payer, amount, network, route } = options;
-  const client = createTempoPublicClient(network.chainId);
-  const balance = await readContract(client, {
-    address: machToken(network.chainId),
-    abi: erc20Abi,
-    functionName: "balanceOf",
-    args: [payer],
-  }).catch(() => undefined);
-  if (balance === undefined)
-    return networkError(
-      `MACH settlement is unavailable: the MACH balance could not be read. Check RPC connectivity (TEMPO_RPC_URL). ${noMachFallback}`,
-      { retryable: true },
-    );
-  if (balance >= amount) {
-    // A route that simulates now, or failed on transport, may settle on a retry.
-    const retryable =
-      route !== undefined &&
-      (await call(client, { account: payer, calls: route }).then(() => true, isTransientRpcError));
-    const causes = options.scoped
-      ? "insufficient swapper liquidity, the access key's call scopes, or a transient RPC error"
-      : "insufficient swapper liquidity or a transient RPC error";
-    return walletError({
-      code: "E_PAYMENT",
-      retryable,
-      message: `MACH settlement is unavailable: the MACH swap route for ${formatTokenAmount(amount)} MACH could not be simulated. Possible causes: ${causes}.${retryable ? " Try again shortly." : ""} ${noMachFallback}`,
-    });
-  }
-  const shortfall = `The MACH balance ${formatTokenAmount(balance)} is below the ${formatTokenAmount(amount)} MACH this charge needs.`;
-  // Hosted MACH checkout is mainnet only.
-  if (network.name !== "mainnet")
-    return walletError({
-      code: "E_INSUFFICIENT_FUNDS",
-      message: `${shortfall} MACH can be bought on mainnet only. ${noMachFallback}`,
-    });
-  const command = continuationCommand(
-    ["wallet", "fund", "--mach", "--address", payer.toLowerCase()],
-    network,
-  );
-  return new CtaError(
-    commandError(
-      "E_INSUFFICIENT_FUNDS",
-      `${shortfall} Buy MACH with '${command}', then retry. ${noMachFallback}`,
-      command,
-    ),
-  );
-}
-
-/** Whether an RPC failure, or any error it wraps, is a transport failure or timeout. */
-function isTransientRpcError(error: unknown) {
-  for (let cause = error; cause instanceof Error; cause = cause.cause)
-    if (cause instanceof HttpRequestError || cause instanceof TimeoutError) return true;
-  return false;
 }
 
 /**
@@ -2555,59 +2124,6 @@ function paymentContext(challenge: { intent: string }, options: RequestOptions) 
   return { depositRaw: parseUnits(options.maxSpend, 6).toString() };
 }
 
-function enforceMaxSpend(
-  challenge: { intent: string; request: Record<string, unknown> },
-  options: RequestOptions,
-) {
-  const amount = challenge.request.amount;
-  if (typeof amount !== "string" || !/^\d+$/.test(amount))
-    throw paymentError("Payment challenge is missing a valid amount");
-  // An explicit cap already refused the subscription, and the default cap leaves recurring
-  // offers to the per-period limit the wallet signs.
-  if (challenge.intent === "subscription") return;
-  assertWithinMaxSpend(BigInt(amount), options);
-}
-
-/** `--max-spend`, then `TEMPO_MAX_SPEND`, then `defaultMaxSpend`, in payment token units. */
-function spendCap(options: RequestOptions) {
-  return options.maxSpend ?? defaultMaxSpend;
-}
-
-function spendCapLabel(options: RequestOptions) {
-  return options.maxSpend ?? `${defaultMaxSpend} (default)`;
-}
-
-/** Refuses an amount, deposit, or cumulative voucher (raw token units) above the spending cap. */
-function assertWithinMaxSpend(required: bigint, options: RequestOptions) {
-  if (required > parseUnits(spendCap(options), 6))
-    throw new MaxSpendExceededError(required, options);
-}
-
-/**
- * A charge, deposit, or voucher over the spending cap, refused before it is signed. The
- * request CLI suggests rerunning the command with `--max-spend <required>`.
- */
-export class MaxSpendExceededError extends Errors.IncurError {
-  /** The smallest `--max-spend` that allows the payment. */
-  readonly required: string;
-  /** The network the payment would use. */
-  readonly network: Network;
-  /** A one-time charge within the cap that the server also offered, when a session is refused. */
-  charge: string | undefined = undefined;
-
-  constructor(required: bigint, options: RequestOptions) {
-    const { exitCode, retryable } = errorCodes.E_LIMIT_EXCEEDED;
-    super({
-      code: "E_LIMIT_EXCEEDED",
-      exitCode,
-      retryable,
-      message: `Payment max spend exceeded: max=${spendCapLabel(options)} required=${formatTokenAmount(required)}`,
-    });
-    this.required = formatTokenAmount(required);
-    this.network = requestNetwork(options);
-  }
-}
-
 function validatePaymentAddresses(challenge: Challenge.Challenge) {
   const request = challenge.request as Record<string, unknown>;
   if (!isAddress(stringValue(request.currency)))
@@ -2615,12 +2131,6 @@ function validatePaymentAddresses(challenge: Challenge.Challenge) {
   const isProof = challenge.intent === "charge" && BigInt(request.amount as string) === 0n;
   if (!isProof && !isAddress(stringValue(request.recipient)))
     throw paymentError("Payment challenge is missing a valid recipient address");
-}
-
-function formatTokenAmount(value: bigint) {
-  const whole = value / 1_000_000n;
-  const fractional = (value % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
-  return fractional ? `${whole}.${fractional}` : whole.toString();
 }
 
 function cloneRequestInit(init: RequestInitWithDispatcher): RequestInitWithDispatcher {
