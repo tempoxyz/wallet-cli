@@ -64,8 +64,8 @@ import { runRequest } from "../src/request/run.js";
 import {
   closeSessions as closeWithWallet,
   dryRunCloseSessions as dryRunWithWallet,
-  listSessions,
-} from "../src/commands/sessions.js";
+} from "../src/commands/sessions/close.js";
+import { listSessions } from "../src/commands/sessions/list.js";
 import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
 import { escrowAbi, mainnetEscrow, moderatoEscrow, usdcToken } from "../src/shared/constants.js";
 import {

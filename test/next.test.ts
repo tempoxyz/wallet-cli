@@ -27,7 +27,7 @@ import { updateAccessKeyHandler } from "../src/commands/keys.js";
 import { revokeHandler } from "../src/commands/revoke.js";
 import { runFundingFlow } from "../src/commands/fund.js";
 import { loginHandler } from "../src/commands/login.js";
-import { closeSessions, dryRunCloseSessions } from "../src/commands/sessions.js";
+import { closeSessions, dryRunCloseSessions } from "../src/commands/sessions/close.js";
 import { swapTokens } from "../src/commands/swap.js";
 import { transferMach, transferTokens } from "../src/commands/transfer.js";
 import { upsertSessionRecord } from "../src/payment/session-store.js";

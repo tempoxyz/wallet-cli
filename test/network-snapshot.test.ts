@@ -10,7 +10,7 @@ import { doctorHandler } from "../src/commands/doctor.js";
 import { revokeHandler } from "../src/commands/revoke.js";
 import { whoamiHandler } from "../src/commands/whoami.js";
 import { fundAction, runFundingFlow } from "../src/commands/fund.js";
-import { syncSessions } from "../src/commands/sessions.js";
+import { syncSessions } from "../src/commands/sessions/sync.js";
 import { swapTokens } from "../src/commands/swap.js";
 import { transferCredits, transferTokens } from "../src/commands/transfer.js";
 import { moderatoToken } from "../src/shared/constants.js";

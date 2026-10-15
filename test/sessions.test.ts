@@ -9,8 +9,8 @@ import {
   buildSessionManagementTransactionRequest,
   closeSessions,
   dryRunCloseSessions,
-  listSessions,
-} from "../src/commands/sessions.js";
+} from "../src/commands/sessions/close.js";
+import { listSessions } from "../src/commands/sessions/list.js";
 import { upsertSessionRecord } from "../src/payment/session-store.js";
 import { escrowAbi, mainnetEscrow } from "../src/shared/constants.js";
 

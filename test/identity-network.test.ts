@@ -33,7 +33,7 @@ import { refreshHandler } from "../src/commands/refresh.js";
 import { revokeHandler } from "../src/commands/revoke.js";
 import { whoamiHandler } from "../src/commands/whoami.js";
 import { loginHandler } from "../src/commands/login.js";
-import { listSessions } from "../src/commands/sessions.js";
+import { listSessions } from "../src/commands/sessions/list.js";
 import { swapTokens } from "../src/commands/swap.js";
 import { transferCredits, transferTokens } from "../src/commands/transfer.js";
 import { loadWalletState, saveWalletState, type WalletState } from "../src/wallet/store.js";
