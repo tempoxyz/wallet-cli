@@ -256,6 +256,20 @@ describe("fund", () => {
     expect(result.code).toBe(code);
     expect(JSON.parse(result.stdout)).toEqual(output);
   });
+
+  it.each([
+    [["fund", ...handoff]],
+    [["fund", "--crypto", ...handoff]],
+    [["fund", "--claim", "REF123", ...handoff]],
+    [["fund", "--mach", ...handoff, "-n", "mainnet"]],
+  ])("%j renders the same keys in toon and JSON", async (args) => {
+    await useTempHome();
+    const json = await wallet([...args, "--format", "json"]);
+    const toon = await wallet([...args, "--format", "toon"]);
+
+    expect([json.code, toon.code]).toEqual([0, 0]);
+    expect(toonKeys(toon.stdout)).toEqual(Object.keys(JSON.parse(json.stdout)));
+  });
 });
 
 async function wallet(args: string[], env: Record<string, string> = {}) {
@@ -272,6 +286,11 @@ async function wallet(args: string[], env: Record<string, string> = {}) {
     const { code, stdout, stderr } = error as { code: number; stdout: string; stderr: string };
     return { code, stdout, stderr };
   }
+}
+
+/** The top-level keys of a toon object: each unindented `key:` line, in order. */
+function toonKeys(toon: string) {
+  return toon.split("\n").flatMap((line) => /^(\w+)[[{:]/.exec(line)?.[1] ?? []);
 }
 
 // Answers every balanceOf call with the next balance, repeating the last one.

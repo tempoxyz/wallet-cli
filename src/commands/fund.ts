@@ -53,7 +53,7 @@ export async function runFundingFlow(options: {
     url,
     ...networkFields(chain),
     token,
-    symbol: action === "mach" ? "MACH" : undefined,
+    ...(action === "mach" ? { symbol: "MACH" } : {}),
     amount: options.amount ?? null,
   };
   // A handoff works without RPC access or a locally installed browser.
