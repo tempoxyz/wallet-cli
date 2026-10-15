@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   createCredential: vi.fn(),
   // The provider holds every wallet it is asked for unless a test says otherwise.
   getAccount: vi.fn(({ address }: { address: string }) => ({ address })),
+  getBlockNumber: vi.fn(),
   getLogs: vi.fn(),
   readContract: vi.fn(),
   request: vi.fn(),
@@ -16,9 +17,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("viem", async (importOriginal) => ({
   ...(await importOriginal<typeof import("viem")>()),
-  // A zero block height leaves orphaned-channel discovery with nothing to scan.
   createPublicClient: vi.fn(({ chain }: { chain: { id: number } }) => ({
-    getBlockNumber: async () => 0n,
+    getBlockNumber: () => mocks.getBlockNumber(),
     getLogs: (call: object) => mocks.getLogs({ ...call, chainId: chain.id }),
     readContract: (call: object) => mocks.readContract({ ...call, chainId: chain.id }),
   })),
@@ -100,6 +100,8 @@ const testnet = 42431;
 beforeEach(async () => {
   vi.useFakeTimers({ now: now * 1000, toFake: ["Date"] });
   vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+  // A zero block height leaves orphaned-channel discovery with nothing to scan.
+  mocks.getBlockNumber.mockResolvedValue(0n);
   mocks.getLogs.mockResolvedValue([]);
   await useTempHome();
 });
@@ -109,6 +111,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   mocks.createCredential.mockReset();
+  mocks.getBlockNumber.mockReset();
   mocks.getLogs.mockReset();
   mocks.readContract.mockReset();
   mocks.request.mockReset();
@@ -772,6 +775,38 @@ describe("pending close instructions", () => {
     });
     expect(result).not.toHaveProperty(["_next", "argv"], expect.arrayContaining(["--cooperative"]));
   });
+});
+
+describe("orphaned channel discovery", () => {
+  it.each([{ all: true }, { orphaned: true }])(
+    "keeps a stored session it finds again on-chain with %j",
+    async (options) => {
+      // The listing skips this origin, so discovery does not see that the session is stored.
+      const hidden = "http://127.0.0.1";
+      await writeWalletState(stateFor(mainnet));
+      await saveSession(channelId, mainnet, { origin: hidden, request_url: `${hidden}/session` });
+      mocks.getBlockNumber.mockResolvedValue(20n);
+      mocks.getLogs.mockResolvedValue([
+        { args: { channelId } },
+        { args: { channelId: otherChannelId } },
+      ]);
+      mockEscrow({ [channelId]: escrowChannel(), [otherChannelId]: escrowChannel() });
+
+      const { sessions } = await listSessions({ ...options, network: "mainnet" });
+
+      // The channel that was not stored is recorded as orphaned; the stored one is untouched.
+      expect(sessions).toEqual([
+        expect.objectContaining({ channel_id: otherChannelId, status: "orphaned" }),
+      ]);
+      expect(await readSessionRecordsByOrigin(hidden)).toEqual([
+        expect.objectContaining({
+          channel_id: channelId,
+          payee: testWallet2.toLowerCase(),
+          request_url: `${hidden}/session`,
+        }),
+      ]);
+    },
+  );
 });
 
 function stateFor(chain: number) {

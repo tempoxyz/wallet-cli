@@ -147,7 +147,7 @@ tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --min-amount-out <MIN_AMOUNT_O
 When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool's annotations say what it does:
 
 - `readOnlyHint: true` (`whoami`, `keys_list`, `services`, `doctor`) only reads.
-- `destructiveHint: true` (`transfer`, `swap`, `sessions_close`, `sessions_sync`, `keys_update`, `revoke`, `logout`) moves funds, changes or revokes a key, closes a session, or deletes stored sessions or the stored wallet. Get the user's approval before every call, after a `dry-run: true` call where the tool offers one.
+- `destructiveHint: true` (`transfer`, `swap`, `sessions_close`, `sessions_sync`, `keys_update`, `revoke`, `logout`, `login`, `login_status`, `refresh`) moves funds, changes or revokes a key, closes a session, deletes stored sessions, or replaces or deletes the stored wallet or its network. Get the user's approval before every call, after a `dry-run: true` call where the tool offers one.
 - `swap` and `revoke` refuse to submit without `yes: true`; pass it only after the user approves the reviewed dry run.
 
 ## Common Issues
