@@ -16,6 +16,7 @@ import {
   paymentOutcomeUnknownError,
   usageError,
   walletError,
+  type CommandContext,
 } from "../shared/errors.js";
 import {
   createTempoPublicClient,
@@ -103,16 +104,6 @@ type CloseOptions = {
   orphaned?: boolean | undefined;
   target?: string | undefined;
   yes?: boolean | undefined;
-};
-
-/**
- * What `sessions close` uses of incur's run context; `error` keeps the `cta` that thrown errors
- * lose.
- */
-type CloseContext = {
-  /** Whether no one can answer a prompt: an agent run, or one whose stdin is not a terminal. */
-  agent: boolean;
-  error: (error: ReturnType<typeof commandError>) => never;
 };
 
 type CloseSummaryOutput = {
@@ -239,7 +230,7 @@ export async function dryRunCloseSessions({ network }: Wallet, options: CloseOpt
 export async function closeSessions(
   { account, network, state }: Wallet,
   options: CloseOptions,
-  context: CloseContext,
+  context: CommandContext,
   { confirm = confirmPrompt }: { confirm?: (question: string) => Promise<boolean> } = {},
 ) {
   validateCloseOptions(options);
