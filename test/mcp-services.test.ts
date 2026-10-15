@@ -39,6 +39,7 @@ const toolHints = [
   ["sessions_sync", false, true, true, true],
   ["swap", false, true, false, true],
   ["transfer", false, true, false, true],
+  ["tx_status", true, false, true, true],
   ["whoami", true, false, true, true],
 ] as const;
 

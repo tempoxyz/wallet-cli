@@ -6,7 +6,19 @@ import { walletError } from "../shared/errors.js";
 import { sleep } from "../shared/utils.js";
 
 export async function withSessionLock<T>(url: string, fn: () => Promise<T>): Promise<T> {
-  const path = lockPath(url);
+  return withFileLock(lockPath(url), "session lock", fn);
+}
+
+/**
+ * Runs `fn` while holding the lock file at `path`, created exclusively and removed afterwards. It
+ * waits for another process's lock, taking it over once that process has exited, and fails with
+ * `E_POLL_TIMEOUT` naming `label` after 30 seconds.
+ */
+export async function withFileLock<T>(
+  path: string,
+  label: string,
+  fn: () => Promise<T>,
+): Promise<T> {
   await mkdir(dirname(path), { recursive: true });
 
   const deadline = Date.now() + 30_000;
@@ -26,7 +38,7 @@ export async function withSessionLock<T>(url: string, fn: () => Promise<T>): Pro
       if (Date.now() > deadline)
         throw walletError({
           code: "E_POLL_TIMEOUT",
-          message: `Timed out waiting for session lock: ${path}`,
+          message: `Timed out waiting for ${label}: ${path}`,
         });
       await sleep(100);
     }

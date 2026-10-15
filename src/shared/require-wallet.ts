@@ -88,7 +88,7 @@ export async function loadWallet(
 }
 
 /** E_KEY_EXPIRED or E_AUTH_REFRESH_REQUIRED when `wallet` has no payment-capable key. */
-function missingKeyError({ state, network, account, key }: Wallet) {
+export function missingKeyError({ state, network, account, key }: Wallet) {
   if (key) return undefined;
   const match = { chainId: network.chainId, walletAddress: account.address };
   const stale = state.accessKeys.find((candidate) => accessKeyMatches(candidate, match));

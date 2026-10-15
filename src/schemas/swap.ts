@@ -1,6 +1,12 @@
 import { z } from "incur";
 
-import { globalOptionShape, networkOutputShape, nextOutputShape } from "./shared.js";
+import {
+  globalOptionShape,
+  idempotencyKeyOption,
+  networkOutputShape,
+  nextOutputShape,
+  replayOutputShape,
+} from "./shared.js";
 
 export const swapArgs = z.object({
   amount: z
@@ -28,6 +34,7 @@ export const swapOptions = z.object({
     .describe("Token address or symbol used to pay fees; defaults to tokenIn"),
   "dry-run": z.boolean().optional().describe("Quote and show calls without submitting"),
   yes: z.boolean().optional().describe("Confirm the reviewed swap for submission"),
+  "idempotency-key": idempotencyKeyOption,
 });
 
 const swapBaseOutputShape = {
@@ -50,7 +57,14 @@ const swapBaseOutputShape = {
   calls: z.array(z.object({ to: z.string(), data: z.string() })),
 };
 
+export const swapSuccessOutput = z.object({
+  status: z.literal("success"),
+  tx_hash: z.string(),
+  ...swapBaseOutputShape,
+});
+
 export const swapOutput = z.union([
   z.object({ status: z.literal("dry_run"), ...swapBaseOutputShape, ...nextOutputShape }),
-  z.object({ status: z.literal("success"), tx_hash: z.string(), ...swapBaseOutputShape }),
+  swapSuccessOutput,
+  swapSuccessOutput.extend(replayOutputShape),
 ]);

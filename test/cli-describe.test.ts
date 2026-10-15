@@ -343,6 +343,35 @@ describe("generated CLI metadata", () => {
     ]);
   });
 
+  it("documents tx status in help, --describe, and its schema", async () => {
+    expect(await walletCli(["tx", "status", "--help"])).toContain(
+      "Usage: tempo wallet tx status <txHash> [options]",
+    );
+    expect(await walletCli(["transfer", "--help"])).toContain("--idempotency-key <string>");
+
+    const manifest = JSON.parse(await walletCli(["--describe"])) as {
+      subcommands: { name: string; subcommands?: unknown[] | undefined }[];
+    };
+    expect(manifest.subcommands.find((command) => command.name === "tx")?.subcommands).toEqual([
+      {
+        name: "status",
+        about: "Show a transaction's status on chain",
+        args: [{ name: "tx_hash", help: "Transaction hash (0x...)", type: "positional" }],
+      },
+    ]);
+
+    const schema = JSON.parse(
+      await walletCli(["tx", "status", "--schema", "--format", "json"]),
+    ) as { output: { properties: { status: { enum: string[] } } } };
+    expect(schema.output.properties.status.enum).toEqual([
+      "success",
+      "reverted",
+      "pending",
+      "not_found",
+    ]);
+    expect(hasNextStep(schema.output)).toBe(true);
+  });
+
   it("documents doctor and its deprecated debug alias", async () => {
     const manifest = JSON.parse(await walletCli(["--describe"])) as {
       subcommands: { name: string; about: string }[];
@@ -403,6 +432,8 @@ describe("generated CLI metadata", () => {
     { command: ["revoke"], flags: ["--dry-run", "--yes", "--no-browser"] },
     { command: ["logout"], flags: ["--revoke", "--yes", "--no-browser"] },
     { command: ["sessions", "close"], flags: ["--dry-run", "--yes"] },
+    { command: ["transfer"], flags: ["--idempotency-key"] },
+    { command: ["swap"], flags: ["--idempotency-key"] },
   ])("describes $flags for $command", async ({ command, flags }) => {
     type Command = {
       name: string;

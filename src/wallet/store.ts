@@ -493,7 +493,8 @@ async function ensurePrivateWalletDirectory(path: string) {
   await chmodIfSupported(walletDir, privateDirMode);
 }
 
-async function writePrivateFile(path: string, contents: string) {
+/** Replaces `path` with `contents` through a renamed temporary file, readable only by the owner. */
+export async function writePrivateFile(path: string, contents: string) {
   const tempPath = join(
     dirname(path),
     `.${basename(path)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,

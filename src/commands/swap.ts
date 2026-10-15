@@ -1,17 +1,18 @@
-import { Cli } from "incur";
+import { Cli, type z } from "incur";
 import { formatUnits, toHex } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
 import { destructive, type WalletCommand } from "../cli/command.js";
 import { flag, option, positional } from "../cli/describe.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
-import { swapArgs, swapOptions, swapOutput } from "../schemas/swap.js";
+import { swapArgs, swapOptions, swapOutput, type swapSuccessOutput } from "../schemas/swap.js";
 import {
   accessKeyLimitError,
   commandError,
   paymentOutcomeUnknownError,
   usageError,
   walletError,
+  type CtaError,
 } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
 import {
@@ -26,6 +27,17 @@ import { withWallet, type Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { createProvider, requireSender } from "../provider.js";
+import {
+  deferredKeyRefusal,
+  defersKeyCheck,
+  idempotencyKey,
+  idempotencyKeyArg,
+  recordedSend,
+  submitTransaction,
+  txStatus,
+  type TxSend,
+  type TxState,
+} from "./tx.js";
 
 export default {
   command: Cli.create("swap", {
@@ -42,13 +54,20 @@ export default {
       },
     ],
     // A refusal that needs a login on the selected network is returned, keeping its `cta`.
-    run: withWallet(
-      async ({ args, error, options }, wallet) => {
-        const result = await swapTokens(wallet, { args, options });
-        return "code" in result ? error(result) : result;
-      },
-      { requireKey: "agent" },
-    ),
+    async run(context) {
+      const deferKey = defersKeyCheck(context.options);
+      return withWallet(
+        async (_, wallet) => {
+          const result = await swapTokens(wallet, {
+            args: context.args,
+            options: context.options,
+            keyRequired: deferKey ? deferredKeyRefusal(context.agent, wallet) : undefined,
+          });
+          return "code" in result ? context.error(result) : result;
+        },
+        { requireKey: deferKey ? "never" : "agent" },
+      )(context);
+    },
   }),
   annotations: { swap: { ...destructive, idempotentHint: false, openWorldHint: true } },
   describe: {
@@ -79,6 +98,7 @@ export default {
       }),
       flag("dry_run", "--dry-run", "Quote and show calls without submitting"),
       flag("yes", "--yes", "Confirm the reviewed swap for submission"),
+      idempotencyKeyArg,
     ],
   },
 } satisfies WalletCommand;
@@ -104,8 +124,11 @@ type SwapDependencies = {
     from: `0x${string}`;
     network: Network;
   }) => Promise<string>;
+  /** Reads a transaction's state on chain, for a swap replayed from its idempotency key. */
+  getTxStatus: (txHash: string) => Promise<TxState>;
 };
 
+/** With `--idempotency-key`, a swap is sent at most once per key; see `recordedSend`. */
 export async function swapTokens(
   wallet: Wallet,
   input: {
@@ -114,11 +137,17 @@ export async function swapTokens(
       "dry-run"?: boolean | undefined;
       "exact-out"?: boolean | undefined;
       "fee-token"?: string | undefined;
+      "idempotency-key"?: string | undefined;
       "max-amount-in"?: string | undefined;
       "min-amount-out"?: string | undefined;
       "slippage-bps": number;
       yes?: boolean | undefined;
     };
+    /**
+     * The refusal to throw instead of sending, for a keyed send whose missing access key was not
+     * checked up front because a replay needs none.
+     */
+    keyRequired?: CtaError | undefined;
   },
   dependencies: Partial<SwapDependencies> = {},
 ) {
@@ -134,6 +163,7 @@ export async function swapTokens(
     input.options["slippage-bps"] > 10_000
   )
     throw usageError("Invalid slippage: --slippage-bps must be between 0 and 10000");
+  const sendKey = idempotencyKey(input.options["idempotency-key"]);
   const feeToken = input.options["fee-token"]
     ? resolveTokenAddress(input.options["fee-token"], network, "fee token")
     : tokenIn;
@@ -172,6 +202,33 @@ export async function swapTokens(
     input.args.amount,
     exactOut ? metadataOut.decimals : metadataIn.decimals,
   );
+  const tx: TxSend = {
+    label: "Swap",
+    network,
+    idempotency:
+      sendKey === undefined
+        ? undefined
+        : {
+            key: sendKey,
+            wallet: account.address.toLowerCase(),
+            request: {
+              command: "swap",
+              mode: exactOut ? "exact_out" : "exact_in",
+              amount: amount.toString(),
+              token_in: tokenIn,
+              token_out: tokenOut,
+              fee_token: feeToken,
+            },
+            getTxStatus: runtime.getTxStatus,
+          },
+  };
+  // A replay sends nothing, so it needs no confirmation or access key, and it precedes the quote
+  // and balance checks, which the swap it replays may no longer pass.
+  if (!input.options["dry-run"]) {
+    const recorded = await recordedSend<z.infer<typeof swapSuccessOutput>>(tx);
+    if (recorded) return recorded;
+    if (input.keyRequired) throw input.keyRequired;
+  }
   const reviewedMinOut = parseSwapBound(
     input.options["min-amount-out"],
     metadataOut.decimals,
@@ -274,6 +331,7 @@ export async function swapTokens(
             "--slippage-bps",
             String(input.options["slippage-bps"]),
             ...(input.options["fee-token"] ? ["--fee-token", feeToken] : []),
+            ...(sendKey !== undefined ? ["--idempotency-key", sendKey] : []),
             "--yes",
           ],
           { network },
@@ -305,13 +363,11 @@ export async function swapTokens(
       network,
     });
 
-  const txHash = await runtime.submit({
-    calls,
-    feeToken,
-    from: account.address as `0x${string}`,
-    network,
-  });
-  return { status: "success" as const, tx_hash: txHash, ...output };
+  return submitTransaction(
+    tx,
+    () => runtime.submit({ calls, feeToken, from: account.address as `0x${string}`, network }),
+    (txHash) => ({ status: "success" as const, tx_hash: txHash, ...output }),
+  );
 }
 
 function parseSwapBound(value: string | undefined, decimals: number, flag: string) {
@@ -381,6 +437,9 @@ function defaultDependencies(network: Network): SwapDependencies {
           "Swap submitted but receipt did not include a transaction hash; check the wallet balance before retrying.",
         );
       return txHash;
+    },
+    async getTxStatus(txHash) {
+      return (await txStatus(txHash, network)).status;
     },
   };
 }

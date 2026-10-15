@@ -155,7 +155,7 @@ Use the first-party wallet CLI for Tempo token swaps. Do not discover or sign in
 tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --dry-run
 
 # Submit only after the user approves the quote, token addresses, and bounds.
-tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --min-amount-out <MIN_AMOUNT_OUT> --yes
+tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --min-amount-out <MIN_AMOUNT_OUT> --idempotency-key <KEY> --yes
 ```
 
 - The amount is exact input by default. Add `--exact-out` to request an exact output amount.
@@ -172,7 +172,7 @@ tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --min-amount-out <MIN_AMOUNT_O
 tempo wallet transfer <AMOUNT> <TOKEN> <RECIPIENT> --dry-run
 
 # Send only after the user approves the amount, token address, recipient, and fee.
-tempo wallet transfer <AMOUNT> <TOKEN> <RECIPIENT> --yes
+tempo wallet transfer <AMOUNT> <TOKEN> <RECIPIENT> --idempotency-key <KEY> --yes
 ```
 
 - Without `--yes`, an agent run sends nothing and returns `E_USAGE`; the dry run's `_next` already includes `--yes` and pins the reviewed `fee_token` with `--fee-token`.
@@ -181,11 +181,19 @@ tempo wallet transfer <AMOUNT> <TOKEN> <RECIPIENT> --yes
 - A transfer is sent only on the network the wallet is logged in on. On another `--network`, it returns `E_USAGE` with a `tempo wallet login --network <NETWORK>` `cta`; run it, then rerun the transfer.
 - Always run `--dry-run` first and preserve full token and recipient addresses in the approval request.
 
+## Retrying Transfers and Swaps
+
+- Pass `--idempotency-key <KEY>` (`idempotency-key` over MCP) on every `transfer` and `swap` you submit: a new unique key, such as a UUID, for each send the user approves. Pass it on the dry run too, and its `_next` carries it.
+- When a send times out, errors, or you are unsure it ran, retry the same command with the same key. The CLI never sends twice for one key on a wallet and network: a send that already went through returns its recorded result with `idempotent_replay: true` and the transaction's current `status` (`success`, `reverted`, `pending`, or `not_found`); report it instead of sending again.
+- Never reuse a key for a different send. Changed arguments with a used key return `E_USAGE` naming what differs.
+- `E_PAYMENT_OUTCOME_UNKNOWN` means the transaction may have been sent. Do not send again, with or without a new key, until you have checked: run its `cta` (`tempo wallet tx status <TX_HASH>` when the hash is known, otherwise `tempo wallet whoami` to check balances), report the result, and get the user's approval for any new send.
+- `tempo wallet tx status <TX_HASH>` only reads. While it reports `pending`, rerun its `_next` until `status` changes; `not_found` means the network does not know the transaction.
+
 ## MCP Tools
 
 When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool's annotations say what it does:
 
-- `readOnlyHint: true` (`whoami`, `keys_list`, `services`, `doctor`) only reads.
+- `readOnlyHint: true` (`whoami`, `keys_list`, `tx_status`, `services`, `doctor`) only reads.
 - `destructiveHint: true` (`transfer`, `swap`, `sessions_close`, `sessions_sync`, `keys_update`, `revoke`, `logout`, `login`, `login_status`, `refresh`) moves funds, changes or revokes a key, closes a session, deletes stored sessions, or replaces or deletes the stored wallet or its network. Get the user's approval before every call, after a `dry-run: true` call where the tool offers one.
 - `transfer`, `swap`, `revoke`, and `sessions_close` refuse to submit without `yes: true`; pass it only after the user approves the reviewed dry run.
 
