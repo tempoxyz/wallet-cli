@@ -4,6 +4,7 @@ import { walletError } from "./errors.js";
 
 type PackageJson = {
   version?: string;
+  dependencies?: Record<string, string>;
 };
 
 export const version = process.env.TEMPO_WALLET_VERSION ?? packageVersion();
@@ -16,10 +17,33 @@ export const logQueryBlockRange = 50_000n;
 export const logScanDepth = 100_000n;
 export const logHeadMargin = 10n;
 
-function packageVersion() {
-  const packageJson = JSON.parse(
+/**
+ * The incur and accounts SDK versions the CLI runs on: set by the bundler for a release build,
+ * else as package.json pins them. `null` when neither is available.
+ */
+export function sdkVersions() {
+  return {
+    incur: process.env.TEMPO_WALLET_INCUR_VERSION ?? dependencyVersion("incur"),
+    accounts: process.env.TEMPO_WALLET_ACCOUNTS_VERSION ?? dependencyVersion("accounts"),
+  };
+}
+
+function dependencyVersion(name: string) {
+  try {
+    return readPackageJson().dependencies?.[name] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function readPackageJson() {
+  return JSON.parse(
     readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
   ) as PackageJson;
+}
+
+function packageVersion() {
+  const packageJson = readPackageJson();
 
   if (!packageJson.version)
     throw walletError({ code: "E_RUNTIME", message: "package.json is missing version" });

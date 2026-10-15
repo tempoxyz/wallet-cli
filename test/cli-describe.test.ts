@@ -287,6 +287,25 @@ describe("generated CLI metadata", () => {
     ]);
   });
 
+  it("documents doctor and its deprecated debug alias", async () => {
+    const manifest = JSON.parse(await walletCli(["--describe"])) as {
+      subcommands: { name: string; about: string }[];
+    };
+    expect(manifest.subcommands).toEqual(
+      expect.arrayContaining([
+        {
+          name: "doctor",
+          about: "Diagnose login, access key, RPC, sqlite3, and environment setup",
+        },
+        { name: "debug", about: "Deprecated: use 'doctor'" },
+      ]),
+    );
+
+    const help = await walletCli(["--help"]);
+    expect(help).toContain("Diagnose login, access key, RPC, sqlite3, and environment setup");
+    expect(help).toContain("Deprecated: use 'doctor'");
+  });
+
   it("returns side-effect-free schema for built-in integration commands", async () => {
     const mcpAdd = JSON.parse(await walletCli(["mcp", "add", "--schema", "--format", "json"])) as {
       options: { properties: { agent: { description: string } } };

@@ -20,7 +20,8 @@ export type AccessKeyScope = {
 };
 
 export type WalletState = {
-  accounts: readonly { address: string }[];
+  /** `keyType` is the SDK's signer type for an account it stored with a local key. */
+  accounts: readonly { address: string; keyType?: string | undefined }[];
   accessKeys: readonly {
     address: string;
     access: string;
@@ -62,7 +63,13 @@ export async function loadWalletState(): Promise<WalletState> {
   const record = getRecord(state);
   const accounts = getArray(record.accounts).flatMap((account) => {
     const item = getRecord(account);
-    return typeof item.address === "string" ? [{ address: item.address }] : [];
+    if (typeof item.address !== "string") return [];
+    return [
+      {
+        address: item.address,
+        ...(typeof item.keyType === "string" ? { keyType: item.keyType } : {}),
+      },
+    ];
   });
   const accessKeys = getArray(record.accessKeys).flatMap((key) => {
     const item = getRecord(key);
@@ -170,7 +177,8 @@ export async function saveWalletState(state: WalletState) {
       {
         "tempo-cli.store": {
           state: {
-            accounts: state.accounts,
+            // Account key material is never loaded, so a key type would describe a key not saved.
+            accounts: state.accounts.map(({ address }) => ({ address })),
             accessKeys: state.accessKeys,
             activeAccount: state.activeAccount ?? 0,
             chainId: state.chainId ?? 4217,

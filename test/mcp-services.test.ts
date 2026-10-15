@@ -146,7 +146,7 @@ describe("MCP tools", () => {
     vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
     await writeWalletState(walletState({ chainId: stored }));
 
-    const response = await mcpCall({ name: "debug", arguments: args });
+    const response = await mcpCall({ name: "doctor", arguments: args });
 
     expect(response.error).toBeUndefined();
     expect(response.result.structuredContent).toMatchObject({
