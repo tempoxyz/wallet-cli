@@ -1,14 +1,45 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cliBundle } from "./cli-bundle.js";
 import { deviceCodeHost } from "./device-code-host.js";
-import { testWallet, usdc, useTempHome, walletState, writeWalletState } from "./helpers.js";
+import {
+  readWalletStoreJson,
+  testAccessKey,
+  testWallet,
+  usdc,
+  useTempHome,
+  walletState,
+  writeWalletState,
+} from "./helpers.js";
 
 const root = resolve(import.meta.dirname, "..");
 const mockFetchModule = resolve(root, "test", "fixtures", "mock-services-fetch.mjs");
+
+// [tool, readOnlyHint, destructiveHint, idempotentHint, openWorldHint]
+const toolHints = [
+  ["completions", true, false, true, false],
+  ["debug", true, false, true, true],
+  ["doctor", true, false, true, true],
+  ["fund", false, false, false, true],
+  ["keys_list", true, false, true, true],
+  ["keys_update", false, true, false, true],
+  ["login", false, false, false, true],
+  ["login_status", false, false, true, true],
+  ["logout", false, true, true, false],
+  ["refresh", false, false, false, true],
+  ["revoke", false, true, true, true],
+  ["services", true, false, true, true],
+  ["sessions_close", false, true, false, true],
+  ["sessions_list", true, false, true, true],
+  ["sessions_sync", false, false, true, true],
+  ["swap", false, true, false, true],
+  ["transfer", false, true, false, true],
+  ["whoami", true, false, true, true],
+] as const;
 
 const initParams = {
   protocolVersion: "2024-11-05",
@@ -128,6 +159,56 @@ describe("MCP tools", () => {
     expect(names).not.toContain("sessions");
   });
 
+  it("annotates every tool with its read, destructive, idempotent, and network hints", async () => {
+    const response = await mcpRequest<{ tools: { name: string; annotations?: unknown }[] }>(
+      "tools/list",
+      {},
+    );
+
+    expect(response.error).toBeUndefined();
+    expect(
+      Object.fromEntries(response.result.tools.map((tool) => [tool.name, tool.annotations])),
+    ).toEqual(
+      Object.fromEntries(
+        toolHints.map(([name, readOnlyHint, destructiveHint, idempotentHint, openWorldHint]) => [
+          name,
+          { readOnlyHint, destructiveHint, idempotentHint, openWorldHint },
+        ]),
+      ),
+    );
+  });
+
+  it.each([
+    {
+      name: "swap",
+      arguments: { amount: "1", tokenIn: "USDC.e", tokenOut: "pathUSD" },
+      message: "Swap not submitted: review the quote with --dry-run, then pass --yes",
+    },
+    {
+      name: "revoke",
+      arguments: { accessKey: testAccessKey },
+      message: "Revocation cannot be undone, so it needs confirmation.",
+    },
+  ])("sends nothing for $name without yes", async ({ name, arguments: args, message }) => {
+    await writeWalletState(walletState());
+    const stored = await readWalletStoreJson();
+    const host = await recordingHost();
+    vi.stubEnv("TEMPO_AUTH_URL", host.url);
+    vi.stubEnv("TEMPO_RPC_URL", host.url);
+    try {
+      const response = await mcpCall({ name, arguments: { ...args, network: "mainnet" } });
+
+      expect(response.error).toBeUndefined();
+      expect(response.result.isError).toBe(true);
+      expect(firstToolText(response)).toContain(message);
+      // Only reads reach the chain; nothing is signed, sent, or handed to the wallet app.
+      expect(host.requests.filter((request) => request !== "eth_call")).toEqual([]);
+      expect(await readWalletStoreJson()).toEqual(stored);
+    } finally {
+      await host.close();
+    }
+  });
+
   it("accepts the network global as a tool option on every command", async () => {
     const response = await mcpRequest<{
       tools: { name: string; inputSchema: { properties?: Record<string, unknown> } }[];
@@ -195,6 +276,51 @@ describe("MCP tools", () => {
     expect(JSON.parse(firstToolText(response))).toMatchObject({ id: "weather" });
   });
 });
+
+/**
+ * Stands in for the chain RPC and the wallet app. It answers `decimals()` with 6 and any other
+ * `eth_call` with a balance or quote large enough for any test amount, and records every RPC
+ * method and other request.
+ */
+async function recordingHost() {
+  const requests: string[] = [];
+  const word = (value: bigint) => `0x${value.toString(16).padStart(64, "0")}`;
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => (body += chunk));
+    request.on("end", () => {
+      response.setHeader("content-type", "application/json");
+      if (request.url !== "/") {
+        requests.push(`${request.method} ${request.url}`);
+        response.statusCode = 404;
+        response.end("{}");
+        return;
+      }
+      const { id, method, params } = JSON.parse(body) as {
+        id: number;
+        method: string;
+        params?: [{ data?: string }?];
+      };
+      requests.push(method);
+      const decimals = params?.[0]?.data?.startsWith("0x313ce567");
+      response.end(
+        JSON.stringify(
+          method === "eth_call"
+            ? { jsonrpc: "2.0", id, result: word(decimals ? 6n : 10n ** 12n) }
+            : { jsonrpc: "2.0", id, error: { code: -32601, message: `Unexpected ${method}` } },
+        ),
+      );
+    });
+  });
+  await new Promise<void>((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected listening address");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () => new Promise<void>((resolvePromise) => server.close(() => resolvePromise())),
+  };
+}
 
 async function walletCli(args: string[]) {
   const { stdout } = await runNode([cliBundle("wallet"), ...args]);

@@ -142,6 +142,14 @@ tempo wallet swap <AMOUNT> <TOKEN_IN> <TOKEN_OUT> --min-amount-out <MIN_AMOUNT_O
 - A swap is sent only on the network the wallet is logged in on. On another `--network`, submission returns `E_USAGE` with a `tempo wallet login --network <NETWORK>` `cta`; run it, then rerun the swap.
 - Always run `--dry-run` first and preserve full token addresses in the approval request.
 
+## MCP Tools
+
+When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool's annotations say what it does:
+
+- `readOnlyHint: true` (`whoami`, `keys_list`, `sessions_list`, `services`, `doctor`) only reads.
+- `destructiveHint: true` (`transfer`, `swap`, `sessions_close`, `keys_update`, `revoke`, `logout`) moves funds, changes or revokes a key, closes a session, or deletes the stored wallet. Get the user's approval before every call, after a `dry-run: true` call where the tool offers one.
+- `swap` and `revoke` refuse to submit without `yes: true`; pass it only after the user approves the reviewed dry run.
+
 ## Common Issues
 
 | Issue                                                        | Cause                                                        | Fix                                                                                                                                                                                                                                                                                                                |
