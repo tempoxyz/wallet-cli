@@ -7,7 +7,7 @@ import {
   MaxSpendExceededError,
   type RequestOptions,
 } from "./commands/request.js";
-import { cliGlobalAlias, cliGlobals } from "./schemas.js";
+import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
 import { ctaErrors } from "./shared/errors.js";

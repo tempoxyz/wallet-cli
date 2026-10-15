@@ -17,7 +17,7 @@ import {
   upsertSessionRecord,
   type PersistedSessionRecord,
 } from "../src/payment/session-store.js";
-import { requestDryRunOutput } from "../src/schemas.js";
+import { requestDryRunOutput } from "../src/schemas/request.js";
 import { readTokenMetadata } from "../src/shared/tokens.js";
 import type { WalletState } from "../src/wallet/store.js";
 import { cliBundle } from "./cli-bundle.js";

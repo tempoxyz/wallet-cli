@@ -48,7 +48,8 @@ import { machToken } from "../src/shared/mach.js";
 import { appUrl, parseNetwork } from "../src/shared/network.js";
 import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
-import { keysOutput, whoamiOutput } from "../src/schemas.js";
+import { keysOutput } from "../src/schemas/keys.js";
+import { whoamiOutput } from "../src/schemas/whoami.js";
 
 import {
   containsSymbol,

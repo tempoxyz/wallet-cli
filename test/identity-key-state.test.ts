@@ -55,7 +55,8 @@ vi.mock("viem/tempo", async (importOriginal) => {
 
 import { currentKeysOutput, currentWhoamiOutput, whoamiHandler } from "../src/commands/identity.js";
 import { moderatoToken } from "../src/shared/constants.js";
-import { keysOutput, whoamiOutput } from "../src/schemas.js";
+import { keysOutput } from "../src/schemas/keys.js";
+import { whoamiOutput } from "../src/schemas/whoami.js";
 import type { WalletState } from "../src/wallet/store.js";
 import {
   testAccessKey,

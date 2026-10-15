@@ -13,7 +13,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 
 import { runRequest } from "../src/commands/request.js";
 import { connect, createProvider } from "../src/provider.js";
-import { requestDryRunOutput } from "../src/schemas.js";
+import { requestDryRunOutput } from "../src/schemas/request.js";
 import { emptyWalletState, type WalletState } from "../src/wallet/store.js";
 import { cliBundle } from "./cli-bundle.js";
 import {

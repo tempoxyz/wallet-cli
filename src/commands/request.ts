@@ -61,7 +61,7 @@ import {
   updateSessionReceipt,
   upsertSessionRecord,
 } from "../payment/session-store.js";
-import type { requestDryRunOutput } from "../schemas.js";
+import type { requestDryRunOutput } from "../schemas/request.js";
 import { escrowAbi, version } from "../shared/constants.js";
 import {
   accessKeyLimitError,

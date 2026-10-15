@@ -13,7 +13,8 @@ import { transferCredits } from "../src/commands/transfer.js";
 import { validateCreditPermit } from "../src/commands/credits.js";
 import { appUrl } from "../src/shared/network.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
-import { transferOutput, whoamiOutput } from "../src/schemas.js";
+import { transferOutput } from "../src/schemas/transfer.js";
+import { whoamiOutput } from "../src/schemas/whoami.js";
 import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
 
 const recipient = "0x1111111111111111111111111111111111111111";

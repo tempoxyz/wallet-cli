@@ -33,51 +33,42 @@ import {
 } from "./commands/sessions.js";
 import { fetchServiceList, fetchServices, staleListFetchedAt } from "./commands/services.js";
 import { completionScript } from "./completions.js";
+import { completionsArgs, completionsOutput } from "./schemas/completions.js";
+import { doctorOutput } from "./schemas/doctor.js";
+import { fundOptions, fundOutput, fundStatusOptions } from "./schemas/fund.js";
 import {
-  cliGlobalAlias,
-  cliGlobals,
-  completionsArgs,
-  completionsOutput,
-  doctorOutput,
-  fundOptions,
-  fundOutput,
-  fundStatusOptions,
-  globalAlias,
-  globalOptions,
   keysOutput,
+  updateAccessKeyArgs,
+  updateAccessKeyOptions,
+  updateAccessKeyOutput,
+} from "./schemas/keys.js";
+import {
   loginOptions,
   loginOutput,
   loginStatusOptions,
   loginStatusOutput,
-  logoutOptions,
-  logoutOutput,
-  refreshOptions,
-  refreshOutput,
-  revokeArgs,
-  revokeOptions,
-  revokeOutput,
-  updateAccessKeyOptions,
-  updateAccessKeyOutput,
-  updateAccessKeyArgs,
+} from "./schemas/login.js";
+import { logoutOptions, logoutOutput } from "./schemas/logout.js";
+import { refreshOptions, refreshOutput } from "./schemas/refresh.js";
+import { revokeArgs, revokeOptions, revokeOutput } from "./schemas/revoke.js";
+import {
   servicesArgs,
   servicesMcpOutput,
-  servicesOutput,
   servicesOptions,
+  servicesOutput,
+} from "./schemas/services.js";
+import {
   sessionsCloseArgs,
   sessionsCloseCommandOutput,
   sessionsCloseOptions,
   sessionsListOptions,
   sessionsListOutput,
   sessionsSyncOptions,
-  swapArgs,
-  swapOptions,
-  swapOutput,
-  transferArgs,
-  transferOptions,
-  transferOutput,
-  whoamiOptions,
-  whoamiOutput,
-} from "./schemas.js";
+} from "./schemas/sessions.js";
+import { cliGlobalAlias, cliGlobals, globalAlias, globalOptions } from "./schemas/shared.js";
+import { swapArgs, swapOptions, swapOutput } from "./schemas/swap.js";
+import { transferArgs, transferOptions, transferOutput } from "./schemas/transfer.js";
+import { whoamiOptions, whoamiOutput } from "./schemas/whoami.js";
 
 let closeCommandFailed = false;
 
