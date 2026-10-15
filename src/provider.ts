@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { Adapter, Keystore, Provider as CoreProvider } from "accounts";
 import { cli, Storage } from "accounts/cli";
 import { deviceCode } from "accounts/deviceCode";
@@ -6,6 +8,7 @@ import { toHex, type Address, type Transport } from "viem";
 import { walletError } from "./shared/errors.js";
 import { openExternal } from "./shared/process.js";
 import { appUrl, type Network } from "./shared/network.js";
+import { getRecord } from "./shared/utils.js";
 
 export const accessKeyAuthorizationSeconds = 30 * 86_400;
 
@@ -181,7 +184,14 @@ function withoutRetries(adapter: Adapter.Adapter): Adapter.Adapter {
   });
 }
 
+/**
+ * Sends `wallet_connect` for `network`. The SDK saves `network` as the wallet's chain as the
+ * request starts, before the wallet app answers, so every later command would default to it. A
+ * connect that fails for any reason, including a denial, an expired code, a timeout, or a stop
+ * from the caller, puts back the chain stored before it; an approval keeps `network`.
+ */
 export async function connect(provider: Pick<CoreProvider.Provider, "request">, network: Network) {
+  const before = await settleWalletStore();
   try {
     return await provider.request({
       method: "wallet_connect",
@@ -198,6 +208,9 @@ export async function connect(provider: Pick<CoreProvider.Provider, "request">, 
         },
       ],
     });
+  } catch (error) {
+    await restoreChain(before, network.chainId);
+    throw error;
   } finally {
     // Wait for the SDK to save the wallet store, so later reads in this process see the result.
     await settleWalletStore();
@@ -205,9 +218,25 @@ export async function connect(provider: Pick<CoreProvider.Provider, "request">, 
 }
 
 /**
- * Waits for the SDK's queued writes to the wallet store. `Storage.filesystem()` runs a file's
- * reads and writes in order, so this read settles after every write queued before it.
+ * Puts the chain of `before`, the wallet store as a connect to `chainId` found it, back in the
+ * store, once the SDK's write of `chainId` has landed. A store that changed in any other way since,
+ * such as by another process's login or logout, is left as it is.
  */
-export async function settleWalletStore() {
-  await Promise.resolve(Storage.filesystem().getItem("store")).catch(() => undefined);
+async function restoreChain(before: unknown, chainId: number) {
+  const { state } = getRecord(before);
+  if (getRecord(state).chainId === chainId) return;
+  const current = getRecord(await settleWalletStore());
+  if (!isDeepStrictEqual(current.state, { ...getRecord(state), chainId })) return;
+  await Promise.resolve(Storage.filesystem().setItem("store", { ...current, state })).catch(
+    () => undefined,
+  );
+}
+
+/**
+ * Waits for the SDK's queued writes to the wallet store and returns the store they left, or
+ * `undefined` when it cannot be read. `Storage.filesystem()` runs a file's reads and writes in
+ * order, so this read settles after every write queued before it.
+ */
+export async function settleWalletStore(): Promise<unknown> {
+  return await Promise.resolve(Storage.filesystem().getItem("store")).catch(() => undefined);
 }
