@@ -214,6 +214,38 @@ describe("wallet store file", () => {
     });
   });
 
+  it("loads an account's key type but saves accounts as addresses only", async () => {
+    await useTempHome();
+    await writeRawWalletStore(
+      JSON.stringify({
+        "tempo-cli.store": {
+          state: {
+            accounts: [
+              { address: testWallet, keyType: "secp256k1", privateKey: testPrivateKey },
+              { address: testWallet2, keyType: 1 },
+            ],
+          },
+          version: 0,
+        },
+      }),
+    );
+
+    const state = await loadWalletState();
+    expect(state.accounts).toEqual([
+      { address: testWallet, keyType: "secp256k1" },
+      { address: testWallet2 },
+    ]);
+
+    await saveWalletState(state);
+    const saved = (await readWalletStoreJson()) as {
+      "tempo-cli.store": { state: { accounts: unknown } };
+    };
+    expect(saved["tempo-cli.store"].state.accounts).toEqual([
+      { address: testWallet },
+      { address: testWallet2 },
+    ]);
+  });
+
   it("round trips nested key authorization bigint values", async () => {
     await useTempHome();
     const keyAuthorization = {

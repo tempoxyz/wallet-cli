@@ -17,7 +17,7 @@ jobs:
       id-token: write
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+        uses: tempoxyz/gh-actions/actions/secure-runner@947d9a3ccb2425a9c94d563fd721cc0e33c89e26 # 2026-10-15T00-15-06Z-947d9a3c
 
       - name: Determine PR source
         id: source
@@ -48,7 +48,7 @@ jobs:
       - name: Fetch GitHub token via STS
         if: steps.source.outputs.same_repo == 'true'
         id: app-token
-        uses: tempoxyz/gh-actions/actions/github-sts@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+        uses: tempoxyz/gh-actions/actions/github-sts@947d9a3ccb2425a9c94d563fd721cc0e33c89e26 # 2026-10-15T00-15-06Z-947d9a3c
         with:
           policy: release
 
@@ -177,7 +177,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@55fe3b63d9612623cc51e6c62d9d62fbcb175fb0 # 2026-09-29T01-25-15Z-55fe3b63
+        uses: tempoxyz/gh-actions/actions/secure-runner@947d9a3ccb2425a9c94d563fd721cc0e33c89e26 # 2026-10-15T00-15-06Z-947d9a3c
 
       - name: Comment for fork PRs
         if: github.event.pull_request.head.repo.full_name != github.repository

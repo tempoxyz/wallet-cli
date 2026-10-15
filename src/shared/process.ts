@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { platform } from "node:process";
+import { env, platform } from "node:process";
 import { createInterface } from "node:readline/promises";
 
+/** Opens `url` in the default browser, unless `TEMPO_NO_BROWSER` is set (headless hosts, agents). */
 export function openExternal(url: string) {
+  if (env.TEMPO_NO_BROWSER) return;
   const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
   const args = platform === "win32" ? ["/c", "start", "", url] : [url];
   const child = spawn(command, args, {
@@ -30,9 +32,20 @@ export async function confirm(question: string) {
   }
 }
 
-export function runProcess(command: string, args: readonly string[]) {
+/** The sqlite3 binary the session store runs, looked up on PATH. */
+export const sqlite3 = "sqlite3";
+
+/** Runs `command` and resolves with its stdout; `signal` kills it and rejects. */
+export function runProcess(
+  command: string,
+  args: readonly string[],
+  options: { signal?: AbortSignal | undefined } = {},
+) {
   return new Promise<string>((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -47,8 +60,28 @@ export function runProcess(command: string, args: readonly string[]) {
   });
 }
 
+// Concurrent CLI processes share channels.db. Like the Rust CLI's busy_timeout, wait this
+// long for another process's lock instead of failing at once with "database is locked".
+const sqliteBusyTimeoutMs = 5_000;
+
 export async function runSql(sql: string) {
-  await runProcess("sqlite3", [channelsDbPath(), sql]);
+  await runSqlite([], sql);
+}
+
+/** Runs a query against channels.db and returns its rows as parsed `sqlite3 -json` output. */
+export async function querySql(sql: string): Promise<unknown> {
+  return JSON.parse((await runSqlite(["-json"], sql)) || "[]");
+}
+
+function runSqlite(options: readonly string[], sql: string) {
+  // `.timeout` sets the busy timeout without printing a row, unlike `PRAGMA busy_timeout`.
+  return runProcess(sqlite3, [
+    ...options,
+    "-cmd",
+    `.timeout ${sqliteBusyTimeoutMs}`,
+    channelsDbPath(),
+    sql,
+  ]);
 }
 
 export function channelsDbPath() {

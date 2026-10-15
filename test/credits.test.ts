@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock("../src/provider.js", () => ({ createProvider: () => ({ request: mocks.request }) }));
+vi.mock("../src/provider.js", () => ({ createProvider: async () => ({ request: mocks.request }) }));
 
 import { whoamiHandler } from "../src/commands/identity.js";
 import { transferCredits } from "../src/commands/transfer.js";

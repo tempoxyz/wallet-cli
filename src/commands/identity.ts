@@ -1,10 +1,8 @@
-import { arch, platform } from "node:process";
 import { Rpc, type Provider as CoreProvider } from "accounts";
 import { z } from "incur";
 import { erc20Abi, formatUnits, isAddress, parseUnits, toHex, type Address } from "viem";
 import { Actions } from "viem/tempo";
 
-import { version } from "../shared/constants.js";
 import {
   appUrl,
   createTempoPublicClient,
@@ -18,7 +16,7 @@ import {
 import { errorCodes, networkError, usageError } from "../shared/errors.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
-import { channelsDbPath, confirm as confirmPrompt, runProcess } from "../shared/process.js";
+import { confirm as confirmPrompt, querySql } from "../shared/process.js";
 import {
   knownToken,
   readTokenMetadata,
@@ -80,11 +78,11 @@ export async function refreshHandler(
   createRefreshProvider: (options: {
     network: Network;
     noBrowser?: boolean | undefined;
-  }) => Pick<CoreProvider.Provider, "request"> = createProvider,
+  }) => Promise<Pick<CoreProvider.Provider, "request">> = createProvider,
 ) {
   const network = await resolveNetwork(options.network);
   const result = await connect(
-    createRefreshProvider({ network, noBrowser: options.browser === false }),
+    await createRefreshProvider({ network, noBrowser: options.browser === false }),
     network,
   );
 
@@ -169,7 +167,7 @@ export async function updateAccessKeyHandler(
   createUpdateProvider: (options: {
     network: Network;
     noBrowser?: boolean | undefined;
-  }) => UpdateAccessKeyProvider = createProvider,
+  }) => Promise<UpdateAccessKeyProvider> = createProvider,
   updateAccessKey: AccessKeyUpdater = updateAccessKeyThroughWallet,
 ) {
   const { account, network, state } = wallet;
@@ -210,7 +208,7 @@ export async function updateAccessKeyHandler(
   const limit = parseLimit(options.limit, decimals);
   const walletAddress = account.address as Address;
   const accessKeyAddress = key.address as Address;
-  const provider = createUpdateProvider({ network, noBrowser: options.browser === false });
+  const provider = await createUpdateProvider({ network, noBrowser: options.browser === false });
 
   await updateAccessKey({
     provider,
@@ -331,7 +329,7 @@ export async function revokeHandler(
     createProvider?: (options: {
       network: Network;
       noBrowser?: boolean | undefined;
-    }) => RevokeProvider;
+    }) => Promise<RevokeProvider>;
     readKey?: OnChainKeyReader;
   } = {},
 ) {
@@ -426,7 +424,7 @@ export async function revokeHandler(
     (await readKey(target)).status === "missing"
       ? stored.keyAuthorization
       : undefined;
-  const provider = (dependencies.createProvider ?? createProvider)({
+  const provider = await (dependencies.createProvider ?? createProvider)({
     network,
     noBrowser: options.browser === false,
   });
@@ -503,23 +501,6 @@ async function readAccessKeyOnChain(options: {
         : "missing",
     // Zero means the key never expires.
     expiry: metadata.expiry > 0n ? Number(metadata.expiry) : undefined,
-  };
-}
-
-export async function debugHandler(options: { network?: string | undefined }) {
-  const state = await loadWalletState();
-  const activeAccount = state.accounts[state.activeAccount ?? 0];
-  const network = await resolveNetwork(options.network, state);
-
-  return {
-    wallet_version: `${version} (local)`,
-    request_version: `${version} (local)`,
-    os: debugOs(),
-    arch: debugArch(),
-    ...networkFields(network.chainId),
-    wallet: activeAccount?.address.toLowerCase() ?? null,
-    wallet_type: activeAccount ? "passkey" : "unknown",
-    logged_in: Boolean(activeAccount),
   };
 }
 
@@ -663,6 +644,14 @@ function currentKeyOutput(
     status: localAccessKeyStatus(key),
     expires_at: formatUnixTimestamp(key.expiry),
   };
+}
+
+/**
+ * A key's spending limits as `whoami` and `keys list` format them, without reading tokens on
+ * chain: a token viem does not list has no `symbol` or formatted `limit`, only its `raw_limit`.
+ */
+export async function keySpendingLimits(key: WalletState["accessKeys"][number]) {
+  return accessKeyLimitsOutput(key, await tokenDetails(keyTokens(key, false)));
 }
 
 function accessKeyLimitsOutput(key: WalletState["accessKeys"][number], details: TokenDetails) {
@@ -921,8 +910,7 @@ async function sessionStats(options: {
              WHERE LOWER(payer) = LOWER('${options.walletAddress.replaceAll("'", "''")}')
                AND state IN ('active', 'closing', 'finalizable')`;
   try {
-    const stdout = await runProcess("sqlite3", ["-json", channelsDbPath(), query]);
-    const rows = getArray(JSON.parse(stdout || "[]") as unknown);
+    const rows = getArray(await querySql(query));
     let active = 0;
     let locked = 0n;
     let pendingRefund = 0n;
@@ -967,16 +955,6 @@ function balanceOutput(
 
 function maxBigInt(...values: bigint[]) {
   return values.reduce((max, value) => (value > max ? value : max), 0n);
-}
-
-function debugOs() {
-  if (platform === "darwin") return "macos";
-  return platform;
-}
-
-function debugArch() {
-  if (arch === "arm64") return "aarch64";
-  return arch;
 }
 
 /** Key management signs through the wallet session, so it must target the logged-in chain. */

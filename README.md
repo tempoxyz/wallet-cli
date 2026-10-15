@@ -86,6 +86,26 @@ tempo request --dry-run https://example.mpp.tempo.xyz/v1/resource
 tempo request https://example.mpp.tempo.xyz/v1/resource
 ```
 
+Once a paid request succeeds, it prints a short receipt on stderr (`Paid 0.01 USDC.e · tx 0x…`)
+and `--write-meta` adds it as `payment`: the `intent`; the `amount` in token units and its
+`token`, with `symbol` and `decimals` when viem lists the token (a MACH settlement reports the
+MACH it debits); `tx_hash` when the server's Payment-Receipt names a transaction; for a session,
+`session` (`open` or `reuse`), `channel_id`, `deposit_locked` and the channel's `cumulative`
+voucher, `null` for a charge; for a subscription, `subscription` with its billing `period` and
+`expires`, since it authorizes `amount` every period instead of paying it once (stderr says
+`Authorized a subscription of up to …`, or, when the receipt's `tx_hash` shows activation paid
+the first period, `Paid … for the first period` as well); the `payer`; and `chain_id` and
+`network`. A newly opened session
+also names `tempo wallet sessions close <channel_id> --network <network>`, on stderr and as
+`instruction` and `_next`: it requests the close, and rerunning it after the grace period
+withdraws the unspent deposit. Structured output
+(`-j`, `--format`) keeps stderr free of the summary, so pass `--write-meta` to get the receipt.
+The summary follows the delivered body. When a paid response's body then fails to arrive, the
+command exits with `E_PAYMENT_OUTCOME_UNKNOWN` and `--write-meta` keeps the receipt for recovery,
+marked `outcome: "unknown"`; a delivered receipt has no `outcome`. Unpaid requests,
+zero-amount proofs, paid requests answered with an HTTP error or an unfollowed redirect, and sessions whose server receipt
+cannot be stored report no receipt.
+
 On HTTP 402, `--dry-run` prints a JSON quote of what paying would spend, without signing,
 opening a session, or paying. It reports the per-call `amount`; for a session offer, whether the
 payment would `open` a session or `reuse` a stored one (`session`) and the `deposit` it would
@@ -165,11 +185,11 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 
 Results with a follow-up step include `instruction` and `_next`. `swap`, `transfer`, and `revoke` dry runs point at the command that submits them, and the swap command pins the reviewed `--min-amount-out` (or `--max-amount-in` with `--exact-out`); a pending `sessions close` points at the withdrawal and sets `poll_interval_seconds` to the remaining grace period; a pending agent `login` points at `login status` with `until: '.status != "pending"'` and `poll_interval_seconds`; `keys update` and a finished `login` or `login status` point at the command that confirms the result. `_next.argv` is authoritative and always ends with `--network` set to the network the command resolved, so it targets the same chain wherever it runs; `_next.command` is the same argv quoted for a POSIX shell.
 
-`transfer` (token and `--mach` payments), `swap`, `keys update`, `revoke`, and `sessions close`, dry runs included, first check for a logged-in wallet on the resolved network; without one they exit 4 with `E_NOT_AUTHENTICATED` and a `cta` naming `tempo wallet login` with that `--network`. `transfer --mach`, and `transfer` and `swap` run by an agent (MCP, `--format`, or output that is not a terminal), also need a usable access key; otherwise they exit 4 with `E_KEY_EXPIRED` or `E_AUTH_REFRESH_REQUIRED` and a `cta` naming `tempo wallet refresh` with that `--network`. An interactive `transfer` or `swap` without one asks for approval in the wallet app instead. `keys update`, `revoke`, and `sessions close` need only the login, not a usable key. Without an access key argument, `keys update` updates the only key stored for the wallet and network, and fails with `E_USAGE` listing the keys when there are several. `transfer --credits` and `transfer --mach` paid by `TEMPO_PRIVATE_KEY` skip the check.
+`transfer` (token and `--mach` payments), `swap`, `keys update`, `revoke`, and `sessions close`, dry runs included, first check for a logged-in wallet on the resolved network; without one they exit 4 with `E_NOT_AUTHENTICATED` and a `cta` naming `tempo wallet login` with that `--network`. `transfer --mach`, and `transfer` and `swap` run by an agent (MCP, `--format`, or output that is not a terminal), also need a usable access key; otherwise they exit 4 with `E_KEY_EXPIRED` or `E_AUTH_REFRESH_REQUIRED` and a `cta` naming `tempo wallet refresh` with that `--network`. An interactive `transfer` or `swap` without one asks for approval in the wallet app instead. The wallet app approves only on the chain the wallet is logged in on, and is also the fallback whenever no access key can sign a swap, so a `swap` on a network other than the logged-in one sends nothing and exits 2 with `E_USAGE` and a `cta` naming `tempo wallet login` with that `--network`, with or without a key there; its dry run still quotes. `keys update`, `revoke`, and `sessions close` need only the login, not a usable key. Without an access key argument, `keys update` updates the only key stored for the wallet and network, and fails with `E_USAGE` listing the keys when there are several. `transfer --credits` and `transfer --mach` paid by `TEMPO_PRIVATE_KEY` skip the check.
 
 `tempo wallet revoke <ACCESS_KEY>` revokes a key of the logged-in wallet on the resolved network: one stored for the wallet, or one created elsewhere that the chain shows authorized for it. Any other address fails with `E_USAGE` listing the wallet's stored keys on that network. The wallet app signs the revocation, so it needs no local signer for the wallet itself. A stored key not yet published on-chain is authorized and revoked in one transaction. The command succeeds only once the chain shows the key revoked; otherwise it keeps the local key and exits 3 with `E_NETWORK`. Revocation cannot be undone, so an interactive run asks `[y/N]` first and an agent run needs `--yes`; without it, it exits 2 with `E_USAGE` and a `cta` that adds `--yes`. `--dry-run` shows the key, wallet, network, limits, and expiry, and its `_next` adds `--yes`.
 
-`login`, `refresh`, `keys update`, and `revoke` ask the wallet app for approval; `--no-browser` prints the URL and confirmation code instead of opening a browser. `refresh` and `keys update` keep the stored key until the wallet app approves the change, so a declined or failed approval leaves the current key usable. A wallet-app request that fails or whose code expires is not resent, so each approval shows one confirmation code; rerun the command to try again.
+`login`, `refresh`, `keys update`, and `revoke` ask the wallet app for approval; `--no-browser` prints the URL and confirmation code instead of opening a browser. Set `TEMPO_NO_BROWSER=1` to do the same for every command, including `login` and `fund`. `refresh` and `keys update` keep the stored key until the wallet app approves the change, so a declined or failed approval leaves the current key usable. A wallet-app request that fails or whose code expires is not resent, so each approval shows one confirmation code; rerun the command to try again.
 
 ## Commands
 
@@ -183,9 +203,16 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 - `swap`
 - `services`
 - `sessions` (same as `sessions list`), `sessions close`, `sessions sync`
-- `debug`
+- `doctor` (`debug` is a deprecated alias)
 - `completions <bash|zsh|fish|nushell|powershell|elvish>`
 - `help [command]` (same as `[command] --help`)
+
+`tempo wallet doctor` reports the setup on the resolved network: the CLI, Node, incur, and accounts SDK versions; the stored wallet's address, chain, and type (`passkey`, `private_key`, or `device_code`, from the key type the store records, else `null`); the access key's status, expiry, and spending limits; the RPC URL and whether it answers `eth_chainId` (asked once without retries, with its chain, whether that matches the network, and the latency); the wallet app URL; whether sqlite3 is on `PATH` and its version; whether the session store exists and is readable; and which environment overrides are set. Each finding is a `checks` entry with status `ok`, `warn`, or `fail`; when a command fixes the most important problem, `instruction` and `_next` name it, such as `tempo wallet login` or `tempo wallet refresh` with the resolved `--network`. An unhealthy setup still exits 0, and only an unknown `--network` fails. The checks run concurrently, and the RPC request and sqlite3 each stop after 3 seconds, so one stalled check does not hold up the report. Secrets are never shown: `TEMPO_PRIVATE_KEY` is reported only as set, and the user info, path, query, and fragment of `TEMPO_RPC_URL` and `TEMPO_AUTH_URL` appear as `<redacted>`. `tempo wallet debug` prints a deprecation notice on stderr and returns the same report.
+
+```sh
+tempo wallet doctor
+tempo wallet doctor --network testnet --format json
+```
 
 Completion scripts hook the `tempo` launcher and complete after `tempo wallet`, for example `eval "$(tempo wallet completions zsh)"` in `~/.zshrc`. The bash, zsh, and Elvish scripts pass other `tempo` subcommands to a completer registered before them. The PowerShell script replaces any existing `tempo` completer, because PowerShell cannot read or chain one.
 

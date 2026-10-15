@@ -15,10 +15,12 @@ import { openExternal } from "../src/shared/process.js";
 
 afterEach(() => {
   mocks.spawn.mockReset();
+  vi.unstubAllEnvs();
 });
 
 describe("openExternal", () => {
   it("ignores a missing browser opener on headless systems", () => {
+    vi.stubEnv("TEMPO_NO_BROWSER", "");
     const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
     mocks.spawn.mockReturnValue(child);
 
@@ -34,5 +36,13 @@ describe("openExternal", () => {
     );
     expect(child.unref).toHaveBeenCalledOnce();
     expect(() => child.emit("error", new Error(`spawn ${command} ENOENT`))).not.toThrow();
+  });
+
+  it.each(["1", "true"])("does not open a browser when TEMPO_NO_BROWSER=%s", (value) => {
+    vi.stubEnv("TEMPO_NO_BROWSER", value);
+
+    openExternal("https://wallet.tempo.xyz/cli-auth");
+
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 });

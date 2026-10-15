@@ -22,6 +22,7 @@ const topLevel = [
   "fund",
   "sessions",
   "services",
+  "doctor",
   "debug",
   "completions",
   "mcp",

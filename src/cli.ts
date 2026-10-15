@@ -7,7 +7,6 @@ import { usageError } from "./shared/errors.js";
 import { withWallet } from "./shared/require-wallet.js";
 import {
   completionsHandler,
-  debugHandler,
   keysHandler,
   logoutHandler,
   refreshHandler,
@@ -15,6 +14,7 @@ import {
   updateAccessKeyHandler,
   whoamiHandler,
 } from "./commands/identity.js";
+import { debugHandler, doctorHandler } from "./commands/doctor.js";
 import { loginHandler, loginStatusHandler } from "./commands/login.js";
 import { swapTokens } from "./commands/swap.js";
 import { transferCredits, transferMach, transferTokens } from "./commands/transfer.js";
@@ -32,7 +32,7 @@ import {
   cliGlobals,
   completionsArgs,
   completionsOutput,
-  debugOutput,
+  doctorOutput,
   fundOptions,
   fundOutput,
   globalAlias,
@@ -253,9 +253,14 @@ cli.command("swap", {
       options: { "dry-run": true },
     },
   ],
-  run: withWallet(({ args, options }, wallet) => swapTokens(wallet, { args, options }), {
-    requireKey: "agent",
-  }),
+  // A refusal that needs a login on the selected network is returned, keeping its `cta`.
+  run: withWallet(
+    async ({ args, error, options }, wallet) => {
+      const result = await swapTokens(wallet, { args, options });
+      return "code" in result ? error(result) : result;
+    },
+    { requireKey: "agent" },
+  ),
 });
 
 cli.command("fund", {
@@ -359,11 +364,21 @@ cli.command("services", {
   },
 });
 
-cli.command("debug", {
-  description: "Collect debug info for support",
+cli.command("doctor", {
+  description: "Diagnose login, access key, RPC, sqlite3, and environment setup",
   options: globalOptions,
   alias: globalAlias,
-  output: debugOutput,
+  output: doctorOutput,
+  async run({ globals }) {
+    return doctorHandler(globals);
+  },
+});
+
+cli.command("debug", {
+  description: "Deprecated: use 'doctor'",
+  options: globalOptions,
+  alias: globalAlias,
+  output: doctorOutput,
   async run({ globals }) {
     return debugHandler(globals);
   },
@@ -1043,7 +1058,8 @@ function describeCli() {
           { name: "list", about: "List skills", aliases: ["ls"] },
         ],
       },
-      { name: "debug", about: "Collect debug info for support" },
+      { name: "doctor", about: "Diagnose login, access key, RPC, sqlite3, and environment setup" },
+      { name: "debug", about: "Deprecated: use 'doctor'" },
     ],
   };
 }

@@ -5,6 +5,7 @@ import { Account } from "viem/tempo";
 import { afterEach, expect, it } from "vitest";
 
 import { updateAccessKeyHandler } from "../src/commands/identity.js";
+import { providerReady } from "../src/provider.js";
 import { usdcToken } from "../src/shared/constants.js";
 import { loadWalletState, type WalletState } from "../src/wallet/store.js";
 import {
@@ -130,8 +131,8 @@ it.each([
       }),
     );
 
-    await updateAccessKeyHandler(await readyWallet(), { limit: "250" }, () =>
-      walletProvider(replacement, saved),
+    await updateAccessKeyHandler(await readyWallet(), { limit: "250" }, async () =>
+      providerReady(walletProvider(replacement, saved)),
     );
 
     // Read the store as the command left it, without draining the SDK's write queue first.

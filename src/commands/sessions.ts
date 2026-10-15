@@ -1,6 +1,3 @@
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
-
 import { encodeFunctionData, getAddress, parseAbiItem, toHex, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
@@ -31,7 +28,7 @@ import {
   tokenDecimals,
   type Network,
 } from "../shared/network.js";
-import { channelsDbPath, runProcess, runSql, sqlString } from "../shared/process.js";
+import { querySql, runSql, sqlString } from "../shared/process.js";
 import { tokenSymbol } from "../shared/tokens.js";
 import {
   decodeBase64UrlJson,
@@ -50,8 +47,9 @@ import {
 } from "../shared/utils.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
-import { createProvider } from "../provider.js";
+import { createProvider, requireSender } from "../provider.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
+import { ensureChannelsTable } from "../payment/session-store.js";
 import { loadWalletState } from "../wallet/store.js";
 
 export type ChannelState = "active" | "closing" | "finalizable" | "finalized" | "orphaned";
@@ -194,7 +192,7 @@ export async function dryRunCloseSessions({ network }: Wallet, options: CloseOpt
   };
 }
 
-export async function closeSessions({ network, state }: Wallet, options: CloseOptions) {
+export async function closeSessions({ account, network, state }: Wallet, options: CloseOptions) {
   validateCloseOptions(options);
   const summary = closeSummary();
   const targets = await closeTargets(options, network, { walletChainId: storedChainId(state) });
@@ -204,6 +202,7 @@ export async function closeSessions({ network, state }: Wallet, options: CloseOp
       closeOneSession(target, {
         cooperative: options.cooperative,
         finalize: options.finalize,
+        from: account.address,
         network,
       }),
       target,
@@ -392,6 +391,8 @@ async function closeOneSession(
   options: {
     cooperative?: boolean | undefined;
     finalize?: boolean | undefined;
+    /** The logged-in wallet that sends the close transactions. */
+    from: string;
     network: Network;
   },
 ): Promise<CloseResultRecord> {
@@ -475,6 +476,7 @@ async function closeOneSession(
     await sendSessionManagementTransaction({
       channelId,
       escrowContract: escrow,
+      from: options.from,
       functionName: "requestClose",
       network: options.network,
       record,
@@ -502,6 +504,7 @@ async function closeOneSession(
   await sendSessionManagementTransaction({
     channelId,
     escrowContract: escrow,
+    from: options.from,
     functionName: "withdraw",
     network: options.network,
     record,
@@ -662,6 +665,7 @@ function credentialSource(payer: string, chain: number) {
 async function sendSessionManagementTransaction(options: {
   channelId: Hex;
   escrowContract: Address;
+  from: string;
   functionName: "requestClose" | "withdraw";
   network: Network;
   record: ChannelRecord;
@@ -674,11 +678,11 @@ async function sendSessionManagementTransaction(options: {
       `wallet is logged in on ${networkName(walletChainId)}, not ${networkName(options.record.chain_id)}; log in with '${continuationCommand(["wallet", "login"], options.network)}', then rerun the close`,
     );
 
-  const provider = createProvider({ network: options.network });
+  const provider = await createProvider({ network: options.network });
   const request = buildSessionManagementTransactionRequest(options);
   const receipt = await provider.request({
     method: "eth_sendTransactionSync",
-    params: [request],
+    params: [{ ...request, from: requireSender(provider, options.from) }],
   });
   const record = getRecord(receipt);
   const txHash = stringValue(record.transactionHash ?? record.transaction_hash ?? record.hash);
@@ -824,7 +828,6 @@ function sessionItem(record: ChannelRecord) {
 }
 
 async function readChannelRecords(): Promise<ChannelRecord[]> {
-  const path = channelsDbPath();
   await ensureChannelsTable();
   const query = `SELECT version, origin, request_url, chain_id,
                     escrow_contract, token, payee, payer, authorized_signer,
@@ -835,16 +838,15 @@ async function readChannelRecords(): Promise<ChannelRecord[]> {
              WHERE origin <> 'http://127.0.0.1'
              ORDER BY last_used_at DESC`;
 
-  let stdout: string;
+  let rows: unknown;
   try {
-    stdout = await runProcess("sqlite3", ["-json", path, query]);
+    rows = await querySql(query);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("unable to open database file") || message.includes("no such table"))
       return [];
     throw error;
   }
-  const rows = JSON.parse(stdout || "[]") as unknown;
   return getArray(rows).flatMap((row) => {
     const item = getRecord(row);
     const channelId = stringValue(item.channel_id).toLowerCase();
@@ -1097,46 +1099,6 @@ async function updateChannelCloseState(options: {
     close_requested_at = ${options.closeRequestedAt},
     grace_ready_at = ${options.graceReadyAt}
     WHERE channel_id = ${sqlString(options.channelId)}`);
-}
-
-async function ensureChannelsTable() {
-  await mkdir(dirname(channelsDbPath()), { recursive: true });
-  await runSql(`CREATE TABLE IF NOT EXISTS channels (
-    channel_id TEXT PRIMARY KEY,
-    version INTEGER NOT NULL DEFAULT 1,
-    origin TEXT NOT NULL,
-    request_url TEXT NOT NULL DEFAULT '',
-    chain_id INTEGER NOT NULL,
-    escrow_contract TEXT NOT NULL,
-    token TEXT NOT NULL,
-    payee TEXT NOT NULL,
-    payer TEXT NOT NULL,
-    authorized_signer TEXT NOT NULL,
-    salt TEXT NOT NULL,
-    deposit TEXT NOT NULL,
-    cumulative_amount TEXT NOT NULL,
-    challenge_echo TEXT NOT NULL,
-    state TEXT NOT NULL DEFAULT 'active',
-    close_requested_at INTEGER NOT NULL DEFAULT 0,
-    grace_ready_at INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL,
-    last_used_at INTEGER NOT NULL,
-    accepted_cumulative TEXT NOT NULL DEFAULT '0',
-    server_spent TEXT NOT NULL DEFAULT '0',
-    session_protocol TEXT NOT NULL DEFAULT 'v1',
-    descriptor_json TEXT
-  )`);
-  await addColumnIfMissing("accepted_cumulative TEXT NOT NULL DEFAULT '0'");
-  await addColumnIfMissing("server_spent TEXT NOT NULL DEFAULT '0'");
-  await addColumnIfMissing("session_protocol TEXT NOT NULL DEFAULT 'v1'");
-  await addColumnIfMissing("descriptor_json TEXT");
-}
-
-async function addColumnIfMissing(definition: string) {
-  await runSql(`ALTER TABLE channels ADD COLUMN ${definition}`).catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes("duplicate column name")) throw error;
-  });
 }
 
 function sessionStateFromCloseTiming(closeRequestedAt: number, gracePeriod: number): ChannelState {

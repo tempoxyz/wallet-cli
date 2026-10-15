@@ -20,10 +20,13 @@ export default async function setup(project: TestProject) {
   // installed skills from adding a "Skills are out of date" notice to test output.
   const dataHome = await mkdtemp(join(tmpdir(), "wallet-cli-data-"));
   process.env.XDG_DATA_HOME = dataHome;
+  // Device-code and fund tests must never open the developer's browser, in workers or in the
+  // CLI subprocesses they spawn.
+  process.env.TEMPO_NO_BROWSER = "1";
   const outdir = await mkdtemp(join(tmpdir(), "wallet-cli-bundle-"));
-  const { version } = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
-    version: string;
-  };
+  const { version, dependencies } = JSON.parse(
+    await readFile(join(root, "package.json"), "utf8"),
+  ) as { version: string; dependencies: Record<string, string> };
   await build({
     entryPoints: {
       "tempo-request": join(root, "src/request-cli.ts"),
@@ -35,7 +38,11 @@ export default async function setup(project: TestProject) {
     target: "node22",
     outdir,
     outExtension: { ".js": ".cjs" },
-    define: { "process.env.TEMPO_WALLET_VERSION": JSON.stringify(version) },
+    define: {
+      "process.env.TEMPO_WALLET_VERSION": JSON.stringify(version),
+      "process.env.TEMPO_WALLET_INCUR_VERSION": JSON.stringify(dependencies.incur),
+      "process.env.TEMPO_WALLET_ACCOUNTS_VERSION": JSON.stringify(dependencies.accounts),
+    },
     logLevel: "error",
   });
   project.provide("cliBundles", {

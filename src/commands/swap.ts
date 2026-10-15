@@ -1,14 +1,25 @@
-import { formatUnits } from "viem";
+import { formatUnits, toHex } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
-import { paymentOutcomeUnknownError, usageError, walletError } from "../shared/errors.js";
+import {
+  commandError,
+  paymentOutcomeUnknownError,
+  usageError,
+  walletError,
+} from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
-import { createTempoPublicClient, networkFields, type Network } from "../shared/network.js";
-import { nextStep } from "../shared/next.js";
+import {
+  createTempoPublicClient,
+  networkFields,
+  networkName,
+  storedChainId,
+  type Network,
+} from "../shared/network.js";
+import { continuationCommand, nextStep } from "../shared/next.js";
 import type { Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
-import { createProvider } from "../provider.js";
+import { createProvider, requireSender } from "../provider.js";
 
 const slippageScale = 10_000n;
 
@@ -28,6 +39,7 @@ type SwapDependencies = {
   submit: (options: {
     calls: readonly { data: `0x${string}`; to: `0x${string}` }[];
     feeToken: `0x${string}`;
+    from: `0x${string}`;
     network: Network;
   }) => Promise<string>;
 };
@@ -48,7 +60,7 @@ export async function swapTokens(
   },
   dependencies: Partial<SwapDependencies> = {},
 ) {
-  const { account, key, network } = wallet;
+  const { account, key, network, state } = wallet;
   const selectedChainId = network.chainId;
   const tokenIn = resolveTokenAddress(input.args.tokenIn, network);
   const tokenOut = resolveTokenAddress(input.args.tokenOut, network);
@@ -76,6 +88,17 @@ export async function swapTokens(
     throw usageError(
       "MACH cannot be swapped. Use 'tempo request --mach' to pay for supported services.",
     );
+  // The provider falls back to wallet-app approval, on the chain the wallet is logged in on,
+  // whenever no access key can sign the calls locally, so a swap is sent only on that chain.
+  const walletChainId = storedChainId(state);
+  if (!input.options["dry-run"] && walletChainId !== selectedChainId) {
+    const command = continuationCommand(["wallet", "login"], network);
+    return commandError(
+      "E_USAGE",
+      `Swap not submitted: wallet is logged in on ${networkName(walletChainId)}, not ${networkName(selectedChainId)}; log in with '${command}', then rerun the swap.`,
+      command,
+    );
+  }
   const runtime = { ...defaultDependencies(network), ...dependencies };
   const [metadataIn, metadataOut] = await Promise.all([
     tokenMetadata(tokenIn, selectedChainId, runtime.getMetadata),
@@ -216,7 +239,12 @@ export async function swapTokens(
       `Active access key cannot spend ${formatUnits(maxAmountIn, metadataIn.decimals)} ${nameIn}. Ask the wallet owner to run 'tempo wallet keys update --token ${tokenIn} --limit ${formatUnits(maxAmountIn, metadataIn.decimals)}' and retry.`,
     );
 
-  const txHash = await runtime.submit({ calls, feeToken, network });
+  const txHash = await runtime.submit({
+    calls,
+    feeToken,
+    from: account.address as `0x${string}`,
+    network,
+  });
   return { status: "success" as const, tx_hash: txHash, ...output };
 }
 
@@ -267,10 +295,18 @@ function defaultDependencies(network: Network): SwapDependencies {
       return Actions.dex.getSellQuote(client, options);
     },
     async submit(options) {
-      const provider = createProvider({ network: options.network });
+      const provider = await createProvider({ network: options.network });
       const receipt = await provider.request({
         method: "eth_sendTransactionSync",
-        params: [{ calls: options.calls, feeToken: options.feeToken }],
+        // Without a chain the provider sends on the one the wallet store last saved.
+        params: [
+          {
+            from: requireSender(provider, options.from),
+            calls: options.calls,
+            chainId: toHex(options.network.chainId),
+            feeToken: options.feeToken,
+          },
+        ],
       });
       const record = getRecord(receipt);
       const txHash = stringValue(record.transactionHash ?? record.transaction_hash ?? record.hash);
