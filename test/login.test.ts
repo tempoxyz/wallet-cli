@@ -2,7 +2,8 @@ import { stat } from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { logoutHandler, refreshHandler } from "../src/commands/identity.js";
+import { logoutHandler } from "../src/commands/logout.js";
+import { refreshHandler } from "../src/commands/refresh.js";
 import { loginHandler, loginStatusHandler } from "../src/commands/login.js";
 import { settleWalletStore } from "../src/provider.js";
 import { appUrl } from "../src/shared/network.js";

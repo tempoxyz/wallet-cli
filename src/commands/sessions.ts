@@ -1,8 +1,20 @@
+import { Cli } from "incur";
 import { encodeFunctionData, getAddress, parseAbiItem, toHex, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
 import { Challenge, Credential } from "mppx";
 
+import { destructive, nonDestructive, type WalletCommand } from "../cli/command.js";
+import { flag, option, positional } from "../cli/describe.js";
+import {
+  sessionsCloseArgs,
+  sessionsCloseCommandOutput,
+  sessionsCloseOptions,
+  sessionsListOptions,
+  sessionsListOutput,
+  sessionsSyncOptions,
+} from "../schemas/sessions.js";
+import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import {
   defaultGracePeriodSeconds,
   escrowAbi,
@@ -30,7 +42,13 @@ import {
   tokenDecimals,
   type Network,
 } from "../shared/network.js";
-import { confirm as confirmPrompt, querySql, runSql, sqlString } from "../shared/process.js";
+import {
+  canPrompt,
+  confirm as confirmPrompt,
+  querySql,
+  runSql,
+  sqlString,
+} from "../shared/process.js";
 import { tokenSymbol } from "../shared/tokens.js";
 import {
   decodeBase64UrlJson,
@@ -48,11 +66,132 @@ import {
   stringValue,
 } from "../shared/utils.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
-import type { Wallet } from "../shared/require-wallet.js";
+import { withWallet, type Wallet } from "../shared/require-wallet.js";
 import { createProvider, requireSender } from "../provider.js";
 import { requireSessionDescriptor } from "../payment/session-descriptor.js";
 import { ensureChannelsTable } from "../payment/session-store.js";
 import { loadWalletState } from "../wallet/store.js";
+
+/** Whether a `sessions close` left a channel unclosed; a one-shot CLI run then exits 1. */
+export let closeCommandFailed = false;
+
+// Bare `tempo wallet sessions` lists sessions.
+export default {
+  command: Cli.create("sessions", {
+    description: "Manage payment sessions",
+    globals: cliGlobals,
+    options: sessionsListOptions,
+    alias: globalAlias,
+    output: sessionsListOutput,
+    async run({ globals, options }) {
+      return listSessions({
+        all: options.all,
+        network: globals.network,
+        orphaned: options.orphaned,
+      });
+    },
+  })
+    .command("list", {
+      description: "List payment sessions",
+      options: sessionsListOptions,
+      alias: globalAlias,
+      output: sessionsListOutput,
+      async run({ globals, options }) {
+        return listSessions({
+          all: options.all,
+          network: globals.network,
+          orphaned: options.orphaned,
+        });
+      },
+    })
+    .command("close", {
+      description: "Request a session close, then withdraw after the grace period with --finalize",
+      args: sessionsCloseArgs,
+      options: sessionsCloseOptions,
+      alias: globalAlias,
+      output: sessionsCloseCommandOutput,
+      // Close and withdraw transactions fall back to wallet app approval, so channel funds stay
+      // recoverable without a usable access key.
+      // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
+      run: withWallet(
+        async (context, wallet) => {
+          const { args, options } = context;
+          const close = {
+            all: options.all,
+            cooperative: options.cooperative,
+            finalize: options.finalize,
+            orphaned: options.orphaned,
+            target: args.url,
+            yes: options.yes,
+          };
+          if (options["dry-run"]) return dryRunCloseSessions(wallet, close);
+          const summary = await closeSessions(wallet, close, {
+            ...context,
+            agent: !canPrompt(context.agent),
+          });
+          closeCommandFailed = summary.failed > 0;
+          return summary;
+        },
+        { requireKey: "never" },
+      ),
+    })
+    .command("sync", {
+      description: "Sync local sessions with on-chain state",
+      options: sessionsSyncOptions,
+      alias: globalAlias,
+      output: sessionsListOutput,
+      async run({ globals, options }) {
+        return syncSessions({ network: globals.network, origin: options.origin });
+      },
+    }),
+  annotations: {
+    sessions_close: { ...destructive, idempotentHint: false, openWorldHint: true },
+    // With `all` or `orphaned`, stores channels discovered on-chain that were not stored yet.
+    sessions_list: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
+    // Deletes stored sessions whose channel the chain shows finalized or does not hold.
+    sessions_sync: { ...destructive, idempotentHint: true, openWorldHint: true },
+  },
+  describe: {
+    name: "sessions",
+    about: "Manage payment sessions",
+    subcommands: [
+      {
+        name: "list",
+        about: "List payment sessions",
+        args: [
+          flag("orphaned", "--orphaned", "Include on-chain orphaned discovery"),
+          flag("all", "--all", "Include local sessions and orphaned discovery"),
+        ],
+      },
+      {
+        name: "close",
+        about: "Request a session close, then withdraw after the grace period with --finalize",
+        args: [
+          positional("url", "URL, origin, or channel ID (0x...) to close"),
+          flag("all", "--all", "Close all active sessions and on-chain channels"),
+          flag("orphaned", "--orphaned", "Close only orphaned on-chain channels"),
+          flag("finalize", "--finalize", "Withdraw channels whose close grace period has ended"),
+          flag(
+            "cooperative",
+            "--cooperative",
+            "Close now through the session's server instead of waiting out the grace period",
+          ),
+          flag("dry_run", "--dry-run", "Show what would be closed without executing"),
+          flag("yes", "--yes", "Close without the confirmation prompt; required for agent runs"),
+        ],
+      },
+      {
+        name: "sync",
+        about: "Sync local sessions with on-chain state",
+        args: [
+          option("origin", "--origin", "Re-sync a specific origin's close state from on-chain", {
+            valueName: "ORIGIN",
+          }),
+        ],
+      },
+    ],
+  },
+} satisfies WalletCommand;
 
 export type ChannelState = "active" | "closing" | "finalizable" | "finalized" | "orphaned";
 

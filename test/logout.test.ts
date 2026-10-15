@@ -4,9 +4,9 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { logoutHandler } from "../src/commands/identity.js";
+import { logoutHandler } from "../src/commands/logout.js";
 import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
-import { logoutOutput } from "../src/schemas.js";
+import { logoutOutput } from "../src/schemas/logout.js";
 import { networkFields } from "../src/shared/network.js";
 import { nowSeconds } from "../src/shared/utils.js";
 import {

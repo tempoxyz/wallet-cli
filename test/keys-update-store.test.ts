@@ -4,7 +4,7 @@ import type { Address } from "viem";
 import { Account } from "viem/tempo";
 import { afterEach, expect, it } from "vitest";
 
-import { updateAccessKeyHandler } from "../src/commands/identity.js";
+import { updateAccessKeyHandler } from "../src/commands/keys.js";
 import { providerReady } from "../src/provider.js";
 import { usdcToken } from "../src/shared/constants.js";
 import { loadWalletState, type WalletState } from "../src/wallet/store.js";

@@ -1,8 +1,12 @@
 import { access, constants } from "node:fs/promises";
 import { arch, platform, version as nodeVersion } from "node:process";
 
+import { Cli } from "incur";
 import { HttpRequestError, TimeoutError } from "viem";
 
+import { readOnly, type WalletCommand } from "../cli/command.js";
+import { doctorOutput } from "../schemas/doctor.js";
+import { cliGlobals, globalAlias, globalOptions } from "../schemas/shared.js";
 import { sdkVersions, version } from "../shared/constants.js";
 import {
   appUrl,
@@ -29,7 +33,25 @@ import {
   walletStorePath,
   type WalletState,
 } from "../wallet/store.js";
-import { keySpendingLimits } from "./identity.js";
+import { keySpendingLimits } from "../wallet/key-output.js";
+
+export default {
+  command: Cli.create("doctor", {
+    description: "Diagnose login, access key, RPC, sqlite3, and environment setup",
+    globals: cliGlobals,
+    options: globalOptions,
+    alias: globalAlias,
+    output: doctorOutput,
+    async run({ globals }) {
+      return doctorHandler(globals);
+    },
+  }),
+  annotations: { doctor: { ...readOnly, openWorldHint: true } },
+  describe: {
+    name: "doctor",
+    about: "Diagnose login, access key, RPC, sqlite3, and environment setup",
+  },
+} satisfies WalletCommand;
 
 /** How long the RPC request and the sqlite3 subprocess may take. */
 const requestTimeout = 3_000;
@@ -162,11 +184,6 @@ export async function doctorHandler(
 }
 
 /** The deprecated name of `doctor`: notes the rename on stderr and returns `doctor`'s report. */
-export async function debugHandler(options: { network?: string | undefined }) {
-  console.error("Warning: 'tempo wallet debug' is deprecated; use 'tempo wallet doctor'.");
-  return await doctorHandler(options);
-}
-
 /**
  * `value` with each part of a URL that can carry a credential replaced by `<redacted>`: the
  * user info, a path other than `/`, the query, and the fragment. Only the scheme, host, and port

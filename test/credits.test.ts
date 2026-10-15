@@ -8,12 +8,13 @@ import { createServer } from "node:http";
 const mocks = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("../src/provider.js", () => ({ createProvider: async () => ({ request: mocks.request }) }));
 
-import { whoamiHandler } from "../src/commands/identity.js";
+import { whoamiHandler } from "../src/commands/whoami.js";
 import { transferCredits } from "../src/commands/transfer.js";
 import { validateCreditPermit } from "../src/commands/credits.js";
 import { appUrl } from "../src/shared/network.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
-import { transferOutput, whoamiOutput } from "../src/schemas.js";
+import { transferOutput } from "../src/schemas/transfer.js";
+import { whoamiOutput } from "../src/schemas/whoami.js";
 import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
 
 const recipient = "0x1111111111111111111111111111111111111111";

@@ -6,14 +6,12 @@ import { resolve } from "node:path";
 import { Parser } from "incur";
 import { describe, expect, it } from "vitest";
 
-import {
-  fundOptions,
-  loginOptions,
-  logoutOptions,
-  refreshOptions,
-  revokeOptions,
-  updateAccessKeyOptions,
-} from "../src/schemas.js";
+import { fundOptions } from "../src/schemas/fund.js";
+import { updateAccessKeyOptions } from "../src/schemas/keys.js";
+import { loginOptions } from "../src/schemas/login.js";
+import { logoutOptions } from "../src/schemas/logout.js";
+import { refreshOptions } from "../src/schemas/refresh.js";
+import { revokeOptions } from "../src/schemas/revoke.js";
 import { appUrl } from "../src/shared/network.js";
 import { cliBundle } from "./cli-bundle.js";
 import { useTempHome } from "./helpers.js";

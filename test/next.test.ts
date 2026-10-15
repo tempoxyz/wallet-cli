@@ -23,7 +23,8 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
   createProvider: vi.fn(async () => ({ request: mocks.request })),
 }));
 
-import { revokeHandler, updateAccessKeyHandler } from "../src/commands/identity.js";
+import { updateAccessKeyHandler } from "../src/commands/keys.js";
+import { revokeHandler } from "../src/commands/revoke.js";
 import { runFundingFlow } from "../src/commands/fund.js";
 import { loginHandler } from "../src/commands/login.js";
 import { closeSessions, dryRunCloseSessions } from "../src/commands/sessions.js";

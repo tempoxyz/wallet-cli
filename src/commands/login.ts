@@ -1,6 +1,16 @@
 import { Keystore } from "accounts";
 import { TimeoutError } from "accounts/deviceCode";
+import { Cli } from "incur";
 
+import { destructive, type WalletCommand } from "../cli/command.js";
+import { flag, option } from "../cli/describe.js";
+import {
+  loginOptions,
+  loginOutput,
+  loginStatusOptions,
+  loginStatusOutput,
+} from "../schemas/login.js";
+import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { connect, createLoginProvider } from "../provider.js";
 import { commandError } from "../shared/errors.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
@@ -15,7 +25,69 @@ import {
   savePendingLogin,
   type PendingLogin,
 } from "../wallet/store.js";
-import { cachedLoginOutput } from "./identity.js";
+import { cachedLoginOutput } from "./whoami.js";
+
+// Bare `tempo wallet login` starts a login; `login status` finishes a pending one.
+export default {
+  command: Cli.create("login", {
+    description: "Sign up or log in to your Tempo wallet",
+    globals: cliGlobals,
+    options: loginOptions,
+    alias: globalAlias,
+    output: loginOutput,
+    async run({ agent, error, globals, options }) {
+      const result = await loginHandler({
+        ...options,
+        network: globals.network,
+        // Agents get the code and URL back at once; a terminal waits for approval.
+        wait: options.wait ?? !agent,
+      });
+      return "code" in result ? error(result) : result;
+    },
+  }).command("status", {
+    description: "Wait for a pending login's approval and finish it",
+    options: loginStatusOptions,
+    alias: globalAlias,
+    output: loginStatusOutput,
+    async run({ error, globals, options }) {
+      const result = await loginStatusHandler({
+        network: globals.network,
+        interval: options.interval,
+        maxAttempts: options["max-attempts"],
+      });
+      return "code" in result ? error(result) : result;
+    },
+  }),
+  annotations: {
+    // Saves the requested network to the wallet store before approval, replaces any pending
+    // login, and once approved, stores the approved account in place of the current one.
+    login: { ...destructive, idempotentHint: false, openWorldHint: true },
+    login_status: { ...destructive, idempotentHint: true, openWorldHint: true },
+  },
+  describe: {
+    name: "login",
+    about: "Sign up or log in to your Tempo wallet",
+    args: [
+      flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
+      flag("wait", "--wait", "Wait for approval (default in a terminal)"),
+      flag("no_wait", "--no-wait", "Return the code and URL for 'login status' immediately"),
+    ],
+    subcommands: [
+      {
+        name: "status",
+        about: "Wait for a pending login's approval and finish it",
+        args: [
+          option("interval", "--interval", "Seconds between checks", {
+            valueName: "SECONDS",
+          }),
+          option("max_attempts", "--max-attempts", "Checks before giving up", {
+            valueName: "COUNT",
+          }),
+        ],
+      },
+    ],
+  },
+} satisfies WalletCommand;
 
 /** RFC 8628 defaults for a `/register` response without `expires_in` or `interval`. */
 const defaultExpiresInSeconds = 600;

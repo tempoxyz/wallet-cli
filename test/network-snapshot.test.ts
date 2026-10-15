@@ -7,7 +7,8 @@ vi.mock("../src/wallet/store.js", async (original) => ({
 }));
 
 import { doctorHandler } from "../src/commands/doctor.js";
-import { revokeHandler, whoamiHandler } from "../src/commands/identity.js";
+import { revokeHandler } from "../src/commands/revoke.js";
+import { whoamiHandler } from "../src/commands/whoami.js";
 import { fundAction, runFundingFlow } from "../src/commands/fund.js";
 import { syncSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";

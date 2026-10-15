@@ -35,20 +35,16 @@ vi.mock("viem/tempo", async (importOriginal) => {
   };
 });
 
-import {
-  currentWhoamiOutput,
-  currentKeysOutput,
-  keysHandler,
-  updateAccessKeyHandler,
-  whoamiHandler,
-} from "../src/commands/identity.js";
+import { currentKeysOutput, keysHandler, updateAccessKeyHandler } from "../src/commands/keys.js";
+import { currentWhoamiOutput, whoamiHandler } from "../src/commands/whoami.js";
 import { accessKeyAuthorizationSeconds, connect } from "../src/provider.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { machToken } from "../src/shared/mach.js";
 import { appUrl, parseNetwork } from "../src/shared/network.js";
 import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
 import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
-import { keysOutput, whoamiOutput } from "../src/schemas.js";
+import { keysOutput } from "../src/schemas/keys.js";
+import { whoamiOutput } from "../src/schemas/whoami.js";
 
 import {
   containsSymbol,

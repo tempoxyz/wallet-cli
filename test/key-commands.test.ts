@@ -4,9 +4,11 @@ import { z } from "incur";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Account } from "viem/tempo";
 
-import { refreshHandler, revokeHandler, updateAccessKeyHandler } from "../src/commands/identity.js";
+import { updateAccessKeyHandler } from "../src/commands/keys.js";
+import { refreshHandler } from "../src/commands/refresh.js";
+import { revokeHandler } from "../src/commands/revoke.js";
 import { createProvider } from "../src/provider.js";
-import { revokeOutput } from "../src/schemas.js";
+import { revokeOutput } from "../src/schemas/revoke.js";
 import { loadWalletState } from "../src/wallet/store.js";
 import {
   expectUsageError,

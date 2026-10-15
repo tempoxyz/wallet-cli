@@ -14,7 +14,7 @@ vi.mock("../src/wallet/store.js", async (original) => ({
   loadWalletState: mocks.state,
 }));
 import { fundStatusHandler, fundUrl, runFundingFlow } from "../src/commands/fund.js";
-import { logoutHandler } from "../src/commands/identity.js";
+import { logoutHandler } from "../src/commands/logout.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { appUrl } from "../src/shared/network.js";
 import { machToken } from "../src/shared/mach.js";
