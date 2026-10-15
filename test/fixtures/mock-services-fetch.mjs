@@ -28,10 +28,10 @@ const serviceDirectory = {
 const realFetch = globalThis.fetch;
 
 globalThis.fetch = async (input, init) => {
-  // Device-code login requests reach the test's wallet host.
-  const authUrl = process.env.TEMPO_AUTH_URL;
-  if (authUrl && String(input instanceof Request ? input.url : input).startsWith(authUrl))
-    return await realFetch(input, init);
+  // Wallet-app and chain RPC requests reach the test's local hosts.
+  const url = String(input instanceof Request ? input.url : input);
+  const hosts = [process.env.TEMPO_AUTH_URL, process.env.TEMPO_RPC_URL];
+  if (hosts.some((host) => host && url.startsWith(host))) return await realFetch(input, init);
   return new Response(JSON.stringify(serviceDirectory), {
     headers: { "content-type": "application/json" },
     status: 200,

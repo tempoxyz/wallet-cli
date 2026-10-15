@@ -395,6 +395,44 @@ cli.command("completions", {
   },
 });
 
+const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true };
+const nonDestructive = { readOnlyHint: false, destructiveHint: false };
+const destructive = { readOnlyHint: false, destructiveHint: true };
+
+/**
+ * MCP tool annotations by tool name, so clients can tell reads from spends. Refreshing the
+ * service directory cache is a read; storing discovered sessions is an additive change. Moving
+ * funds, changing or revoking a key, closing a session, replacing or deleting stored sessions,
+ * and replacing or deleting the stored wallet or its network are destructive. `openWorldHint`
+ * marks tools that reach the chain RPC, the wallet app, or another server.
+ */
+const mcpToolHints: Record<string, Mcp.ToolAnnotations> = {
+  completions: { ...readOnly, openWorldHint: false },
+  debug: { ...readOnly, openWorldHint: true },
+  doctor: { ...readOnly, openWorldHint: true },
+  // Opens a wallet-app checkout; any payment happens there, not in this command.
+  fund: { ...nonDestructive, idempotentHint: false, openWorldHint: true },
+  keys_list: { ...readOnly, openWorldHint: true },
+  keys_update: { ...destructive, idempotentHint: false, openWorldHint: true },
+  // Saves the requested network to the wallet store before approval, replaces any pending
+  // login, and once approved, stores the approved account in place of the current one.
+  login: { ...destructive, idempotentHint: false, openWorldHint: true },
+  login_status: { ...destructive, idempotentHint: true, openWorldHint: true },
+  logout: { ...destructive, idempotentHint: true, openWorldHint: false },
+  // Saves the requested network to the wallet store before approval, like `login`.
+  refresh: { ...destructive, idempotentHint: false, openWorldHint: true },
+  revoke: { ...destructive, idempotentHint: true, openWorldHint: true },
+  services: { ...readOnly, openWorldHint: true },
+  sessions_close: { ...destructive, idempotentHint: false, openWorldHint: true },
+  // With `all` or `orphaned`, stores channels discovered on-chain that were not stored yet.
+  sessions_list: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
+  // Deletes stored sessions whose channel the chain shows finalized or does not hold.
+  sessions_sync: { ...destructive, idempotentHint: true, openWorldHint: true },
+  swap: { ...destructive, idempotentHint: false, openWorldHint: true },
+  transfer: { ...destructive, idempotentHint: false, openWorldHint: true },
+  whoami: { ...readOnly, openWorldHint: true },
+};
+
 void main();
 
 export default cli;
@@ -495,28 +533,37 @@ function walletCompletions(args: readonly string[]) {
   });
 }
 
-/** MCP tool calls carry no CLI globals, so accept `network` as a tool option and pass it on. */
-function withMcpGlobals(commands: Map<string, unknown>): Map<string, unknown> {
+/**
+ * MCP tool calls carry no CLI globals, so accept `network` as a tool option and pass it on.
+ * Each tool also declares its `mcpToolHints` entry, found by the tool name incur gives it
+ * (`keys update` is `keys_update`).
+ */
+function withMcpGlobals(
+  commands: Map<string, unknown>,
+  prefix: readonly string[] = [],
+): Map<string, unknown> {
   return new Map(
     [...commands].map(([name, entry]) => {
+      const path = [...prefix, name];
       if (isCommandGroup(entry))
         return [
           name,
           {
             ...entry,
             // A group root (bare `login`) is a tool of its own.
-            ...(isRunnableCommand(entry.root) ? { root: withMcpGlobal(entry.root) } : {}),
-            commands: withMcpGlobals(entry.commands),
+            ...(isRunnableCommand(entry.root) ? { root: withMcpGlobal(entry.root, path) } : {}),
+            commands: withMcpGlobals(entry.commands, path),
           },
         ];
-      return [name, isRunnableCommand(entry) ? withMcpGlobal(entry) : entry];
+      return [name, isRunnableCommand(entry) ? withMcpGlobal(entry, path) : entry];
     }),
   );
 }
 
-function withMcpGlobal(entry: RunnableCommand) {
+function withMcpGlobal(entry: RunnableCommand, path: readonly string[]) {
   return {
     ...entry,
+    mcp: { annotations: mcpToolHints[path.join("_")] },
     options: entry.options ? entry.options.extend(cliGlobals.shape) : cliGlobals,
     run(context: { options: Record<string, unknown> }) {
       const { network, ...options } = context.options;

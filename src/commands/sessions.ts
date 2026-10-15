@@ -1068,7 +1068,8 @@ async function saveDiscoveredChannel(options: {
       ? 0
       : Number(options.channel.closeRequestedAt) + options.gracePeriod;
   await ensureChannelsTable();
-  await runSql(`INSERT OR REPLACE INTO channels (
+  // A session stored since the scan began, or one the listing hides, keeps its stored record.
+  await runSql(`INSERT OR IGNORE INTO channels (
     channel_id, version, origin, request_url, chain_id, escrow_contract, token, payee, payer,
     authorized_signer, salt, deposit, cumulative_amount, accepted_cumulative, server_spent,
     challenge_echo, state, close_requested_at, grace_ready_at, created_at, last_used_at,
