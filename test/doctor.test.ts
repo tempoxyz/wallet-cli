@@ -134,8 +134,17 @@ describe("wallet", () => {
       store: () => writeWalletState(walletState({ accessKeys: [mainnetKey, testnetKey] })),
       wallet: { logged_in: true, chain_id: 4217, network: "tempo" },
       status: "warn",
-      message: `Wallet ${testWallet.toLowerCase()} is logged in on mainnet, not testnet.`,
+      message: `Wallet ${testWallet.toLowerCase()} is logged in on tempo, not tempo-moderato.`,
       next: login("testnet"),
+    },
+    {
+      // The network falls back to mainnet, so the message must name the stored chain itself.
+      name: "logged in on an unsupported chain",
+      store: () => writeWalletState(walletState({ chainId: 1 })),
+      wallet: { logged_in: true, chain_id: 1, network: "chain-1" },
+      status: "warn",
+      message: `Wallet ${testWallet.toLowerCase()} is logged in on chain-1, not tempo.`,
+      next: login("mainnet"),
     },
     {
       name: "an unreadable wallet store",
@@ -226,6 +235,14 @@ describe("key", () => {
       status: "fail",
       message: `No access key is stored for wallet ${testWallet.toLowerCase()} on mainnet.`,
       next: refresh("mainnet"),
+    },
+    {
+      // Outside `Date`'s range, so formatting it would throw.
+      name: "invalid expiry",
+      accessKeys: [{ ...mainnetKey, expiry: 10_000_000_000_000 }],
+      key: { address: testAccessKey, expires_at: null },
+      status: "fail",
+      message: `Access key ${testAccessKey} has an invalid expiry (10000000000000) in the wallet store. Run 'tempo wallet logout', then 'tempo wallet login'.`,
     },
   ])("reports a $name key", async ({ accessKeys, key, status, message, next }) => {
     await writeWalletState(walletState({ accessKeys }));
@@ -412,6 +429,30 @@ describe("sqlite3 and the session store", () => {
     expect(report.session_store).toEqual({ path: channelsDbPath(), ...section });
     expect(check(report, "session_store")).toEqual({ name: "session_store", status, message });
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "fails a session store whose directory cannot be searched",
+    async () => {
+      const directory = dirname(channelsDbPath());
+      await chmod(directory, 0o000);
+      try {
+        const report = await doctor();
+
+        expect(report.session_store).toEqual({
+          path: channelsDbPath(),
+          exists: null,
+          readable: false,
+        });
+        expect(check(report, "session_store")).toEqual({
+          name: "session_store",
+          status: "fail",
+          message: `The session store ${channelsDbPath()} cannot be reached (EACCES).`,
+        });
+      } finally {
+        await chmod(directory, 0o700);
+      }
+    },
+  );
 });
 
 describe("environment", () => {
@@ -475,6 +516,28 @@ describe("environment", () => {
     expect(report).toMatchObject({ chain_id: 42431, network: "tempo-moderato" });
     expect(check(report, "env")).toMatchObject({ status: "fail" });
     expect(report.env).toEqual([{ name: "TEMPO_WALLET_NETWORK", value: "typo" }]);
+  });
+
+  it.each([
+    { value: "https://wallet.example", status: "ok" },
+    { value: "http://127.0.0.1:3000", status: "ok" },
+    { value: "", status: "fail" },
+    { value: "wallet.example", status: "fail" },
+    { value: "localhost:3000", status: "fail" },
+    { value: "ftp://wallet.example", status: "fail" },
+  ])("reports TEMPO_AUTH_URL $value as $status", async ({ value, status }) => {
+    vi.stubEnv("TEMPO_AUTH_URL", value);
+
+    const report = await doctor();
+
+    expect(check(report, "env")).toEqual({
+      name: "env",
+      status,
+      message:
+        status === "ok"
+          ? "Overrides set: TEMPO_AUTH_URL."
+          : "TEMPO_AUTH_URL is not an http(s) URL, so login and other wallet app requests fail. Set it to the wallet app URL, or unset it.",
+    });
   });
 
   it("rejects an unsupported --network as a usage error", async () => {

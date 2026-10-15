@@ -8,6 +8,7 @@ import {
   appUrl,
   createTempoPublicClient,
   networkFields,
+  networkName,
   parseNetwork,
   rpcUrl,
   storedChainId,
@@ -59,7 +60,8 @@ type RpcSection = {
 
 type SqliteSection = { found: boolean; version: string | null };
 
-type SessionStoreSection = { path: string; exists: boolean; readable: boolean };
+/** `exists` is `null` when the path cannot be checked, such as under an unsearchable directory. */
+type SessionStoreSection = { path: string; exists: boolean | null; readable: boolean };
 
 const redacted = "<redacted>";
 
@@ -97,7 +99,7 @@ export async function doctorHandler(
   const sessionStore = bounded(deadline, sessionStoreCheck(), (reason) =>
     result<SessionStoreSection>(
       "session_store",
-      { path: channelsDbPath(), exists: false, readable: false },
+      { path: channelsDbPath(), exists: null, readable: false },
       "fail",
       `The session store ${reason}.`,
     ),
@@ -257,7 +259,8 @@ function walletCheck(store: StoreRead, network: Network) {
       "wallet",
       section,
       "warn",
-      `Wallet ${section.address} is logged in on ${walletNetwork(state).name}, not ${network.name}.`,
+      // `walletNetwork` reads an unsupported stored chain as mainnet, so name both chains.
+      `Wallet ${section.address} is logged in on ${section.network}, not ${networkName(network.chainId)}.`,
       login(network),
     );
   return result("wallet", section, "ok", `Logged in as ${section.address} on ${network.name}.`);
@@ -311,13 +314,23 @@ async function keyCheck(state: WalletState | undefined, network: Network) {
       refresh(network),
     );
 
+  // A damaged store can hold an expiry outside `Date`'s range, which `formatUnixTimestamp` throws on.
+  const validExpiry =
+    key.expiry === undefined || Number.isFinite(new Date(key.expiry * 1000).getTime());
   const section = {
     address: key.address.toLowerCase(),
     status: localAccessKeyStatus(key),
-    expires_at: formatUnixTimestamp(key.expiry),
+    expires_at: validExpiry ? formatUnixTimestamp(key.expiry) : null,
     spending_limits: await keySpendingLimits(key),
   };
   const name = `Access key ${section.address}`;
+  if (!validExpiry)
+    return result(
+      "key",
+      section,
+      "fail",
+      `${name} has an invalid expiry (${key.expiry}) in the wallet store. Run 'tempo wallet logout', then 'tempo wallet login'.`,
+    );
   switch (section.status) {
     case "ready":
       return result(
@@ -429,40 +442,78 @@ async function sqliteCheck(timeout: number): Promise<Result<SqliteSection>> {
   }
 }
 
-/** Whether the session database exists and can be read; the first session creates it. */
+/**
+ * Whether the session database exists and can be read; the first session creates it. Only
+ * `ENOENT` means it is absent: another error, such as a directory that cannot be searched, leaves
+ * `exists` unknown and fails the check.
+ */
 async function sessionStoreCheck(): Promise<Result<SessionStoreSection>> {
   const path = channelsDbPath();
-  const exists = await canAccess(path, constants.F_OK);
-  const readable = exists && (await canAccess(path, constants.R_OK));
-  const section = { path, exists, readable };
-  if (!exists)
-    return result("session_store", section, "ok", "No payment sessions are recorded yet.");
-  if (!readable)
-    return result("session_store", section, "fail", `The session store ${path} is not readable.`);
-  return result("session_store", section, "ok", "The session store is readable.");
+  const unreachable = await accessError(path, constants.F_OK);
+  if (unreachable?.code === "ENOENT")
+    return result(
+      "session_store",
+      { path, exists: false, readable: false },
+      "ok",
+      "No payment sessions are recorded yet.",
+    );
+  if (unreachable)
+    return result(
+      "session_store",
+      { path, exists: null, readable: false },
+      "fail",
+      `The session store ${path} cannot be reached (${unreachable.code ?? "unknown error"}).`,
+    );
+  const readable = (await accessError(path, constants.R_OK)) === undefined;
+  return readable
+    ? result(
+        "session_store",
+        { path, exists: true, readable },
+        "ok",
+        "The session store is readable.",
+      )
+    : result(
+        "session_store",
+        { path, exists: true, readable },
+        "fail",
+        `The session store ${path} is not readable.`,
+      );
 }
 
-function canAccess(path: string, mode: number) {
+/** The error `access` reports for `path`, or `undefined` when it allows `mode`. */
+function accessError(path: string, mode: number) {
   return access(path, mode).then(
-    () => true,
-    () => false,
+    () => undefined,
+    (error: NodeJS.ErrnoException) => error,
   );
 }
 
+/** Fails for an override that breaks other commands: an unknown network or a non-http(s) app URL. */
 function envCheck(): Check {
-  if (process.env.TEMPO_WALLET_NETWORK !== undefined && envNetwork() === null)
-    return {
-      name: "env",
-      status: "fail",
-      message:
-        "TEMPO_WALLET_NETWORK names no supported network, so other commands fail. Set it to mainnet or testnet, or unset it.",
-    };
+  const authUrl = process.env.TEMPO_AUTH_URL;
+  const problems = [
+    ...(process.env.TEMPO_WALLET_NETWORK !== undefined && envNetwork() === null
+      ? [
+          "TEMPO_WALLET_NETWORK names no supported network, so other commands fail. Set it to mainnet or testnet, or unset it.",
+        ]
+      : []),
+    ...(authUrl !== undefined && !isHttpUrl(authUrl)
+      ? [
+          "TEMPO_AUTH_URL is not an http(s) URL, so login and other wallet app requests fail. Set it to the wallet app URL, or unset it.",
+        ]
+      : []),
+  ];
+  if (problems.length) return { name: "env", status: "fail", message: problems.join(" ") };
   const set = Object.keys(envOverrides).filter((name) => process.env[name] !== undefined);
   return {
     name: "env",
     status: "ok",
     message: set.length ? `Overrides set: ${set.join(", ")}.` : "No overrides are set.",
   };
+}
+
+function isHttpUrl(value: string) {
+  return URL.canParse(value) && /^https?:$/.test(new URL(value).protocol);
 }
 
 function login(network: Network) {

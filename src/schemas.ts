@@ -400,7 +400,11 @@ export const doctorOutput = z.object({
   }),
   auth: z.object({ url: z.string().describe("Wallet app URL, redacted like rpc.url") }),
   sqlite3: z.object({ found: z.boolean(), version: z.string().nullable() }),
-  session_store: z.object({ path: z.string(), exists: z.boolean(), readable: z.boolean() }),
+  session_store: z.object({
+    path: z.string(),
+    exists: z.boolean().nullable().describe("null when the path cannot be checked"),
+    readable: z.boolean(),
+  }),
   env: z
     .array(z.object({ name: z.string(), value: z.string().nullable() }))
     .describe("Overrides that are set; value is null for a secret and redacted for a URL"),
