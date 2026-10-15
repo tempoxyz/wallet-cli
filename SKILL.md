@@ -13,9 +13,9 @@ license: MIT OR Apache-2.0
 
 ## Networks
 
-- Tempo Mainnet (chain ID `4217`) is live and is the default. Commands use `--network`, then `TEMPO_WALLET_NETWORK`, then the logged-in wallet's network, then mainnet. A `--private-key` or `TEMPO_PRIVATE_KEY` payer skips the logged-in wallet's network. `tempo wallet whoami` without `--mach` or `--credits` reports `chain_id` and `network`; a paid `--dry-run` quote reports only `chain_id`, and other `tempo request` output reports neither.
+- Tempo Mainnet (chain ID `4217`) is the default. `--network` overrides it, then `TEMPO_WALLET_NETWORK`, then the logged-in wallet's network.
 - Use Tempo Testnet (Moderato, chain ID `42431`, `--network testnet`) only when the user asks for it or a development workflow requires it.
-- `pathUSD` is a live mainnet TIP-20 at `0x20c0000000000000000000000000000000000000`. The faucet-issued testnet token at the same address is a test token, not the production asset.
+- `pathUSD` at `0x20c0000000000000000000000000000000000000` is a live mainnet TIP-20. The faucet-issued testnet token at the same address is a test token.
 
 ## Setup
 
@@ -88,15 +88,16 @@ tempo request -t --dry-run -X POST --json '{"input":"..."}' <SERVICE_URL>/<ENDPO
 tempo request -t --dry-run -X GET <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
-Present the dry-run price and any session `deposit`, and wait for explicit approval before making a paid request, unless the user already supplied a budget that covers it. Pass that budget as `--max-spend` on the dry run too, since the cap changes the deposit a session locks. Then run the matching request without `--dry-run`, with `--max-spend` set to the approved amount or budget, `--network` to the quote's network (`mainnet` for `chain_id` `4217`, `testnet` for `42431`), `--payment-intent` to the quote's `intent`, and `--payment-token` to the quote's `token` address (keep `--mach` instead when the quote used it). These refuse a fresh challenge for more, on another chain, in another token, or with another intent; they do not pin the recipient.
+Show the user the quoted `amount` and any session `deposit`, and wait for explicit approval before paying, unless their budget already covers it. Pass a budget as `--max-spend` on the dry run too, since it changes the deposit a session locks. Then run the same request without `--dry-run`, pinned to what was approved:
 
 ```bash
 tempo request -t -X POST --max-spend <APPROVED_AMOUNT> --network <QUOTED_NETWORK> --payment-intent <QUOTED_INTENT> --payment-token <QUOTED_TOKEN> --json '{"input":"..."}' <SERVICE_URL>/<ENDPOINT_PATH>
 tempo request -t -X GET --max-spend <APPROVED_AMOUNT> --network <QUOTED_NETWORK> --payment-intent <QUOTED_INTENT> --payment-token <QUOTED_TOKEN> <SERVICE_URL>/<ENDPOINT_PATH>
 ```
 
-- `recurring: true` marks a subscription. The quote does not show its renewal terms and `--max-spend` refuses it, so do not run it; report it to the user, and quote again with `--payment-intent charge` or `session` to look for a one-time or session offer.
-- `payment_required: false` means no payment is needed, but the dry run already sent the request (`probe_sent`); rerun it without `--dry-run` only when repeating the request is safe.
+- `<QUOTED_NETWORK>` is `mainnet` for `chain_id` `4217` or `testnet` for `42431`; `<QUOTED_INTENT>` and `<QUOTED_TOKEN>` are the quote's `intent` and `token`. Keep `--mach` instead of `--payment-token` when the quote used it. The request then refuses a challenge for more, or on another chain, token, or intent. It does not pin the recipient.
+- `recurring: true` is a subscription. The quote does not show its renewal terms and `--max-spend` refuses it, so do not run it: tell the user, and quote again with `--payment-intent charge` or `session`.
+- `payment_required: false` means the dry run already sent the request; rerun it without `--dry-run` only when repeating the request is safe.
 
 ### MACH Funding and Payments
 

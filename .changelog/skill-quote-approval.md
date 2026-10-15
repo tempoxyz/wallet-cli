@@ -2,4 +2,4 @@
 tempo-request: patch
 ---
 
-`SKILL.md` now has agents quote a request with `tempo request -t --dry-run`, present the price, and wait for explicit approval before running the paid request with the approved `--max-spend` and the quote's `--network`, `--payment-intent`, and `--payment-token`, unless the user already gave a budget that covers it. A subscription quote (`recurring: true`) is reported instead of run, since the quote does not show its renewal terms, and a dry run of an endpoint that needs no payment has already sent the request. The skill also covers Tempo Mainnet, Moderato testnet, and how commands select the network, and declares its `MIT OR Apache-2.0` license.
+`SKILL.md` has agents quote paid requests with `--dry-run` and wait for explicit approval, then pin the paid request to the approved amount and the quote's network, payment intent, and token. It also documents the default network and declares the skill's `MIT OR Apache-2.0` license.
