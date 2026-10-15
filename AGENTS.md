@@ -2,7 +2,7 @@
 
 ## Layout
 
-- Each `tempo wallet` command, or group such as `keys`, is one module, `src/commands/<command>.ts`. It holds the handler and default-exports the incur command with its `run` wiring, the MCP `annotations` of each tool it serves, and its `--describe` entry.
+- Each `tempo wallet` command, or group such as `keys`, is one module, `src/commands/<command>.ts`. It holds the handler and default-exports the incur command with its `run` wiring, the MCP `annotations` of each tool it serves, and optionally its `--describe` entry. A command without one, like `completions`, is left out of `--describe`.
 - Keep annotations on that export, not on the incur command's `mcp`: incur also reads those into `--llms-full` and synced skills.
 - Its args, options, and output schemas are in `src/schemas/<command>.ts`, and the globals and shared shapes in `src/schemas/shared.ts`. Import the module you need; there is no barrel.
 - `src/cli.ts` imports each command and lists it once, in the order shell completions offer it. A new command adds one import and one list entry.

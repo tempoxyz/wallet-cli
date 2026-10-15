@@ -16,7 +16,7 @@ export type WalletCommand = {
    * into confirmation hints in `--llms-full` and synced skills.
    */
   annotations?: Record<string, Mcp.ToolAnnotations> | undefined;
-  /** The `--describe` entry; a command without one is left out. */
+  /** The `--describe` entry. Optional: a command without one, like `completions`, is left out. */
   describe?: Describe | undefined;
 };
 
