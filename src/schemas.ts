@@ -269,6 +269,27 @@ export const transferDryRunOutput = z.object({
   token: z.string(),
   to: z.string(),
   from: z.string(),
+  fee_token: z
+    .string()
+    .nullable()
+    .describe(
+      "--fee-token, else the account's default fee token, else the transferred token; null when the default cannot be read",
+    ),
+  fee_estimate: z
+    .string()
+    .nullable()
+    .describe("Estimated network fee in fee_token units; null when the estimate failed"),
+  balance: z.string().nullable().describe("Sender's token balance; null when the lookup failed"),
+  fee_token_balance: z
+    .string()
+    .nullable()
+    .describe("Sender's fee_token balance; null when the lookup failed or fee_token is null"),
+  sufficient_balance: z
+    .boolean()
+    .nullable()
+    .describe(
+      "Whether balance covers amount and fee_token_balance covers fee_estimate (both, when they are the same token); false on any known shortfall, else null when unknown",
+    ),
   ...nextOutputShape,
 });
 
@@ -515,7 +536,11 @@ export const transferArgs = z.object({
 export const transferOptions = z.object({
   ...globalOptionShape,
   "fee-token": z.string().optional().describe("Pay fees in a different token (address or symbol)"),
-  "dry-run": z.boolean().optional().describe("Show plan + fee estimate, don't send"),
+  "dry-run": z.boolean().optional().describe("Show plan, fee estimate, and balance; don't send"),
+  yes: z
+    .boolean()
+    .optional()
+    .describe("Send without the confirmation prompt; required for agent runs"),
   mach: z.boolean().optional().describe("Pay with on-chain MACH"),
   credits: z.boolean().optional().describe("Spend existing MPP Credits (deprecated)"),
   "max-spend": z

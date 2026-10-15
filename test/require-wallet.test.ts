@@ -559,6 +559,25 @@ describe("wallet CLI login and access key checks", () => {
     },
   );
 
+  // Piped input is not a person answering, even when output goes to a terminal.
+  it("revoke with piped stdin ignores the input and returns E_USAGE with a --yes cta", async () => {
+    const home = await useTempHome();
+    await writeWalletState(walletState());
+    requests.length = 0;
+
+    const result = await wallet(
+      ["revoke", testAccessKey, "--no-browser"],
+      { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
+      { interactive: true, pipedStdin: true, input: "y\n" },
+    );
+
+    const command = `tempo wallet revoke ${testAccessKey.toLowerCase()} --yes --no-browser --network mainnet`;
+    expect(result.code).toBe(2);
+    expect(result.stderr).not.toContain("[y/N]");
+    expect(result.stdout).toContain(`then run '${command}'.`);
+    expect(requests).toEqual([]);
+  });
+
   it.each([
     { command: "refresh", argv: ["refresh", "--no-browser"] },
     { command: "keys update", argv: ["keys", "update", "--limit", "1", "--no-browser"] },
@@ -580,17 +599,25 @@ describe("wallet CLI login and access key checks", () => {
   });
 });
 
-const interactiveStdout = join(import.meta.dirname, "fixtures", "interactive-stdout.mjs");
+const fixtures = join(import.meta.dirname, "fixtures");
 
 /**
- * Runs the wallet CLI as an agent (`--format json`), or with `interactive` as a terminal user;
- * `input` is written to its stdin.
+ * Runs the wallet CLI as an agent (`--format json`), or with `interactive` as a terminal user,
+ * whose stdin is a terminal too unless `pipedStdin`; `input` is written to its stdin.
  */
 function wallet(
   args: string[],
   env: Record<string, string>,
-  { interactive = false, input }: { interactive?: boolean; input?: string } = {},
+  {
+    interactive = false,
+    pipedStdin = false,
+    input,
+  }: { interactive?: boolean; pipedStdin?: boolean; input?: string } = {},
 ) {
+  const fixture = join(
+    fixtures,
+    pipedStdin ? "interactive-stdout.mjs" : "interactive-terminal.mjs",
+  );
   const childEnv: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1", ...env };
   for (const name of ["TEMPO_PRIVATE_KEY", "TEMPO_WALLET_NETWORK"])
     if (!(name in env)) delete childEnv[name];
@@ -598,7 +625,7 @@ function wallet(
     const child = execFile(
       process.execPath,
       interactive
-        ? ["--import", interactiveStdout, cliBundle("wallet"), ...args]
+        ? ["--import", fixture, cliBundle("wallet"), ...args]
         : [cliBundle("wallet"), ...args, "--format", "json"],
       { env: childEnv, timeout: 10_000 },
       (error, stdout, stderr) => {
