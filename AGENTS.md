@@ -7,6 +7,7 @@
 - Its args, options, and output schemas are in `src/schemas/<command>.ts`, and the globals and shared shapes in `src/schemas/shared.ts`. Import the module you need; there is no barrel.
 - `src/cli.ts` imports each command and lists it once. `--describe` follows that list, and shell completions offer the mounted commands in its order, then incur's builtin `mcp` and `skills`. A new command adds one import and one list entry.
 - `src/cli/` holds the plumbing: argv preprocessing, the MCP server, the `--describe` builders, incur's builtin `mcp` and `skills`, and the completion scripts.
+- Workarounds for upstream bugs live in `src/cli/incur-compat.ts` (incur, including `patches/`) and `src/provider/accounts-compat.ts` (accounts SDK), each with the upstream fix that makes it removable.
 - `tempo request` is `src/request-cli.ts` and `src/commands/request.ts`.
 
 ## Friction logging
