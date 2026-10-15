@@ -400,10 +400,11 @@ const nonDestructive = { readOnlyHint: false, destructiveHint: false };
 const destructive = { readOnlyHint: false, destructiveHint: true };
 
 /**
- * MCP tool annotations by tool name, so clients can tell reads from spends. Refreshing a local
- * cache (the service directory, discovered sessions) is a read. Moving funds, changing or
- * revoking a key, closing a session, and deleting the stored wallet are destructive.
- * `openWorldHint` marks tools that reach the chain RPC, the wallet app, or another server.
+ * MCP tool annotations by tool name, so clients can tell reads from spends. Refreshing the
+ * service directory cache is a read; storing discovered sessions is an additive change. Moving
+ * funds, changing or revoking a key, closing a session, and deleting stored sessions or the
+ * stored wallet are destructive. `openWorldHint` marks tools that reach the chain RPC, the wallet
+ * app, or another server.
  */
 const mcpToolHints: Record<string, Mcp.ToolAnnotations> = {
   completions: { ...readOnly, openWorldHint: false },
@@ -420,8 +421,10 @@ const mcpToolHints: Record<string, Mcp.ToolAnnotations> = {
   revoke: { ...destructive, idempotentHint: true, openWorldHint: true },
   services: { ...readOnly, openWorldHint: true },
   sessions_close: { ...destructive, idempotentHint: false, openWorldHint: true },
-  sessions_list: { ...readOnly, openWorldHint: true },
-  sessions_sync: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
+  // With `all` or `orphaned`, stores channels discovered on-chain that were not stored yet.
+  sessions_list: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
+  // Deletes stored sessions whose channel the chain shows finalized or does not hold.
+  sessions_sync: { ...destructive, idempotentHint: true, openWorldHint: true },
   swap: { ...destructive, idempotentHint: false, openWorldHint: true },
   transfer: { ...destructive, idempotentHint: false, openWorldHint: true },
   whoami: { ...readOnly, openWorldHint: true },
