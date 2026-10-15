@@ -79,7 +79,10 @@ const options = z.object({
     .optional()
     .describe("Treat response as SSE and output each event as NDJSON"),
   bearer: z.string().optional().describe("Authorization bearer token"),
-  "write-meta": z.string().optional().describe("Write response metadata JSON to file"),
+  "write-meta": z
+    .string()
+    .optional()
+    .describe("Write response metadata JSON, with any payment receipt, to file"),
   proxy: z.string().optional().describe("Use an HTTP/HTTPS proxy"),
   noProxy: z.boolean().optional().describe("Disable all proxy use"),
   "max-redirs": z.coerce.number().optional().describe("Maximum redirects when -L is used"),
@@ -146,7 +149,8 @@ const cli = Cli.create("tempo request", {
   ],
   async run({ args, error, formatExplicit, globals, options }) {
     try {
-      // Structured output (-j, --format) keeps stderr parseable; --dry-run JSON reports the signer.
+      // Structured output (-j, --format) keeps stderr parseable; --dry-run JSON reports the signer,
+      // and --write-meta the signer and payment receipt.
       await executeRequest(
         { ...toRequestOptions(args.url, options), network: globals.network },
         formatExplicit ? { stderr: { write: () => true } } : {},
@@ -495,7 +499,7 @@ function describeRequestCli() {
         name: "write_meta",
         long: "--write-meta",
         value_name: "FILE",
-        help: "Write response metadata JSON to file",
+        help: "Write response metadata JSON, with any payment receipt, to file",
       },
       { name: "proxy", long: "--proxy", value_name: "URL", help: "Use an HTTP/HTTPS proxy" },
       { name: "no_proxy", long: "--no-proxy", help: "Disable all proxy use" },
