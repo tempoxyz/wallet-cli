@@ -58,3 +58,23 @@ export const nextOutputShape = {
     })
     .optional(),
 };
+
+/** A transaction's state on chain, as `tx status` reads it. */
+export const txStateSchema = z.enum(["success", "reverted", "pending", "not_found"]);
+
+/** `--idempotency-key` on the commands that send a transaction. */
+export const idempotencyKeyOption = z
+  .string()
+  .optional()
+  .describe(
+    "Send at most once per key for this wallet and network; a retry with the same key returns the recorded result instead of sending again",
+  );
+
+/** Fields a send replayed from its idempotency key adds to the result it recorded. */
+export const replayOutputShape = {
+  status: txStateSchema.describe("The recorded transaction's state on chain now"),
+  idempotent_replay: z
+    .literal(true)
+    .describe("Nothing was sent: this is the result recorded for the idempotency key"),
+  ...nextOutputShape,
+};

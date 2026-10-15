@@ -19,6 +19,7 @@ const topLevel = [
   "revoke",
   "transfer",
   "swap",
+  "tx",
   "fund",
   "sessions",
   "services",
@@ -111,6 +112,7 @@ describe("tempo wallet completions", () => {
         previous: false,
         expected: ["list", "close", "sync"],
       },
+      { words: ["tempo", "wallet", "tx", ""], previous: false, expected: ["status"] },
       { words: ["tempo", "wallet", "-n", "testnet", "fu"], previous: false, expected: ["fund"] },
       { words: ["tempo", "node", ""], previous: false, expected: [] },
       { words: ["tempo", "wallet", "sw"], previous: true, expected: ["swap"] },
@@ -164,7 +166,8 @@ async function wallet(args: string[]) {
 }
 
 async function shell(name: string, script: string, bin: string) {
-  const { stdout } = await execFileAsync(name, ["-c", script], {
+  // `zsh -f` skips ~/.zshenv, which can put an installed `tempo` ahead of the stub on PATH.
+  const { stdout } = await execFileAsync(name, [...(name === "zsh" ? ["-f"] : []), "-c", script], {
     env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` },
   });
   return stdout.split("\n").filter(Boolean);

@@ -10,7 +10,7 @@ import {
   toHex,
   zeroAddress,
 } from "viem";
-import { Cli, Errors } from "incur";
+import { Cli, Errors, type z } from "incur";
 import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 import { Abis, Actions } from "viem/tempo";
@@ -18,7 +18,12 @@ import { Abis, Actions } from "viem/tempo";
 import { destructive, type WalletCommand } from "../cli/command.js";
 import { flag, option, positional } from "../cli/describe.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
-import { transferArgs, transferOptions, transferOutput } from "../schemas/transfer.js";
+import {
+  transferArgs,
+  transferOptions,
+  transferOutput,
+  type transferSuccessOutput,
+} from "../schemas/transfer.js";
 import {
   commandError,
   networkError,
@@ -56,6 +61,15 @@ import {
   resolvePaymentNetwork,
   resolveMaxSpend,
 } from "./request.js";
+import {
+  idempotencyKey,
+  idempotencyKeyArg,
+  recordedSend,
+  submitTransaction,
+  txStatus,
+  type TxSend,
+  type TxState,
+} from "./tx.js";
 
 export default {
   command: Cli.create("transfer", {
@@ -77,6 +91,8 @@ export default {
       const { args, globals, options } = context;
       const flags = { ...options, network: globals.network };
       if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
+      if ((options.credits || options.mach) && options["idempotency-key"] !== undefined)
+        throw usageError("--idempotency-key applies only to token transfers");
       if (options.credits) {
         // MCP puts the shared `to` field in args; a CLI positional recipient needs amount and token.
         if (args.amount !== undefined || args.token !== undefined)
@@ -99,7 +115,8 @@ export default {
             options,
             interactive: canPrompt(context.agent),
           });
-          // A refusal that needs a login on the selected network is returned, keeping its `cta`.
+          // A refusal that needs a login on the selected network, or an unknown outcome, is
+          // returned, keeping its `cta`.
           return "code" in result ? context.error(result) : result;
         },
         {
@@ -130,6 +147,7 @@ export default {
       ),
       flag("dry_run", "--dry-run", "Show plan, fee estimate, and balance; don't send"),
       flag("yes", "--yes", "Send without the confirmation prompt; required for agent runs"),
+      idempotencyKeyArg,
       flag("mach", "--mach", "Pay with on-chain MACH"),
       flag("credits", "--credits", "Spend existing MPP Credits (deprecated)"),
       option("max_spend", "--max-spend", "Maximum MACH spend in USD", { valueName: "AMOUNT" }),
@@ -200,6 +218,8 @@ type TransferDependencies = {
     from: string;
     network: Network;
   }) => Promise<string>;
+  /** Reads a transaction's state on chain, for a send replayed from its idempotency key. */
+  getTxStatus: (txHash: string) => Promise<TxState>;
 };
 
 /**
@@ -207,6 +227,7 @@ type TransferDependencies = {
  * without `--yes` asks on the terminal. Any other run without `--yes` sends nothing; its dry run
  * reports the fee estimate and balance and continues with `--yes`. A reviewed fee token (the
  * dry run's `_next`, or the prompt) is pinned in the transaction, so the fee is charged in it.
+ * With `--idempotency-key`, a transfer is sent at most once per key; see `recordedSend`.
  */
 export async function transferTokens(
   wallet: Wallet,
@@ -216,6 +237,7 @@ export async function transferTokens(
       address?: string | undefined;
       "dry-run"?: boolean | undefined;
       "fee-token"?: string | undefined;
+      "idempotency-key"?: string | undefined;
       yes?: boolean | undefined;
     };
     /** Whether a person answers at the terminal (stdin and stdout); only then is it prompted. */
@@ -238,6 +260,7 @@ export async function transferTokens(
   const from = wallet.account.address.toLowerCase() as `0x${string}`;
   if (options.options.address !== undefined && options.options.address.toLowerCase() !== from)
     throw usageError("--address must match the logged-in wallet");
+  const key = idempotencyKey(options.options["idempotency-key"]);
 
   const { network } = wallet;
   const requestedToken = resolveTokenAddress(args.token, network);
@@ -309,12 +332,36 @@ export async function transferTokens(
           // The reviewed fee token is pinned, so the send cannot charge another one.
           ...(paidFeeToken ? ["--fee-token", paidFeeToken] : []),
           ...(options.options.address ? ["--address", options.options.address] : []),
+          ...(key !== undefined ? ["--idempotency-key", key] : []),
           "--yes",
         ],
         { network },
       ),
     };
   }
+  const tx: TxSend = {
+    label: "Transfer",
+    network,
+    idempotency:
+      key === undefined
+        ? undefined
+        : {
+            key,
+            wallet: from,
+            request: {
+              command: "transfer",
+              amount: amount.toString(),
+              token: token.address,
+              to,
+              fee_token: feeToken ?? null,
+            },
+            getTxStatus: runtime.getTxStatus,
+          },
+  };
+  // A replay sends nothing, so it needs no confirmation.
+  const recorded = await recordedSend<z.infer<typeof transferSuccessOutput>>(tx);
+  if (recorded) return recorded;
+
   let sendFeeToken = feeToken;
   if (!options.options.yes) {
     if (!options.interactive)
@@ -342,17 +389,11 @@ export async function transferTokens(
   }
 
   const call = Actions.token.transfer.call({ amount, token: token.address, to });
-  const txHash = await runtime.submit({
-    call,
-    feeToken: sendFeeToken,
-    from: wallet.account.address,
-    network,
-  });
-  return {
-    status: "success" as const,
-    tx_hash: txHash,
-    ...outputBase,
-  };
+  return submitTransaction(
+    tx,
+    () => runtime.submit({ call, feeToken: sendFeeToken, from: wallet.account.address, network }),
+    (txHash) => ({ status: "success" as const, tx_hash: txHash, ...outputBase }),
+  );
 }
 
 /**
@@ -443,6 +484,9 @@ function defaultDependencies(network: Network): TransferDependencies {
           "Transfer submitted but receipt did not include a transaction hash; check the wallet balance before retrying.",
         );
       return txHash;
+    },
+    async getTxStatus(txHash) {
+      return (await txStatus(txHash, network)).status;
     },
   };
 }

@@ -1,6 +1,12 @@
 import { z } from "incur";
 
-import { globalOptionShape, networkOutputShape, nextOutputShape } from "./shared.js";
+import {
+  globalOptionShape,
+  idempotencyKeyOption,
+  networkOutputShape,
+  nextOutputShape,
+  replayOutputShape,
+} from "./shared.js";
 
 export const transferArgs = z.object({
   amount: z.string().optional().describe('Amount in human units ("1.00", "50")'),
@@ -16,6 +22,7 @@ export const transferOptions = z.object({
     .boolean()
     .optional()
     .describe("Send without the confirmation prompt; required for agent runs"),
+  "idempotency-key": idempotencyKeyOption,
   mach: z.boolean().optional().describe("Pay with on-chain MACH"),
   credits: z.boolean().optional().describe("Spend existing MPP Credits (deprecated)"),
   "max-spend": z
@@ -110,6 +117,7 @@ export const spendMachOutput = z.object({
 export const transferOutput = z.union([
   transferDryRunOutput,
   transferSuccessOutput,
+  transferSuccessOutput.extend(replayOutputShape),
   spendMachOutput,
   spendCreditsOutput,
 ]);

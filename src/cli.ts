@@ -20,6 +20,7 @@ import services from "./commands/services.js";
 import sessions, { closeCommandFailed } from "./commands/sessions.js";
 import swap from "./commands/swap.js";
 import transfer from "./commands/transfer.js";
+import tx from "./commands/tx.js";
 import whoami from "./commands/whoami.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";
@@ -55,6 +56,7 @@ const commands: WalletCommand[] = [
   revoke,
   transfer,
   swap,
+  tx,
   fund,
   sessions,
   services,
