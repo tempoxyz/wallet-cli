@@ -10,11 +10,14 @@ import {
   toHex,
   zeroAddress,
 } from "viem";
-import { Errors } from "incur";
+import { Cli, Errors } from "incur";
 import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 import { Abis, Actions } from "viem/tempo";
 
+import { destructive, type WalletCommand } from "../cli/command.js";
+import { cliGlobals, globalAlias } from "../schemas/shared.js";
+import { transferArgs, transferOptions, transferOutput } from "../schemas/transfer.js";
 import {
   commandError,
   networkError,
@@ -32,8 +35,8 @@ import {
   type Network,
 } from "../shared/network.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
-import { confirm } from "../shared/process.js";
-import type { Wallet } from "../shared/require-wallet.js";
+import { canPrompt, confirm } from "../shared/process.js";
+import { withWallet, type Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata, tokenSymbol } from "../shared/tokens.js";
 import { escapeInvisible, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { version } from "../shared/constants.js";
@@ -52,6 +55,63 @@ import {
   resolvePaymentNetwork,
   resolveMaxSpend,
 } from "./request.js";
+
+export default {
+  command: Cli.create("transfer", {
+    description: "Transfer tokens to an address",
+    globals: cliGlobals,
+    args: transferArgs,
+    options: transferOptions,
+    alias: globalAlias,
+    output: transferOutput,
+    examples: [
+      {
+        args: { amount: "50", token: "0x20c0...b50", to: "0x70997...9C8" },
+        options: { "dry-run": true },
+      },
+      { args: { amount: "1.00", token: "USDC.e", to: "0x70997...9C8" }, options: { yes: true } },
+      { options: { mach: true, "max-spend": "5", "mpp-challenge": "<WWW_AUTHENTICATE>" } },
+    ],
+    async run(context) {
+      const { args, globals, options } = context;
+      const flags = { ...options, network: globals.network };
+      if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
+      if (options.credits) {
+        // MCP puts the shared `to` field in args; a CLI positional recipient needs amount and token.
+        if (args.amount !== undefined || args.token !== undefined)
+          throw usageError(
+            "Positional amount, token, and recipient arguments cannot be used with --credits; use --amount-cents and --to, or an MPP challenge",
+          );
+        // Credits are signed by the wallet app, not the local access key.
+        return transferCredits({ options: { ...flags, to: options.to ?? args.to } });
+      }
+      // A TEMPO_PRIVATE_KEY payer stands in for the logged-in wallet.
+      if (options.mach && process.env.TEMPO_PRIVATE_KEY) return transferMach({ options: flags });
+      // MACH pays with the stored access key; a token transfer without one, run interactively,
+      // is approved in the wallet app instead.
+      return withWallet(
+        async (_, wallet) => {
+          if (options.mach)
+            return transferMach({ options: { ...flags, network: wallet.network.name } });
+          const result = await transferTokens(wallet, {
+            args,
+            options,
+            interactive: canPrompt(context.agent),
+          });
+          // A refusal that needs a login on the selected network is returned, keeping its `cta`.
+          return "code" in result ? context.error(result) : result;
+        },
+        {
+          requireKey: options.mach ? "always" : "agent",
+          // That refusal also comes before the key check: a key there would not lift it.
+          refuse: (_, wallet) =>
+            options.mach || options["dry-run"] ? undefined : transferNetworkRefusal(wallet),
+        },
+      )(context);
+    },
+  }),
+  annotations: { transfer: { ...destructive, idempotentHint: false, openWorldHint: true } },
+} satisfies WalletCommand;
 
 // Dry-run lookups are advisory, so a stalled RPC must not hold up the review.
 const lookupTimeout = 3_000;

@@ -1,10 +1,14 @@
+import { Cli } from "incur";
 import { isAddress, type Address } from "viem";
 
+import { destructive, type WalletCommand } from "../cli/command.js";
+import { revokeArgs, revokeOptions, revokeOutput } from "../schemas/revoke.js";
+import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { networkFields, type Network } from "../shared/network.js";
 import { commandError, networkError, usageError, type CommandContext } from "../shared/errors.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
-import { requireWalletChain, type Wallet } from "../shared/require-wallet.js";
-import { confirm as confirmPrompt } from "../shared/process.js";
+import { requireWalletChain, withWallet, type Wallet } from "../shared/require-wallet.js";
+import { canPrompt, confirm as confirmPrompt } from "../shared/process.js";
 import { createProvider, settleWalletStore } from "../provider.js";
 import { saveWalletState, type WalletState } from "../wallet/store.js";
 import { accessKeyMatches } from "../wallet/access-key.js";
@@ -15,6 +19,28 @@ import {
   type OnChainKeyReader,
   type RevokeProvider,
 } from "../wallet/revocation.js";
+
+export default {
+  command: Cli.create("revoke", {
+    description: "Revoke an access key",
+    globals: cliGlobals,
+    args: revokeArgs,
+    options: revokeOptions,
+    alias: globalAlias,
+    output: revokeOutput,
+    // The wallet app signs the revocation, so the local access key need not be usable.
+    // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
+    run: withWallet(
+      (context, wallet) =>
+        revokeHandler(wallet, context.args, context.options, {
+          ...context,
+          agent: !canPrompt(context.agent),
+        }),
+      { requireKey: "never" },
+    ),
+  }),
+  annotations: { revoke: { ...destructive, idempotentHint: true, openWorldHint: true } },
+} satisfies WalletCommand;
 
 /**
  * Revokes an access key of the logged-in wallet on its network through the wallet app, after

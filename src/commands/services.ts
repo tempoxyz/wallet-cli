@@ -3,11 +3,35 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promis
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { Cli } from "incur";
 import { formatUnits } from "viem";
 
+import { readOnly, type WalletCommand } from "../cli/command.js";
+import { servicesArgs, servicesOptions, servicesOutput } from "../schemas/services.js";
+import { globalAlias } from "../schemas/shared.js";
 import { version } from "../shared/constants.js";
 import { httpError, networkError, usageError, walletError } from "../shared/errors.js";
 import { getArray, getRecord, sanitizeText, stringValue } from "../shared/utils.js";
+
+export default {
+  command: Cli.create("services", {
+    description: "Browse the MPP service directory",
+    args: servicesArgs,
+    options: servicesOptions,
+    alias: globalAlias,
+    output: servicesOutput,
+    async run({ args, options }) {
+      if (args.serviceId === "list" && !options.search)
+        return fetchServiceList({ refresh: options.refresh });
+      return fetchServices({
+        refresh: options.refresh,
+        search: options.search,
+        serviceId: args.serviceId === "list" ? undefined : args.serviceId,
+      });
+    },
+  }),
+  annotations: { services: { ...readOnly, openWorldHint: true } },
+} satisfies WalletCommand;
 
 type ServiceSummary = {
   id: string;

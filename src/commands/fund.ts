@@ -1,7 +1,11 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import { Cli } from "incur";
 import { erc20Abi, formatUnits, type Address } from "viem";
 import { ousd } from "viem/tokens";
 
+import { nonDestructive, type WalletCommand } from "../cli/command.js";
+import { fundOptions, fundOutput, fundStatusOptions } from "../schemas/fund.js";
+import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { commandError, networkError, usageError } from "../shared/errors.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
 import {
@@ -32,6 +36,55 @@ import {
   savePendingFund,
   type PendingFund,
 } from "../wallet/store.js";
+
+// Bare `tempo wallet fund` opens a funding flow; `fund status` waits for a pending one.
+export default {
+  command: Cli.create("fund", {
+    description: "Open add-funds flows in the wallet app",
+    globals: cliGlobals,
+    options: fundOptions,
+    alias: globalAlias,
+    output: fundOutput,
+    async run({ error, globals, options }) {
+      const result = await runFundingFlow({
+        action: fundAction({
+          credits: options.credits,
+          mach: options.mach,
+          crypto: options.crypto,
+          referralCode: options["referral-code"] ?? options.claim,
+        }),
+        address: options.address,
+        code: options["referral-code"] ?? options.claim,
+        noBrowser: options.browser === false,
+        noWait: options.wait === false,
+        amount: options.amount,
+        timeout: options.timeout,
+        network: globals.network,
+      });
+      return "code" in result ? error(result) : result;
+    },
+  }).command("status", {
+    description: "Wait for a pending funding's balance increase",
+    options: fundStatusOptions,
+    alias: globalAlias,
+    output: fundOutput,
+    async run({ error, globals, options }) {
+      const result = await fundStatusHandler({
+        network: globals.network,
+        interval: options.interval,
+        maxAttempts: options["max-attempts"],
+      });
+      return "code" in result ? error(result) : result;
+    },
+  }),
+  annotations: {
+    // Opens a wallet-app checkout and saves it for `fund status`; any payment happens in the
+    // wallet app, not in this command.
+    fund: { ...nonDestructive, idempotentHint: false, openWorldHint: true },
+    // Reads balances and clears the pending funding once it arrives or expires; reruns add nothing.
+    fund_status: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
+  },
+} satisfies WalletCommand;
 
 export type FundAction = "fund" | "mach" | "crypto" | "credits" | "claim";
 

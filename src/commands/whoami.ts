@@ -1,5 +1,9 @@
+import { Cli } from "incur";
 import { formatUnits, isAddress } from "viem";
 
+import { readOnly, type WalletCommand } from "../cli/command.js";
+import { cliGlobals, globalAlias } from "../schemas/shared.js";
+import { whoamiOptions, whoamiOutput } from "../schemas/whoami.js";
 import {
   appUrl,
   networkFields,
@@ -39,6 +43,20 @@ import {
 } from "../wallet/key-output.js";
 import { queryMachBalance } from "../shared/mach.js";
 import { queryCreditBalance, warnCreditsDeprecated } from "./credits.js";
+
+export default {
+  command: Cli.create("whoami", {
+    description: "Show who you are: wallet, balances, keys",
+    globals: cliGlobals,
+    options: whoamiOptions,
+    alias: globalAlias,
+    output: whoamiOutput,
+    async run({ globals, options }) {
+      return whoamiHandler({ ...options, network: globals.network });
+    },
+  }),
+  annotations: { whoami: { ...readOnly, openWorldHint: true } },
+} satisfies WalletCommand;
 
 /** Whoami output when the active wallet already has a usable access key on `network`. */
 export async function cachedLoginOutput(state: WalletState, network: Network) {

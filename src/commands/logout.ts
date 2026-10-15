@@ -1,6 +1,10 @@
 import { access } from "node:fs/promises";
+import { Cli } from "incur";
 import type { Address } from "viem";
 
+import { destructive, type WalletCommand } from "../cli/command.js";
+import { logoutOptions, logoutOutput } from "../schemas/logout.js";
+import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import {
   explicitNetwork,
   networkFields,
@@ -18,7 +22,7 @@ import {
   type WalletErrorCode,
 } from "../shared/errors.js";
 import { continuationCommand, nextStep, shellQuote } from "../shared/next.js";
-import { channelsDbPath, confirm as confirmPrompt } from "../shared/process.js";
+import { canPrompt, channelsDbPath, confirm as confirmPrompt } from "../shared/process.js";
 import { createProvider, settleWalletStore } from "../provider.js";
 import {
   clearPendingFund,
@@ -38,6 +42,27 @@ import {
   type RevokeProvider,
 } from "../wallet/revocation.js";
 import { fundedSessions } from "./sessions.js";
+
+export default {
+  command: Cli.create("logout", {
+    description: "Log out of every network, or of one with --network",
+    globals: cliGlobals,
+    options: logoutOptions,
+    alias: globalAlias,
+    output: logoutOutput,
+    async run(context) {
+      return logoutHandler(
+        { ...context.options, network: context.globals.network },
+        // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
+        { ...context, agent: !canPrompt(context.agent) },
+      );
+    },
+  }),
+  annotations: {
+    // With `revoke`, asks the wallet app to revoke the keys and reads them on-chain.
+    logout: { ...destructive, idempotentHint: true, openWorldHint: true },
+  },
+} satisfies WalletCommand;
 
 /**
  * Logs out of `network` (`--network` or `TEMPO_WALLET_NETWORK`), or of every network without one,

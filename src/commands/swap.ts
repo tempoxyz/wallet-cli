@@ -1,6 +1,10 @@
+import { Cli } from "incur";
 import { formatUnits, toHex } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
+import { destructive, type WalletCommand } from "../cli/command.js";
+import { cliGlobals, globalAlias } from "../schemas/shared.js";
+import { swapArgs, swapOptions, swapOutput } from "../schemas/swap.js";
 import {
   accessKeyLimitError,
   commandError,
@@ -17,10 +21,36 @@ import {
   type Network,
 } from "../shared/network.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
-import type { Wallet } from "../shared/require-wallet.js";
+import { withWallet, type Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { createProvider, requireSender } from "../provider.js";
+
+export default {
+  command: Cli.create("swap", {
+    description: "Swap TIP-20 tokens on the Tempo Stablecoin DEX",
+    globals: cliGlobals,
+    args: swapArgs,
+    options: swapOptions,
+    alias: globalAlias,
+    output: swapOutput,
+    examples: [
+      {
+        args: { amount: "10", tokenIn: "USDC.e", tokenOut: "pathUSD" },
+        options: { "dry-run": true },
+      },
+    ],
+    // A refusal that needs a login on the selected network is returned, keeping its `cta`.
+    run: withWallet(
+      async ({ args, error, options }, wallet) => {
+        const result = await swapTokens(wallet, { args, options });
+        return "code" in result ? error(result) : result;
+      },
+      { requireKey: "agent" },
+    ),
+  }),
+  annotations: { swap: { ...destructive, idempotentHint: false, openWorldHint: true } },
+} satisfies WalletCommand;
 
 const slippageScale = 10_000n;
 

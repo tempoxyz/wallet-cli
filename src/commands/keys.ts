@@ -1,10 +1,19 @@
 import type { Provider as CoreProvider } from "accounts";
+import { Cli } from "incur";
 import { formatUnits, isAddress, parseUnits, toHex, type Address } from "viem";
 
+import { destructive, readOnly, type WalletCommand } from "../cli/command.js";
+import {
+  keysOutput,
+  updateAccessKeyArgs,
+  updateAccessKeyOptions,
+  updateAccessKeyOutput,
+} from "../schemas/keys.js";
+import { cliGlobals, globalAlias, globalOptions } from "../schemas/shared.js";
 import { explicitNetwork, networkFields, tokenAddress, type Network } from "../shared/network.js";
 import { usageError } from "../shared/errors.js";
 import { nextStep } from "../shared/next.js";
-import { requireWalletChain, type Wallet } from "../shared/require-wallet.js";
+import { requireWalletChain, withWallet, type Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenMetadata } from "../shared/tokens.js";
 import { createProvider, settleWalletStore } from "../provider.js";
 import { loadWalletState, saveWalletState, type WalletState } from "../wallet/store.js";
@@ -18,6 +27,40 @@ import {
   tokenDetails,
   type TokenBalance,
 } from "../wallet/key-output.js";
+
+// Mounted groups share the root globals; declaring them types `globals` in their commands.
+export default {
+  command: Cli.create("keys", {
+    description: "Manage access keys",
+    globals: cliGlobals,
+  })
+    .command("list", {
+      description: "List keys and their spending limits",
+      options: globalOptions,
+      alias: globalAlias,
+      output: keysOutput,
+      async run({ globals }) {
+        return keysHandler(globals);
+      },
+    })
+    .command("update", {
+      description: "Update an access key spending limit",
+      args: updateAccessKeyArgs,
+      options: updateAccessKeyOptions,
+      alias: globalAlias,
+      output: updateAccessKeyOutput,
+      // The wallet app approves the new limit, so an expired or unusable key can still be limited.
+      run: withWallet(
+        ({ args, options }, wallet) =>
+          updateAccessKeyHandler(wallet, { ...options, accessKey: args.accessKey }),
+        { requireKey: "never" },
+      ),
+    }),
+  annotations: {
+    keys_list: { ...readOnly, openWorldHint: true },
+    keys_update: { ...destructive, idempotentHint: false, openWorldHint: true },
+  },
+} satisfies WalletCommand;
 
 /** Lists keys on every network unless `--network` or `TEMPO_WALLET_NETWORK` selects one. */
 export async function keysHandler(options: { network?: string | undefined } = {}) {

@@ -1,73 +1,27 @@
 #!/usr/bin/env node
 import { Cli, Completions, Mcp, type z } from "incur";
 
+import type { WalletCommand } from "./cli/command.js";
+import completions from "./commands/completions.js";
+import debug from "./commands/debug.js";
+import doctor from "./commands/doctor.js";
+import fund from "./commands/fund.js";
+import keys from "./commands/keys.js";
+import login from "./commands/login.js";
+import logout from "./commands/logout.js";
+import refresh from "./commands/refresh.js";
+import revoke from "./commands/revoke.js";
+import services, { staleListFetchedAt } from "./commands/services.js";
+import sessions, { closeCommandFailed } from "./commands/sessions.js";
+import swap from "./commands/swap.js";
+import transfer from "./commands/transfer.js";
+import whoami from "./commands/whoami.js";
+import { completionScript } from "./completions.js";
+import { servicesMcpOutput } from "./schemas/services.js";
+import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
-import { ctaErrors, usageError } from "./shared/errors.js";
-import { canPrompt } from "./shared/process.js";
-import { withWallet } from "./shared/require-wallet.js";
-import { completionsHandler } from "./commands/completions.js";
-import { keysHandler, updateAccessKeyHandler } from "./commands/keys.js";
-import { logoutHandler } from "./commands/logout.js";
-import { refreshHandler } from "./commands/refresh.js";
-import { revokeHandler } from "./commands/revoke.js";
-import { whoamiHandler } from "./commands/whoami.js";
-import { debugHandler, doctorHandler } from "./commands/doctor.js";
-import { loginHandler, loginStatusHandler } from "./commands/login.js";
-import { swapTokens } from "./commands/swap.js";
-import {
-  transferCredits,
-  transferMach,
-  transferNetworkRefusal,
-  transferTokens,
-} from "./commands/transfer.js";
-import { fundAction, fundStatusHandler, runFundingFlow } from "./commands/fund.js";
-import {
-  closeSessions,
-  dryRunCloseSessions,
-  listSessions,
-  syncSessions,
-} from "./commands/sessions.js";
-import { fetchServiceList, fetchServices, staleListFetchedAt } from "./commands/services.js";
-import { completionScript } from "./completions.js";
-import { completionsArgs, completionsOutput } from "./schemas/completions.js";
-import { doctorOutput } from "./schemas/doctor.js";
-import { fundOptions, fundOutput, fundStatusOptions } from "./schemas/fund.js";
-import {
-  keysOutput,
-  updateAccessKeyArgs,
-  updateAccessKeyOptions,
-  updateAccessKeyOutput,
-} from "./schemas/keys.js";
-import {
-  loginOptions,
-  loginOutput,
-  loginStatusOptions,
-  loginStatusOutput,
-} from "./schemas/login.js";
-import { logoutOptions, logoutOutput } from "./schemas/logout.js";
-import { refreshOptions, refreshOutput } from "./schemas/refresh.js";
-import { revokeArgs, revokeOptions, revokeOutput } from "./schemas/revoke.js";
-import {
-  servicesArgs,
-  servicesMcpOutput,
-  servicesOptions,
-  servicesOutput,
-} from "./schemas/services.js";
-import {
-  sessionsCloseArgs,
-  sessionsCloseCommandOutput,
-  sessionsCloseOptions,
-  sessionsListOptions,
-  sessionsListOutput,
-  sessionsSyncOptions,
-} from "./schemas/sessions.js";
-import { cliGlobalAlias, cliGlobals, globalAlias, globalOptions } from "./schemas/shared.js";
-import { swapArgs, swapOptions, swapOutput } from "./schemas/swap.js";
-import { transferArgs, transferOptions, transferOutput } from "./schemas/transfer.js";
-import { whoamiOptions, whoamiOutput } from "./schemas/whoami.js";
-
-let closeCommandFailed = false;
+import { ctaErrors } from "./shared/errors.js";
 
 const cli = Cli.create("tempo wallet", {
   version,
@@ -88,399 +42,30 @@ const cli = Cli.create("tempo wallet", {
 // Returns a thrown CtaError through `c.error`, so it keeps its cta; MCP registers it below.
 cli.use(ctaErrors);
 
-// Bare `tempo wallet login` starts a login; `login status` finishes a pending one.
-const login = Cli.create("login", {
-  description: "Sign up or log in to your Tempo wallet",
-  globals: cliGlobals,
-  options: loginOptions,
-  alias: globalAlias,
-  output: loginOutput,
-  async run({ agent, error, globals, options }) {
-    const result = await loginHandler({
-      ...options,
-      network: globals.network,
-      // Agents get the code and URL back at once; a terminal waits for approval.
-      wait: options.wait ?? !agent,
-    });
-    return "code" in result ? error(result) : result;
-  },
-});
+// Mounted in this order, which shell completions list them in.
+const commands: WalletCommand[] = [
+  login,
+  refresh,
+  logout,
+  whoami,
+  keys,
+  revoke,
+  transfer,
+  swap,
+  fund,
+  sessions,
+  services,
+  doctor,
+  debug,
+  completions,
+];
 
-login.command("status", {
-  description: "Wait for a pending login's approval and finish it",
-  options: loginStatusOptions,
-  alias: globalAlias,
-  output: loginStatusOutput,
-  async run({ error, globals, options }) {
-    const result = await loginStatusHandler({
-      network: globals.network,
-      interval: options.interval,
-      maxAttempts: options["max-attempts"],
-    });
-    return "code" in result ? error(result) : result;
-  },
-});
+for (const { command } of commands) cli.command(command);
 
-cli.command(login);
-
-cli.command("refresh", {
-  description: "Refresh your access key without logging out",
-  options: refreshOptions,
-  alias: globalAlias,
-  output: refreshOutput,
-  async run({ globals, options }) {
-    return refreshHandler({ ...options, network: globals.network });
-  },
-});
-
-cli.command("logout", {
-  description: "Log out of every network, or of one with --network",
-  options: logoutOptions,
-  alias: globalAlias,
-  output: logoutOutput,
-  async run(context) {
-    return logoutHandler(
-      { ...context.options, network: context.globals.network },
-      // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
-      { ...context, agent: !canPrompt(context.agent) },
-    );
-  },
-});
-
-cli.command("whoami", {
-  description: "Show who you are: wallet, balances, keys",
-  options: whoamiOptions,
-  alias: globalAlias,
-  output: whoamiOutput,
-  async run({ globals, options }) {
-    return whoamiHandler({ ...options, network: globals.network });
-  },
-});
-
-// Mounted groups share the root globals; declaring them types `globals` in their commands.
-const keys = Cli.create("keys", {
-  description: "Manage access keys",
-  globals: cliGlobals,
-});
-
-keys.command("list", {
-  description: "List keys and their spending limits",
-  options: globalOptions,
-  alias: globalAlias,
-  output: keysOutput,
-  async run({ globals }) {
-    return keysHandler(globals);
-  },
-});
-
-keys.command("update", {
-  description: "Update an access key spending limit",
-  args: updateAccessKeyArgs,
-  options: updateAccessKeyOptions,
-  alias: globalAlias,
-  output: updateAccessKeyOutput,
-  // The wallet app approves the new limit, so an expired or unusable key can still be limited.
-  run: withWallet(
-    ({ args, options }, wallet) =>
-      updateAccessKeyHandler(wallet, { ...options, accessKey: args.accessKey }),
-    { requireKey: "never" },
-  ),
-});
-
-cli.command(keys);
-
-cli.command("revoke", {
-  description: "Revoke an access key",
-  args: revokeArgs,
-  options: revokeOptions,
-  alias: globalAlias,
-  output: revokeOutput,
-  // The wallet app signs the revocation, so the local access key need not be usable.
-  // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
-  run: withWallet(
-    (context, wallet) =>
-      revokeHandler(wallet, context.args, context.options, {
-        ...context,
-        agent: !canPrompt(context.agent),
-      }),
-    { requireKey: "never" },
-  ),
-});
-
-cli.command("transfer", {
-  description: "Transfer tokens to an address",
-  args: transferArgs,
-  options: transferOptions,
-  alias: globalAlias,
-  output: transferOutput,
-  examples: [
-    {
-      args: { amount: "50", token: "0x20c0...b50", to: "0x70997...9C8" },
-      options: { "dry-run": true },
-    },
-    { args: { amount: "1.00", token: "USDC.e", to: "0x70997...9C8" }, options: { yes: true } },
-    { options: { mach: true, "max-spend": "5", "mpp-challenge": "<WWW_AUTHENTICATE>" } },
-  ],
-  async run(context) {
-    const { args, globals, options } = context;
-    const flags = { ...options, network: globals.network };
-    if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
-    if (options.credits) {
-      // MCP puts the shared `to` field in args; a CLI positional recipient needs amount and token.
-      if (args.amount !== undefined || args.token !== undefined)
-        throw usageError(
-          "Positional amount, token, and recipient arguments cannot be used with --credits; use --amount-cents and --to, or an MPP challenge",
-        );
-      // Credits are signed by the wallet app, not the local access key.
-      return transferCredits({ options: { ...flags, to: options.to ?? args.to } });
-    }
-    // A TEMPO_PRIVATE_KEY payer stands in for the logged-in wallet.
-    if (options.mach && process.env.TEMPO_PRIVATE_KEY) return transferMach({ options: flags });
-    // MACH pays with the stored access key; a token transfer without one, run interactively,
-    // is approved in the wallet app instead.
-    return withWallet(
-      async (_, wallet) => {
-        if (options.mach)
-          return transferMach({ options: { ...flags, network: wallet.network.name } });
-        const result = await transferTokens(wallet, {
-          args,
-          options,
-          interactive: canPrompt(context.agent),
-        });
-        // A refusal that needs a login on the selected network is returned, keeping its `cta`.
-        return "code" in result ? context.error(result) : result;
-      },
-      {
-        requireKey: options.mach ? "always" : "agent",
-        // That refusal also comes before the key check: a key there would not lift it.
-        refuse: (_, wallet) =>
-          options.mach || options["dry-run"] ? undefined : transferNetworkRefusal(wallet),
-      },
-    )(context);
-  },
-});
-
-cli.command("swap", {
-  description: "Swap TIP-20 tokens on the Tempo Stablecoin DEX",
-  args: swapArgs,
-  options: swapOptions,
-  alias: globalAlias,
-  output: swapOutput,
-  examples: [
-    {
-      args: { amount: "10", tokenIn: "USDC.e", tokenOut: "pathUSD" },
-      options: { "dry-run": true },
-    },
-  ],
-  // A refusal that needs a login on the selected network is returned, keeping its `cta`.
-  run: withWallet(
-    async ({ args, error, options }, wallet) => {
-      const result = await swapTokens(wallet, { args, options });
-      return "code" in result ? error(result) : result;
-    },
-    { requireKey: "agent" },
-  ),
-});
-
-// Bare `tempo wallet fund` opens a funding flow; `fund status` waits for a pending one.
-const fund = Cli.create("fund", {
-  description: "Open add-funds flows in the wallet app",
-  globals: cliGlobals,
-  options: fundOptions,
-  alias: globalAlias,
-  output: fundOutput,
-  async run({ error, globals, options }) {
-    const result = await runFundingFlow({
-      action: fundAction({
-        credits: options.credits,
-        mach: options.mach,
-        crypto: options.crypto,
-        referralCode: options["referral-code"] ?? options.claim,
-      }),
-      address: options.address,
-      code: options["referral-code"] ?? options.claim,
-      noBrowser: options.browser === false,
-      noWait: options.wait === false,
-      amount: options.amount,
-      timeout: options.timeout,
-      network: globals.network,
-    });
-    return "code" in result ? error(result) : result;
-  },
-});
-
-fund.command("status", {
-  description: "Wait for a pending funding's balance increase",
-  options: fundStatusOptions,
-  alias: globalAlias,
-  output: fundOutput,
-  async run({ error, globals, options }) {
-    const result = await fundStatusHandler({
-      network: globals.network,
-      interval: options.interval,
-      maxAttempts: options["max-attempts"],
-    });
-    return "code" in result ? error(result) : result;
-  },
-});
-
-cli.command(fund);
-
-// Bare `tempo wallet sessions` lists sessions.
-const sessions = Cli.create("sessions", {
-  description: "Manage payment sessions",
-  globals: cliGlobals,
-  options: sessionsListOptions,
-  alias: globalAlias,
-  output: sessionsListOutput,
-  async run({ globals, options }) {
-    return listSessions({ all: options.all, network: globals.network, orphaned: options.orphaned });
-  },
-});
-
-sessions.command("list", {
-  description: "List payment sessions",
-  options: sessionsListOptions,
-  alias: globalAlias,
-  output: sessionsListOutput,
-  async run({ globals, options }) {
-    return listSessions({ all: options.all, network: globals.network, orphaned: options.orphaned });
-  },
-});
-
-sessions.command("close", {
-  description: "Request a session close, then withdraw after the grace period with --finalize",
-  args: sessionsCloseArgs,
-  options: sessionsCloseOptions,
-  alias: globalAlias,
-  output: sessionsCloseCommandOutput,
-  // Close and withdraw transactions fall back to wallet app approval, so channel funds stay
-  // recoverable without a usable access key.
-  // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
-  run: withWallet(
-    async (context, wallet) => {
-      const { args, options } = context;
-      const close = {
-        all: options.all,
-        cooperative: options.cooperative,
-        finalize: options.finalize,
-        orphaned: options.orphaned,
-        target: args.url,
-        yes: options.yes,
-      };
-      if (options["dry-run"]) return dryRunCloseSessions(wallet, close);
-      const summary = await closeSessions(wallet, close, {
-        ...context,
-        agent: !canPrompt(context.agent),
-      });
-      closeCommandFailed = summary.failed > 0;
-      return summary;
-    },
-    { requireKey: "never" },
-  ),
-});
-
-sessions.command("sync", {
-  description: "Sync local sessions with on-chain state",
-  options: sessionsSyncOptions,
-  alias: globalAlias,
-  output: sessionsListOutput,
-  async run({ globals, options }) {
-    return syncSessions({ network: globals.network, origin: options.origin });
-  },
-});
-
-cli.command(sessions);
-
-cli.command("services", {
-  description: "Browse the MPP service directory",
-  args: servicesArgs,
-  options: servicesOptions,
-  alias: globalAlias,
-  output: servicesOutput,
-  async run({ args, options }) {
-    if (args.serviceId === "list" && !options.search)
-      return fetchServiceList({ refresh: options.refresh });
-    return fetchServices({
-      refresh: options.refresh,
-      search: options.search,
-      serviceId: args.serviceId === "list" ? undefined : args.serviceId,
-    });
-  },
-});
-
-cli.command("doctor", {
-  description: "Diagnose login, access key, RPC, sqlite3, and environment setup",
-  options: globalOptions,
-  alias: globalAlias,
-  output: doctorOutput,
-  async run({ globals }) {
-    return doctorHandler(globals);
-  },
-});
-
-cli.command("debug", {
-  description: "Deprecated: use 'doctor'",
-  options: globalOptions,
-  alias: globalAlias,
-  output: doctorOutput,
-  async run({ globals }) {
-    return debugHandler(globals);
-  },
-});
-
-cli.command("completions", {
-  description: "Generate shell completions script",
-  args: completionsArgs,
-  options: globalOptions,
-  alias: globalAlias,
-  output: completionsOutput,
-  run() {
-    return completionsHandler();
-  },
-});
-
-const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true };
-const nonDestructive = { readOnlyHint: false, destructiveHint: false };
-const destructive = { readOnlyHint: false, destructiveHint: true };
-
-/**
- * MCP tool annotations by tool name, so clients can tell reads from spends. Refreshing the
- * service directory cache is a read; storing discovered sessions is an additive change. Moving
- * funds, changing or revoking a key, closing a session, replacing or deleting stored sessions,
- * and replacing or deleting the stored wallet or its network are destructive. `openWorldHint`
- * marks tools that reach the chain RPC, the wallet app, or another server.
- */
-const mcpToolHints: Record<string, Mcp.ToolAnnotations> = {
-  completions: { ...readOnly, openWorldHint: false },
-  debug: { ...readOnly, openWorldHint: true },
-  doctor: { ...readOnly, openWorldHint: true },
-  // Opens a wallet-app checkout and saves it for `fund status`; any payment happens in the
-  // wallet app, not in this command.
-  fund: { ...nonDestructive, idempotentHint: false, openWorldHint: true },
-  // Reads balances and clears the pending funding once it arrives or expires; reruns add nothing.
-  fund_status: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
-  keys_list: { ...readOnly, openWorldHint: true },
-  keys_update: { ...destructive, idempotentHint: false, openWorldHint: true },
-  // Saves the requested network to the wallet store before approval, replaces any pending
-  // login, and once approved, stores the approved account in place of the current one.
-  login: { ...destructive, idempotentHint: false, openWorldHint: true },
-  login_status: { ...destructive, idempotentHint: true, openWorldHint: true },
-  // With `revoke`, asks the wallet app to revoke the keys and reads them on-chain.
-  logout: { ...destructive, idempotentHint: true, openWorldHint: true },
-  // Saves the requested network to the wallet store before approval, like `login`.
-  refresh: { ...destructive, idempotentHint: false, openWorldHint: true },
-  revoke: { ...destructive, idempotentHint: true, openWorldHint: true },
-  services: { ...readOnly, openWorldHint: true },
-  sessions_close: { ...destructive, idempotentHint: false, openWorldHint: true },
-  // With `all` or `orphaned`, stores channels discovered on-chain that were not stored yet.
-  sessions_list: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
-  // Deletes stored sessions whose channel the chain shows finalized or does not hold.
-  sessions_sync: { ...destructive, idempotentHint: true, openWorldHint: true },
-  swap: { ...destructive, idempotentHint: false, openWorldHint: true },
-  transfer: { ...destructive, idempotentHint: false, openWorldHint: true },
-  whoami: { ...readOnly, openWorldHint: true },
-};
+/** Each MCP tool's annotations by tool name, from the `annotations` of its command. */
+const toolAnnotations = Object.fromEntries(
+  commands.flatMap(({ annotations }) => Object.entries(annotations)),
+);
 
 void main();
 
@@ -488,9 +73,9 @@ export default cli;
 
 function walletCommands() {
   // incur keys this map by the default Cli type; the globals generic does not change the entry.
-  const commands = Cli.toCommands.get(cli as never);
-  if (!commands) throw new Error("Unable to access wallet commands");
-  return commands as Map<string, unknown>;
+  const entries = Cli.toCommands.get(cli as never);
+  if (!entries) throw new Error("Unable to access wallet commands");
+  return entries as Map<string, unknown>;
 }
 
 function createMcpCommands() {
@@ -585,7 +170,7 @@ function walletCompletions(args: readonly string[]) {
 
 /**
  * MCP tool calls carry no CLI globals, so accept `network` as a tool option and pass it on.
- * Each tool also declares its `mcpToolHints` entry, found by the tool name incur gives it
+ * Each tool also declares its `toolAnnotations` entry, found by the tool name incur gives it
  * (`keys update` is `keys_update`).
  */
 function withMcpGlobals(
@@ -613,7 +198,7 @@ function withMcpGlobals(
 function withMcpGlobal(entry: RunnableCommand, path: readonly string[]) {
   return {
     ...entry,
-    mcp: { annotations: mcpToolHints[path.join("_")] },
+    mcp: { annotations: toolAnnotations[path.join("_")] },
     options: entry.options ? entry.options.extend(cliGlobals.shape) : cliGlobals,
     run(context: { options: Record<string, unknown> }) {
       const { network, ...options } = context.options;

@@ -6,7 +6,8 @@ import { promisify } from "node:util";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { debugHandler, doctorHandler, redactUrl } from "../src/commands/doctor.js";
+import { debugHandler } from "../src/commands/debug.js";
+import { doctorHandler, redactUrl } from "../src/commands/doctor.js";
 import { channelsDbPath } from "../src/shared/process.js";
 import type { WalletState } from "../src/wallet/store.js";
 import { cliBundle } from "./cli-bundle.js";
