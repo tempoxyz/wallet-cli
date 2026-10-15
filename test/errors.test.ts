@@ -169,7 +169,7 @@ describe("typed error sites", () => {
 
   it("throws typed errors instead of bare Error", async () => {
     const found: string[] = [];
-    for (const dir of ["src/commands", "src/payment", "src/shared"])
+    for (const dir of ["src/commands", "src/payment", "src/request", "src/shared"])
       for (const file of await readdir(join(root, dir), { recursive: true })) {
         if (!file.endsWith(".ts")) continue;
         const source = await readFile(join(root, dir, file), "utf8");
