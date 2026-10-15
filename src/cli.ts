@@ -3,7 +3,7 @@ import { Cli, Completions, Mcp, type z } from "incur";
 
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
-import { usageError } from "./shared/errors.js";
+import { ctaErrors, usageError } from "./shared/errors.js";
 import { canPrompt } from "./shared/process.js";
 import { withWallet } from "./shared/require-wallet.js";
 import {
@@ -90,6 +90,9 @@ const cli = Cli.create("tempo wallet", {
   // The Tempo launcher manages updates, so skip incur npm update checks.
   update: false,
 });
+
+// Returns a thrown CtaError through `c.error`, so it keeps its cta; MCP registers it below.
+cli.use(ctaErrors);
 
 // Bare `tempo wallet login` starts a login; `login status` finishes a pending one.
 const login = Cli.create("login", {
@@ -501,6 +504,7 @@ async function main() {
   if (args.includes("--mcp")) {
     await Mcp.serve(cli.name, version, createMcpCommands(), {
       env: cli.env,
+      middlewares: [ctaErrors],
       tools: { discovery: "direct" },
       vars: cli.vars,
       version,

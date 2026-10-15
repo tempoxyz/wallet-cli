@@ -10,6 +10,7 @@ import {
   toHex,
   zeroAddress,
 } from "viem";
+import { Errors } from "incur";
 import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 import { Abis, Actions } from "viem/tempo";
@@ -405,7 +406,10 @@ export async function transferMach(options: {
         ...identity.methodOptions,
         getClient: identity.getClient,
         expectedChainId: network.chainId,
-        ...machChargeParameters(requestOptions),
+        ...machChargeParameters(requestOptions, {
+          amount: BigInt(output.amount_raw),
+          key: "key" in identity ? identity.key : undefined,
+        }),
         clientId: flags["mpp-client-id"],
         mode: "push",
       }),
@@ -416,8 +420,8 @@ export async function transferMach(options: {
   try {
     credential = await payment.createCredential(response);
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "E_PAYMENT")
-      throw error;
+    // The route refuses a charge it cannot settle before anything is signed.
+    if (error instanceof Errors.IncurError) throw error;
     // The SDK may have broadcast before a transport failure. Never automatically retry.
     throw paymentOutcomeUnknownError(
       `MACH settlement did not return a confirmed result. Check challenge ${escapeInvisible(JSON.stringify(challenge.id))} with the provider before retrying.`,

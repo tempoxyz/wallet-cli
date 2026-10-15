@@ -25,11 +25,13 @@ import {
   erc20Abi,
   formatUnits,
   http,
+  HttpRequestError,
   isAddress,
   parseUnits,
+  TimeoutError,
   type Address,
 } from "viem";
-import { prepareTransactionRequest, signTransaction } from "viem/actions";
+import { call, prepareTransactionRequest, readContract, signTransaction } from "viem/actions";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   Abis as TempoAbis,
@@ -62,6 +64,9 @@ import {
 import type { requestDryRunOutput } from "../schemas.js";
 import { escrowAbi, version } from "../shared/constants.js";
 import {
+  accessKeyLimitError,
+  commandError,
+  CtaError,
   errorCodes,
   networkError,
   httpError,
@@ -70,6 +75,7 @@ import {
   usageError,
   walletError,
 } from "../shared/errors.js";
+import { machToken } from "../shared/mach.js";
 import {
   createTempoPublicClient,
   escrowContract,
@@ -92,6 +98,7 @@ import {
   listedSymbol,
   readTokenMetadata,
   resolveTokenAddress,
+  tokenLabel,
   tokenMetadata,
 } from "../shared/tokens.js";
 import {
@@ -1014,9 +1021,10 @@ async function payAndRetryRequest(
       getClient,
       maxDeposit: spendCap(options),
     };
+    const charge = chargeSettlement(selectedChallenge, options, identity);
     const payment = Mppx.create({
       methods: [
-        tempo.charge({ ...methodOptions, ...machChargeParameters(options) }),
+        tempo.charge({ ...methodOptions, ...charge.parameters }),
         ...(options.paymentIntent === "auto" ? [tempo.subscription({ getClient })] : []),
       ],
       polyfill: false,
@@ -1026,7 +1034,11 @@ async function payAndRetryRequest(
       createCredential(paymentContext(challenge, options) as never),
     );
 
-    const credential = await payment.createCredential(challengeResponse);
+    const credential = await payment
+      .createCredential(challengeResponse)
+      .catch(async (error: unknown) => {
+        throw (await charge.limitError(error)) ?? error;
+      });
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
     const response = await fetchPaidRequest(
       { init: paidInit, url: request.url },
@@ -1037,10 +1049,60 @@ async function payAndRetryRequest(
     return response;
   } catch (error) {
     if (error instanceof Errors.IncurError) throw error;
-    const diagnostic = spendingLimitDiagnostic(error, header, options);
-    if (diagnostic) throw diagnostic;
     throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
   }
+}
+
+type ChargeParameters = NonNullable<Parameters<typeof tempo.charge>[0]>;
+
+/**
+ * `tempo.charge` options for paying `challenge` as `identity`, and the E_LIMIT_EXCEEDED error for
+ * a credential the access key's spending limit refuses. The SDK signs the calls it resolves an
+ * account for last, the MACH route or the direct transfer, so their first call names the token
+ * the charge debits.
+ */
+function chargeSettlement(
+  challenge: Challenge.Challenge,
+  options: RequestOptions,
+  identity: PaymentIdentity,
+) {
+  const amount = challengeAmount(challenge);
+  const key = "key" in identity ? identity.key : undefined;
+  const mach = machChargeParameters(options, { amount, key });
+  let debited = stringValue(challenge.request.currency).toLowerCase();
+  const parameters: ChargeParameters = {
+    ...mach,
+    async resolveAccount(info) {
+      const token = info.operation.kind === "executeCalls" ? info.operation.calls?.[0]?.to : null;
+      if (token) debited = token.toLowerCase();
+      return (await mach.resolveAccount?.(info)) ?? info.account;
+    },
+  };
+  return {
+    parameters,
+    async limitError(error: unknown) {
+      if (!key || challenge.intent !== "charge") return undefined;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/SpendingLimitExceeded|spending limit exceeded/i.test(message)) return undefined;
+      // The SDK picks the fee token itself and does not expose it, so a fee-token limit failure
+      // has no exact fix to suggest.
+      if (/fee[\s_-]*token/i.test(message)) return undefined;
+      const network = requestNetwork(options);
+      // `keys update` reads --limit in the token's decimals, so without them there is no exact
+      // limit to suggest.
+      const token = await tokenMetadata(debited as Address, network.chainId, (address) =>
+        readTokenMetadata(address, network.chainId, dryRunRpc),
+      ).catch(() => undefined);
+      if (!token) return undefined;
+      return accessKeyLimitError({
+        key: key.address,
+        token: token.address,
+        label: tokenLabel(token),
+        amount: formatUnits(amount, token.decimals),
+        network,
+      });
+    },
+  };
 }
 
 async function paySessionAndRetryRequest(
@@ -2084,30 +2146,152 @@ function isMachPaymentToken(token: string | undefined) {
   );
 }
 
-/** Restrict explicit MACH selection to the canonical SDK route; never silently spend stablecoins. */
+/**
+ * Holds an explicit MACH selection to the canonical SDK route, so it never silently spends
+ * stablecoins. When the route cannot pay `payment.amount`, the error names the cause: the access
+ * key's stored MACH limit is below it, its stored call scopes leave out a route call, the payer's
+ * MACH balance is below it, or else the route did not simulate.
+ */
 export function machChargeParameters(
   options: RequestOptions,
-): NonNullable<Parameters<typeof tempo.charge>[0]> {
+  payment: { amount: bigint; key?: WalletState["accessKeys"][number] | undefined },
+): ChargeParameters {
   if (!isMachPaymentToken(options.paymentToken)) return {};
-  const expectedChain = requestNetwork(options).chainId;
-  const deployment = machineTokenDeployments[expectedChain as keyof typeof machineTokenDeployments];
+  const network = requestNetwork(options);
+  // machToken refuses a chain without a MACH deployment.
+  const token = machToken(network.chainId).toLowerCase();
+  const deployment =
+    machineTokenDeployments[network.chainId as keyof typeof machineTokenDeployments];
+  const swapper = deployment.swap.toLowerCase();
+  const { key } = payment;
+  const limit = storedAccessKeyLimit(key, token);
+  // The SDK resolves the route's calls first, and the direct transfer only once it gives up on
+  // the route; that second call reports why, checking the route's calls again.
+  let route: readonly MachRouteCall[] | undefined;
   return {
     autoSwap: false,
-    resolveAccount({ account, chainId: requestedChain, operation }) {
+    async resolveAccount({ account, chainId, operation }) {
       const calls = operation.kind === "executeCalls" ? operation.calls : undefined;
-      if (
-        !deployment ||
-        requestedChain !== expectedChain ||
-        calls?.length !== 2 ||
-        calls[0]?.to.toLowerCase() !== deployment.token.toLowerCase() ||
-        calls[1]?.to.toLowerCase() !== deployment.swap.toLowerCase()
-      )
+      const isRoute =
+        chainId === network.chainId &&
+        calls?.length === 2 &&
+        calls[0]?.to.toLowerCase() === token &&
+        calls[1]?.to.toLowerCase() === swapper;
+      if (isRoute) route = calls;
+      // The route needs a key that can spend the MACH and call both contracts. The SDK skips a
+      // route this refuses and resolves the direct transfer, which reports it.
+      if (key && limit !== null && limit < payment.amount)
+        throw accessKeyLimitError({
+          key: key.address,
+          token,
+          label: "MACH",
+          amount: formatTokenAmount(payment.amount),
+          network,
+        });
+      const blocked = route?.find((call) => !storedScopesAllow(key, call));
+      if (blocked)
         throw paymentError(
-          "MACH settlement is unavailable: check MACH balance, swapper liquidity, and access-key permissions; no stablecoin fallback was authorized",
+          `MACH settlement is unavailable: the access key's call scopes do not allow its call to the MACH ${blocked.to.toLowerCase() === token ? "token" : "swapper"} (${blocked.to.toLowerCase()}), and 'tempo wallet keys update' cannot change call scopes; the wallet owner must authorize a key that may make that call. ${noMachFallback}`,
         );
-      return account;
+      if (isRoute) return account;
+      throw await machRouteError({
+        payer: account.address,
+        amount: payment.amount,
+        network,
+        route,
+        scoped: key !== undefined,
+      });
     },
   };
+}
+
+type MachRouteCall = { to: Address; data: `0x${string}` };
+
+const noMachFallback = "No stablecoin fallback was authorized.";
+
+/**
+ * Whether `key`'s stored call scopes allow `call`: a scope must name its address and, if it names
+ * one, its selector. Recipient rules are not checked. Scopes stored without exact semantics are
+ * unknown and allow every call.
+ */
+function storedScopesAllow(
+  key: WalletState["accessKeys"][number] | undefined,
+  call: MachRouteCall,
+) {
+  if (key?.permissionSemantics !== 1 || key.scopes === undefined) return true;
+  const selector = call.data.slice(0, 10).toLowerCase();
+  return key.scopes.some(
+    (scope) =>
+      scope.address.toLowerCase() === call.to.toLowerCase() &&
+      (scope.selector === undefined || scope.selector.toLowerCase() === selector),
+  );
+}
+
+/**
+ * Why the MACH route cannot settle `amount`: the payer's MACH balance is below it, with the
+ * funding command as its `cta` on mainnet, or else the route did not simulate. The SDK keeps its
+ * simulation error, so the route is simulated again to tell a transient failure apart.
+ */
+async function machRouteError(options: {
+  payer: Address;
+  amount: bigint;
+  network: Network;
+  route: readonly MachRouteCall[] | undefined;
+  /** Whether an access key pays, whose call scopes may refuse the route. */
+  scoped: boolean;
+}) {
+  const { payer, amount, network, route } = options;
+  const client = createTempoPublicClient(network.chainId);
+  const balance = await readContract(client, {
+    address: machToken(network.chainId),
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [payer],
+  }).catch(() => undefined);
+  if (balance === undefined)
+    return networkError(
+      `MACH settlement is unavailable: the MACH balance could not be read. Check RPC connectivity (TEMPO_RPC_URL). ${noMachFallback}`,
+      { retryable: true },
+    );
+  if (balance >= amount) {
+    // A route that simulates now, or failed on transport, may settle on a retry.
+    const retryable =
+      route !== undefined &&
+      (await call(client, { account: payer, calls: route }).then(() => true, isTransientRpcError));
+    const causes = options.scoped
+      ? "insufficient swapper liquidity, the access key's call scopes, or a transient RPC error"
+      : "insufficient swapper liquidity or a transient RPC error";
+    return walletError({
+      code: "E_PAYMENT",
+      retryable,
+      message: `MACH settlement is unavailable: the MACH swap route for ${formatTokenAmount(amount)} MACH could not be simulated. Possible causes: ${causes}.${retryable ? " Try again shortly." : ""} ${noMachFallback}`,
+    });
+  }
+  const shortfall = `The MACH balance ${formatTokenAmount(balance)} is below the ${formatTokenAmount(amount)} MACH this charge needs.`;
+  // Hosted MACH checkout is mainnet only.
+  if (network.name !== "mainnet")
+    return walletError({
+      code: "E_INSUFFICIENT_FUNDS",
+      message: `${shortfall} MACH can be bought on mainnet only. ${noMachFallback}`,
+    });
+  const command = continuationCommand(
+    ["wallet", "fund", "--mach", "--address", payer.toLowerCase()],
+    network,
+  );
+  return new CtaError(
+    commandError(
+      "E_INSUFFICIENT_FUNDS",
+      `${shortfall} Buy MACH with '${command}', then retry. ${noMachFallback}`,
+      command,
+    ),
+  );
+}
+
+/** Whether an RPC failure, or any error it wraps, is a transport failure or timeout. */
+function isTransientRpcError(error: unknown) {
+  for (let cause = error; cause instanceof Error; cause = cause.cause)
+    if (cause instanceof HttpRequestError || cause instanceof TimeoutError) return true;
+  return false;
 }
 
 /**
@@ -2121,20 +2305,6 @@ function paymentTokenValue(options: RequestOptions) {
   if (options.network === undefined && !/^0x/i.test(value))
     return listedSymbol(value, "payment token");
   return resolveTokenAddress(value, requestNetwork(options), "payment token");
-}
-
-function spendingLimitDiagnostic(error: unknown, header: string | null, options: RequestOptions) {
-  const message = sanitizeText(error instanceof Error ? error.message : String(error));
-  if (!/SpendingLimitExceeded|spending limit exceeded/i.test(message)) return undefined;
-  const currencies = offeredTempoCurrencies(header).map(escapeInvisible);
-  const token = options.paymentToken ?? (currencies.length === 1 ? currencies[0] : undefined);
-  if (!token)
-    return paymentError(
-      `${message}\nThe delegated key may not cover the payment token. Retry with --payment-token <token-address> to select one offer, then update that token limit with 'tempo wallet keys update --token <token-address> --limit <amount>'.`,
-    );
-  return paymentError(
-    `${message}\nThe delegated key may not cover payment token ${token}. Review the key with 'tempo wallet keys list', then authorize that token with 'tempo wallet keys update --token ${token} --limit <amount>'.`,
-  );
 }
 
 function offeredTempoCurrencies(header: string | null) {

@@ -1,5 +1,8 @@
 import { Errors } from "incur";
 
+import type { Network } from "./network.js";
+import { continuationCommand } from "./next.js";
+
 /** Every error code the CLI reports, with its process exit code and default retryability. */
 export const errorCodes = {
   E_USAGE: {
@@ -101,6 +104,15 @@ export function walletError(options: {
   });
 }
 
+/** An error shaped for incur's `c.error`, with the commands that fix it as its `cta`. */
+export type CommandErrorPayload = {
+  code: WalletErrorCode;
+  message: string;
+  exitCode: number;
+  retryable: boolean;
+  cta: { commands: { command: string; description?: string | undefined }[] };
+};
+
 /**
  * An error for incur's `c.error` whose `cta` is the command to run next. Commands return it
  * from `run` instead of throwing it, because incur drops the `cta` of thrown errors.
@@ -110,7 +122,7 @@ export function commandError(
   message: string,
   command: string,
   options: { retryable?: boolean | undefined } = {},
-) {
+): CommandErrorPayload {
   const { exitCode, retryable } = errorCodes[code];
   return {
     code,
@@ -119,6 +131,60 @@ export function commandError(
     retryable: options.retryable ?? retryable,
     cta: { commands: [{ command }] },
   };
+}
+
+/**
+ * A `commandError` thrown below a command's `run`, where returning `c.error` is not possible.
+ * incur drops the `cta` of thrown errors, so each CLI registers `ctaErrors`, which returns it
+ * through `c.error` instead.
+ */
+export class CtaError extends Errors.IncurError {
+  /** The `c.error` payload, `cta` included. */
+  readonly payload: CommandErrorPayload;
+
+  constructor(payload: CommandErrorPayload) {
+    super(payload);
+    this.payload = payload;
+  }
+}
+
+/** incur middleware that returns a thrown `CtaError` through `c.error`, keeping its `cta`. */
+export async function ctaErrors(
+  context: { error: (payload: CommandErrorPayload) => never },
+  next: () => Promise<void>,
+) {
+  try {
+    await next();
+  } catch (error) {
+    if (!(error instanceof CtaError)) throw error;
+    context.error(error.payload);
+  }
+}
+
+/**
+ * E_LIMIT_EXCEEDED for an access key whose spending limit cannot cover `amount` (token units) of
+ * `token`, with the `tempo wallet keys update` that sets the limit to that amount as its `cta`.
+ * `label` names the token in the message.
+ */
+export function accessKeyLimitError(options: {
+  key: string;
+  token: string;
+  label: string;
+  amount: string;
+  network: Network;
+}) {
+  const { key, token, label, amount, network } = options;
+  const command = continuationCommand(
+    ["wallet", "keys", "update", key.toLowerCase(), "--token", token, "--limit", amount],
+    network,
+  );
+  return new CtaError(
+    commandError(
+      "E_LIMIT_EXCEEDED",
+      `The access key cannot spend ${amount} ${label}. Ask the wallet owner to run '${command}', then retry.`,
+      command,
+    ),
+  );
 }
 
 export function usageError(message: string) {

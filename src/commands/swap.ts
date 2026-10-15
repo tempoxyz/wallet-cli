@@ -2,6 +2,7 @@ import { formatUnits, toHex } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
 import {
+  accessKeyLimitError,
   commandError,
   paymentOutcomeUnknownError,
   usageError,
@@ -235,9 +236,13 @@ export async function swapTokens(
   if (!input.options.yes)
     throw usageError("Swap not submitted: review the quote with --dry-run, then pass --yes");
   if (requiresAccessKeyUpdate)
-    throw usageError(
-      `Active access key cannot spend ${formatUnits(maxAmountIn, metadataIn.decimals)} ${nameIn}. Ask the wallet owner to run 'tempo wallet keys update --token ${tokenIn} --limit ${formatUnits(maxAmountIn, metadataIn.decimals)}' and retry.`,
-    );
+    throw accessKeyLimitError({
+      key: key.address,
+      token: tokenIn,
+      label: nameIn,
+      amount: output.max_amount_in,
+      network,
+    });
 
   const txHash = await runtime.submit({
     calls,

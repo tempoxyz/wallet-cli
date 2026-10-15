@@ -10,6 +10,7 @@ import {
 import { cliGlobalAlias, cliGlobals } from "./schemas.js";
 import { bindOptionValues } from "./shared/argv.js";
 import { version } from "./shared/constants.js";
+import { ctaErrors } from "./shared/errors.js";
 import { continuationCommand } from "./shared/next.js";
 import { WalletRequiredError } from "./shared/require-wallet.js";
 
@@ -196,6 +197,9 @@ const cli = Cli.create("tempo request", {
     return undefined;
   },
 });
+
+// Returns a thrown CtaError through `c.error`, so it keeps its cta.
+cli.use(ctaErrors);
 
 const argv = process.argv.slice(2);
 

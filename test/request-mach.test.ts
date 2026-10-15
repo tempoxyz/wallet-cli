@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
+import { Errors } from "incur";
 import { Challenge, Credential } from "mppx";
 import { machineTokenDeployments } from "mppx/tempo";
-import { decodeFunctionData, parseAbi } from "viem";
+import { decodeFunctionData, parseAbi, TimeoutError } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import {
   call,
   prepareTransactionRequest,
@@ -9,12 +11,19 @@ import {
   sendTransactionSync,
   signTransaction,
 } from "viem/actions";
-import { Abis } from "viem/tempo";
+import { Abis, Actions } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseRequestArgs, preparePaymentChallenge, runRequest } from "../src/commands/request.js";
 import { transferMach } from "../src/commands/transfer.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
-import { useTempHome, walletState, writeWalletState } from "./helpers.js";
+import { CtaError } from "../src/shared/errors.js";
+import {
+  testAccessKey,
+  unlistedToken,
+  useTempHome,
+  walletState,
+  writeWalletState,
+} from "./helpers.js";
 
 vi.mock("viem/actions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("viem/actions")>();
@@ -39,6 +48,7 @@ vi.mock("viem/tempo", async (importOriginal) => {
           vi.fn().mockResolvedValue({ amount: 1_000_000n }),
           actual.Actions.token.getBalance,
         ),
+        getMetadata: vi.fn(),
       },
       fee: { ...actual.Actions.fee, getUserToken: vi.fn().mockResolvedValue(undefined) },
     },
@@ -67,6 +77,8 @@ beforeEach(() => {
   );
   vi.mocked(signTransaction).mockResolvedValue("0x021234");
   vi.mocked(sendTransactionSync).mockResolvedValue({ transactionHash: hash } as never);
+  // An unlisted token's metadata is read on chain; these tests have no RPC.
+  vi.mocked(Actions.token.getMetadata).mockRejectedValue(new Error("no RPC in MACH tests"));
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -264,18 +276,330 @@ it("runs the actual SDK MACH route and sends only the validated credential", asy
   expect(signTransaction).toHaveBeenCalledOnce();
   expect(sendTransactionSync).not.toHaveBeenCalled();
 });
-it.each(["balance", "simulation"])(
-  "does not spend stablecoins when explicit MACH %s is unavailable",
-  async (failure) => {
-    if (failure === "balance") vi.mocked(readContract).mockResolvedValue(0n);
-    else vi.mocked(call).mockRejectedValue(new Error("unavailable"));
-    const service = await server();
-    await expect(
-      runRequest(["--payment-token", "MACH", "--max-spend", "0.015", service.url]),
-    ).rejects.toThrow("no stablecoin fallback");
+
+const payer = privateKeyToAccount(`0x${"1".repeat(64)}`).address.toLowerCase();
+const noFallback = "No stablecoin fallback was authorized.";
+const fundMach = `tempo wallet fund --mach --address ${payer} --network mainnet`;
+const raiseMachLimit = `tempo wallet keys update ${testAccessKey} --token ${deployment.token.toLowerCase()} --limit 0.015 --network mainnet`;
+const storedKey = walletState().accessKeys[0]!;
+
+type MachRouteFailure = {
+  cause: string;
+  network?: "testnet";
+  /** Pays with the logged-in wallet's access key, changed by these fields, not TEMPO_PRIVATE_KEY. */
+  stored?: Partial<typeof storedKey>;
+  /** The MACH balance read, or its failure. */
+  balance?: bigint | Error;
+  /** The route simulation's failure; `once` fails only the SDK's attempt, not the re-check. */
+  simulation?: { error: Error; once?: true };
+  /** Decided from the stored key, without an RPC read. */
+  offline?: true;
+  error: Record<string, unknown>;
+  cta?: string;
+};
+
+const machLimit = { limits: [{ token: deployment.token, limit: "15000#__bigint" }] };
+const scopeRefusal = (contract: "token" | "swapper", address: string) =>
+  `MACH settlement is unavailable: the access key's call scopes do not allow its call to the MACH ${contract} (${address.toLowerCase()}), and 'tempo wallet keys update' cannot change call scopes; the wallet owner must authorize a key that may make that call. ${noFallback}`;
+const unsimulated = (causes: string, retry = "") =>
+  `MACH settlement is unavailable: the MACH swap route for 0.015 MACH could not be simulated. Possible causes: ${causes}.${retry} ${noFallback}`;
+
+// Each cause of an unavailable MACH route, and the error and `cta` it reports.
+const machRouteFailures: MachRouteFailure[] = [
+  {
+    cause: "an access key whose MACH limit is below the charge",
+    stored: { limits: [{ token: deployment.token, limit: "1000#__bigint" }] },
+    offline: true,
+    error: {
+      code: "E_LIMIT_EXCEEDED",
+      exitCode: 4,
+      retryable: false,
+      message: `The access key cannot spend 0.015 MACH. Ask the wallet owner to run '${raiseMachLimit}', then retry.`,
+    },
+    cta: raiseMachLimit,
+  },
+  {
+    cause: "exact access-key limits that leave MACH out",
+    stored: { permissionSemantics: 1 },
+    offline: true,
+    error: {
+      code: "E_LIMIT_EXCEEDED",
+      message: expect.stringContaining("cannot spend 0.015 MACH"),
+    },
+    cta: raiseMachLimit,
+  },
+  {
+    cause: "exact call scopes that leave the swapper out",
+    stored: { ...machLimit, permissionSemantics: 1, scopes: [{ address: deployment.token }] },
+    offline: true,
+    error: {
+      code: "E_PAYMENT",
+      exitCode: 4,
+      retryable: false,
+      message: scopeRefusal("swapper", deployment.swap),
+    },
+  },
+  {
+    cause: "exact call scopes that allow another MACH token selector",
+    stored: {
+      ...machLimit,
+      permissionSemantics: 1,
+      scopes: [{ address: deployment.token, selector: "0xa9059cbb" }, { address: deployment.swap }],
+    },
+    offline: true,
+    error: { code: "E_PAYMENT", message: scopeRefusal("token", deployment.token) },
+  },
+  {
+    cause: "a MACH balance below the charge",
+    balance: 10_000n,
+    error: {
+      code: "E_INSUFFICIENT_FUNDS",
+      exitCode: 4,
+      retryable: false,
+      message: `The MACH balance 0.01 is below the 0.015 MACH this charge needs. Buy MACH with '${fundMach}', then retry. ${noFallback}`,
+    },
+    cta: fundMach,
+  },
+  {
+    cause: "a testnet MACH balance below the charge",
+    network: "testnet",
+    balance: 0n,
+    error: {
+      code: "E_INSUFFICIENT_FUNDS",
+      message: `The MACH balance 0 is below the 0.015 MACH this charge needs. MACH can be bought on mainnet only. ${noFallback}`,
+    },
+  },
+  {
+    cause: "a route simulation that reverts",
+    simulation: { error: new Error("swapper reverted") },
+    error: {
+      code: "E_PAYMENT",
+      exitCode: 4,
+      retryable: false,
+      message: unsimulated("insufficient swapper liquidity or a transient RPC error"),
+    },
+  },
+  {
+    cause: "a route simulation that reverts for an access key",
+    stored: machLimit,
+    simulation: { error: new Error("swapper reverted") },
+    error: {
+      code: "E_PAYMENT",
+      retryable: false,
+      message: unsimulated(
+        "insufficient swapper liquidity, the access key's call scopes, or a transient RPC error",
+      ),
+    },
+  },
+  {
+    cause: "a route simulation that times out",
+    simulation: { error: new TimeoutError({ body: {}, url: "https://rpc.example" }) },
+    error: {
+      code: "E_PAYMENT",
+      retryable: true,
+      message: unsimulated(
+        "insufficient swapper liquidity or a transient RPC error",
+        " Try again shortly.",
+      ),
+    },
+  },
+  {
+    cause: "a route simulation that fails only once",
+    simulation: { error: new Error("swapper reverted"), once: true },
+    error: { code: "E_PAYMENT", retryable: true, message: expect.stringContaining("Try again") },
+  },
+  {
+    cause: "a MACH balance that cannot be read",
+    balance: new Error("rpc down"),
+    error: {
+      code: "E_NETWORK",
+      exitCode: 3,
+      retryable: true,
+      message: `MACH settlement is unavailable: the MACH balance could not be read. Check RPC connectivity (TEMPO_RPC_URL). ${noFallback}`,
+    },
+  },
+];
+
+describe.each([
+  {
+    via: "tempo request --mach",
+    pay: async (network: string) => {
+      const testnet = network === "testnet";
+      const service = await server([
+        offer({
+          ...(testnet ? { currency: moderatoToken } : {}),
+          methodDetails: { chainId: testnet ? 42431 : 4217, machineTokenEnabled: true },
+        }),
+      ]);
+      const error = await runRequest(["-n", network, "--mach", "--max-spend", "0.015", service.url])
+        .then(() => undefined)
+        .catch((value: unknown) => value);
+      expect(service.paid).toEqual([]);
+      return error;
+    },
+  },
+  {
+    via: "tempo wallet transfer --mach",
+    pay: async (network: string) => {
+      const testnet = network === "testnet";
+      const challenge = offer({
+        ...(testnet ? { currency: moderatoToken } : {}),
+        methodDetails: { chainId: testnet ? 42431 : 4217, machineTokenEnabled: true },
+      });
+      return transferMach({
+        options: { network, "mpp-challenge": Challenge.serialize(challenge), "max-spend": "0.015" },
+      }).catch((value: unknown) => value);
+    },
+  },
+])("an unavailable MACH route through $via", ({ pay }) => {
+  it.each(machRouteFailures)(
+    "reports $cause without signing",
+    async ({ network = "mainnet", stored, balance, simulation, offline, error: expected, cta }) => {
+      if (stored) {
+        await useTempHome();
+        await writeWalletState(walletState({ accessKeys: [{ ...storedKey, ...stored }] }));
+        vi.stubEnv("TEMPO_PRIVATE_KEY", "");
+      }
+      if (typeof balance === "bigint") vi.mocked(readContract).mockResolvedValue(balance);
+      else if (balance) vi.mocked(readContract).mockRejectedValue(balance);
+      if (simulation?.once) vi.mocked(call).mockRejectedValueOnce(simulation.error);
+      else if (simulation) vi.mocked(call).mockRejectedValue(simulation.error);
+
+      const error = await pay(network);
+
+      expect(error).toBeInstanceOf(Errors.IncurError);
+      expect(error).toMatchObject(expected);
+      expect((error as Partial<CtaError>).payload?.cta).toEqual(
+        cta ? { commands: [{ command: cta }] } : undefined,
+      );
+      if (offline) {
+        expect(readContract).not.toHaveBeenCalled();
+        expect(call).not.toHaveBeenCalled();
+      }
+      expect(prepareTransactionRequest).not.toHaveBeenCalled();
+      expect(signTransaction).not.toHaveBeenCalled();
+      expect(sendTransactionSync).not.toHaveBeenCalled();
+    },
+  );
+});
+
+it.each([
+  { name: "a MACH limit that covers the charge", stored: machLimit },
+  {
+    name: "exact call scopes that allow the route",
+    stored: {
+      ...machLimit,
+      permissionSemantics: 1 as const,
+      scopes: [{ address: deployment.token, selector: "0x095ea7b3" }, { address: deployment.swap }],
+    },
+  },
+])("pays MACH with an access key that has $name", async ({ stored }) => {
+  await useTempHome();
+  await writeWalletState(walletState({ accessKeys: [{ ...storedKey, ...stored }] }));
+  vi.stubEnv("TEMPO_PRIVATE_KEY", "");
+  const service = await server();
+
+  await runRequest(["--mach", "--max-spend", "0.015", service.url], {
+    stdout: { write: () => true },
+  });
+
+  expect(service.paid).toHaveLength(1);
+  expect(signTransaction).toHaveBeenCalledOnce();
+});
+
+// The SDK refuses a credential the key's limit cannot cover; the cta raises the limit of the
+// token the signed calls debit, which is MACH whenever the SDK took the MACH route, to the charge
+// in that token's decimals.
+it.each([
+  {
+    route: "the direct transfer",
+    request: { methodDetails: { chainId: 4217 } },
+    token: usdcToken,
+    label: "USDC.e",
+    limit: "0.015",
+  },
+  {
+    route: "the MACH route",
+    request: { methodDetails: { chainId: 4217, machineTokenEnabled: true } },
+    token: deployment.token.toLowerCase(),
+    label: "MACH",
+    limit: "0.015",
+  },
+  {
+    route: "a direct transfer of an 18-decimal token",
+    request: { currency: unlistedToken, methodDetails: { chainId: 4217 } },
+    metadata: { decimals: 18, symbol: "WIDE" },
+    token: unlistedToken,
+    label: "WIDE",
+    limit: "0.000000000000015",
+  },
+])(
+  "names the token $route debits when the access key's limit refuses a charge",
+  async ({ request, metadata, token, label, limit }) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    vi.stubEnv("TEMPO_PRIVATE_KEY", "");
+    if (metadata) vi.mocked(Actions.token.getMetadata).mockResolvedValue(metadata as never);
+    vi.mocked(prepareTransactionRequest).mockRejectedValue(
+      new Error("Execution reverted: SpendingLimitExceeded()"),
+    );
+    const service = await server([offer(request)]);
+
+    const error = await runRequest(["--max-spend", "0.015", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    const command = `tempo wallet keys update ${testAccessKey} --token ${token} --limit ${limit} --network mainnet`;
+    expect(error).toMatchObject({
+      code: "E_LIMIT_EXCEEDED",
+      exitCode: 4,
+      message: `The access key cannot spend ${limit} ${label}. Ask the wallet owner to run '${command}', then retry.`,
+      payload: { cta: { commands: [{ command }] } },
+    });
     expect(service.paid).toEqual([]);
-    expect(signTransaction).not.toHaveBeenCalled();
-    expect(sendTransactionSync).not.toHaveBeenCalled();
+  },
+);
+
+// Without an access key there is no limit to raise, the SDK picks the fee token without exposing
+// it, and an unreadable token has no known decimals, so none of these refusals names a keys update.
+it.each([
+  { name: "no access key pays", key: false, message: "SpendingLimitExceeded()" },
+  {
+    name: "the fee token's limit refuses it",
+    key: true,
+    message: "Fee token spending limit exceeded",
+  },
+  {
+    name: "the fee token's limit refuses it (error name)",
+    key: true,
+    message: "FeeTokenSpendingLimitExceeded()",
+  },
+  {
+    name: "the debited token's decimals cannot be read",
+    key: true,
+    message: "SpendingLimitExceeded()",
+    currency: unlistedToken,
+  },
+])(
+  "reports a spending-limit refusal without a cta when $name",
+  async ({ key, message, currency }) => {
+    if (key) {
+      await useTempHome();
+      await writeWalletState(walletState());
+      vi.stubEnv("TEMPO_PRIVATE_KEY", "");
+    }
+    vi.mocked(prepareTransactionRequest).mockRejectedValue(new Error(message));
+    const service = await server([
+      offer({ ...(currency ? { currency } : {}), methodDetails: { chainId: 4217 } }),
+    ]);
+
+    const error = await runRequest(["--max-spend", "0.015", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({ code: "E_PAYMENT", message });
+    expect(error).not.toBeInstanceOf(CtaError);
+    expect(service.paid).toEqual([]);
   },
 );
 it("uses MACH automatically for an ordinary machine-enabled charge", async () => {
