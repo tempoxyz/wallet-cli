@@ -157,14 +157,19 @@ export async function logoutHandler(
     };
   }
 
+  // An expired key can neither sign nor have its authorization published, so it has nothing to
+  // revoke; the wallet app cannot revoke one the chain does not hold.
+  const revocable = options.revoke
+    ? keys.filter((key) => localAccessKeyStatus(key) !== "expired")
+    : [];
   // `wallet_revokeAccessKey` takes no chain, so the wallet app revokes on the stored chain only.
   const walletChainId = storedChainId(state);
-  const elsewhere = options.revoke && keys.find((key) => key.chainId !== walletChainId);
+  const elsewhere = revocable.find((key) => key.chainId !== walletChainId);
   if (elsewhere) {
     const walletNetwork = chainNetwork(walletChainId);
     const keyNetwork = chainNetwork(elsewhere.chainId);
     const reason = `The wallet app revokes access keys only on the network the wallet is logged in on (${walletNetwork.name}), not on ${keyNetwork.name}.`;
-    if (keys.some((key) => key.chainId === walletChainId)) {
+    if (revocable.some((key) => key.chainId === walletChainId)) {
       const command = logoutCommand({ ...flags, network: walletNetwork });
       return context.error(
         commandError(
@@ -195,8 +200,10 @@ export async function logoutHandler(
   const reasons = [
     ...(unchecked ? [`The ${unchecked}.`] : []),
     ...(sessions.length > 0 ? [fundedSessionsReason(sessions, closeSteps)] : []),
-    ...(options.revoke && keys.length > 0
-      ? [`--revoke revokes ${count(keys.length, "access key")} on-chain, which cannot be undone.`]
+    ...(revocable.length > 0
+      ? [
+          `--revoke revokes ${count(revocable.length, "access key")} on-chain, which cannot be undone.`,
+        ]
       : []),
   ];
   if (reasons.length > 0 && !options.yes) {
@@ -216,14 +223,14 @@ export async function logoutHandler(
   }
 
   const revoked: WalletState["accessKeys"][number][] = [];
-  if (options.revoke && keys.length > 0) {
+  if (revocable.length > 0) {
     const walletNetwork = chainNetwork(walletChainId);
     const readKey = dependencies.readKey ?? readAccessKeyOnChain;
     const provider = await (dependencies.createProvider ?? createProvider)({
       network: walletNetwork,
       noBrowser: options.browser === false,
     });
-    for (const key of keys) {
+    for (const key of revocable) {
       const failure = await revokeThroughWallet({
         provider,
         readKey,
@@ -265,10 +272,15 @@ export async function logoutHandler(
     disconnected
       ? "wallet disconnected"
       : `still logged in on ${chainNetwork(storedChainId(next)).name}`,
-    ...(keys.length === 0
+    ...(revoked.length > 0
+      ? [`${count(revoked.length, "access key")} revoked on-chain and removed`]
+      : []),
+    ...(keys.length === revoked.length
       ? []
       : options.revoke
-        ? [`${count(keys.length, "access key")} revoked on-chain and removed`]
+        ? [
+            `${count(keys.length - revoked.length, "expired access key")} removed without revoking, since an expired key cannot be used`,
+          ]
         : [
             `${count(keys.length, "access key")} removed locally but not revoked, so authorized on-chain until expiry (use --revoke to revoke)`,
           ]),
@@ -286,7 +298,7 @@ export async function logoutHandler(
       address: key.address.toLowerCase(),
       wallet_address: key.access.toLowerCase(),
       ...networkFields(key.chainId),
-      revoked: options.revoke === true,
+      revoked: revoked.some(sameKey(key)),
     })),
     sessions,
     message,

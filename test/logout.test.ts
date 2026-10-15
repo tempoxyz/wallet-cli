@@ -652,6 +652,60 @@ describe("logout --revoke", () => {
     expect((await loadWalletState()).accessKeys).toEqual(answer ? [] : [key]);
   });
 
+  // An unused key expires before its authorization is published, so the chain does not hold it.
+  const expiredKey = { ...key2, expiry: 1 };
+  it.each<{
+    name: string;
+    state: WalletState;
+    options: { yes?: boolean };
+    revoked: WalletState["accessKeys"];
+  }>([
+    {
+      name: "an expired key next to a live one",
+      state: walletState({ accessKeys: [expiredKey, key] }),
+      options: { yes: true },
+      revoked: [key],
+    },
+    {
+      name: "an only, expired key, with no confirmation",
+      state: walletState({ accessKeys: [expiredKey] }),
+      options: {},
+      revoked: [],
+    },
+    {
+      name: "an expired key on another network",
+      state: walletState({ accessKeys: [key, { ...expiredKey, chainId: testnet.chainId }] }),
+      options: { yes: true },
+      revoked: [key],
+    },
+  ])("removes $name without revoking it", async ({ state, options, revoked }) => {
+    await setup(state);
+    const app = walletApp(mainnet.chainId, { dropsRevokedKey: true });
+    const readKey = keychain(...revoked.map(() => "revoked" as const));
+    const context = runContext(true);
+
+    const output = await logoutHandler({ ...options, revoke: true }, context, {
+      createProvider: app.createProvider,
+      readKey,
+    });
+
+    expect(context.error).not.toHaveBeenCalled();
+    expect(app.createProvider).toHaveBeenCalledTimes(revoked.length > 0 ? 1 : 0);
+    expect(
+      app.request.mock.calls.flatMap(([call]) =>
+        call.method === "wallet_revokeAccessKey" ? [call.params[0].accessKeyAddress] : [],
+      ),
+    ).toEqual(revoked.map((candidate) => candidate.address));
+    expect(readKey).toHaveBeenCalledTimes(revoked.length);
+    expect(logoutOutput.parse(output)).toMatchObject({
+      keys: state.accessKeys.map((candidate) => removed(candidate, revoked.includes(candidate))),
+      message: expect.stringContaining(
+        "; 1 expired access key removed without revoking, since an expired key cannot be used",
+      ),
+    });
+    expect(await loadWalletState()).toMatchObject({ accounts: [], accessKeys: [] });
+  });
+
   it("logs out without a prompt when the network has no keys to revoke", async () => {
     await setup(walletState({ accessKeys: [] }));
     const app = walletApp();
