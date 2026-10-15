@@ -17,6 +17,7 @@ import { escrowAbi, mainnetEscrow } from "../src/shared/constants.js";
 import {
   expectUsageError,
   readyWallet,
+  runContext,
   testAccessKey,
   testWallet,
   testWallet2,
@@ -60,6 +61,21 @@ describe("sessions utilities", () => {
 
     expect(await dryRunCloseSessions(await readyWallet(), { target: validChannelId })).toEqual({
       targets: [{ channel_id: validChannelId }],
+      instruction:
+        "Review the sessions, then run the next command to close them. This cannot be undone.",
+      _next: {
+        argv: [
+          "tempo",
+          "wallet",
+          "sessions",
+          "close",
+          validChannelId,
+          "--yes",
+          "--network",
+          "mainnet",
+        ],
+        command: `tempo wallet sessions close ${validChannelId} --yes --network mainnet`,
+      },
     });
   });
 
@@ -195,10 +211,11 @@ describe("sessions utilities", () => {
         token: usdc,
       });
 
-      const summary = await closeSessions(await readyWallet("tempo"), {
-        cooperative: true,
-        target: origin,
-      });
+      const summary = await closeSessions(
+        await readyWallet("tempo"),
+        { cooperative: true, target: origin, yes: true },
+        runContext(),
+      );
 
       expect(summary.results).toEqual([
         expect.objectContaining({ status: "error", error: "voucher rejected" }),

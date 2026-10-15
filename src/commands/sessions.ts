@@ -11,10 +11,12 @@ import {
   logScanDepth,
 } from "../shared/constants.js";
 import {
+  commandError,
   paymentError,
   paymentOutcomeUnknownError,
   usageError,
   walletError,
+  type CommandContext,
 } from "../shared/errors.js";
 import {
   createTempoPublicClient,
@@ -28,7 +30,7 @@ import {
   tokenDecimals,
   type Network,
 } from "../shared/network.js";
-import { querySql, runSql, sqlString } from "../shared/process.js";
+import { confirm as confirmPrompt, querySql, runSql, sqlString } from "../shared/process.js";
 import { tokenSymbol } from "../shared/tokens.js";
 import {
   decodeBase64UrlJson,
@@ -101,6 +103,7 @@ type CloseOptions = {
   finalize?: boolean | undefined;
   orphaned?: boolean | undefined;
   target?: string | undefined;
+  yes?: boolean | undefined;
 };
 
 type CloseSummaryOutput = {
@@ -209,13 +212,45 @@ export async function dryRunCloseSessions({ network }: Wallet, options: CloseOpt
       if (record.channel_id) return { channel_id: record.channel_id };
       return { channel_id: "", origin: record.origin, state: "not found" };
     }),
+    ...(targets.some(hasChannel)
+      ? nextStep(
+          `Review the sessions, then run the next command to ${options.finalize ? "withdraw" : "close"} them. This cannot be undone.`,
+          confirmedCloseArgv(options),
+          { network },
+        )
+      : {}),
   };
 }
 
-export async function closeSessions({ account, network, state }: Wallet, options: CloseOptions) {
+/**
+ * Closes the selected sessions once the close is confirmed: `--yes` confirms it, a run that can
+ * prompt asks on the terminal, and any other run sends nothing and is refused with the same
+ * command plus `--yes`. Targets without a channel have nothing to close and need no confirmation.
+ */
+export async function closeSessions(
+  { account, network, state }: Wallet,
+  options: CloseOptions,
+  context: CommandContext,
+  { confirm = confirmPrompt }: { confirm?: (question: string) => Promise<boolean> } = {},
+) {
   validateCloseOptions(options);
   const summary = closeSummary();
   const targets = await closeTargets(options, network, { walletChainId: storedChainId(state) });
+  const closable = targets.filter(hasChannel);
+  if (!options.yes && closable.length > 0) {
+    if (context.agent) {
+      const command = continuationCommand(confirmedCloseArgv(options), network);
+      return context.error(
+        commandError(
+          "E_USAGE",
+          `Closing a session cannot be undone, so it needs confirmation. Review the sessions with --dry-run, then run '${command}'.`,
+          command,
+        ),
+      );
+    }
+    if (!(await confirm(closePrompt(closable, options, network))))
+      throw usageError("Sessions not closed: not confirmed at the prompt");
+  }
   for (const target of targets)
     await recordCloseResult(
       summary,
@@ -234,7 +269,8 @@ export async function closeSessions({ account, network, state }: Wallet, options
 
 /**
  * Points cooperative closes the chain does not show yet at a plain rerun, which removes the
- * record once the close is on-chain and otherwise requests the close on-chain itself.
+ * record once the close is on-chain and otherwise requests the close on-chain itself. The rerun
+ * carries `--yes`, since this run already confirmed the close.
  */
 function withCloseConfirmationNextStep(summary: CloseSummaryOutput, network: Network) {
   const requested = summary.results.filter((result) => result.status === "requested");
@@ -246,7 +282,7 @@ function withCloseConfirmationNextStep(summary: CloseSummaryOutput, network: Net
       instruction: `${requested.length} cooperative closes were accepted by the server, but the chain does not show them closed yet, so their local records were kept. Confirm each with ${requested
         .map(
           (result) =>
-            `'${continuationCommand(["wallet", "sessions", "close", result.channel_id], network)}'`,
+            `'${continuationCommand(["wallet", "sessions", "close", result.channel_id, "--yes"], network)}'`,
         )
         .join(", ")}; a channel that is still open has its close requested on-chain instead.`,
     };
@@ -254,7 +290,7 @@ function withCloseConfirmationNextStep(summary: CloseSummaryOutput, network: Net
     ...summary,
     ...nextStep(
       `The server accepted the cooperative close of channel ${single.channel_id}, but the chain does not show it closed yet, so its local record was kept. Run the next command to confirm the close and remove the record; if the channel is still open, it requests the close on-chain instead.`,
-      ["wallet", "sessions", "close", single.channel_id],
+      ["wallet", "sessions", "close", single.channel_id, "--yes"],
       { network, until: ".pending == 0 and .failed == 0" },
     ),
   };
@@ -262,7 +298,8 @@ function withCloseConfirmationNextStep(summary: CloseSummaryOutput, network: Net
 
 /**
  * Points pending closes at a rerun of the same scope, which reports them as pending without a
- * transaction until the grace period ends and then withdraws exactly those channels.
+ * transaction until the grace period ends and then withdraws exactly those channels. Each rerun
+ * carries `--yes`, since this run already confirmed the close.
  */
 function withPendingCloseNextStep(
   summary: CloseSummaryOutput,
@@ -288,7 +325,7 @@ function withPendingCloseNextStep(
     );
   const cooperative =
     single && offersCooperative(single)
-      ? ` To close it now through its server instead, run '${continuationCommand(["wallet", "sessions", "close", single.channel_id, "--cooperative"], network)}'.`
+      ? ` To close it now through its server instead, run '${continuationCommand(["wallet", "sessions", "close", single.channel_id, "--cooperative", "--yes"], network)}'.`
       : !single && pending.some(offersCooperative)
         ? " To close one now through its server instead, add --cooperative to its command."
         : "";
@@ -300,7 +337,7 @@ function withPendingCloseNextStep(
       instruction: `${status} Then withdraw each with ${pending
         .map(
           (result) =>
-            `'${continuationCommand(["wallet", "sessions", "close", result.channel_id], network)}'`,
+            `'${continuationCommand(["wallet", "sessions", "close", result.channel_id, "--yes"], network)}'`,
         )
         .join(", ")}.${cooperative}`,
     };
@@ -308,7 +345,7 @@ function withPendingCloseNextStep(
     ...summary,
     ...nextStep(
       `${status} Then run the next command; until then it reports the close as pending without sending a transaction.${cooperative}`,
-      ["wallet", "sessions", "close", single.channel_id],
+      ["wallet", "sessions", "close", single.channel_id, "--yes"],
       {
         network,
         pollIntervalSeconds: waitSecs,
@@ -316,6 +353,52 @@ function withPendingCloseNextStep(
       },
     ),
   };
+}
+
+/** The `sessions close` command for `options`, confirmed with `--yes`. */
+function confirmedCloseArgv(options: CloseOptions) {
+  return [
+    "wallet",
+    "sessions",
+    "close",
+    ...(options.target ? [options.target] : []),
+    ...(options.all ? ["--all"] : []),
+    ...(options.orphaned ? ["--orphaned"] : []),
+    ...(options.finalize ? ["--finalize"] : []),
+    ...(options.cooperative ? ["--cooperative"] : []),
+    "--yes",
+  ];
+}
+
+/** Whether a close target names a channel; an origin without a session names none. */
+function hasChannel(record: ChannelRecord) {
+  return isChannelId(record.channel_id);
+}
+
+/** Asks to close `records` on `network`, listing each channel and the deposit it holds. */
+function closePrompt(records: readonly ChannelRecord[], options: CloseOptions, network: Network) {
+  const verb = options.finalize ? "Withdraw" : "Close";
+  const outcome = options.finalize
+    ? "Each withdrawal returns the channel's unspent deposit to the wallet."
+    : options.cooperative
+      ? "The session's server closes the channel now, and its unspent deposit returns to the wallet."
+      : "Each close is requested on-chain; its unspent deposit returns to the wallet once withdrawn after the grace period.";
+  const deposit = (record: ChannelRecord) =>
+    // A channel ID without a local record is read on-chain only when it is closed.
+    record.virtual
+      ? "unknown (no local record)"
+      : `${formatTokenUnits(record.deposit, tokenDecimals())} ${tokenSymbol(record.token, record.chain_id) ?? record.token}`;
+  return [
+    `${verb} ${records.length === 1 ? "1 session" : `${records.length} sessions`}${options.cooperative ? " through its server" : ""}:`,
+    ...records.flatMap((record) => [
+      `  - channel: ${record.channel_id}`,
+      `    origin:  ${record.origin || "none"}`,
+      `    network: ${network.name} (chain ${record.chain_id})`,
+      `    deposit: ${deposit(record)}`,
+    ]),
+    outcome,
+    `${verb} ${records.length === 1 ? "this session" : "these sessions"}? This cannot be undone.`,
+  ].join("\n");
 }
 
 function validateCloseOptions(options: CloseOptions) {
@@ -347,6 +430,8 @@ async function closeTargets(
         ...(options.finalize ? ["--finalize"] : []),
         ...(options.cooperative ? ["--cooperative"] : []),
         ...(dryRun ? ["--dry-run"] : []),
+        // A confirmed close stays confirmed on the right network; an unconfirmed one still asks.
+        ...(options.yes ? ["--yes"] : []),
       ],
       walletChainId,
     );

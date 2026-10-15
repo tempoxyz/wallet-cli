@@ -26,7 +26,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 import { revokeHandler, updateAccessKeyHandler } from "../src/commands/identity.js";
 import { runFundingFlow } from "../src/commands/fund.js";
 import { loginHandler } from "../src/commands/login.js";
-import { closeSessions } from "../src/commands/sessions.js";
+import { closeSessions, dryRunCloseSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";
 import { transferMach, transferTokens } from "../src/commands/transfer.js";
 import { upsertSessionRecord } from "../src/payment/session-store.js";
@@ -310,11 +310,25 @@ const continuations: {
       await writeWalletState(stateFor(chain));
       await saveSession(channelId, chain);
       mockEscrow();
-      return closeSessions(await readyWallet(option), { target: channelId });
+      return closeSessions(
+        await readyWallet(option),
+        { target: channelId, yes: true },
+        runContext(),
+      );
     },
-    argv: ["wallet", "sessions", "close", channelId],
+    // The close was confirmed, so the withdrawal that completes it does not ask again.
+    argv: ["wallet", "sessions", "close", channelId, "--yes"],
     until: ".pending == 0 and .failed == 0",
     poll_interval_seconds: 800,
+  },
+  {
+    name: "a session close dry run continues with the confirmed close",
+    run: async ({ option, chain }) => {
+      await writeWalletState(stateFor(chain));
+      await saveSession(channelId, chain);
+      return dryRunCloseSessions(await readyWallet(option), { target: channelId });
+    },
+    argv: ["wallet", "sessions", "close", channelId, "--yes"],
   },
 ];
 
@@ -361,12 +375,16 @@ it("states when a pending session close becomes withdrawable", async () => {
   await saveSession(channelId, 4217);
   mockEscrow();
 
-  const result = await closeSessions(await readyWallet(), { target: channelId });
+  const result = await closeSessions(
+    await readyWallet(),
+    { target: channelId, yes: true },
+    runContext(),
+  );
 
   expect(result).toMatchObject({
     pending: 1,
     instruction: expect.stringContaining("after 2026-10-13T12:13:20Z (in 800s)"),
-    _next: { command: `tempo wallet sessions close ${channelId} --network mainnet` },
+    _next: { command: `tempo wallet sessions close ${channelId} --yes --network mainnet` },
   });
 });
 
@@ -405,7 +423,7 @@ it.each([
         10_000n,
         2_000n,
       ]);
-      return closeSessions(await readyWallet(), { target: channelId });
+      return closeSessions(await readyWallet(), { target: channelId, yes: true }, runContext());
     },
   },
 ])("omits a continuation from $name", async ({ run }) => {
@@ -439,13 +457,17 @@ it.each([
     await saveSession(otherChannelId, 4217, session);
     mockEscrow();
 
-    const result = await closeSessions(await readyWallet(), options);
+    const result = await closeSessions(
+      await readyWallet(),
+      { ...options, yes: true },
+      runContext(),
+    );
 
     expect(result).toMatchObject({ pending: 2 });
     for (const id of [channelId, otherChannelId])
       expect(result).toHaveProperty(
         "instruction",
-        expect.stringContaining(`'tempo wallet sessions close ${id} --network mainnet'`),
+        expect.stringContaining(`'tempo wallet sessions close ${id} --yes --network mainnet'`),
       );
     expect(result).not.toHaveProperty("_next");
   },
@@ -499,12 +521,16 @@ it("keeps the selected network on each per-channel close command", async () => {
   await saveSession(otherChannelId, 42431);
   mockEscrow();
 
-  const result = await closeSessions(await readyWallet("testnet"), { target: origin });
+  const result = await closeSessions(
+    await readyWallet("testnet"),
+    { target: origin, yes: true },
+    runContext(),
+  );
 
   for (const id of [channelId, otherChannelId])
     expect(result).toHaveProperty(
       "instruction",
-      expect.stringContaining(`'tempo wallet sessions close ${id} --network testnet'`),
+      expect.stringContaining(`'tempo wallet sessions close ${id} --yes --network testnet'`),
     );
 });
 

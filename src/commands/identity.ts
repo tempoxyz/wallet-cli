@@ -21,6 +21,7 @@ import {
   errorCodes,
   networkError,
   usageError,
+  type CommandContext,
   type WalletErrorCode,
 } from "../shared/errors.js";
 import { continuationCommand, nextStep, shellQuote } from "../shared/next.js";
@@ -658,15 +659,6 @@ function parseLimit(value: string, decimals: number) {
 }
 
 type RevokeProvider = Pick<CoreProvider.Provider, "request">;
-
-/**
- * What `revoke` and `logout` use of incur's run context: `agent` is set when no one can answer a
- * prompt, and `error` keeps the `cta` that thrown errors lose.
- */
-type CommandContext = {
-  agent: boolean;
-  error: (error: ReturnType<typeof commandError>) => never;
-};
 
 /** An access key's state in the AccountKeychain precompile, where revocation takes effect. */
 type OnChainKey = { status: "published" | "revoked" | "missing"; expiry: number | undefined };

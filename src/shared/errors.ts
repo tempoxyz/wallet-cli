@@ -134,6 +134,15 @@ export function commandError(
 }
 
 /**
+ * What a command that needs confirmation uses of incur's run context: `agent` is set when no one
+ * can answer a prompt, and `error` keeps the `cta` that thrown errors lose.
+ */
+export type CommandContext = {
+  agent: boolean;
+  error: (error: CommandErrorPayload) => never;
+};
+
+/**
  * A `commandError` thrown below a command's `run`, where returning `c.error` is not possible.
  * incur drops the `cta` of thrown errors, so each CLI registers `ctaErrors`, which returns it
  * through `c.error` instead.

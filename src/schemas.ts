@@ -344,6 +344,7 @@ export const sessionsListOutput = z.object({
 
 export const sessionsCloseDryRunOutput = z.object({
   targets: z.array(z.unknown()),
+  ...nextOutputShape,
 });
 
 export const sessionsCloseOutput = z.object({
@@ -699,6 +700,10 @@ export const sessionsCloseOptions = z.object({
     .optional()
     .describe("Close now through the session's server instead of waiting out the grace period"),
   "dry-run": z.boolean().optional().describe("Show what would be closed without executing"),
+  yes: z
+    .boolean()
+    .optional()
+    .describe("Close without the confirmation prompt; required for agent runs"),
 });
 
 export const sessionsCloseCommandOutput = z.union([sessionsCloseDryRunOutput, sessionsCloseOutput]);
