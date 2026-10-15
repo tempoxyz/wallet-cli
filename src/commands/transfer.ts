@@ -15,16 +15,23 @@ import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 import { Abis, Actions } from "viem/tempo";
 
-import { networkError, paymentOutcomeUnknownError, usageError } from "../shared/errors.js";
+import {
+  commandError,
+  networkError,
+  paymentOutcomeUnknownError,
+  usageError,
+} from "../shared/errors.js";
 import {
   appUrl,
   createTempoPublicClient,
   networkFields,
+  networkName,
   resolveNetwork,
+  storedChainId,
   tokenAddress,
   type Network,
 } from "../shared/network.js";
-import { nextStep } from "../shared/next.js";
+import { continuationCommand, nextStep } from "../shared/next.js";
 import { confirm } from "../shared/process.js";
 import type { Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata, tokenSymbol } from "../shared/tokens.js";
@@ -120,6 +127,17 @@ export async function transferTokens(
   const feeToken = options.options["fee-token"]
     ? resolveTokenAddress(options.options["fee-token"], network, "fee token")
     : undefined;
+  // The provider falls back to wallet-app approval, on the chain the wallet is logged in on,
+  // whenever no access key can sign the call locally, so a transfer is sent only on that chain.
+  const walletChainId = storedChainId(wallet.state);
+  if (!options.options["dry-run"] && walletChainId !== network.chainId) {
+    const command = continuationCommand(["wallet", "login"], network);
+    return commandError(
+      "E_USAGE",
+      `Transfer not sent: wallet is logged in on ${networkName(walletChainId)}, not ${networkName(network.chainId)}; log in with '${command}', then rerun the transfer.`,
+      command,
+    );
+  }
   // An unlisted token's decimals are read on chain.
   const token = await tokenMetadata(requestedToken, network.chainId);
   const amount = parseTokenAmount(args.amount, token.decimals);

@@ -437,55 +437,63 @@ describe("wallet CLI login and access key checks", () => {
   });
 
   // Wallet-app approval, the provider's fallback whenever no key can sign, is on the chain the
-  // wallet is logged in on, so a swap needs a login on the selected network before it reads a
-  // quote or sends anything, even with a key there.
-  it.each([
-    {
-      name: "without a key there",
-      network: "testnet",
-      state: walletState({ accessKeys: [expiredKey] }),
-      interactive: true,
-    },
-    {
-      name: "without a key there",
-      network: "mainnet",
-      state: walletState({ chainId: 42431, accessKeys: [{ ...testnetKey, expiry: 1 }] }),
-      interactive: true,
-    },
-    {
-      name: "with a key there",
-      network: "testnet",
-      state: walletState({ accessKeys: [key, testnetKey] }),
-      interactive: false,
-    },
-    {
-      name: "with a key there",
-      network: "mainnet",
-      state: walletState({ chainId: 42431, accessKeys: [key, testnetKey] }),
-      interactive: false,
-    },
-  ])(
-    "swap --network $network $name over another login returns a login cta (interactive: $interactive)",
-    async ({ network, state, interactive }) => {
+  // wallet is logged in on, so a swap or token transfer needs a login on the selected network
+  // before it reads a quote or token, prompts, or sends anything, even with a key there.
+  it.each(
+    [
+      {
+        name: "without a key there",
+        network: "testnet",
+        state: walletState({ accessKeys: [expiredKey] }),
+        interactive: true,
+      },
+      {
+        name: "without a key there",
+        network: "mainnet",
+        state: walletState({ chainId: 42431, accessKeys: [{ ...testnetKey, expiry: 1 }] }),
+        interactive: true,
+      },
+      {
+        name: "with a key there",
+        network: "testnet",
+        state: walletState({ accessKeys: [key, testnetKey] }),
+        interactive: false,
+      },
+      {
+        name: "with a key there",
+        network: "mainnet",
+        state: walletState({ chainId: 42431, accessKeys: [key, testnetKey] }),
+        interactive: false,
+      },
+    ].flatMap((row) => [
+      { ...row, command: "swap", argv: ["swap", "1", "pathUSD", "USDC.e"] },
+      { ...row, command: "transfer", argv: ["transfer", "1", "pathUSD", recipient] },
+    ]),
+  )(
+    "$command --network $network $name over another login returns a login cta (interactive: $interactive)",
+    async ({ command: name, argv, network, state, interactive }) => {
       const home = await useTempHome();
       await writeWalletState(state);
       requests.length = 0;
 
+      // An interactive run answers yes to any prompt instead of passing --yes.
       const result = await wallet(
-        ["swap", "1", "pathUSD", "USDC.e", "--network", network, "--yes"],
+        [...argv, "--network", network, ...(interactive ? [] : ["--yes"])],
         { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
-        { interactive },
+        { interactive, input: "y\n" },
       );
 
       const command = `tempo wallet login --network ${network}`;
       expect(result.code).toBe(2);
       if (interactive) {
         expect(result.stdout).toContain("E_USAGE");
+        expect(result.stdout).toContain(`then rerun the ${name}.`);
         expect(result.stdout).toContain(`Suggested command:\n  ${command}`);
+        expect(result.stderr).not.toContain("[y/N]");
       } else
         expect(JSON.parse(result.stdout)).toEqual({
           code: "E_USAGE",
-          message: expect.stringContaining(`log in with '${command}', then rerun the swap.`),
+          message: expect.stringContaining(`log in with '${command}', then rerun the ${name}.`),
           retryable: false,
           cta: { description: "Suggested command:", commands: [{ command }] },
         });

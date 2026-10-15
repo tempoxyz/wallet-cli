@@ -246,14 +246,17 @@ cli.command("transfer", {
     // MACH pays with the stored access key; a token transfer without one, run interactively,
     // is approved in the wallet app instead.
     return withWallet(
-      async (_, wallet) =>
-        options.mach
-          ? transferMach({ options: { ...flags, network: wallet.network.name } })
-          : transferTokens(wallet, {
-              args,
-              options,
-              interactive: canPrompt(context.agent),
-            }),
+      async (_, wallet) => {
+        if (options.mach)
+          return transferMach({ options: { ...flags, network: wallet.network.name } });
+        const result = await transferTokens(wallet, {
+          args,
+          options,
+          interactive: canPrompt(context.agent),
+        });
+        // A refusal that needs a login on the selected network is returned, keeping its `cta`.
+        return "code" in result ? context.error(result) : result;
+      },
       { requireKey: options.mach ? "always" : "agent" },
     )(context);
   },
