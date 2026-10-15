@@ -2,7 +2,6 @@ import { Mcp, type Cli } from "incur";
 
 import { staleListFetchedAt } from "../commands/services.js";
 import { servicesMcpOutput } from "../schemas/services.js";
-import { cliGlobals } from "../schemas/shared.js";
 import { version } from "../shared/constants.js";
 import { ctaErrors } from "../shared/errors.js";
 import {
@@ -12,6 +11,7 @@ import {
   type RunnableCommand,
   type WalletCommand,
 } from "./command.js";
+import { withMcpGlobal } from "./incur-compat.js";
 
 /** Serves the commands mounted on `cli` as MCP tools over stdio. */
 export async function serveMcp(
@@ -32,7 +32,7 @@ function createMcpCommands(mounted: Map<string, unknown>, commands: readonly Wal
   const annotations = Object.fromEntries(
     commands.flatMap((command) => Object.entries(command.annotations ?? {})),
   );
-  const mcpCommands = withMcpGlobals(mounted, annotations);
+  const mcpCommands = mcpTools(mounted, annotations);
   const sessionsGroup = mcpCommands.get("sessions");
   if (isCommandGroup(sessionsGroup)) {
     // Bare `sessions` is CLI shorthand; MCP already exposes `sessions_list`.
@@ -60,11 +60,10 @@ function createMcpCommands(mounted: Map<string, unknown>, commands: readonly Wal
 }
 
 /**
- * MCP tool calls carry no CLI globals, so accept `network` as a tool option and pass it on.
- * Each tool also declares its `annotations` entry, found by the tool name incur gives it
- * (`keys update` is `keys_update`).
+ * Each tool declares its `annotations` entry, found by the tool name incur gives it
+ * (`keys update` is `keys_update`), and accepts the CLI globals; see `withMcpGlobal`.
  */
-function withMcpGlobals(
+function mcpTools(
   commands: Map<string, unknown>,
   annotations: Record<string, Mcp.ToolAnnotations>,
   prefix: readonly string[] = [],
@@ -79,28 +78,20 @@ function withMcpGlobals(
             ...entry,
             // A group root (bare `login`) is a tool of its own.
             ...(isRunnableCommand(entry.root)
-              ? { root: withMcpGlobal(entry.root, path, annotations) }
+              ? { root: mcpTool(entry.root, path, annotations) }
               : {}),
-            commands: withMcpGlobals(entry.commands, annotations, path),
+            commands: mcpTools(entry.commands, annotations, path),
           },
         ];
-      return [name, isRunnableCommand(entry) ? withMcpGlobal(entry, path, annotations) : entry];
+      return [name, isRunnableCommand(entry) ? mcpTool(entry, path, annotations) : entry];
     }),
   );
 }
 
-function withMcpGlobal(
+function mcpTool(
   entry: RunnableCommand,
   path: readonly string[],
   annotations: Record<string, Mcp.ToolAnnotations>,
 ) {
-  return {
-    ...entry,
-    mcp: { annotations: annotations[path.join("_")] },
-    options: entry.options ? entry.options.extend(cliGlobals.shape) : cliGlobals,
-    run(context: { options: Record<string, unknown> }) {
-      const { network, ...options } = context.options;
-      return entry.run({ ...context, globals: { network }, options });
-    },
-  };
+  return withMcpGlobal({ ...entry, mcp: { annotations: annotations[path.join("_")] } });
 }

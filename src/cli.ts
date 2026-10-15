@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { Cli } from "incur";
 
-import { bindCommandOptions, expandHelp, normalizeServicesOutputAliases } from "./cli/argv.js";
+import { expandHelp, normalizeServicesOutputAliases } from "./cli/argv.js";
 import { handleBuiltinSchema, mcp, skills } from "./cli/builtins.js";
 import { commandMap, type WalletCommand } from "./cli/command.js";
 import { walletCompletions } from "./cli/completions.js";
 import { describeCli } from "./cli/describe.js";
+import { bindCommandOptions } from "./cli/incur-compat.js";
 import { serveMcp } from "./cli/mcp.js";
 import completions from "./commands/completions.js";
 import debug from "./commands/debug.js";
