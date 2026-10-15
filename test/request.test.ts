@@ -21,12 +21,12 @@ import {
   fetchPaidRequest,
   chargeFallbackError,
   isSessionInvalidationResponse,
-  parseRequestArgs,
   runRequest,
   selectPaymentTokenResponse,
   sessionChallengeFromHeader,
   tempoPaymentChallengeResponse,
 } from "../src/commands/request.js";
+import { parseRequestArgs } from "../src/request/args.js";
 import { resolvePaymentIdentity, storedAccessKeyIdentity } from "../src/request/identity.js";
 import {
   findReusableSessions,

@@ -13,7 +13,8 @@ import {
 } from "viem/actions";
 import { Abis, Actions } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseRequestArgs, preparePaymentChallenge, runRequest } from "../src/commands/request.js";
+import { preparePaymentChallenge, runRequest } from "../src/commands/request.js";
+import { parseRequestArgs } from "../src/request/args.js";
 import { transferMach } from "../src/commands/transfer.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { CtaError } from "../src/shared/errors.js";
