@@ -17,6 +17,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 
 import { swapTokens } from "../src/commands/swap.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
+import { CtaError } from "../src/shared/errors.js";
 import { machToken } from "../src/shared/mach.js";
 import { parseNetwork } from "../src/shared/network.js";
 import {
@@ -25,8 +26,10 @@ import {
   expectUsageError,
   invalidTokenInputs,
   readyWallet,
+  testAccessKey,
   testWallet,
   tokenInputs,
+  usdc,
   unlistedToken,
   untrustedSymbols,
   useTempHome,
@@ -267,24 +270,52 @@ describe("swapTokens", () => {
     expectUsageError(error, "Swap not submitted: review the quote with --dry-run, then pass --yes");
   });
 
-  it("explains the access-key update required for an unauthorized input token", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
+  it.each([
+    {
+      name: "an unauthorized input token",
+      limits: [{ token: usdc, limit: "100000000#__bigint" }],
+      args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
+      options: {},
+      limit: "10",
+      label: "pathUSD",
+    },
+    {
+      name: "a limit below an exact-output maximum input",
+      limits: [{ token: moderatoToken, limit: "10000000#__bigint" }],
+      args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
+      options: { "exact-out": true },
+      limit: "10.1505",
+      label: "pathUSD",
+    },
+  ])(
+    "returns the keys update for $name as the cta",
+    async ({ limits, args, options, limit, label }) => {
+      await useTempHome();
+      const state = walletState();
+      await writeWalletState({
+        ...state,
+        accessKeys: state.accessKeys.map((stored) => ({ ...stored, limits })),
+      });
+      const runtime = dependencies();
 
-    const error = await swapTokens(
-      await readyWallet(),
-      {
-        args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
-        options: { "slippage-bps": 50, yes: true },
-      },
-      dependencies(),
-    ).catch((value: unknown) => value);
+      const error = await swapTokens(
+        await readyWallet(),
+        { args, options: { "slippage-bps": 50, yes: true, ...options } },
+        runtime,
+      ).catch((value: unknown) => value);
 
-    expectUsageError(
-      error,
-      `Active access key cannot spend 10 pathUSD. Ask the wallet owner to run 'tempo wallet keys update --token ${moderatoToken} --limit 10' and retry.`,
-    );
-  });
+      const command = `tempo wallet keys update ${testAccessKey} --token ${moderatoToken} --limit ${limit} --network mainnet`;
+      expect(error).toBeInstanceOf(CtaError);
+      expect(error).toMatchObject({
+        code: "E_LIMIT_EXCEEDED",
+        exitCode: 4,
+        retryable: false,
+        message: `The access key cannot spend ${limit} ${label}. Ask the wallet owner to run '${command}', then retry.`,
+        payload: { cta: { commands: [{ command }] } },
+      });
+      expect(runtime.submit).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     { name: "an access key that has no stored limits", key: { limits: undefined } },

@@ -1,0 +1,5 @@
+---
+wallet-cli: minor
+---
+
+Spending-limit and MACH settlement errors now carry a `cta` with the command that fixes them. A charge the access key's spending limit refuses, `tempo wallet swap --yes` above the key's limit (previously `E_USAGE`, exit 2), and an explicit MACH payment whose key cannot spend the MACH return `E_LIMIT_EXCEEDED` (exit 4) with `tempo wallet keys update <key> --token <token> --limit <amount> --network <network>` for the token the payment debits and the amount it needs, in that token's decimals; a refusal by the fee token's limit, or for a token whose decimals cannot be read, stays `E_PAYMENT` without a `cta`. The MACH-unavailable error is split by cause: a MACH balance below the charge returns `E_INSUFFICIENT_FUNDS` with `tempo wallet fund --mach --address <payer> --network mainnet` as its `cta` (no `cta` on testnet), stored call scopes that leave out the MACH token or swapper return `E_PAYMENT` naming the call, a swap route that cannot be simulated returns `E_PAYMENT` without a `cta` (retryable when the failure looks transient), and an unreadable MACH balance returns retryable `E_NETWORK`. MCP tool errors carry the same `cta`.
