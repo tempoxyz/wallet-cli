@@ -60,7 +60,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
   createProvider: vi.fn(async () => ({ getAccount: mocks.getAccount, request: mocks.request })),
 }));
 
-import { runRequest } from "../src/commands/request.js";
+import { runRequest } from "../src/request/run.js";
 import {
   closeSessions as closeWithWallet,
   dryRunCloseSessions as dryRunWithWallet,
