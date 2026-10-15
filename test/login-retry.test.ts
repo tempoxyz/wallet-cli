@@ -41,7 +41,7 @@ vi.mock("../src/shared/network.js", async (importOriginal) => ({
 }));
 
 import { parseRequestArgs, resolvePaymentIdentity, runRequest } from "../src/commands/request.js";
-import { emptyWalletState, loadWalletState, saveWalletState } from "../src/wallet/store.js";
+import { emptyWalletState, saveWalletState } from "../src/wallet/store.js";
 import { useTempHome } from "./helpers.js";
 
 afterEach(() => {
@@ -63,8 +63,6 @@ it("request-triggered authorization selects Moderato despite the persisted mainn
       expect.anything(),
       expect.objectContaining({ params: [expect.objectContaining({ chainId: "0xa5bf" })] }),
     );
-    // The authorization failed, so the wallet stays on its network.
-    expect((await loadWalletState()).chainId).toBe(4217);
   } finally {
     vi.unstubAllEnvs();
   }

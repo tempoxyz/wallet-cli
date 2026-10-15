@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
-
 import { Adapter, Keystore, Provider as CoreProvider } from "accounts";
 import { cli, Storage } from "accounts/cli";
 import { deviceCode } from "accounts/deviceCode";
@@ -29,14 +27,74 @@ export async function createProvider(options: {
       if (!options.noBrowser) openExternal(url);
     },
   });
+  return await walletProvider(adapter, options.network);
+}
+
+/**
+ * The wallet store's chain that a provider keeps on disk while `held`, in place of the chain the
+ * SDK saves; see `walletStorage`.
+ */
+type ChainHold = { held: boolean; chainId?: unknown };
+
+/** The `ChainHold` of each provider `walletProvider` made, which `connect` sets. */
+const chainHolds = new WeakMap<object, ChainHold>();
+
+/** A provider on `adapter` that saves to the wallet store through `walletStorage`. */
+async function walletProvider(adapter: Adapter.Adapter, network: Network) {
+  const hold: ChainHold = { held: false };
   const provider = CoreProvider.create({
-    adapter: withoutRetries(adapter),
+    adapter: releaseOnApproval(withoutRetries(adapter), hold),
     // Pull mode is the local-account-friendly MPP path for a CLI.
     mpp: { mode: "pull" },
-    storage: Storage.filesystem(),
-    testnet: options.network.name === "testnet",
+    storage: walletStorage(hold),
+    testnet: network.name === "testnet",
   });
+  chainHolds.set(provider, hold);
   return await providerReady(provider);
+}
+
+/**
+ * `Storage.filesystem()`, saving the chain of `hold` to the wallet store while it is held. The SDK
+ * saves a `wallet_connect`'s chain as the wallet's as soon as the request starts, before the wallet
+ * app answers, so without the hold a request that is denied, expires, times out, or is interrupted
+ * would leave every later command defaulting to that network.
+ */
+function walletStorage(hold: ChainHold): ReturnType<typeof Storage.filesystem> {
+  const storage = Storage.filesystem();
+  return {
+    ...storage,
+    setItem(name, value) {
+      if (!hold.held || name !== "store") return storage.setItem(name, value);
+      const item = getRecord(value);
+      return storage.setItem(name, {
+        ...item,
+        state: { ...getRecord(item.state), chainId: hold.chainId },
+      });
+    },
+  };
+}
+
+/**
+ * `adapter`, releasing `hold` as soon as the wallet app returns the accounts for a `wallet_connect`.
+ * The SDK saves those accounts in the same turn, so the chain switches in that write rather than in
+ * a later write of its own.
+ */
+function releaseOnApproval(adapter: Adapter.Adapter, hold: ChainHold): Adapter.Adapter {
+  return Adapter.define(adapter, (parameters) => {
+    const instance = adapter(parameters);
+    const { loadAccounts } = instance.actions;
+    return {
+      ...instance,
+      actions: {
+        ...instance.actions,
+        loadAccounts: async (...args) => {
+          const result = await loadAccounts(...args);
+          hold.held = false;
+          return result;
+        },
+      },
+    };
+  });
 }
 
 /**
@@ -145,14 +203,7 @@ export async function createLoginProvider(options: {
     ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
     url: deviceCodeUrl(),
   });
-  return await providerReady(
-    CoreProvider.create({
-      adapter: withoutRetries(adapter),
-      mpp: { mode: "pull" },
-      storage: Storage.filesystem(),
-      testnet: options.network.name === "testnet",
-    }),
-  );
+  return await walletProvider(adapter, options.network);
 }
 
 function deviceCodeUrl() {
@@ -185,13 +236,16 @@ function withoutRetries(adapter: Adapter.Adapter): Adapter.Adapter {
 }
 
 /**
- * Sends `wallet_connect` for `network`. The SDK saves `network` as the wallet's chain as the
- * request starts, before the wallet app answers, so every later command would default to it. A
- * connect that fails for any reason, including a denial, an expired code, a timeout, or a stop
- * from the caller, puts back the chain stored before it; an approval keeps `network`.
+ * Sends `wallet_connect` for `network`. For a provider `walletProvider` made, the wallet store keeps
+ * its chain until the wallet app approves, and switches to `network` as the SDK saves the approved
+ * accounts; a request that fails leaves it, and so does any later write from the same provider.
  */
 export async function connect(provider: Pick<CoreProvider.Provider, "request">, network: Network) {
-  const before = await settleWalletStore();
+  const hold = chainHolds.get(provider);
+  if (hold) {
+    hold.chainId = getRecord(getRecord(await settleWalletStore()).state).chainId;
+    hold.held = true;
+  }
   try {
     return await provider.request({
       method: "wallet_connect",
@@ -208,28 +262,10 @@ export async function connect(provider: Pick<CoreProvider.Provider, "request">, 
         },
       ],
     });
-  } catch (error) {
-    await restoreChain(before, network.chainId);
-    throw error;
   } finally {
     // Wait for the SDK to save the wallet store, so later reads in this process see the result.
     await settleWalletStore();
   }
-}
-
-/**
- * Puts the chain of `before`, the wallet store as a connect to `chainId` found it, back in the
- * store, once the SDK's write of `chainId` has landed. A store that changed in any other way since,
- * such as by another process's login or logout, is left as it is.
- */
-async function restoreChain(before: unknown, chainId: number) {
-  const { state } = getRecord(before);
-  if (getRecord(state).chainId === chainId) return;
-  const current = getRecord(await settleWalletStore());
-  if (!isDeepStrictEqual(current.state, { ...getRecord(state), chainId })) return;
-  await Promise.resolve(Storage.filesystem().setItem("store", { ...current, state })).catch(
-    () => undefined,
-  );
 }
 
 /**

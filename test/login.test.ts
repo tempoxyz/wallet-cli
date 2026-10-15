@@ -12,7 +12,13 @@ import {
   saveWalletState,
 } from "../src/wallet/store.js";
 import { deviceCodeHost, type TokenAnswer } from "./device-code-host.js";
-import { testWallet, testWallet2, useTempHome, walletState } from "./helpers.js";
+import {
+  testWallet,
+  testWallet2,
+  useTempHome,
+  walletState,
+  writeRawWalletStore,
+} from "./helpers.js";
 
 const loginCta = (network: string) => ({
   commands: [{ command: `tempo wallet login --network ${network}` }],
@@ -417,8 +423,9 @@ describe("login status", () => {
 });
 
 describe("stored network", () => {
-  // Logged in on mainnet, with a key a mainnet login does not reuse.
-  const onMainnet = walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, expiry: 1 }] });
+  // A key no login reuses, so each one asks the wallet.
+  const expiredKey = { ...walletState().accessKeys[0]!, expiry: 1 };
+  const onMainnet = walletState({ accessKeys: [expiredKey] });
   const flows = [
     {
       flow: "login",
@@ -427,9 +434,10 @@ describe("stored network", () => {
     {
       flow: "login, then login status",
       run: async (network: string) => {
+        const before = (await loadWalletState()).chainId;
         await loginHandler({ network, browser: false, wait: false });
         // A pending login leaves the network as it was.
-        expect((await loadWalletState()).chainId).toBe(4217);
+        expect((await loadWalletState()).chainId).toBe(before);
         return await loginStatusHandler({});
       },
     },
@@ -439,6 +447,22 @@ describe("stored network", () => {
         refreshHandler({ network, browser: false }).catch((error: unknown) => error),
     },
   ];
+
+  /** Serves `host` and returns the stored chain at each `/token` poll, after the SDK's writes. */
+  function watchChain(host: ReturnType<typeof deviceCodeHost>) {
+    const chains: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith("/token")) {
+          await settleWalletStore();
+          chains.push((await loadWalletState()).chainId);
+        }
+        return await host.fetch(input, init);
+      }),
+    );
+    return chains;
+  }
 
   // Only an approval moves the wallet to the login's network.
   const answers = [
@@ -457,11 +481,13 @@ describe("stored network", () => {
     async ({ run, network, answer, chainId }) => {
       await useTempHome();
       await saveWalletState(onMainnet);
-      const host = useHost([answer]);
+      const host = deviceCodeHost(() => answer);
+      const waiting = watchChain(host);
 
       await run(network);
 
-      expect(host.polls).toHaveLength(1);
+      // The store keeps mainnet while the wallet decides, so an interrupted login leaves it too.
+      expect(waiting).toEqual([4217]);
       const state = await loadWalletState();
       expect(state.chainId).toBe(chainId);
       expect(state.accounts).toEqual([{ address: testWallet }]);
@@ -498,6 +524,64 @@ describe("stored network", () => {
         chainId: 42431,
         accessKeys: [expect.objectContaining({ chainId: 42431 })],
       });
+    },
+  );
+
+  it.each([flows[0]!, flows[2]!])(
+    "overlapping $flow runs on two networks that both fail leave the stored network",
+    async ({ run }) => {
+      await useTempHome();
+      await saveWalletState(walletState({ accessKeys: [expiredKey], chainId: 42431 }));
+      // The mainnet run fails once the testnet run is waiting; the testnet run fails after it.
+      let firstDone = false;
+      const host = deviceCodeHost((poll) => {
+        if (host.polls[poll - 1]!.device_code === "device-1")
+          return host.registrations.length > 1 ? "deny" : "pending";
+        return firstDone ? "deny" : "pending";
+      });
+      vi.stubGlobal("fetch", vi.fn(host.fetch));
+
+      const first = run("mainnet");
+      await vi.waitFor(() => expect(host.registrations).toHaveLength(1));
+      const second = run("testnet");
+      await first;
+      firstDone = true;
+      await second;
+
+      expect(host.registrations).toHaveLength(2);
+      expect((await loadWalletState()).chainId).toBe(42431);
+    },
+  );
+
+  const stores = [
+    {
+      store: "an account and no active account",
+      write: () =>
+        writeRawWalletStore(
+          JSON.stringify({
+            "tempo-cli.store": {
+              state: { accounts: [{ address: testWallet }], accessKeys: [], chainId: 4217 },
+              version: 0,
+            },
+          }),
+        ),
+      answer: "deny",
+      chainId: 4217,
+    },
+    { store: "no wallet store", write: async () => undefined, answer: "deny", chainId: undefined },
+    { store: "no wallet store", write: async () => undefined, answer: "approve", chainId: 42431 },
+  ] as const;
+
+  it.each(flows.flatMap(({ flow, run }) => stores.map((scenario) => ({ flow, run, ...scenario }))))(
+    "$flow on testnet from $store leaves chain $chainId when the wallet answers $answer",
+    async ({ run, write, answer, chainId }) => {
+      await useTempHome();
+      await write();
+      useHost([answer]);
+
+      await run("testnet");
+
+      expect((await loadWalletState()).chainId).toBe(chainId);
     },
   );
 });
