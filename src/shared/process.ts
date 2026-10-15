@@ -30,9 +30,20 @@ export async function confirm(question: string) {
   }
 }
 
-export function runProcess(command: string, args: readonly string[]) {
+/** The sqlite3 binary the session store runs, looked up on PATH. */
+export const sqlite3 = "sqlite3";
+
+/** Runs `command` and resolves with its stdout; `signal` kills it and rejects. */
+export function runProcess(
+  command: string,
+  args: readonly string[],
+  options: { signal?: AbortSignal | undefined } = {},
+) {
   return new Promise<string>((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -48,7 +59,7 @@ export function runProcess(command: string, args: readonly string[]) {
 }
 
 export async function runSql(sql: string) {
-  await runProcess("sqlite3", [channelsDbPath(), sql]);
+  await runProcess(sqlite3, [channelsDbPath(), sql]);
 }
 
 export function channelsDbPath() {

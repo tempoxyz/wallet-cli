@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 
 type PackageJson = {
   version?: string;
+  dependencies?: Record<string, string>;
 };
 
 const entrypoints = {
@@ -37,6 +38,9 @@ run("esbuild", [
   "--format=cjs",
   "--target=node22",
   `--define:process.env.TEMPO_WALLET_VERSION=${JSON.stringify(version)}`,
+  // `tempo wallet doctor` reports these; the bundle ships without package.json.
+  `--define:process.env.TEMPO_WALLET_INCUR_VERSION=${JSON.stringify(packageJson.dependencies?.incur ?? null)}`,
+  `--define:process.env.TEMPO_WALLET_ACCOUNTS_VERSION=${JSON.stringify(packageJson.dependencies?.accounts ?? null)}`,
   `--outfile=${bundlePath}`,
 ]);
 

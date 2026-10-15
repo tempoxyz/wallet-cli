@@ -30,11 +30,11 @@ it.each([
   "-n testnet whoami",
   "whoami --network=testnet",
   "--network moderato whoami",
-  "debug --network tempo-moderato",
+  "doctor --network tempo-moderato",
   "sessions list -n testnet",
   "-n testnet sessions list",
   "-n testnet sessions",
-  "debug -jn testnet",
+  "doctor -jn testnet",
   "whoami -sn testnet",
 ])(
   "accepts the network global in `%s`",

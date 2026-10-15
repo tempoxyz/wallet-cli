@@ -27,8 +27,8 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
   createProvider: vi.fn(async () => ({ request: mocks.request })),
 }));
 
+import { doctorHandler } from "../src/commands/doctor.js";
 import {
-  debugHandler,
   keysHandler,
   refreshHandler,
   revokeHandler,
@@ -222,7 +222,7 @@ it.each([
 
 const loggedOutCommands = [
   { command: "whoami", run: (network?: string) => whoamiHandler({ network }) },
-  { command: "debug", run: (network?: string) => debugHandler({ network }) },
+  { command: "doctor", run: (network?: string) => doctorHandler({ network }) },
   { command: "sessions list", run: (network?: string) => listSessions({ network }) },
 ];
 

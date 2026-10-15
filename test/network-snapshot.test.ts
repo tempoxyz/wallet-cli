@@ -6,7 +6,8 @@ vi.mock("../src/wallet/store.js", async (original) => ({
   loadWalletState: mocks.loadWalletState,
 }));
 
-import { debugHandler, revokeHandler, whoamiHandler } from "../src/commands/identity.js";
+import { doctorHandler } from "../src/commands/doctor.js";
+import { revokeHandler, whoamiHandler } from "../src/commands/identity.js";
 import { fundAction, runFundingFlow } from "../src/commands/fund.js";
 import { syncSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";
@@ -51,7 +52,7 @@ afterEach(() => {
 it.each<{ command: string; run: () => Promise<unknown>; continues?: boolean }>([
   { command: "sessions sync", run: () => syncSessions({}) },
   { command: "whoami", run: () => whoamiHandler({}) },
-  { command: "debug", run: () => debugHandler({}) },
+  { command: "doctor", run: () => doctorHandler({}) },
   {
     command: "revoke --dry-run",
     run: async () =>

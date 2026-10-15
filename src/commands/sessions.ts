@@ -31,7 +31,7 @@ import {
   tokenDecimals,
   type Network,
 } from "../shared/network.js";
-import { channelsDbPath, runProcess, runSql, sqlString } from "../shared/process.js";
+import { channelsDbPath, runProcess, runSql, sqlite3, sqlString } from "../shared/process.js";
 import { tokenSymbol } from "../shared/tokens.js";
 import {
   decodeBase64UrlJson,
@@ -843,7 +843,7 @@ async function readChannelRecords(): Promise<ChannelRecord[]> {
 
   let stdout: string;
   try {
-    stdout = await runProcess("sqlite3", ["-json", path, query]);
+    stdout = await runProcess(sqlite3, ["-json", path, query]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("unable to open database file") || message.includes("no such table"))

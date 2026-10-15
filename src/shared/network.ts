@@ -22,9 +22,13 @@ export async function resolveNetwork(
 ): Promise<Network> {
   const explicit = explicitNetwork(flag);
   if (explicit) return explicit;
-  const wallet = state ?? (await loadWalletState());
-  const loggedIn = wallet.accounts[wallet.activeAccount ?? 0] !== undefined;
-  return loggedIn && storedChainId(wallet) === testnet.chainId ? testnet : mainnet;
+  return walletNetwork(state ?? (await loadWalletState()));
+}
+
+/** The logged-in wallet's network, or mainnet when no wallet is logged in. */
+export function walletNetwork(state: WalletState): Network {
+  const loggedIn = state.accounts[state.activeAccount ?? 0] !== undefined;
+  return loggedIn && storedChainId(state) === testnet.chainId ? testnet : mainnet;
 }
 
 /** The wallet store's chain; a store without one is on mainnet, the default it is saved with. */

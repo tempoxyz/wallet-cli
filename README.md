@@ -183,9 +183,16 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 - `swap`
 - `services`
 - `sessions` (same as `sessions list`), `sessions close`, `sessions sync`
-- `debug`
+- `doctor` (`debug` is a deprecated alias)
 - `completions <bash|zsh|fish|nushell|powershell|elvish>`
 - `help [command]` (same as `[command] --help`)
+
+`tempo wallet doctor` reports the setup on the resolved network: the CLI, Node, incur, and accounts SDK versions; the stored wallet's address, chain, and type (`passkey`, `private_key`, or `device_code`, from the key type the store records, else `null`); the access key's status, expiry, and spending limits; the RPC URL and whether it answers `eth_chainId` (asked once without retries, with its chain, whether that matches the network, and the latency); the wallet app URL; whether sqlite3 is on `PATH` and its version; whether the session store exists and is readable; and which environment overrides are set. Each finding is a `checks` entry with status `ok`, `warn`, or `fail`; when a command fixes the most important problem, `instruction` and `_next` name it, such as `tempo wallet login` or `tempo wallet refresh` with the resolved `--network`. An unhealthy setup still exits 0, and only an unknown `--network` fails. The checks run concurrently, and the RPC request and sqlite3 each stop after 3 seconds, so one stalled check does not hold up the report. Secrets are never shown: `TEMPO_PRIVATE_KEY` is reported only as set, and the user info, path, query, and fragment of `TEMPO_RPC_URL` and `TEMPO_AUTH_URL` appear as `<redacted>`. `tempo wallet debug` prints a deprecation notice on stderr and returns the same report.
+
+```sh
+tempo wallet doctor
+tempo wallet doctor --network testnet --format json
+```
 
 Completion scripts hook the `tempo` launcher and complete after `tempo wallet`, for example `eval "$(tempo wallet completions zsh)"` in `~/.zshrc`. The bash, zsh, and Elvish scripts pass other `tempo` subcommands to a completer registered before them. The PowerShell script replaces any existing `tempo` completer, because PowerShell cannot read or chain one.
 
