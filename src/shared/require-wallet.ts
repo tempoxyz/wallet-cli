@@ -6,7 +6,7 @@ import {
   selectPaymentCapableAccessKey,
 } from "../wallet/access-key.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
-import { errorCodes } from "./errors.js";
+import { errorCodes, type CommandErrorPayload } from "./errors.js";
 import { resolveNetwork, type Network } from "./network.js";
 import { continuationCommand } from "./next.js";
 
@@ -27,7 +27,7 @@ type WalletProblem = ReturnType<typeof walletProblem>;
 type RunContext = {
   agent: boolean;
   globals: { network?: string | undefined };
-  error: (error: WalletProblem) => never;
+  error: (error: CommandErrorPayload) => never;
 };
 
 /**
@@ -43,20 +43,31 @@ type KeyRequirement = "always" | "agent" | "never";
  * Wraps a command's `run` so the handler starts only with a logged-in wallet on the resolved
  * network and, per `requireKey` (default `always`), a payment-capable access key; otherwise
  * the command returns E_NOT_AUTHENTICATED, E_KEY_EXPIRED, or E_AUTH_REFRESH_REQUIRED with the
- * login or refresh command for that network as its `cta`. It wraps `run` because incur
- * middleware cannot see command options, and returns `c.error` because incur drops the `cta`
- * of thrown errors.
+ * login or refresh command for that network as its `cta`. `refuse` runs between the login and
+ * key checks, for a refusal whose remedy is not a key. It wraps `run` because incur middleware
+ * cannot see command options, and returns `c.error` because incur drops the `cta` of thrown
+ * errors.
  */
 export function withWallet<context extends RunContext, result>(
   handler: (context: context, wallet: Wallet) => result | Promise<result>,
-  { requireKey = "always" }: { requireKey?: KeyRequirement } = {},
+  {
+    requireKey = "always",
+    refuse,
+  }: {
+    requireKey?: KeyRequirement;
+    refuse?: ((context: context, wallet: Wallet) => CommandErrorPayload | undefined) | undefined;
+  } = {},
 ) {
   return async (context: context): Promise<result> => {
-    const wallet = await loadWallet(
-      context.globals.network,
-      requireKey === "always" || (requireKey === "agent" && context.agent),
-    );
-    return "code" in wallet ? context.error(wallet) : handler(context, wallet);
+    const wallet = await loadWallet(context.globals.network, false);
+    if ("code" in wallet) return context.error(wallet);
+    const refusal = refuse?.(context, wallet);
+    if (refusal) return context.error(refusal);
+    const keyRequired =
+      requireKey === "always" || (requireKey === "agent" && context.agent)
+        ? missingKeyError(wallet)
+        : undefined;
+    return keyRequired ? context.error(keyRequired) : handler(context, wallet);
   };
 }
 
@@ -72,8 +83,14 @@ export async function loadWallet(
 
   const match = { chainId: network.chainId, walletAddress: account.address };
   const key = selectPaymentCapableAccessKey(state.accessKeys, match);
-  if (key || !requireKey) return { state, network, account, key };
+  const wallet = { state, network, account, key };
+  return (requireKey && missingKeyError(wallet)) || wallet;
+}
 
+/** E_KEY_EXPIRED or E_AUTH_REFRESH_REQUIRED when `wallet` has no payment-capable key. */
+function missingKeyError({ state, network, account, key }: Wallet) {
+  if (key) return undefined;
+  const match = { chainId: network.chainId, walletAddress: account.address };
   const stale = state.accessKeys.find((candidate) => accessKeyMatches(candidate, match));
   return walletProblem(
     stale && localAccessKeyStatus(stale) === "expired"

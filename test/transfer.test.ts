@@ -34,11 +34,17 @@ vi.mock("viem/tempo", async (importOriginal) => {
 
 vi.mock("../src/provider.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/provider.js")>()),
-  createProvider: vi.fn(async () => ({
-    getAccount: mocks.getAccount,
-    getClient: () => ({}),
-    request: mocks.request,
-  })),
+  // Like the real provider, it loads the wallet store's chain when it is created.
+  createProvider: vi.fn(async () => {
+    const { loadWalletState } = await import("../src/wallet/store.js");
+    const { chainId = 4217 } = await loadWalletState();
+    return {
+      getAccount: mocks.getAccount,
+      getClient: () => ({}),
+      request: mocks.request,
+      store: { getState: () => ({ chainId }) },
+    };
+  }),
 }));
 
 import { transferTokens } from "../src/commands/transfer.js";
@@ -575,37 +581,129 @@ describe("transferTokens", () => {
     expect(lookups.submit).not.toHaveBeenCalled();
   });
 
-  // The provider sends on the wallet's saved chain unless the request names one.
+  // The provider sends on the wallet's saved chain unless the request names one, and falls back
+  // to wallet-app approval on that chain when no access key can sign, so a transfer on another
+  // network is refused, with or without a key there, before any lookup or prompt. A dry run
+  // still reviews it.
+  it.each(
+    [
+      { stored: 4217, network: "mainnet", refusal: undefined },
+      { stored: 42431, network: "testnet", refusal: undefined },
+      {
+        stored: 4217,
+        network: "testnet",
+        refusal: "wallet is logged in on tempo, not tempo-moderato",
+      },
+      {
+        stored: 42431,
+        network: "mainnet",
+        refusal: "wallet is logged in on tempo-moderato, not tempo",
+      },
+    ].flatMap((chains) => [
+      { ...chains, key: "a usable access key", expiry: 2_000_000_000, mode: "--yes" },
+      { ...chains, key: "no usable access key", expiry: 1, mode: "the prompt" },
+    ]),
+  )(
+    "transfers --network $network over a $stored login with $key and $mode: $refusal",
+    async ({ stored, network, refusal, expiry, mode }) => {
+      await useTempHome();
+      const key = { ...walletState().accessKeys[0]!, expiry };
+      await writeWalletState(
+        walletState({ chainId: stored, accessKeys: [key, { ...key, chainId: 42431 }] }),
+      );
+      const { chainId } = parseNetwork(network);
+      // Interactive runs reach the transfer without a usable key.
+      const wallet = await readyWallet(network, false);
+      const { submit: _submit, ...lookups } = dependencies();
+      const args = { amount: "1.5", token: "pathUSD", to: recipient };
+      mocks.request.mockClear();
+
+      const dryRun = await transferTokens(wallet, { args, options: { "dry-run": true } }, lookups);
+      lookups.getUserFeeToken.mockClear();
+      const result = await transferTokens(
+        wallet,
+        mode === "--yes"
+          ? { args, options: { yes: true } }
+          : { args, options: {}, interactive: true },
+        lookups,
+      );
+
+      const command = `tempo wallet login --network ${network}`;
+      expect(dryRun).toMatchObject({ status: "dry_run", chain_id: chainId });
+      expect(result).toEqual(
+        refusal
+          ? {
+              code: "E_USAGE",
+              message: `Transfer not sent: ${refusal}; log in with '${command}', then rerun the transfer.`,
+              exitCode: 2,
+              retryable: false,
+              cta: { commands: [{ command }] },
+            }
+          : expect.objectContaining({ status: "success", chain_id: chainId }),
+      );
+      expect(mocks.request.mock.calls).toEqual(
+        refusal
+          ? []
+          : [
+              [
+                {
+                  method: "eth_sendTransactionSync",
+                  params: [
+                    {
+                      from: testWallet,
+                      calls: [expect.objectContaining({ to: moderatoToken })],
+                      chainId: toHex(chainId),
+                      // The prompt names the fee token, so that send pins it.
+                      ...(mode === "the prompt" ? { feeToken: moderatoToken } : {}),
+                    },
+                  ],
+                },
+              ],
+            ],
+      );
+      // A refusal comes before the fee-token read and the prompt.
+      expect(lookups.getUserFeeToken).toHaveBeenCalledTimes(refusal || mode === "--yes" ? 0 : 1);
+      expect(lookups.confirm).toHaveBeenCalledTimes(refusal || mode === "--yes" ? 0 : 1);
+    },
+  );
+
+  // Another process can log in on another chain while the prompt is open; the provider loads that
+  // chain when the send creates it, so the send checks it again.
   it.each([
-    { name: "the saved chain", stored: 4217, network: "mainnet" },
-    { name: "--network testnet over a mainnet login", stored: 4217, network: "testnet" },
-    { name: "--network mainnet over a testnet login", stored: 42431, network: "mainnet" },
-  ] as const)("sends on the reviewed network with $name", async ({ stored, network }) => {
+    { name: "the login is unchanged", switchTo: undefined },
+    { name: "another login switched to testnet", switchTo: 42431 },
+  ])("sends after the prompt only if $name", async ({ switchTo }) => {
     await useTempHome();
-    const key = walletState().accessKeys[0]!;
-    await writeWalletState(
-      walletState({ chainId: stored, accessKeys: [key, { ...key, chainId: 42431 }] }),
-    );
-    const { chainId } = parseNetwork(network);
-    const { submit: _submit, ...lookups } = dependencies();
+    await writeWalletState(walletState());
+    const { submit: _submit, ...lookups } = dependencies({
+      confirm: vi.fn(async () => {
+        if (switchTo !== undefined) await writeWalletState(walletState({ chainId: switchTo }));
+        return true;
+      }),
+    });
     mocks.request.mockClear();
 
-    await transferTokens(
-      await readyWallet(network),
-      { args: { amount: "1.5", token: "pathUSD", to: recipient }, options: { yes: true } },
+    const result = await transferTokens(
+      await readyWallet(),
+      { args: { amount: "1", token: usdcToken, to: recipient }, options: {}, interactive: true },
       lookups,
-    );
+    ).catch((value: unknown) => value);
 
-    expect(mocks.request).toHaveBeenCalledExactlyOnceWith({
-      method: "eth_sendTransactionSync",
-      params: [
-        {
-          from: testWallet,
-          calls: [expect.objectContaining({ to: moderatoToken })],
-          chainId: toHex(chainId),
-        },
-      ],
-    });
+    expect(lookups.confirm).toHaveBeenCalledOnce();
+    if (switchTo === undefined) {
+      expect(result).toMatchObject({ status: "success" });
+      expect(mocks.request).toHaveBeenCalledOnce();
+    } else {
+      expectUsageError(
+        result,
+        "The wallet is now logged in on tempo-moderato, not tempo, so nothing was sent. Log in with 'tempo wallet login --network mainnet', then retry.",
+      );
+      // `ctaErrors` returns the login it needs as the cta.
+      expect(result).toMatchObject({
+        payload: { cta: { commands: [{ command: "tempo wallet login --network mainnet" }] } },
+      });
+      expect(mocks.request).not.toHaveBeenCalled();
+    }
   });
 
   it.each([

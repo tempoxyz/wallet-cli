@@ -177,6 +177,7 @@ tempo wallet transfer <AMOUNT> <TOKEN> <RECIPIENT> --yes
 - Without `--yes`, an agent run sends nothing and returns `E_USAGE`; the dry run's `_next` already includes `--yes` and pins the reviewed `fee_token` with `--fee-token`.
 - `fee_estimate` is in `fee_token` units. `sufficient_balance` checks `balance` against the amount and `fee_token_balance` against the fee. `fee_token`, `fee_estimate`, `balance`, `fee_token_balance`, and `sufficient_balance` are `null` when unknown; treat `null` as unknown, not as sufficient.
 - If `sufficient_balance` is false, report the shortfall and stop; offer `tempo wallet fund`.
+- A transfer is sent only on the network the wallet is logged in on. On another `--network`, it returns `E_USAGE` with a `tempo wallet login --network <NETWORK>` `cta`; run it, then rerun the transfer.
 - Always run `--dry-run` first and preserve full token and recipient addresses in the approval request.
 
 ## MCP Tools
