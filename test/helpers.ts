@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, vi } from "vitest";
+import { toHex } from "viem";
 
 import { loadWallet } from "../src/shared/require-wallet.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
-import type { WalletState } from "../src/wallet/store.js";
+import { loadWalletState, saveWalletState, type WalletState } from "../src/wallet/store.js";
 
 const originalHome = process.env.HOME;
 
@@ -204,6 +205,40 @@ export async function readyWallet(network?: string, requireKey = true) {
   const wallet = await loadWallet(network, requireKey);
   if ("code" in wallet) throw new Error(wallet.message);
   return wallet;
+}
+
+/**
+ * A wallet-app provider that only takes requests, so nothing can be signed locally. With
+ * `dropsRevokedKey`, a `wallet_revokeAccessKey` removes the key from the wallet store, as the SDK
+ * does once the wallet app returns, whether or not the chain shows it revoked.
+ */
+export function walletApp(chainId = 4217, { dropsRevokedKey = false } = {}) {
+  const request = vi.fn();
+  request.mockImplementation(
+    async ({ method, params }: { method: string; params?: [{ accessKeyAddress: string }] }) => {
+      if (method === "eth_chainId") return toHex(chainId);
+      if (method === "wallet_connect") return { accounts: [] };
+      if (method === "wallet_revokeAccessKey" && dropsRevokedKey) {
+        const state = await loadWalletState();
+        const revoked = params?.[0].accessKeyAddress.toLowerCase();
+        await saveWalletState({
+          ...state,
+          accessKeys: state.accessKeys.filter((key) => key.address.toLowerCase() !== revoked),
+        });
+      }
+      return undefined;
+    },
+  );
+  return { request, createProvider: vi.fn(async () => ({ request })) };
+}
+
+export type KeyStatus = "published" | "revoked" | "missing";
+
+/** The key's AccountKeychain state on each successive read. */
+export function keychain(...statuses: KeyStatus[]) {
+  const readKey = vi.fn();
+  for (const status of statuses) readKey.mockResolvedValueOnce({ status, expiry: undefined });
+  return readKey;
 }
 
 /** The incur run context a command reads; `error` returns the refusal so a test can inspect it. */

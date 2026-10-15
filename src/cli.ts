@@ -137,12 +137,16 @@ cli.command("refresh", {
 });
 
 cli.command("logout", {
-  description: "Log out and disconnect your wallet",
+  description: "Log out of every network, or of one with --network",
   options: logoutOptions,
   alias: globalAlias,
   output: logoutOutput,
-  async run() {
-    return logoutHandler();
+  async run(context) {
+    return logoutHandler(
+      { ...context.options, network: context.globals.network },
+      // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
+      { ...context, agent: !canPrompt(context.agent) },
+    );
   },
 });
 
@@ -428,7 +432,8 @@ const mcpToolHints: Record<string, Mcp.ToolAnnotations> = {
   // login, and once approved, stores the approved account in place of the current one.
   login: { ...destructive, idempotentHint: false, openWorldHint: true },
   login_status: { ...destructive, idempotentHint: true, openWorldHint: true },
-  logout: { ...destructive, idempotentHint: true, openWorldHint: false },
+  // With `revoke`, asks the wallet app to revoke the keys and reads them on-chain.
+  logout: { ...destructive, idempotentHint: true, openWorldHint: true },
   // Saves the requested network to the wallet store before approval, like `login`.
   refresh: { ...destructive, idempotentHint: false, openWorldHint: true },
   revoke: { ...destructive, idempotentHint: true, openWorldHint: true },
@@ -853,8 +858,20 @@ function describeCli() {
       },
       {
         name: "logout",
-        about: "Log out and disconnect your wallet",
-        args: [flag("yes", "--yes", "Skip confirmation prompt")],
+        about: "Log out of every network, or of one with --network",
+        args: [
+          flag(
+            "revoke",
+            "--revoke",
+            "Revoke the access keys on-chain through the wallet app before removing them",
+          ),
+          flag(
+            "yes",
+            "--yes",
+            "Log out without a prompt when stored sessions hold unspent deposits or with --revoke",
+          ),
+          flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
+        ],
       },
       {
         name: "whoami",

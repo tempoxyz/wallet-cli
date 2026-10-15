@@ -14,6 +14,7 @@ import {
 } from "../src/wallet/store.js";
 import { deviceCodeHost, type TokenAnswer } from "./device-code-host.js";
 import {
+  runContext,
   testWallet,
   testWallet2,
   useTempHome,
@@ -297,7 +298,7 @@ describe("login status", () => {
     },
     {
       name: "logout",
-      replace: () => logoutHandler(),
+      replace: () => logoutHandler({}, runContext()),
       message:
         "The login was cancelled by logout. Run 'tempo wallet login --network testnet' to start a new one.",
       cta: loginCta("testnet"),
@@ -334,7 +335,7 @@ describe("login status", () => {
     await useTempHome();
     const host = useHost(["approve"]);
     await loginHandler({ network: "testnet", browser: false, wait: false });
-    await logoutHandler();
+    await logoutHandler({}, runContext());
 
     expect(await loginStatusHandler({ network: "testnet" })).toMatchObject({
       code: "E_USAGE",

@@ -141,6 +141,26 @@ async function sessionList(
   };
 }
 
+/**
+ * Stored sessions paid by one of `payers`, on `chainId` when it is set, whose deposit still holds
+ * unspent funds: every session not finalized, as `sessions list` reports it.
+ */
+export async function fundedSessions(options: {
+  payers: readonly string[];
+  chainId?: number | undefined;
+}) {
+  const payers = new Set(options.payers.map((payer) => payer.toLowerCase()));
+  return (await readChannelRecords())
+    .filter(
+      (record) =>
+        payers.has(record.payer) &&
+        (options.chainId === undefined || record.chain_id === options.chainId) &&
+        sessionStatus(record) !== "finalized" &&
+        unspentDeposit(record) > 0n,
+    )
+    .map(sessionItem);
+}
+
 export async function syncSessions(options: {
   network?: string | undefined;
   origin?: string | undefined;
@@ -802,10 +822,23 @@ function closeTarget(record: ChannelRecord) {
   };
 }
 
+/**
+ * The highest voucher the server acknowledged, else the signed cumulative. A higher stored
+ * cumulative is not proof of spend: a payment saves it before creating the voucher, so counting
+ * it could hide a deposit that is still refundable.
+ */
+function sessionSpent(record: ChannelRecord) {
+  return record.accepted_cumulative > 0n ? record.accepted_cumulative : record.cumulative_amount;
+}
+
+function unspentDeposit(record: ChannelRecord) {
+  const spent = sessionSpent(record);
+  return record.deposit > spent ? record.deposit - spent : 0n;
+}
+
 function sessionItem(record: ChannelRecord) {
-  const spent =
-    record.accepted_cumulative > 0n ? record.accepted_cumulative : record.cumulative_amount;
-  const remaining = record.deposit > spent ? record.deposit - spent : 0n;
+  const spent = sessionSpent(record);
+  const remaining = unspentDeposit(record);
   const status = sessionStatus(record);
   return {
     channel_id: record.channel_id,

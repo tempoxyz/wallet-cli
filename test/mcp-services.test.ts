@@ -29,7 +29,7 @@ const toolHints = [
   ["keys_update", false, true, false, true],
   ["login", false, true, false, true],
   ["login_status", false, true, true, true],
-  ["logout", false, true, true, false],
+  ["logout", false, true, true, true],
   ["refresh", false, true, false, true],
   ["revoke", false, true, true, true],
   ["services", true, false, true, true],
