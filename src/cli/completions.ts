@@ -2,6 +2,7 @@ import { Completions } from "incur";
 
 import { cliGlobalAlias, cliGlobals } from "../schemas/shared.js";
 import { commandTokens, firstCommandIndex } from "./argv.js";
+import type { WalletCommand } from "./command.js";
 
 type Candidate = Completions.Candidate;
 
@@ -23,19 +24,28 @@ const builtinFlags: Candidate[] = [
   { value: "--version", description: "Show version" },
 ];
 
-/** Wallet-owned `completions` output; see `completionScript` for which shells stay with incur. */
-export function walletCompletions(args: readonly string[], commands: Map<string, unknown>) {
+/**
+ * Wallet-owned `completions` output; see `completionScript` for which shells stay with incur.
+ * Like incur's own completion, it offers the mounted commands in mount order, then incur's
+ * builtins, which are the `commands` entries without a `command`, in their order there.
+ */
+export function walletCompletions(
+  args: readonly string[],
+  mounted: Map<string, unknown>,
+  commands: readonly WalletCommand[],
+) {
   const index = firstCommandIndex(args);
   if (index === undefined || args[index] !== "completions") return undefined;
   if (args.includes("--help") || args.includes("-h")) return undefined;
   // The first positional after `completions`, skipping flags and their values.
   const [shell] = commandTokens(args.slice(index + 1));
   return completionScript(shell, () => {
-    const entries = commands as Parameters<typeof Completions.complete>[0];
+    const entries = mounted as Parameters<typeof Completions.complete>[0];
     return [
       ...Completions.complete(entries, undefined, [""], 0),
-      { value: "mcp", description: "Register as MCP server" },
-      { value: "skills", description: "Sync skill files to agents" },
+      ...commands.flatMap(({ command, describe }) =>
+        command || !describe ? [] : [{ value: describe.name, description: describe.about }],
+      ),
       { value: "help", description: "Show help for a command" },
       ...Completions.complete(entries, undefined, ["-"], 0, {
         schema: cliGlobals,

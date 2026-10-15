@@ -44,8 +44,8 @@ const cli = Cli.create("tempo wallet", {
 // Returns a thrown CtaError through `c.error`, so it keeps its cta; `serveMcp` registers it too.
 cli.use(ctaErrors);
 
-// Shell completions list the commands in this order, and `--describe` lists them with incur's
-// builtin `mcp` and `skills`.
+// `--describe` lists these in this order. Shell completions offer the mounted commands in the
+// same order, then incur's builtin `mcp` and `skills`, which incur mounts itself.
 const commands: WalletCommand[] = [
   login,
   refresh,
@@ -88,7 +88,7 @@ async function main() {
     return;
   }
 
-  const script = walletCompletions(args, mounted);
+  const script = walletCompletions(args, mounted, commands);
   if (script !== undefined) {
     process.stdout.write(`${script}\n`);
     return;
