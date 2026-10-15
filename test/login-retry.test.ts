@@ -59,8 +59,12 @@ it("request-triggered authorization selects Moderato despite the persisted mainn
       resolvePaymentIdentity(parseRequestArgs(["-n", "testnet", "https://example.com"])),
     ).rejects.toThrow("Stop at device authorization");
     await Storage.filesystem().getItem("store");
-    expect((await loadWalletState()).chainId).toBe(42431);
-    expect(mocks.loadAccounts).toHaveBeenCalledOnce();
+    expect(mocks.loadAccounts).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      expect.objectContaining({ params: [expect.objectContaining({ chainId: "0xa5bf" })] }),
+    );
+    // The authorization failed, so the wallet stays on its network.
+    expect((await loadWalletState()).chainId).toBe(4217);
   } finally {
     vi.unstubAllEnvs();
   }

@@ -2,8 +2,9 @@ import { stat } from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { logoutHandler } from "../src/commands/identity.js";
+import { logoutHandler, refreshHandler } from "../src/commands/identity.js";
 import { loginHandler, loginStatusHandler } from "../src/commands/login.js";
+import { settleWalletStore } from "../src/provider.js";
 import {
   loadPendingLogin,
   loadWalletState,
@@ -254,7 +255,7 @@ describe("login status", () => {
 
       expect(host.polls.map((poll) => poll.device_code)).toEqual(["device-1", "device-2"]);
       const state = await loadWalletState();
-      expect(state.chainId).toBe(42431);
+      expect(state.chainId).toBe(4217);
       expect(state.accessKeys.map((key) => key.chainId)).toEqual([4217]);
     },
   );
@@ -400,6 +401,7 @@ describe("login status", () => {
 
   it("waits until the code expires rather than the SDK's five minutes, then reports it", async () => {
     await useTempHome();
+    await saveWalletState(walletState());
     const host = useHost(["pending"], { expiresIn: 2 });
     await loginHandler({ network: "testnet", browser: false, wait: false });
 
@@ -409,7 +411,95 @@ describe("login status", () => {
     });
     expect(host.polls.length).toBeGreaterThan(1);
     expect(await loadPendingLogin()).toBeUndefined();
+    // The SDK's timeout leaves the wallet on its network.
+    expect((await loadWalletState()).chainId).toBe(4217);
   });
+});
+
+describe("stored network", () => {
+  // Logged in on mainnet, with a key a mainnet login does not reuse.
+  const onMainnet = walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, expiry: 1 }] });
+  const flows = [
+    {
+      flow: "login",
+      run: (network: string) => loginHandler({ network, browser: false, wait: true }),
+    },
+    {
+      flow: "login, then login status",
+      run: async (network: string) => {
+        await loginHandler({ network, browser: false, wait: false });
+        // A pending login leaves the network as it was.
+        expect((await loadWalletState()).chainId).toBe(4217);
+        return await loginStatusHandler({});
+      },
+    },
+    {
+      flow: "refresh",
+      run: (network: string) =>
+        refreshHandler({ network, browser: false }).catch((error: unknown) => error),
+    },
+  ];
+
+  // Only an approval moves the wallet to the login's network.
+  const answers = [
+    { network: "testnet", answer: "approve", chainId: 42431 },
+    { network: "testnet", answer: "deny", chainId: 4217 },
+    { network: "testnet", answer: "expire", chainId: 4217 },
+    { network: "testnet", answer: "unavailable", chainId: 4217 },
+    { network: "mainnet", answer: "approve", chainId: 4217 },
+    { network: "mainnet", answer: "deny", chainId: 4217 },
+  ] as const;
+
+  it.each(
+    flows.flatMap(({ flow, run }) => answers.map((scenario) => ({ flow, run, ...scenario }))),
+  )(
+    "$flow on $network leaves chain $chainId when the wallet answers $answer",
+    async ({ run, network, answer, chainId }) => {
+      await useTempHome();
+      await saveWalletState(onMainnet);
+      const host = useHost([answer]);
+
+      await run(network);
+
+      expect(host.polls).toHaveLength(1);
+      const state = await loadWalletState();
+      expect(state.chainId).toBe(chainId);
+      expect(state.accounts).toEqual([{ address: testWallet }]);
+    },
+  );
+
+  it.each(flows)(
+    "$flow on testnet leaves a store another login changed before the wallet denied it",
+    async ({ run }) => {
+      await useTempHome();
+      await saveWalletState(onMainnet);
+      // Another process logs in on testnet while this login waits for the wallet, after the
+      // SDK saved this login's network.
+      const other = walletState({
+        accessKeys: [{ ...walletState().accessKeys[0]!, chainId: 42431 }],
+        chainId: 42431,
+      });
+      const host = deviceCodeHost(() => "deny");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+          if (String(input).endsWith("/token")) {
+            await settleWalletStore();
+            await saveWalletState(other);
+          }
+          return await host.fetch(input, init);
+        }),
+      );
+
+      await run("testnet");
+
+      expect(host.polls).toHaveLength(1);
+      expect(await loadWalletState()).toMatchObject({
+        chainId: 42431,
+        accessKeys: [expect.objectContaining({ chainId: 42431 })],
+      });
+    },
+  );
 });
 
 /** The wallet store holds the account and the access key registration `index` asked for. */
