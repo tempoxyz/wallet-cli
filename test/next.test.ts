@@ -24,6 +24,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 }));
 
 import { revokeHandler, updateAccessKeyHandler } from "../src/commands/identity.js";
+import { runFundingFlow } from "../src/commands/fund.js";
 import { loginHandler } from "../src/commands/login.js";
 import { closeSessions } from "../src/commands/sessions.js";
 import { swapTokens } from "../src/commands/swap.js";
@@ -279,6 +280,18 @@ const continuations: {
       return loginHandler({ network: option, browser: false, wait: false });
     },
     argv: ["wallet", "login", "status", "--interval", "5"],
+    until: '.status != "pending"',
+    poll_interval_seconds: 5,
+  },
+  {
+    name: "a pending funding waits for its funds with fund status",
+    run: async ({ option, chain }) => {
+      await writeWalletState(stateFor(chain));
+      mocks.readContract.mockResolvedValue(0n);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      return runFundingFlow({ action: "fund", network: option, noBrowser: true });
+    },
+    argv: ["wallet", "fund", "status", "--interval", "5"],
     until: '.status != "pending"',
     poll_interval_seconds: 5,
   },

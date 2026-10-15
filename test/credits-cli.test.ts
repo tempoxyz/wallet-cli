@@ -7,6 +7,7 @@ import { cliBundle } from "./cli-bundle.js";
 
 import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
 import { usdcToken } from "../src/shared/constants.js";
+import { appUrl } from "../src/shared/network.js";
 
 const exec = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -35,7 +36,7 @@ describe("credits CLI compatibility", () => {
       expect(result.code).toBe(2);
       expect(result.stdout + result.stderr).toContain("MPP Credits can no longer be purchased");
       expect(result.stdout + result.stderr).toContain("tempo wallet fund --mach");
-      expect(result.stdout + result.stderr).not.toContain("https://wallet.tempo.xyz/agent");
+      expect(result.stdout + result.stderr).not.toContain(new URL("/agent", appUrl).toString());
     },
   );
 

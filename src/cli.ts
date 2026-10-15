@@ -19,7 +19,7 @@ import { debugHandler, doctorHandler } from "./commands/doctor.js";
 import { loginHandler, loginStatusHandler } from "./commands/login.js";
 import { swapTokens } from "./commands/swap.js";
 import { transferCredits, transferMach, transferTokens } from "./commands/transfer.js";
-import { fundAction, runFundingFlow } from "./commands/fund.js";
+import { fundAction, fundStatusHandler, runFundingFlow } from "./commands/fund.js";
 import {
   closeSessions,
   dryRunCloseSessions,
@@ -36,6 +36,7 @@ import {
   doctorOutput,
   fundOptions,
   fundOutput,
+  fundStatusOptions,
   globalAlias,
   globalOptions,
   keysOutput,
@@ -277,13 +278,15 @@ cli.command("swap", {
   ),
 });
 
-cli.command("fund", {
+// Bare `tempo wallet fund` opens a funding flow; `fund status` waits for a pending one.
+const fund = Cli.create("fund", {
   description: "Open add-funds flows in the wallet app",
+  globals: cliGlobals,
   options: fundOptions,
   alias: globalAlias,
   output: fundOutput,
-  async run({ globals, options }) {
-    return runFundingFlow({
+  async run({ error, globals, options }) {
+    const result = await runFundingFlow({
       action: fundAction({
         credits: options.credits,
         mach: options.mach,
@@ -298,8 +301,26 @@ cli.command("fund", {
       timeout: options.timeout,
       network: globals.network,
     });
+    return "code" in result ? error(result) : result;
   },
 });
+
+fund.command("status", {
+  description: "Wait for a pending funding's balance increase",
+  options: fundStatusOptions,
+  alias: globalAlias,
+  output: fundOutput,
+  async run({ error, globals, options }) {
+    const result = await fundStatusHandler({
+      network: globals.network,
+      interval: options.interval,
+      maxAttempts: options["max-attempts"],
+    });
+    return "code" in result ? error(result) : result;
+  },
+});
+
+cli.command(fund);
 
 // Bare `tempo wallet sessions` lists sessions.
 const sessions = Cli.create("sessions", {
@@ -424,8 +445,11 @@ const mcpToolHints: Record<string, Mcp.ToolAnnotations> = {
   completions: { ...readOnly, openWorldHint: false },
   debug: { ...readOnly, openWorldHint: true },
   doctor: { ...readOnly, openWorldHint: true },
-  // Opens a wallet-app checkout; any payment happens there, not in this command.
+  // Opens a wallet-app checkout and saves it for `fund status`; any payment happens in the
+  // wallet app, not in this command.
   fund: { ...nonDestructive, idempotentHint: false, openWorldHint: true },
+  // Reads balances and clears the pending funding once it arrives or expires; reruns add nothing.
+  fund_status: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
   keys_list: { ...readOnly, openWorldHint: true },
   keys_update: { ...destructive, idempotentHint: false, openWorldHint: true },
   // Saves the requested network to the wallet store before approval, replaces any pending
@@ -1036,6 +1060,20 @@ function describeCli() {
           option("referral_code", "--referral-code", "Referral code to claim while funding", {
             valueName: "CODE",
           }),
+        ],
+        subcommands: [
+          {
+            name: "status",
+            about: "Wait for a pending funding's balance increase",
+            args: [
+              option("interval", "--interval", "Seconds between balance checks", {
+                valueName: "SECONDS",
+              }),
+              option("max_attempts", "--max-attempts", "Checks before giving up", {
+                valueName: "COUNT",
+              }),
+            ],
+          },
         ],
       },
       {

@@ -14,7 +14,9 @@ import {
   revokeOptions,
   updateAccessKeyOptions,
 } from "../src/schemas.js";
+import { appUrl } from "../src/shared/network.js";
 import { cliBundle } from "./cli-bundle.js";
+import { useTempHome } from "./helpers.js";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -158,19 +160,23 @@ describe("generated CLI metadata", () => {
   it("returns a complete remote MACH handoff through the CLI", async () => {
     const wallet = "0x1111111111111111111111111111111111111111";
     const result = JSON.parse(
-      await walletCli([
-        "fund",
-        "--mach",
-        "--address",
-        wallet,
-        "--amount",
-        "5",
-        "--no-browser",
-        "--format",
-        "json",
-        "--network",
-        "mainnet",
-      ]),
+      await walletCli(
+        [
+          "fund",
+          "--mach",
+          "--address",
+          wallet,
+          "--amount",
+          "5",
+          "--no-browser",
+          "--format",
+          "json",
+          "--network",
+          "mainnet",
+        ],
+        // The test RPC is unreachable, so no pending funding is saved, and never in the real home.
+        { HOME: await useTempHome() },
+      ),
     );
     expect(result).toMatchObject({
       status: "pending",
@@ -182,7 +188,7 @@ describe("generated CLI metadata", () => {
       balance: null,
     });
     expect(result.url).toBe(
-      `https://wallet.tempo.xyz/agent?action=fund&intent=mach&address=${wallet}&chainId=4217&amount=5`,
+      `${new URL("/agent", appUrl)}?action=fund&intent=mach&address=${wallet}&chainId=4217&amount=5`,
     );
   });
 
@@ -452,18 +458,18 @@ function hasNextStep(schema: unknown): boolean {
   return (anyOf ?? []).some(hasNextStep);
 }
 
-async function walletCli(args: string[]) {
-  return bundledCli(cliBundle("wallet"), args);
+async function walletCli(args: string[], env: Record<string, string> = {}) {
+  return bundledCli(cliBundle("wallet"), args, env);
 }
 
 async function requestCli(args: string[]) {
   return bundledCli(cliBundle("request"), args);
 }
 
-async function bundledCli(entrypoint: string, args: string[]) {
+async function bundledCli(entrypoint: string, args: string[], env: Record<string, string> = {}) {
   const { stdout } = await execFileAsync(process.execPath, [entrypoint, ...args], {
     cwd: root,
-    env: { ...process.env, NO_COLOR: "1" },
+    env: { ...process.env, NO_COLOR: "1", ...env },
     maxBuffer: 1024 * 1024,
   });
   return stdout;
