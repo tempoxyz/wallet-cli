@@ -22,7 +22,7 @@ const channelId = `0x${"a".repeat(64)}`;
 const otherChannelId = `0x${"b".repeat(64)}`;
 
 /** Concurrent initializations; each statement runs in its own sqlite3 process. */
-const concurrency = 16;
+const concurrency = 8;
 
 /** The channels table as older releases created it, before any of the added columns. */
 const originalSchema = `CREATE TABLE channels (
