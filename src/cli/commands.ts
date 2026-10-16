@@ -9,7 +9,7 @@ import login from "../commands/login.js";
 import logout from "../commands/logout.js";
 import refresh from "../commands/refresh.js";
 import revoke from "../commands/revoke.js";
-import services from "../commands/services.js";
+import services from "../commands/services/index.js";
 import sessions from "../commands/sessions/index.js";
 import swap from "../commands/swap.js";
 import transfer from "../commands/transfer/index.js";

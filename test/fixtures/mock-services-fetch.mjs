@@ -22,6 +22,13 @@ const serviceDirectory = {
         llmsTxt: "https://weather.example.com/llms.txt",
       },
     },
+    // Ids that name a `services` subcommand, or that incur would take for a typo of one.
+    ...["list", "search", "show", "edgar-search"].map((id) => ({
+      id,
+      name: `Service ${id}`,
+      serviceUrl: `https://${id}.example.com`,
+      endpoints: [],
+    })),
   ],
 };
 

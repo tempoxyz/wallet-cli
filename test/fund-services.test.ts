@@ -6,14 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fundAction, fundUrl, runFundingFlow } from "../src/commands/fund.js";
 import { appUrl } from "../src/shared/network.js";
 import {
-  fetchServices,
-  fetchServiceList,
   serviceDirectoryCachePath,
   staleListFetchedAt,
-} from "../src/commands/services.js";
+} from "../src/commands/services/directory.js";
+import { listServices } from "../src/commands/services/list.js";
+import { searchServices } from "../src/commands/services/search.js";
+import { showService } from "../src/commands/services/show.js";
 import { expectUsageError, useTempHome } from "./helpers.js";
-
-type ServiceSummary = Awaited<ReturnType<typeof fetchServiceList>>[number];
 
 /** The wallet app's funding page, on the app `TEMPO_AUTH_URL` names. */
 const agent = new URL("/agent", appUrl).toString();
@@ -115,7 +114,7 @@ describe("runFundingFlow", () => {
   });
 });
 
-describe("fetchServices", () => {
+describe("service directory", () => {
   const serviceDirectory = {
     services: [
       {
@@ -167,7 +166,7 @@ describe("fetchServices", () => {
   it("normalizes the service list", async () => {
     mockFetchOk(serviceDirectory);
 
-    const list = await fetchServiceList();
+    const list = await listServices();
     expect(list).toHaveLength(2);
 
     const [weather, translate] = list;
@@ -195,31 +194,31 @@ describe("fetchServices", () => {
 
   it("searches across tags", async () => {
     mockFetchOk(serviceDirectory);
-    const results = (await fetchServices({ search: "meteorology" })) as ServiceSummary[];
+    const results = await searchServices({ query: "meteorology" });
     expect(results.map((service) => service.id)).toEqual(["weather"]);
   });
 
   it("searches across categories", async () => {
     mockFetchOk(serviceDirectory);
-    const results = (await fetchServices({ search: "nlp" })) as ServiceSummary[];
+    const results = await searchServices({ query: "nlp" });
     expect(results.map((service) => service.id)).toEqual(["translate"]);
   });
 
   it("searches across description", async () => {
     mockFetchOk(serviceDirectory);
-    const results = (await fetchServices({ search: "translation" })) as ServiceSummary[];
+    const results = await searchServices({ query: "translation" });
     expect(results.map((service) => service.id)).toEqual(["translate"]);
   });
 
   it("returns the full list when the search is empty", async () => {
     mockFetchOk(serviceDirectory);
-    const results = await fetchServices({ search: "   " });
+    const results = await searchServices({ query: "   " });
     expect(results).toHaveLength(2);
   });
 
   it("looks up a service detail by id", async () => {
     mockFetchOk(serviceDirectory);
-    const detail = await fetchServices({ serviceId: "weather" });
+    const detail = await showService({ serviceId: "weather" });
     expect(detail).toMatchObject({
       id: "weather",
       docs: {
@@ -267,7 +266,7 @@ describe("fetchServices", () => {
       ],
     });
 
-    expect(await fetchServiceList()).toEqual([
+    expect(await listServices()).toEqual([
       {
         id: "weather",
         name: "Trusted API",
@@ -277,7 +276,7 @@ describe("fetchServices", () => {
         endpoint_count: 1,
       },
     ]);
-    expect(await fetchServices({ serviceId: "weather" })).toMatchObject({
+    expect(await showService({ serviceId: "weather" })).toMatchObject({
       endpoints: [
         {
           path: "/now",
@@ -302,8 +301,8 @@ describe("fetchServices", () => {
       ],
     });
 
-    expect((await fetchServiceList()).map((service) => service.id)).toEqual(["stableenrich"]);
-    expect(await fetchServices({ serviceId: "stableenrich" })).toMatchObject({
+    expect((await listServices()).map((service) => service.id)).toEqual(["stableenrich"]);
+    expect(await showService({ serviceId: "stableenrich" })).toMatchObject({
       service_url: "https://stableenrich.dev",
     });
   });
@@ -316,7 +315,7 @@ describe("fetchServices", () => {
       ],
     });
 
-    await expect(fetchServices({ serviceId: "stableenrich" })).rejects.toMatchObject({
+    await expect(showService({ serviceId: "stableenrich" })).rejects.toMatchObject({
       code: "E_USAGE",
       message: "Service directory lists 'stableenrich' more than once",
     });
@@ -335,7 +334,7 @@ describe("fetchServices", () => {
       ],
     });
 
-    expect(await fetchServiceList()).toEqual([
+    expect(await listServices()).toEqual([
       expect.objectContaining({
         id: "official",
         name: "Official",
@@ -348,11 +347,11 @@ describe("fetchServices", () => {
     const nested = `${"[".repeat(20_000)}${"]".repeat(20_000)}`;
     mockFetchText(`{"services":[{"id":"weather","name":"Weather API","extra":${nested}}]}`);
 
-    expect(await fetchServiceList()).toEqual([
+    expect(await listServices()).toEqual([
       expect.objectContaining({ id: "weather", name: "Weather API" }),
     ]);
     // The cached copy is read back without re-serializing the nesting.
-    expect(await fetchServiceList()).toEqual([
+    expect(await listServices()).toEqual([
       expect.objectContaining({ id: "weather", name: "Weather API" }),
     ]);
   });
@@ -403,20 +402,34 @@ describe("fetchServices", () => {
       [Array(200).fill("weather").join(" ").slice(0, 256), ["weather"]],
     ])("matches %j to %j", async (search, ids) => {
       mockFetchOk(searchDirectory);
-      const results = (await fetchServices({ search })) as ServiceSummary[];
+      const results = await searchServices({ query: search });
       expect(results.map((service) => service.id)).toEqual(ids);
     });
 
     it.each([
-      ["a".repeat(257), "--search accepts at most 256 characters"],
+      ["a".repeat(257), "Search queries accept at most 256 characters"],
       [
         Array.from({ length: 17 }, (_, index) => `w${index}`).join(" "),
-        "--search accepts at most 16 distinct words",
+        "Search queries accept at most 16 distinct words",
       ],
     ])("rejects oversized search %#", async (search, message) => {
       mockFetchOk(searchDirectory);
-      await expect(fetchServices({ search })).rejects.toMatchObject({ code: "E_USAGE", message });
+      await expect(searchServices({ query: search })).rejects.toMatchObject({
+        code: "E_USAGE",
+        message,
+      });
     });
+
+    // The CLI drops a query's leading dashes so it is never read as a flag; see normalizeServicesArgs.
+    it.each(["--language", "-language", "--translate service", "--", "-"])(
+      "matches %j as it does without its leading dashes",
+      async (search) => {
+        mockFetchOk(searchDirectory);
+        expect(await searchServices({ query: search })).toEqual(
+          await searchServices({ query: search.replace(/^-+/, "") }),
+        );
+      },
+    );
   });
 
   it.each([
@@ -441,7 +454,7 @@ describe("fetchServices", () => {
       ],
     });
 
-    expect(await fetchServices({ serviceId: "weather" })).toMatchObject({
+    expect(await showService({ serviceId: "weather" })).toMatchObject({
       endpoints: [{ payment: { amount: amount ?? "", decimals: decimals ?? null, price } }],
     });
   });
@@ -472,7 +485,7 @@ describe("fetchServices", () => {
       ].map((id) => ({ id, name: id })),
     });
 
-    await expect(fetchServices({ serviceId })).rejects.toMatchObject({
+    await expect(showService({ serviceId })).rejects.toMatchObject({
       code: "E_NOT_FOUND",
       exitCode: 2,
       message,
@@ -562,7 +575,7 @@ describe("fetchServices", () => {
           );
         const warn = vi.spyOn(console, "error").mockImplementation(() => {});
 
-        const detail = fetchServices({ serviceId: "weather", refresh }).catch((e) => e);
+        const detail = showService({ serviceId: "weather", refresh }).catch((e) => e);
         if (result) {
           const expected = stale
             ? { name: result, stale: true, fetched_at: fetchedAt }
@@ -589,7 +602,7 @@ describe("fetchServices", () => {
 
         // Lists carry the same provenance for MCP results.
         if (result)
-          expect(staleListFetchedAt(await fetchServiceList({ refresh }))).toBe(
+          expect(staleListFetchedAt(await listServices({ refresh }))).toBe(
             stale ? fetchedAt : undefined,
           );
       },
@@ -600,7 +613,7 @@ describe("fetchServices", () => {
       await mkdir(path, { recursive: true });
       mockFetchText(fetchedDirectory);
 
-      expect(await fetchServices({ serviceId: "weather" })).toMatchObject({ name: "Fetched" });
+      expect(await showService({ serviceId: "weather" })).toMatchObject({ name: "Fetched" });
       expect(await readdir(dirname(path))).toEqual(["services-cache.json"]);
     });
   });
@@ -609,7 +622,7 @@ describe("fetchServices", () => {
     const fetch = mockFetchOk(serviceDirectory);
     const timeout = vi.spyOn(AbortSignal, "timeout");
 
-    await fetchServiceList();
+    await listServices();
 
     const [url, init] = fetch.mock.calls[0] ?? [];
     expect(url).toBe("https://mpp.dev/api/services");
@@ -671,7 +684,7 @@ describe("fetchServices", () => {
     ],
   ])("maps %s to %s", async (_name, code, message, fetch) => {
     vi.spyOn(globalThis, "fetch").mockImplementation(fetch);
-    await expect(fetchServiceList()).rejects.toMatchObject({
+    await expect(listServices()).rejects.toMatchObject({
       code,
       exitCode: 3,
       message,
@@ -685,9 +698,9 @@ describe("fetchServices", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response("{}"))
       .mockResolvedValueOnce(new Response(JSON.stringify({ services: [{ id: "stableenrich" }] })));
-    await expect(fetchServiceList()).rejects.toMatchObject({ code: "E_NETWORK" });
+    await expect(listServices()).rejects.toMatchObject({ code: "E_NETWORK" });
     await expect(readFile(serviceDirectoryCachePath(), "utf8")).rejects.toThrow();
-    expect((await fetchServiceList()).map((service) => service.id)).toEqual(["stableenrich"]);
+    expect((await listServices()).map((service) => service.id)).toEqual(["stableenrich"]);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -698,6 +711,6 @@ describe("fetchServices", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ services: [{ id: "stableenrich" }] })),
     );
-    expect((await fetchServiceList()).map((service) => service.id)).toEqual(["stableenrich"]);
+    expect((await listServices()).map((service) => service.id)).toEqual(["stableenrich"]);
   });
 });

@@ -27,13 +27,23 @@ describe("generated CLI metadata", () => {
     expect((await cli(["--version"])).trim()).toBe(await packageVersion());
   });
 
-  it("documents direct service lookup and search in services help", async () => {
-    const output = await walletCli(["services", "--help"]);
+  it.each([
+    { command: ["services"], usage: "Usage: tempo wallet services [options] | <command>" },
+    { command: ["services", "list"], usage: "Usage: tempo wallet services list [options]" },
+    {
+      command: ["services", "search"],
+      usage: "Usage: tempo wallet services search <query> [options]",
+    },
+    {
+      command: ["services", "show"],
+      usage: "Usage: tempo wallet services show <serviceId> [options]",
+    },
+  ])("documents $command in its help", async ({ command, usage }) => {
+    const output = await walletCli([...command, "--help"]);
 
-    expect(output).toContain("Usage: tempo wallet services [serviceId] [options]");
-    expect(output).toContain("--search <string>");
+    expect(output).toContain(usage);
     expect(output).toContain("--refresh");
-    expect(output).not.toContain("Usage: tempo wallet services <command>");
+    expect(output).not.toContain("--search");
   });
 
   it("documents access key limit updates", async () => {
@@ -214,15 +224,19 @@ describe("generated CLI metadata", () => {
     expect(hasNextStep(schema.output)).toBe(true);
   });
 
-  it("returns schema for the direct services command", async () => {
-    const output = await walletCli(["services", "--schema", "--format", "json"]);
+  it.each([
+    { command: ["services", "search"], arg: "query", description: "Words to match" },
+    { command: ["services", "show"], arg: "serviceId", description: "Service ID" },
+  ])("returns the $command schema", async ({ command, arg, description }) => {
+    const output = await walletCli([...command, "--schema", "--format", "json"]);
     const schema = JSON.parse(output) as {
-      args: { properties: { serviceId: { description: string } } };
-      options: { properties: { search: { description: string } } };
+      args: { properties: Record<string, { description: string }>; required: string[] };
+      options: { properties: Record<string, unknown> };
     };
 
-    expect(schema.args.properties.serviceId.description).toContain("Service ID");
-    expect(schema.options.properties.search.description).toContain("Search by name");
+    expect(schema.args.properties[arg]?.description).toContain(description);
+    expect(schema.args.required).toEqual([arg]);
+    expect(schema.options.properties).toHaveProperty("refresh");
   });
 
   it("advertises nullable wallet balances and RPC diagnostics", async () => {
@@ -293,22 +307,22 @@ describe("generated CLI metadata", () => {
     ["short toon with explicit json", ["services", "-t", "--format", "json", "--schema"]],
   ])("normalizes legacy services output aliases before schema dispatch: %s", async (_, args) => {
     const schema = JSON.parse(await walletCli(args)) as {
-      args: { properties: { serviceId: { type: string } } };
+      options: { properties: { refresh: { type: string } } };
     };
-    expect(schema.args.properties.serviceId.type).toBe("string");
+    expect(schema.options.properties.refresh.type).toBe("boolean");
   });
 
   it("keeps explicit services --format precedence over quick output aliases", async () => {
     const output = await walletCli(["services", "--json-output", "--format", "json", "--schema"]);
     const schema = JSON.parse(output) as {
-      options: { properties: { search: { type: string } } };
+      options: { properties: { refresh: { type: string } } };
     };
 
-    expect(schema.options.properties.search.type).toBe("string");
+    expect(schema.options.properties.refresh.type).toBe("boolean");
 
     const toon = await walletCli(["services", "--json-output", "--format", "toon", "--schema"]);
-    expect(toon).toContain("args:");
-    expect(toon).toContain("serviceId:");
+    expect(toon).toContain("options:");
+    expect(toon).toContain("refresh:");
   });
 
   it("includes built-in mcp and skills commands in --describe", async () => {
@@ -323,8 +337,12 @@ describe("generated CLI metadata", () => {
     };
 
     const services = manifest.subcommands.find((command) => command.name === "services");
-    expect(services?.subcommands).toBeUndefined();
-    expect(services?.args?.map((arg) => arg.long)).toEqual([undefined, "--search", "--refresh"]);
+    expect(services?.subcommands?.map((command) => command.name)).toEqual([
+      "list",
+      "search",
+      "show",
+    ]);
+    expect(services?.args).toBeUndefined();
 
     const keys = manifest.subcommands.find((command) => command.name === "keys");
     expect(keys?.subcommands?.map((command) => command.name)).toEqual(["list", "update"]);

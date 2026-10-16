@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Cli } from "incur";
 
-import { expandHelp, normalizeServicesOutputAliases } from "./cli/argv.js";
+import { expandHelp, normalizeServicesArgs } from "./cli/argv.js";
 import { handleBuiltinSchema } from "./cli/builtins.js";
 import { commandMap } from "./cli/command.js";
 import { commands } from "./cli/commands.js";
@@ -46,7 +46,7 @@ async function main() {
   }
 
   const mounted = commandMap(cli);
-  const args = expandHelp(normalizeServicesOutputAliases(bindCommandOptions(rawArgs, mounted)));
+  const args = normalizeServicesArgs(expandHelp(bindCommandOptions(rawArgs, mounted)));
 
   if (handleBuiltinSchema(args)) process.exit(0);
 

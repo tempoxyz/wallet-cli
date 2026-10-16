@@ -2,20 +2,20 @@ import { z } from "incur";
 
 import { globalOptionShape } from "./shared.js";
 
-export const servicesArgs = z.object({
-  serviceId: z.string().optional().describe("Service ID to show details for"),
+const refresh = z
+  .boolean()
+  .optional()
+  .describe("Fetch the service directory instead of using the cached copy");
+
+/** The options of bare `services` and each of its subcommands. */
+export const servicesOptions = z.object({ ...globalOptionShape, refresh });
+
+export const servicesSearchArgs = z.object({
+  query: z.string().describe("Words to match in name, id, description, tags, or category"),
 });
 
-export const servicesOptions = z.object({
-  ...globalOptionShape,
-  search: z
-    .string()
-    .optional()
-    .describe("Search by name, id, description, tags, or category; every word must match"),
-  refresh: z
-    .boolean()
-    .optional()
-    .describe("Fetch the service directory instead of using the cached copy"),
+export const servicesShowArgs = z.object({
+  serviceId: z.string().describe("Service ID to show details for"),
 });
 
 export const serviceOutput = z.object({
@@ -36,10 +36,30 @@ export const serviceDetailOutput = serviceOutput.extend({
   fetched_at: z.string().optional(),
 });
 
-export const servicesOutput = z.union([z.array(serviceOutput), serviceDetailOutput]);
-
 export const servicesListOutput = z.array(serviceOutput);
 
+/** MCP results must be objects, so `services_list` and `services_search` wrap their list. */
+export const servicesListMcpOutput = z.object({
+  services: z.array(serviceOutput),
+  stale: z.boolean().optional(),
+  fetched_at: z.string().optional(),
+});
+
+/** The deprecated `services` MCP tool: an id shows that service; otherwise it lists or searches. */
+export const deprecatedServicesArgs = z.object({
+  serviceId: z.string().optional().describe("Service ID to show details for"),
+});
+
+export const deprecatedServicesOptions = z.object({
+  ...globalOptionShape,
+  search: z
+    .string()
+    .optional()
+    .describe("Search by name, id, description, tags, or category; every word must match"),
+  refresh,
+});
+
+/** The deprecated `services` tool's result: a wrapped list, or one service's details. */
 export const servicesMcpOutput = z
   .object({
     ...serviceDetailOutput.partial().shape,
