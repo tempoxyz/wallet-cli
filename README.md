@@ -226,7 +226,7 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 
 <!-- generated:commands start -->
 
-- `login`: Sign up or log in to your Tempo wallet. Options: `--no-browser`, `--wait`.
+- `login`: Sign up or log in to your Tempo wallet. Options: `--no-browser`, `--wait`, `--no-wait`.
 - `login status`: Wait for a pending login's approval and finish it. Options: `--interval`, `--max-attempts`.
 - `refresh`: Refresh your access key without logging out. Options: `--no-browser`.
 - `logout`: Log out of every network, or of one with --network. Options: `--revoke`, `--yes`, `--no-browser`.
@@ -237,7 +237,7 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 - `transfer [amount] [token] [to]`: Transfer tokens to an address. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--credits`, `--max-spend`, `--amount-cents`, `--to`, `--data`, `--value`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
 - `swap <amount> <tokenIn> <tokenOut>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
 - `tx status <txHash>`: Show a transaction's status on chain.
-- `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--credits`, `--amount`, `--wait`, `--timeout`, `--referral-code`, `--claim`.
+- `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--credits`, `--amount`, `--wait`, `--no-wait`, `--timeout`, `--referral-code`, `--claim`.
 - `fund status`: Wait for a pending funding's balance increase. Options: `--interval`, `--max-attempts`.
 - `sessions`: Manage payment sessions. Options: `--orphaned`, `--all`.
 - `sessions list`: List payment sessions. Options: `--orphaned`, `--all`.
@@ -251,7 +251,7 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 - `debug`: Deprecated: use 'doctor'.
 - `completions [bash|zsh|fish|nushell|powershell|elvish]`: Generate shell completions script.
 
-Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--json-output` (`-j`), and `--toon-output` (`-t`).
+Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--json-output` (`-j`), `--toon-output` (`-t`), `--filter-output`, `--format`, `--full-output`, `--help`, `--llms`, `--llms-full`, `--mcp`, `--schema`, `--token-count`, `--token-limit`, `--token-offset`, and `--version`.
 
 <!-- generated:commands end -->
 

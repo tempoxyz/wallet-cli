@@ -20,6 +20,7 @@ import {
   type WalletCommand,
 } from "../src/cli/command.js";
 import { commands } from "../src/cli/commands.js";
+import { builtinFlags } from "../src/cli/completions.js";
 import type { Describe } from "../src/cli/describe.js";
 import { createMcpCommands } from "../src/cli/mcp.js";
 import {
@@ -98,32 +99,46 @@ export function updateDocs(root: string, options: { check: boolean }) {
   return stale;
 }
 
-/** One line per command and subcommand, in `commands` order, then the global options. */
+/**
+ * One line per command and subcommand, in `commands` order, then the global options: the wallet's
+ * own, then incur's built-in flags.
+ */
 function commandReference(mounted: Map<string, unknown>, list: readonly WalletCommand[]) {
   const lines = list.flatMap(({ command, describe }) => {
-    if (command) return entryLines(command.name, mounted.get(command.name));
+    if (command) return entryLines(command.name, mounted.get(command.name), describe);
     return describe ? describeLines(describe, []) : [];
   });
   const globals = [
     ...optionNames(Object.entries(cliGlobals.shape), cliGlobalAlias),
     ...optionNames(Object.entries(globalOptionShape), globalAlias),
+    ...builtinFlags.map(({ value }) => `\`${value}\``),
   ];
   return [...lines, "", `Global options: ${series(globals)}.`].join("\n");
 }
 
-/** A mounted command, or a group's runnable root and then its subcommands. */
-function entryLines(path: string, entry: unknown): string[] {
+/**
+ * A mounted command, or a group's runnable root and then its subcommands, each with its
+ * `--describe` entry when it has one.
+ */
+function entryLines(path: string, entry: unknown, describe: Describe | undefined): string[] {
   if (isCommandGroup(entry))
     return [
-      ...(isRunnableCommand(entry.root) ? [runnableLine(path, entry.root)] : []),
-      ...[...entry.commands].flatMap(([name, command]) => entryLines(`${path} ${name}`, command)),
+      ...(isRunnableCommand(entry.root) ? [runnableLine(path, entry.root, describe)] : []),
+      ...[...entry.commands].flatMap(([name, command]) =>
+        entryLines(
+          `${path} ${name}`,
+          command,
+          describe?.subcommands?.find((subcommand) => subcommand.name === name),
+        ),
+      ),
     ];
-  return isRunnableCommand(entry) ? [runnableLine(path, entry)] : [];
+  return isRunnableCommand(entry) ? [runnableLine(path, entry, describe)] : [];
 }
 
 function runnableLine(
   path: string,
   command: RunnableCommand & { args?: z.ZodObject | undefined; description?: string | undefined },
+  describe: Describe | undefined,
 ) {
   const args = Object.entries(command.args?.shape ?? {}).map(([name, field]) => {
     const values = enumValues(field as z.ZodType);
@@ -134,7 +149,12 @@ function runnableLine(
   const options = Object.entries(command.options?.shape ?? {}).filter(
     ([name]) => !Object.hasOwn(globalOptionShape, name),
   );
-  return line([path, ...args].join(" "), command.description, optionNames(options, command.alias));
+  const described = (describe?.args ?? []).flatMap((arg) => ("long" in arg ? [arg.long] : []));
+  return line(
+    [path, ...args].join(" "),
+    command.description,
+    optionNames(options, command.alias, described),
+  );
 }
 
 /** incur's builtins `mcp` and `skills`, which only their `--describe` entry lists: its leaves. */
@@ -154,18 +174,27 @@ function line(usage: string, description: string | undefined, options: readonly 
   return options.length > 0 ? `${text} Options: ${options.join(", ")}.` : text;
 }
 
-/** Each option as typed on the command line; a boolean that defaults to true as `--no-<name>`. */
+/**
+ * Each option as typed on the command line. A boolean that defaults to true is listed as its
+ * `--no-<name>` form only; any other boolean adds `--no-<name>` when its help text or its
+ * `--describe` entry (`described`, the long flags) names that form.
+ */
 function optionNames(
   options: readonly [string, unknown][],
   alias: Record<string, string | undefined> = {},
+  described: readonly string[] = [],
 ) {
-  return options.map(([name, field]) => {
-    const flag = name.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
-    const negated =
-      field instanceof z.ZodDefault &&
-      field.unwrap() instanceof z.ZodBoolean &&
-      field.def.defaultValue === true;
-    return withShort(negated ? `--no-${flag}` : `--${flag}`, alias[name] && `-${alias[name]}`);
+  return options.flatMap(([name, field]) => {
+    const flag = `--${name.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`)}`;
+    const short = alias[name] && `-${alias[name]}`;
+    const schema = field as z.ZodType;
+    if (!(unwrap(schema) instanceof z.ZodBoolean)) return [withShort(flag, short)];
+    const negated = `--no-${flag.slice(2)}`;
+    if (schema instanceof z.ZodDefault && schema.def.defaultValue === true)
+      return [withShort(negated, short)];
+    const documented =
+      described.includes(negated) || (schema.description ?? "").split(/[^\w-]+/).includes(negated);
+    return [withShort(flag, short), ...(documented ? [`\`${negated}\``] : [])];
   });
 }
 
@@ -174,9 +203,15 @@ function withShort(long: string, short: string | undefined) {
 }
 
 function enumValues(field: z.ZodType): string[] | undefined {
-  if (field instanceof z.ZodOptional || field instanceof z.ZodDefault)
-    return enumValues(field.unwrap() as z.ZodType);
-  return field instanceof z.ZodEnum ? field.options.map(String) : undefined;
+  const schema = unwrap(field);
+  return schema instanceof z.ZodEnum ? schema.options.map(String) : undefined;
+}
+
+/** The schema inside any optional and default wrappers. */
+function unwrap(field: z.ZodType): z.ZodType {
+  return field instanceof z.ZodOptional || field instanceof z.ZodDefault
+    ? unwrap(field.unwrap() as z.ZodType)
+    : field;
 }
 
 /**

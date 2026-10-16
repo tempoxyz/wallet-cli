@@ -9,7 +9,7 @@ type Candidate = Completions.Candidate;
 export const supportedShells = ["bash", "zsh", "fish", "nushell", "powershell", "elvish"] as const;
 
 // incur's built-in global flags, as listed in its help output; incur does not export them.
-const builtinFlags: Candidate[] = [
+export const builtinFlags: Candidate[] = [
   { value: "--filter-output", description: "Filter output by key paths" },
   { value: "--format", description: "Output format" },
   { value: "--full-output", description: "Show full output envelope" },

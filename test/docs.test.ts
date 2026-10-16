@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { docBlocks, renderBlocks, replaceBlocks, updateDocs } from "../scripts/docs.js";
 import { destructive, readOnly, type WalletCommand } from "../src/cli/command.js";
+import { builtinFlags } from "../src/cli/completions.js";
 import { flag, option } from "../src/cli/describe.js";
 import { globalAlias, globalOptionShape } from "../src/schemas/shared.js";
 
@@ -22,6 +23,8 @@ const fixture: WalletCommand[] = [
         ...globalOptionShape,
         browser: z.boolean().default(true),
         "dry-run": z.boolean().optional(),
+        wait: z.boolean().optional().describe("Wait for the payment; --no-wait returns at once"),
+        follow: z.boolean().default(false),
         maxSpend: z.string().optional(),
       }),
       alias: { ...globalAlias, "dry-run": "d" },
@@ -29,12 +32,21 @@ const fixture: WalletCommand[] = [
     }).command("status", {
       description: "Show a payment.",
       args: z.object({ format: z.enum(["short", "long"]).optional() }),
-      options: z.object(globalOptionShape),
+      options: z.object({ ...globalOptionShape, quiet: z.boolean().optional() }),
       run: () => ({}),
     }),
     annotations: {
       pay: { ...destructive, idempotentHint: false, openWorldHint: true },
       pay_status: { ...readOnly, openWorldHint: false },
+    },
+    // `--describe` names negated forms that the options' help text leaves out.
+    describe: {
+      name: "pay",
+      about: "Pay an address",
+      args: [flag("no_follow", "--no-follow", "Do not follow")],
+      subcommands: [
+        { name: "status", about: "Show a payment", args: [flag("no_quiet", "--no-quiet", "Talk")] },
+      ],
     },
   },
   {
@@ -59,11 +71,20 @@ describe("renderBlocks", () => {
   it("lists each command with its usage, description, and options, then the global options", () => {
     expect(renderBlocks(fixture).commands).toBe(
       [
-        "- `pay <to> [memo]`: Pay an address. Options: `--no-browser`, `--dry-run` (`-d`), `--max-spend`.",
-        "- `pay status [short|long]`: Show a payment.",
+        "- `pay <to> [memo]`: Pay an address. Options: `--no-browser`, `--dry-run` (`-d`), `--wait`, `--no-wait`, `--follow`, `--no-follow`, `--max-spend`.",
+        "- `pay status [short|long]`: Show a payment. Options: `--quiet`, `--no-quiet`.",
         "- `mcp add`: Register as MCP server. Options: `--command` (`-c`), `--no-global`.",
         "",
-        "Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--json-output` (`-j`), and `--toon-output` (`-t`).",
+        `Global options: ${[
+          "`--network` (`-n`)",
+          "`--verbose` (`-v`)",
+          "`--silent` (`-s`)",
+          "`--json-output` (`-j`)",
+          "`--toon-output` (`-t`)",
+          ...builtinFlags.map(({ value }) => `\`${value}\``),
+        ]
+          .join(", ")
+          .replace(/, ([^,]+)$/, ", and $1")}.`,
       ].join("\n"),
     );
   });
