@@ -13,7 +13,7 @@ The sqlite3 shell runs the SQL argument's later statements after one fails at ru
 
 ## Possible Solution
 
-Feed scripts to sqlite3 on stdin, one statement per line, with `-bail`, which does stop at the first failing line. Until then, write with one statement per call.
+Feed scripts to sqlite3 on stdin with `-bail`, which does stop at the first failing statement. `runSqlScript` now does this for the legacy session import; `runSql` could do the same, or be limited to single statements.
 
 ## Minimal Reproducible Example
 
