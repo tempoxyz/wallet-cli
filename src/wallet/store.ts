@@ -265,8 +265,14 @@ export async function clearPendingLogin(deviceCode?: string | undefined) {
     (await loadPendingLogin())?.registration.device_code === deviceCode;
   // A login that is no longer saved needs no lock; one that is gets checked again under it.
   if (!(await isThisLogin())) return;
+  let locked = false;
   await withPendingLoginLock(async () => {
+    locked = true;
     if (await isThisLogin()) await removePendingLogin();
+  }).catch((error: unknown) => {
+    // Callers clear after their login or logout is stored, so a lock that cannot be taken leaves
+    // the file, for `login status` or the next login to replace, rather than failing them.
+    if (locked) throw error;
   });
 }
 

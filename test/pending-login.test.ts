@@ -1,6 +1,8 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
 import {
   clearPendingLogin,
@@ -27,6 +29,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     return contents;
   };
   return { ...actual, readFile };
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 function pendingLogin(deviceCode: string): PendingLogin {
@@ -66,4 +72,16 @@ it.each([
   await saving;
 
   expect((await loadPendingLogin())?.registration.device_code).toBe(left);
+});
+
+it("leaves the pending login, without failing, when its lock cannot be taken", async () => {
+  const home = await useTempHome();
+  await savePendingLogin(pendingLogin("device-old"));
+  // Without sqlite3 the lock is a pid file, and one left by an exited process is never taken over.
+  vi.stubEnv("PATH", join(home, "no-bin"));
+  await writeFile(join(home, ".tempo", "wallet", "pending-login.lock.pid"), "99999999\n");
+
+  await expect(clearPendingLogin("device-old")).resolves.toBeUndefined();
+
+  expect((await loadPendingLogin())?.registration.device_code).toBe("device-old");
 });
