@@ -3,8 +3,9 @@ import { cli, Storage } from "accounts/cli";
 import { deviceCode } from "accounts/deviceCode";
 import { http, toHex, type Address, type Transport } from "viem";
 
+import { CtaError } from "./cli/incur-compat.js";
 import { providerReady, withoutRetries } from "./provider/accounts-compat.js";
-import { commandError, CtaError, walletError } from "./shared/errors.js";
+import { commandError, walletError } from "./shared/errors.js";
 import { openExternal } from "./shared/process.js";
 import { appUrl, networkName, parseNetwork, rpcUrl, type Network } from "./shared/network.js";
 import { continuationCommand } from "./shared/next.js";

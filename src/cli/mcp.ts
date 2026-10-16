@@ -3,7 +3,6 @@ import { Mcp, type Cli } from "incur";
 import { staleListFetchedAt } from "../commands/services.js";
 import { servicesMcpOutput } from "../schemas/services.js";
 import { version } from "../shared/constants.js";
-import { ctaErrors } from "../shared/errors.js";
 import {
   commandMap,
   isCommandGroup,
@@ -11,7 +10,7 @@ import {
   type RunnableCommand,
   type WalletCommand,
 } from "./command.js";
-import { withMcpGlobal } from "./incur-compat.js";
+import { ctaErrors, withMcpGlobal } from "./incur-compat.js";
 
 /** Serves the commands mounted on `cli` as MCP tools over stdio. */
 export async function serveMcp(

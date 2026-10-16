@@ -6,7 +6,7 @@ import { handleBuiltinSchema, mcp, skills } from "./cli/builtins.js";
 import { commandMap, type WalletCommand } from "./cli/command.js";
 import { walletCompletions } from "./cli/completions.js";
 import { describeCli } from "./cli/describe.js";
-import { bindCommandOptions } from "./cli/incur-compat.js";
+import { bindCommandOptions, ctaErrors } from "./cli/incur-compat.js";
 import { serveMcp } from "./cli/mcp.js";
 import completions from "./commands/completions.js";
 import debug from "./commands/debug.js";
@@ -26,7 +26,6 @@ import tx from "./commands/tx.js";
 import whoami from "./commands/whoami.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";
-import { ctaErrors } from "./shared/errors.js";
 
 const cli = Cli.create("tempo wallet", {
   version,

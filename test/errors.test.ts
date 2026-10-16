@@ -7,9 +7,9 @@ import { describe, expect, it, vi } from "vitest";
 import { parseRequestArgs } from "../src/request/args.js";
 import { executeRequest } from "../src/request/run.js";
 import { requireSessionDescriptor } from "../src/payment/session-descriptor.js";
+import { ctaErrors } from "../src/cli/incur-compat.js";
 import {
   accessKeyLimitError,
-  ctaErrors,
   errorCodes,
   httpError,
   networkError,

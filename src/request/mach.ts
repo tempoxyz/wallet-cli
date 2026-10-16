@@ -4,10 +4,10 @@ import { erc20Abi, HttpRequestError, TimeoutError, type Address } from "viem";
 import { call, readContract } from "viem/actions";
 import { Transaction as TempoTransaction } from "viem/tempo";
 
+import { CtaError } from "../cli/incur-compat.js";
 import {
   accessKeyLimitError,
   commandError,
-  CtaError,
   networkError,
   paymentError,
   walletError,

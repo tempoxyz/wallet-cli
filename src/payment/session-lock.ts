@@ -5,7 +5,8 @@ import { mkdir, readFile } from "node:fs/promises";
 import { devNull, homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { commandError, CtaError, walletError } from "../shared/errors.js";
+import { CtaError } from "../cli/incur-compat.js";
+import { commandError, walletError } from "../shared/errors.js";
 import { shellQuote } from "../shared/next.js";
 import { sqlite3 } from "../shared/process.js";
 import { sleep } from "../shared/utils.js";

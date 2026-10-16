@@ -1,5 +1,6 @@
 import { Errors } from "incur";
 
+import { CtaError } from "../cli/incur-compat.js";
 import type { Network } from "./network.js";
 import { continuationCommand } from "./next.js";
 
@@ -141,34 +142,6 @@ export type CommandContext = {
   agent: boolean;
   error: (error: CommandErrorPayload) => never;
 };
-
-/**
- * A `commandError` thrown below a command's `run`, where returning `c.error` is not possible.
- * incur drops the `cta` of thrown errors, so each CLI registers `ctaErrors`, which returns it
- * through `c.error` instead.
- */
-export class CtaError extends Errors.IncurError {
-  /** The `c.error` payload, `cta` included. */
-  readonly payload: CommandErrorPayload;
-
-  constructor(payload: CommandErrorPayload) {
-    super(payload);
-    this.payload = payload;
-  }
-}
-
-/** incur middleware that returns a thrown `CtaError` through `c.error`, keeping its `cta`. */
-export async function ctaErrors(
-  context: { error: (payload: CommandErrorPayload) => never },
-  next: () => Promise<void>,
-) {
-  try {
-    await next();
-  } catch (error) {
-    if (!(error instanceof CtaError)) throw error;
-    context.error(error.payload);
-  }
-}
 
 /**
  * E_LIMIT_EXCEEDED for an access key whose spending limit cannot cover `amount` (token units) of

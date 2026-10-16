@@ -33,7 +33,8 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 import { swapTokens } from "../src/commands/swap.js";
 import { transferTokens } from "../src/commands/transfer/tokens.js";
 import { deferredKeyRefusal, type TxState } from "../src/commands/tx.js";
-import { CtaError, paymentOutcomeUnknownError, walletError } from "../src/shared/errors.js";
+import { CtaError } from "../src/cli/incur-compat.js";
+import { paymentOutcomeUnknownError, walletError } from "../src/shared/errors.js";
 import type { Wallet } from "../src/shared/require-wallet.js";
 import { nowSeconds, sleep } from "../src/shared/utils.js";
 import {

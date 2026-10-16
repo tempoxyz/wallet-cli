@@ -4,9 +4,10 @@
  * https://github.com/wevm/incur/pull/252, merged but unreleased. Remove the patch and its
  * `pnpm-workspace.yaml` entry once incur > 0.7.1 includes wevm/incur#252.
  */
-import type { z } from "incur";
+import { Errors, type z } from "incur";
 
 import { cliGlobalAlias, cliGlobals } from "../schemas/shared.js";
+import type { CommandErrorPayload } from "../shared/errors.js";
 import { commandTokens } from "./argv.js";
 import { isCommandGroup, isRunnableCommand, type RunnableCommand } from "./command.js";
 
@@ -116,4 +117,40 @@ export function withMcpGlobal<command extends RunnableCommand>(entry: command) {
       return entry.run({ ...context, globals: { network }, options });
     },
   };
+}
+
+/**
+ * A `commandError` thrown below a command's `run`, where returning `c.error` is not possible.
+ * incur drops the `cta` of thrown errors, so each CLI registers `ctaErrors`, which returns it
+ * through `c.error` instead.
+ *
+ * Upstream: https://github.com/wevm/incur/pull/259 keeps the `cta` of thrown errors. Remove this
+ * and `ctaErrors` once incur > 0.7.1 includes wevm/incur#259, throwing `Errors.IncurError` with
+ * its `cta` instead.
+ */
+export class CtaError extends Errors.IncurError {
+  /** The `c.error` payload, `cta` included. */
+  readonly payload: CommandErrorPayload;
+
+  constructor(payload: CommandErrorPayload) {
+    super(payload);
+    this.payload = payload;
+  }
+}
+
+/**
+ * incur middleware that returns a thrown `CtaError` through `c.error`, keeping its `cta`.
+ *
+ * Upstream: https://github.com/wevm/incur/pull/259. Remove with `CtaError`.
+ */
+export async function ctaErrors(
+  context: { error: (payload: CommandErrorPayload) => never },
+  next: () => Promise<void>,
+) {
+  try {
+    await next();
+  } catch (error) {
+    if (!(error instanceof CtaError)) throw error;
+    context.error(error.payload);
+  }
 }
