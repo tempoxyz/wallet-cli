@@ -5,7 +5,6 @@ import { Account } from "viem/tempo";
 import { afterEach, expect, it } from "vitest";
 
 import { updateAccessKeyHandler } from "../src/commands/keys.js";
-import { providerReady } from "../src/provider/accounts-compat.js";
 import { usdcToken } from "../src/shared/constants.js";
 import { loadWalletState, type WalletState } from "../src/wallet/store.js";
 import {
@@ -51,12 +50,12 @@ async function keyAuthorization(limit: bigint) {
 }
 
 /**
- * The SDK provider on the real filesystem storage. Like `accounts/cli`'s adapter, it saves the
- * replacement authorization the wallet returns for an unpublished key through the SDK store,
- * which writes the wallet store in the background. `saved` waits for that write before the
- * request returns.
+ * The SDK provider on the real filesystem storage, once it has loaded the store. Like
+ * `accounts/cli`'s adapter, it saves the replacement authorization the wallet returns for an
+ * unpublished key through the SDK store, which writes the wallet store in the background. `saved`
+ * waits for that write before the request returns.
  */
-function walletProvider(replacement: KeyAuthorization | undefined, saved: boolean) {
+async function walletProvider(replacement: KeyAuthorization | undefined, saved: boolean) {
   const adapter = Adapter.define({ name: "Test wallet" }, (parameters) => {
     // The SDK's store type needs zustand's middleware types, which this package does not load.
     const store: AccessKeyStore = parameters.store;
@@ -81,7 +80,9 @@ function walletProvider(replacement: KeyAuthorization | undefined, saved: boolea
       },
     };
   });
-  return Provider.create({ adapter, storage: Storage.filesystem() });
+  const provider = Provider.create({ adapter, storage: Storage.filesystem() });
+  await provider.ready();
+  return provider;
 }
 
 const usdcLimit = (limit: string) => ({ token: usdcToken, limit: `${limit}#__bigint` });
@@ -131,8 +132,8 @@ it.each([
       }),
     );
 
-    await updateAccessKeyHandler(await readyWallet(), { limit: "250" }, async () =>
-      providerReady(walletProvider(replacement, saved)),
+    await updateAccessKeyHandler(await readyWallet(), { limit: "250" }, () =>
+      walletProvider(replacement, saved),
     );
 
     // Read the store as the command left it, without draining the SDK's write queue first.

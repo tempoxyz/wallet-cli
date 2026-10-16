@@ -4,7 +4,6 @@ import { deviceCode } from "accounts/deviceCode";
 import { http, toHex, type Address, type Transport } from "viem";
 
 import { CtaError } from "./cli/incur-compat.js";
-import { providerReady, withoutRetries } from "./provider/accounts-compat.js";
 import { commandError, walletError } from "./shared/errors.js";
 import { openExternal } from "./shared/process.js";
 import { appUrl, networkName, parseNetwork, rpcUrl, type Network } from "./shared/network.js";
@@ -13,10 +12,7 @@ import { getRecord } from "./shared/utils.js";
 
 export const accessKeyAuthorizationSeconds = 30 * 86_400;
 
-/**
- * The `accounts/cli` provider, with its wallet store loaded (see `providerReady`) and wallet-app
- * requests sent once (see `withoutRetries`).
- */
+/** The `accounts/cli` provider, with its wallet store loaded (see `walletProvider`). */
 export async function createProvider(options: {
   network: Network;
   noBrowser?: boolean | undefined;
@@ -42,11 +38,16 @@ type ChainHold = { held: boolean; chainId?: unknown };
 /** The `ChainHold` of each provider `walletProvider` made, which `connect` sets. */
 const chainHolds = new WeakMap<object, ChainHold>();
 
-/** A provider on `adapter` that saves to the wallet store through `walletStorage`. */
+/**
+ * A provider on `adapter` that saves to the wallet store through `walletStorage`. It resolves once
+ * the provider has loaded the store, since the SDK's `getAccount` throws until then. A store that
+ * fails to load, or does not load within the SDK's `hydrationTimeout` (10 seconds by default),
+ * fails with a retryable `E_RUNTIME`, so no command runs on an empty store.
+ */
 async function walletProvider(adapter: Adapter.Adapter, network: Network) {
   const hold: ChainHold = { held: false };
   const provider = CoreProvider.create({
-    adapter: releaseOnApproval(withoutRetries(adapter), hold),
+    adapter: releaseOnApproval(adapter, hold),
     // Pull mode is the local-account-friendly MPP path for a CLI.
     mpp: { mode: "pull" },
     storage: walletStorage(hold),
@@ -54,7 +55,15 @@ async function walletProvider(adapter: Adapter.Adapter, network: Network) {
     transports: walletTransports(),
   });
   chainHolds.set(provider, hold);
-  return await providerReady(provider);
+  await provider.ready().catch((error: unknown) => {
+    throw walletError({
+      code: "E_RUNTIME",
+      message: "The wallet store could not be loaded. Run the command again.",
+      retryable: true,
+      ...(error instanceof Error ? { cause: error } : {}),
+    });
+  });
+  return provider;
 }
 
 /**
