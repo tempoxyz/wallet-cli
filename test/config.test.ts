@@ -24,7 +24,12 @@ import {
   rpcUrl,
   rpcUrlOverride,
 } from "../src/shared/network.js";
-import { configPath, saveConfigValue, type ConfigSource } from "../src/wallet/config.js";
+import {
+  configPath,
+  saveConfigValue,
+  withConfigSnapshot,
+  type ConfigSource,
+} from "../src/wallet/config.js";
 import { rpcChainCheck } from "../src/wallet/key-output.js";
 import { loadWalletState, saveWalletState } from "../src/wallet/store.js";
 import { cliBundle } from "./cli-bundle.js";
@@ -809,6 +814,64 @@ describe("the saved network and the logged-in chain", () => {
   });
 });
 
+describe("one command's settings", () => {
+  const readers: Record<ConfigKey, { read: () => unknown; first: string; next: string }> = {
+    network: {
+      read: async () => (await resolveNetwork(undefined)).name,
+      first: "testnet",
+      next: "mainnet",
+    },
+    "rpc-url": {
+      read: () => rpcUrl(4217),
+      first: "https://first.example.com",
+      next: "https://next.example.com",
+    },
+    "max-spend": { read: () => resolveMaxSpend(), first: "5", next: "50" },
+  };
+
+  it.each(configKeys)("keep the first %s a command reads", async (key) => {
+    await useTempHome();
+    vi.stubEnv("TEMPO_RPC_URL", undefined);
+    const { read, first, next } = readers[key];
+    await saveConfigValue(key, first);
+
+    await withConfigSnapshot(async () => {
+      expect(await read()).toBe(first);
+      // Another process saves a new value while this command runs.
+      writeFileSync(configPath(), JSON.stringify({ [key]: next }));
+      expect(await read()).toBe(first);
+    });
+    // The next command reads it.
+    expect(await read()).toBe(next);
+  });
+
+  it("checks and reads keys list balances through one rpc-url while another process changes it", async () => {
+    await useTempHome();
+    vi.stubEnv("TEMPO_RPC_URL", undefined);
+    await saveWalletState(walletState());
+    const next = await chainRpc(42431);
+    // Once its chain is checked, another process points the saved rpc-url at the other chain.
+    const first = await chainRpc(4217, {
+      onChainId: () => writeFileSync(configPath(), JSON.stringify({ "rpc-url": next.url })),
+    });
+    try {
+      await saveConfigValue("rpc-url", first.url);
+
+      const output = (await walletJson(["keys", "list"])) as { keys: { balance: string | null }[] };
+
+      expect(output.keys.map(({ balance }) => balance)).toEqual(["7"]);
+      expect(first.requests).toContain("eth_chainId");
+      expect(next.requests).toEqual([]);
+      // The change applies to the next command, which finds that endpoint on another chain.
+      const after = (await walletJson(["keys", "list"])) as { keys: { balance: string | null }[] };
+      expect(after.keys.map(({ balance }) => balance)).toEqual([null]);
+      expect(next.requests).toContain("eth_chainId");
+    } finally {
+      await Promise.all([first.close(), next.close()]);
+    }
+  }, 30_000);
+});
+
 describe("an invalid config file", () => {
   const fix = "Fix it, or delete it to clear every setting.";
   const unset = (key: string) => `Run 'tempo wallet config unset ${key}', or fix the file.`;
@@ -1102,7 +1165,7 @@ async function walletJson(args: string[]) {
  * A JSON-RPC endpoint on `chainId` that records each method it is asked. It answers `balanceOf`
  * with 7 tokens and fails any other call, as for an access key the chain does not hold.
  */
-async function chainRpc(chainId: number) {
+async function chainRpc(chainId: number, { onChainId }: { onChainId?: () => void } = {}) {
   const requests: string[] = [];
   const server = createServer((request, response) => {
     let body = "";
@@ -1114,6 +1177,7 @@ async function chainRpc(chainId: number) {
         params?: [{ data?: string }?];
       };
       requests.push(method);
+      if (method === "eth_chainId") onChainId?.();
       response.setHeader("content-type", "application/json");
       const balanceOf = method === "eth_call" && params?.[0]?.data?.startsWith("0x70a08231");
       response.end(

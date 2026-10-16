@@ -159,8 +159,8 @@ export async function configSetHandler(
     const refusal = await confirmChange(change, options, context, dependencies);
     if (refusal) return context.error(refusal);
   }
-  await saveConfigValue(name, saved, options.yes ? {} : { expected: config[name] });
-  return await effectiveSettings([name], options);
+  const next = await saveConfigValue(name, saved, options.yes ? {} : { expected: config[name] });
+  return await effectiveSettings([name], options, undefined, next);
 }
 
 /**
@@ -182,8 +182,12 @@ export async function configUnsetHandler(
     const refusal = await confirmChange(change, options, context, dependencies);
     if (refusal) return context.error(refusal);
   }
-  await saveConfigValue(name, undefined, options.yes ? {} : { expected: config[name] });
-  return await effectiveSettings([name], options);
+  const next = await saveConfigValue(
+    name,
+    undefined,
+    options.yes ? {} : { expected: config[name] },
+  );
+  return await effectiveSettings([name], options, undefined, next);
 }
 
 type Change = {
@@ -261,10 +265,16 @@ async function describeSetting(name: ConfigKey, flags: Flags, state: WalletState
   }
 }
 
-async function effectiveSettings(keys: readonly ConfigKey[], flags: Flags, state?: WalletState) {
+/** `keys` as `config` (by default, `loadConfig`'s) leaves them; `set` passes what it saved. */
+async function effectiveSettings(
+  keys: readonly ConfigKey[],
+  flags: Flags,
+  state?: WalletState,
+  config?: Config,
+) {
   const settings = await Promise.all(
     keys.map(async (key) => {
-      const { value, source } = await configSettings[key].effective(flags.network, state);
+      const { value, source } = await configSettings[key].effective(flags.network, state, config);
       return [key, { value: shown(key, value), source }] as const;
     }),
   );

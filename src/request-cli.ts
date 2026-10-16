@@ -10,6 +10,7 @@ import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";
 import { continuationCommand } from "./shared/next.js";
 import { WalletRequiredError } from "./shared/require-wallet.js";
+import { configSnapshot } from "./wallet/config.js";
 
 const maxSpendHelp = `Hard cap for cumulative payment spend in token units (or TEMPO_MAX_SPEND, then the saved max-spend setting; default ${defaultMaxSpend})`;
 
@@ -197,6 +198,8 @@ const cli = Cli.create("tempo request", {
 
 // Returns a thrown CtaError through `c.error`, so it keeps its cta.
 cli.use(ctaErrors);
+// The request reads the config file once; see `withConfigSnapshot`.
+cli.use(configSnapshot);
 
 const argv = process.argv.slice(2);
 

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -29,9 +30,8 @@ export function configPath() {
 
 /**
  * The saved value of `key` in `config`, checked with `parse`; `undefined` when it is not set.
- * `config` is the file as it is now unless a caller passes the settings a change would leave, so
- * a long-running MCP server follows changes from other processes. A file that is not a JSON
- * object, or a value `parse` rejects, fails with `ConfigFileError`.
+ * `config` is `loadConfig`'s unless a caller passes the settings a change would leave. A file that
+ * is not a JSON object, or a value `parse` rejects, fails with `ConfigFileError`.
  */
 export function configValue<value>(
   key: ConfigKey,
@@ -65,11 +65,12 @@ export async function saveConfigValue(
   key: ConfigKey,
   value: string | undefined,
   options: { expected?: unknown } = {},
-) {
+): Promise<Config> {
   const path = configPath();
   await ensurePrivateWalletDirectory(path);
-  await withFileLock(join(dirname(path), "config.lock"), "config lock", async () => {
-    const config = loadConfig();
+  return await withFileLock(join(dirname(path), "config.lock"), "config lock", async () => {
+    // Read the file itself, not the command's snapshot: this is the value the change replaces.
+    const config = readConfigFile();
     const { [key]: saved, ...others } = config;
     if ("expected" in options && !isDeepStrictEqual(saved, options.expected))
       throw walletError({
@@ -77,14 +78,49 @@ export async function saveConfigValue(
         message: `${key} changed in ${path} while this command ran, so nothing was changed. Rerun the command to review the new value.`,
         retryable: true,
       });
-    if (saved === value) return;
+    if (saved === value) return config;
     const next = value === undefined ? others : { ...config, [key]: value };
     await writePrivateFile(path, JSON.stringify(next, null, 2));
+    return next;
   });
 }
 
-/** The config file's settings; none when it does not exist. */
+/** Each running command's view of the config file; see `withConfigSnapshot`. */
+const snapshots = new AsyncLocalStorage<{ read?: { config: Config } | { error: unknown } }>();
+
+/**
+ * Runs `fn`, one command, with one view of the config file: its first read is kept for every later
+ * read in `fn`, so the command resolves `network`, `rpc-url`, and `max-spend` once, and a chain
+ * check and the reads it vouches for use the same endpoint. A change another process saves
+ * meanwhile applies to the next command.
+ */
+export function withConfigSnapshot<result>(fn: () => result) {
+  return snapshots.run({}, fn);
+}
+
+/** incur middleware that runs each command, a CLI run or an MCP tool call, in `withConfigSnapshot`. */
+export async function configSnapshot(_context: unknown, next: () => Promise<void>) {
+  await withConfigSnapshot(next);
+}
+
+/**
+ * The config file's settings, none when it does not exist: as the running command first read
+ * them (see `withConfigSnapshot`), else as the file holds them now.
+ */
 export function loadConfig(): Config {
+  const snapshot = snapshots.getStore();
+  if (!snapshot) return readConfigFile();
+  if (!snapshot.read)
+    try {
+      snapshot.read = { config: readConfigFile() };
+    } catch (error) {
+      snapshot.read = { error };
+    }
+  if ("error" in snapshot.read) throw snapshot.read.error;
+  return snapshot.read.config;
+}
+
+function readConfigFile(): Config {
   let text: string;
   try {
     text = readFileSync(configPath(), "utf8");
