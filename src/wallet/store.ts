@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { z } from "incur";
 
+import { withFileLock } from "../payment/session-lock.js";
 import { getArray, getRecord } from "../shared/utils.js";
 
 export type AccessKeyLimit = {
@@ -250,22 +251,43 @@ export async function loadPendingLogin(): Promise<PendingLogin | undefined> {
 export async function savePendingLogin(pending: PendingLogin) {
   const path = pendingLoginPath();
   await ensurePrivateWalletDirectory(path);
-  await writePrivateFile(path, JSON.stringify(pending, null, 2));
+  await withPendingLoginLock(() => writePrivateFile(path, JSON.stringify(pending, null, 2)));
 }
 
 /**
  * Removes the pending login. With `deviceCode`, removes it only while it is still that login,
- * so a process finishing an older login leaves a newer one in place.
+ * so a process finishing an older login leaves a newer one in place: the check and the removal
+ * hold the lock `savePendingLogin` writes under, so no login is saved between them. A lock that
+ * cannot be taken fails the clear, unless `bestEffort` leaves the file instead, for a caller
+ * that has already stored its result.
  */
-export async function clearPendingLogin(deviceCode?: string | undefined) {
-  if (
-    deviceCode !== undefined &&
-    (await loadPendingLogin())?.registration.device_code !== deviceCode
-  )
-    return;
+export async function clearPendingLogin(
+  deviceCode?: string | undefined,
+  { bestEffort = false }: { bestEffort?: boolean | undefined } = {},
+) {
+  if (deviceCode === undefined) return await removePendingLogin();
+  const isThisLogin = async () =>
+    (await loadPendingLogin())?.registration.device_code === deviceCode;
+  // A login that is no longer saved needs no lock; one that is gets checked again under it.
+  if (!(await isThisLogin())) return;
+  let locked = false;
+  await withPendingLoginLock(async () => {
+    locked = true;
+    if (await isThisLogin()) await removePendingLogin();
+  }).catch((error: unknown) => {
+    if (locked || !bestEffort) throw error;
+  });
+}
+
+async function removePendingLogin() {
   await unlink(pendingLoginPath()).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });
+}
+
+function withPendingLoginLock<T>(fn: () => Promise<T>) {
+  const path = join(homedir(), ".tempo", "wallet", "pending-login.lock");
+  return withFileLock(path, "pending login lock", fn);
 }
 
 const rawAmount = z.string().regex(/^\d+$/);

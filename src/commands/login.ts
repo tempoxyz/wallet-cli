@@ -239,7 +239,9 @@ async function finishLogin(pending: PendingLogin, network: Network, options: Pol
     );
   }
 
-  await clearPendingLogin(pending.registration.device_code);
+  // The wallet has answered, and an approval is already stored, so a pending login that cannot be
+  // cleared stays behind for the next login to replace rather than hiding that answer.
+  await clearPendingLogin(pending.registration.device_code, { bestEffort: true });
   if (result === "denied")
     return commandError(
       "E_LOGIN_DENIED",

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -287,6 +288,68 @@ describe("logout scope", () => {
       expect(await loadPendingLogin()).toEqual(kept ? pendingLogin("testnet") : undefined);
     },
   );
+
+  it("fails without changing anything when it cannot cancel the pending login, until a retry can", async () => {
+    await setup(bothNetworks);
+    await savePendingLogin(pendingLogin("testnet"));
+    // sqlite3 cannot lock a lock file that is not a database.
+    const lock = join(homedir(), ".tempo", "wallet", "pending-login.lock");
+    await writeFile(lock, "not a database");
+    const before = await loadWalletState();
+    const command = "tempo wallet logout --network testnet";
+
+    expect(await logoutHandler({ network: "testnet" }, runContext(true))).toMatchObject({
+      code: "E_RUNTIME",
+      retryable: true,
+      message: expect.stringMatching(
+        new RegExp(
+          `^Not logged out: the pending login could not be cancelled\\. sqlite3 failed to lock [\\s\\S]* Rerun '${command}' to retry\\.$`,
+        ),
+      ),
+      cta: { commands: [{ command }] },
+    });
+    expect(await loadWalletState()).toEqual(before);
+    expect(await loadPendingLogin()).toEqual(pendingLogin("testnet"));
+
+    await rm(lock);
+    expect(await logoutHandler({ network: "testnet" }, runContext(true))).toMatchObject({
+      was_logged_in: true,
+    });
+    expect(await loadPendingLogin()).toBeUndefined();
+  });
+
+  it("with --revoke, revokes nothing when it cannot cancel the pending login, until a retry can", async () => {
+    await setup(walletState());
+    await savePendingLogin(pendingLogin("mainnet"));
+    const lock = join(homedir(), ".tempo", "wallet", "pending-login.lock");
+    await writeFile(lock, "not a database");
+    const before = await loadWalletState();
+    const app = walletApp();
+
+    expect(
+      await logoutHandler({ network: "mainnet", revoke: true, yes: true }, runContext(true), {
+        createProvider: app.createProvider,
+        readKey: keychain(),
+      }),
+    ).toMatchObject({
+      code: "E_RUNTIME",
+      retryable: true,
+      cta: { commands: [{ command: "tempo wallet logout --revoke --yes --network mainnet" }] },
+    });
+    expect(app.createProvider).not.toHaveBeenCalled();
+    expect(app.request).not.toHaveBeenCalled();
+    expect(await loadWalletState()).toEqual(before);
+    expect(await loadPendingLogin()).toEqual(pendingLogin("mainnet"));
+
+    await rm(lock);
+    expect(
+      await logoutHandler({ network: "mainnet", revoke: true, yes: true }, runContext(true), {
+        createProvider: app.createProvider,
+        readKey: keychain("revoked"),
+      }),
+    ).toMatchObject({ keys: [{ chain_id: 4217, revoked: true }] });
+    expect(await loadPendingLogin()).toBeUndefined();
+  });
 });
 
 describe("logout with sessions holding deposits", () => {
@@ -861,7 +924,8 @@ describe("logout --revoke", () => {
         accounts: [{ address: testWallet }],
         accessKeys: kept,
       });
-      expect(await loadPendingLogin()).toEqual(pendingLogin("mainnet"));
+      // The pending login is cancelled before any key is revoked.
+      expect(await loadPendingLogin()).toBeUndefined();
     },
   );
 
