@@ -1,18 +1,27 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { walletError } from "../shared/errors.js";
+import { commandError, CtaError, walletError } from "../shared/errors.js";
+import { shellQuote } from "../shared/next.js";
 import { sqlite3 } from "../shared/process.js";
 import { sleep } from "../shared/utils.js";
 
-export async function withSessionLock<T>(url: string, fn: () => Promise<T>): Promise<T> {
-  return withFileLock(lockPath(url), "session lock", fn);
-}
+type Release = () => Promise<void>;
 
 const lockTimeoutMs = 30_000;
+
+/**
+ * Runs `fn` holding the session lock for `url`'s origin, as `withFileLock` does. Without sqlite3 on
+ * PATH it fails with `E_USAGE` instead of falling back: session payments need sqlite3 anyway.
+ */
+export async function withSessionLock<T>(url: string, fn: () => Promise<T>): Promise<T> {
+  const release = await kernelLock(lockPath(url), "session lock");
+  if (!release) throw sqlite3MissingError();
+  return runHolding(release, fn);
+}
 
 /**
  * Runs `fn` while holding the exclusive lock on the file at `path`, which is created on first use
@@ -22,14 +31,18 @@ const lockTimeoutMs = 30_000;
  * A `sqlite3` child holds the lock as an open `BEGIN EXCLUSIVE` transaction on `path`, an OS file
  * lock the kernel releases when the child exits. The child exits when its stdin closes: on release,
  * or when this process dies. So a lock is never left behind, and none is ever reclaimed or deleted.
+ * Without sqlite3 on PATH, it takes the pid file at `${path}.pid` instead; see `pidFileLock`.
  */
 export async function withFileLock<T>(
   path: string,
   label: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  await mkdir(dirname(path), { recursive: true });
-  const release = await acquire(path, label);
+  const release = (await kernelLock(path, label)) ?? (await pidFileLock(`${path}.pid`, label));
+  return runHolding(release, fn);
+}
+
+async function runHolding<T>(release: Release, fn: () => Promise<T>) {
   try {
     return await fn();
   } finally {
@@ -37,27 +50,26 @@ export async function withFileLock<T>(
   }
 }
 
-async function acquire(path: string, label: string) {
+/** Takes the sqlite3-held lock at `path`; resolves `undefined` when sqlite3 is not on PATH. */
+async function kernelLock(path: string, label: string) {
+  await mkdir(dirname(path), { recursive: true });
   const deadline = Date.now() + lockTimeoutMs;
   while (true) {
-    const release = await tryLock(path, Math.max(0, deadline - Date.now()));
-    if (release) return release;
-    if (Date.now() > deadline)
-      throw walletError({
-        code: "E_POLL_TIMEOUT",
-        message: `Timed out waiting for ${label}: ${path}`,
-      });
+    const attempt = await tryLock(path, Math.max(0, deadline - Date.now()));
+    if (attempt === "no sqlite3") return undefined;
+    if (attempt !== "busy") return attempt;
+    if (Date.now() > deadline) throw timeoutError(label, path);
     await sleep(100);
   }
 }
 
 /**
  * Starts a `sqlite3` child that takes the lock at `path`, its busy handler retrying for up to
- * `waitMs` while another holds it. Resolves with the function that releases the lock, or with
- * `undefined` if it is still held.
+ * `waitMs` while another holds it. Resolves with the function that releases the lock, `"busy"` if
+ * it is still held, or `"no sqlite3"` if sqlite3 is not on PATH.
  */
 function tryLock(path: string, waitMs: number) {
-  return new Promise<(() => Promise<void>) | undefined>((resolve, reject) => {
+  return new Promise<Release | "busy" | "no sqlite3">((resolve, reject) => {
     // Detached into its own session, the child gets none of the terminal's signals, such as the
     // hangup that ends sqlite3, so it outlives `fn` unless it is killed by pid.
     const child = spawn(sqlite3, ["-bail", path], { detached: true, windowsHide: true });
@@ -75,11 +87,12 @@ function tryLock(path: string, waitMs: number) {
       });
     });
     child.stderr.on("data", (chunk: string) => (stderr += chunk));
-    child.on("error", (error) =>
-      reject(new Error(`Failed to run sqlite3 for the lock at ${path}: ${error.message}`)),
-    );
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") resolve("no sqlite3");
+      else reject(new Error(`Failed to run sqlite3 for the lock at ${path}: ${error.message}`));
+    });
     child.on("close", (code) => {
-      if (/database is locked/.test(stderr)) resolve(undefined);
+      if (/database is locked/.test(stderr)) resolve("busy");
       else reject(new Error(`sqlite3 failed to lock ${path}: ${stderr.trim() || `exit ${code}`}`));
     });
     // A child that has exited fails the write; its exit settles the promise instead.
@@ -89,10 +102,79 @@ function tryLock(path: string, waitMs: number) {
   });
 }
 
-// Lock files are never deleted, so origins hash into 256 of them. Origins that share one only
-// wait for each other.
+/**
+ * The lock `withFileLock` takes without sqlite3: `path`, created exclusively with the holder's pid
+ * and deleted by the holder on release. It is never taken over, since waiters that each find its
+ * holder dead and delete it can delete each other's: one whose holder has exited fails with a
+ * retryable `E_RUNTIME` naming it, for the user to remove.
+ */
+async function pidFileLock(path: string, label: string): Promise<Release> {
+  const deadline = Date.now() + lockTimeoutMs;
+  while (true) {
+    const handle = await open(path, "wx", 0o600).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "EEXIST") throw error;
+    });
+    if (handle) {
+      try {
+        await handle.writeFile(`${process.pid}\n`);
+      } catch (error) {
+        await unlink(path);
+        throw error;
+      } finally {
+        await handle.close();
+      }
+      return () => unlink(path).catch(() => undefined);
+    }
+    const pid = await exitedHolder(path);
+    if (pid !== undefined) throw staleLockError(label, path, pid);
+    if (Date.now() > deadline) throw timeoutError(label, path);
+    await sleep(100);
+  }
+}
+
+/** The pid in the lock file at `path`, if that process has exited. */
+async function exitedHolder(path: string) {
+  const pid = Number((await readFile(path, "utf8").catch(() => "")).split("\n")[0]);
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  try {
+    process.kill(pid, 0);
+    return undefined;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH" ? pid : undefined;
+  }
+}
+
+function timeoutError(label: string, path: string) {
+  return walletError({
+    code: "E_POLL_TIMEOUT",
+    message: `Timed out waiting for ${label}: ${path}`,
+  });
+}
+
+// incur prefixes every cta command with the CLI's name, so removing the file can only be named in
+// the message.
+function staleLockError(label: string, path: string, pid: number) {
+  return walletError({
+    code: "E_RUNTIME",
+    message: `The ${label} ${path} was left by process ${pid}, which has exited. Once no tempo process is running, remove it with 'rm ${shellQuote(path)}' and retry.`,
+    retryable: true,
+  });
+}
+
+function sqlite3MissingError() {
+  return new CtaError(
+    commandError(
+      "E_USAGE",
+      "sqlite3 was not found on PATH. Payment sessions need it: install sqlite3, then retry.",
+      "tempo wallet doctor",
+    ),
+  );
+}
+
+// One lock file per origin, named by its hash. They are never deleted, so each origin paid leaves
+// one empty file.
 function lockPath(url: string) {
   const origin = new URL(url).origin;
-  const slot = createHash("sha256").update(origin).digest("hex").slice(0, 2);
-  return join(homedir(), ".tempo", "wallet", "session-locks", `${slot}.lock`);
+  const name = createHash("sha256").update(origin).digest("hex");
+  return join(homedir(), ".tempo", "wallet", "session-locks", `${name}.lock`);
 }

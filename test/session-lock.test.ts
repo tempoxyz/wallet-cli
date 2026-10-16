@@ -1,22 +1,33 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { withFileLock, withSessionLock } from "../src/payment/session-lock.js";
 import { walletError } from "../src/shared/errors.js";
+import { nowSeconds } from "../src/shared/utils.js";
+import { createIdempotencyRecord, pruneIdempotencyRecords } from "../src/wallet/idempotency.js";
 import { useTempHome } from "./helpers.js";
 
 const holderScript = join(import.meta.dirname, "fixtures", "lock-holder.ts");
+
+/** Takes sqlite3 off PATH for the rest of the test. */
+function withoutSqlite3() {
+  vi.stubEnv("PATH", join(import.meta.dirname, "no-such-bin"));
+}
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("withFileLock", () => {
+describe.each([
+  ["with sqlite3", () => undefined, (path: string) => path],
+  ["without sqlite3", withoutSqlite3, (path: string) => `${path}.pid`],
+])("withFileLock %s", (_mode, setUp, lockFile) => {
   it.each([
     [
       "an EEXIST error",
@@ -29,6 +40,7 @@ describe("withFileLock", () => {
     ["any other error", new Error("boom")],
   ])("propagates %s from fn unchanged without running fn again", async (_name, error) => {
     const { path } = await lockFiles();
+    setUp();
     const fn = vi.fn(async () => {
       throw error;
     });
@@ -38,27 +50,48 @@ describe("withFileLock", () => {
     await expect(withFileLock(path, "test lock", async () => "next")).resolves.toBe("next");
   });
 
-  it.each([
-    [
-      "sqlite3 is not on PATH",
-      async (path: string) => vi.stubEnv("PATH", join(dirname(path), "no-bin")),
-      /^Failed to run sqlite3 for the lock at .*ENOENT/,
-    ],
-    [
-      "the lock file is not a database",
-      async (path: string) => writeFile(path, "12345\n"),
-      /^sqlite3 failed to lock .*file is not a database/,
-    ],
-  ])("fails without running fn when %s", async (_name, arrange, message) => {
-    const { path } = await lockFiles();
-    await mkdir(dirname(path), { recursive: true });
-    await arrange(path);
-    const fn = vi.fn(async () => "ran");
+  it("admits 8 concurrent calls one at a time", async () => {
+    const { path, log } = await lockFiles();
+    setUp();
 
-    await expect(withFileLock(path, "test lock", fn)).rejects.toThrow(message);
-    expect(fn).not.toHaveBeenCalled();
+    await Promise.all(
+      Array.from({ length: 8 }, () => withFileLock(path, "test lock", () => holdFor(log, 20))),
+    );
+
+    expect(await occupancy(log)).toEqual({ entries: 8, maxConcurrent: 1 });
   });
 
+  it("reports a lock held past the deadline as a retryable timeout without running fn", async () => {
+    const { path } = await lockFiles();
+    setUp();
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let held!: () => void;
+    const holding = new Promise<void>((resolve) => (held = resolve));
+    const holder = withFileLock(path, "test lock", async () => {
+      held();
+      await released;
+    });
+    await holding;
+
+    // Each clock read jumps past the 30-second deadline, so the first wait is the last.
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => (now += 40_000));
+    const fn = vi.fn(async () => "ran");
+
+    await expect(withFileLock(path, "test lock", fn)).rejects.toMatchObject({
+      code: "E_POLL_TIMEOUT",
+      exitCode: 3,
+      retryable: true,
+      message: `Timed out waiting for test lock: ${lockFile(path)}`,
+    });
+    expect(fn).not.toHaveBeenCalled();
+    release();
+    await expect(holder).resolves.toBeUndefined();
+  });
+});
+
+describe("withFileLock with sqlite3", () => {
   it.each([
     ["after a holder is killed mid-critical-section", true],
     ["with no holder before them", false],
@@ -90,55 +123,105 @@ describe("withFileLock", () => {
 
     expect(waitedMs).toBeLessThan(2_000);
   });
+
+  it("fails without running fn when the lock file is not a database", async () => {
+    const { path } = await lockFiles();
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, "12345\n");
+    const fn = vi.fn(async () => "ran");
+
+    await expect(withFileLock(path, "test lock", fn)).rejects.toThrow(
+      /^sqlite3 failed to lock .*file is not a database/,
+    );
+    expect(fn).not.toHaveBeenCalled();
+    await expect(readFile(path, "utf8")).resolves.toBe("12345\n");
+  });
+});
+
+describe("withFileLock without sqlite3", () => {
+  it("refuses a pid file whose holder has exited, leaving it for the user to remove", async () => {
+    const { path } = await lockFiles();
+    withoutSqlite3();
+    const pidFile = `${path}.pid`;
+    await mkdir(dirname(pidFile), { recursive: true });
+    await writeFile(pidFile, "99999999\n");
+    const fn = vi.fn(async () => "ran");
+
+    await expect(withFileLock(path, "test lock", fn)).rejects.toMatchObject({
+      code: "E_RUNTIME",
+      exitCode: 1,
+      retryable: true,
+      message: `The test lock ${pidFile} was left by process 99999999, which has exited. Once no tempo process is running, remove it with 'rm ${pidFile}' and retry.`,
+    });
+    expect(fn).not.toHaveBeenCalled();
+    await expect(readFile(pidFile, "utf8")).resolves.toBe("99999999\n");
+  });
+
+  it("serializes idempotency claims and prunes", async () => {
+    const home = await useTempHome();
+    withoutSqlite3();
+    const claim = {
+      key: "k1",
+      wallet: "0x0000000000000000000000000000000000000001",
+      chain_id: 4217,
+      request: { command: "transfer" },
+      status: "submitting" as const,
+      tx_hash: null,
+      created_at: nowSeconds(),
+      result: null,
+    };
+
+    await expect(createIdempotencyRecord(claim)).resolves.toBe(true);
+    await expect(createIdempotencyRecord(claim)).resolves.toBe(false);
+    await expect(pruneIdempotencyRecords()).resolves.toBeUndefined();
+    expect(await readdir(join(home, ".tempo", "wallet"))).not.toContain("idempotency.lock.pid");
+  });
 });
 
 describe("withSessionLock", () => {
-  const url = "https://lock.example.com/resource";
-
-  it("reports a lock held past the deadline as a retryable timeout without running fn", async () => {
+  it("fails with E_USAGE and a doctor cta without sqlite3, without running fn", async () => {
     await useTempHome();
-    let release!: () => void;
-    const released = new Promise<void>((resolve) => (release = resolve));
-    let held!: () => void;
-    const holding = new Promise<void>((resolve) => (held = resolve));
-    const holder = withSessionLock(url, async () => {
-      held();
-      await released;
-    });
-    await holding;
-
-    // Each clock read jumps past the 30-second deadline, so the first wait is the last.
-    let now = Date.now();
-    vi.spyOn(Date, "now").mockImplementation(() => (now += 40_000));
+    withoutSqlite3();
     const fn = vi.fn(async () => "ran");
 
-    await expect(withSessionLock(url, fn)).rejects.toMatchObject({
-      code: "E_POLL_TIMEOUT",
-      exitCode: 3,
-      retryable: true,
-      message: expect.stringMatching(/^Timed out waiting for session lock: \S+\.lock$/),
+    await expect(withSessionLock("https://lock.example.com/", fn)).rejects.toMatchObject({
+      code: "E_USAGE",
+      exitCode: 2,
+      retryable: false,
+      message:
+        "sqlite3 was not found on PATH. Payment sessions need it: install sqlite3, then retry.",
+      payload: { cta: { commands: [{ command: "tempo wallet doctor" }] } },
     });
     expect(fn).not.toHaveBeenCalled();
-    release();
-    await expect(holder).resolves.toBeUndefined();
   });
 
-  it("keeps lock files to a fixed set of hashed names rather than one per origin", async () => {
+  it("keeps one lock file per origin, named by its hash", async () => {
     const home = await useTempHome();
-    const origins = ["https://a.example.com", "https://b.example.com", "http://127.0.0.1:8080"];
+    const urls = [
+      "https://a.example.com/one",
+      "https://a.example.com/two",
+      "https://b.example.com/paid",
+      "http://127.0.0.1:8080/paid",
+    ];
 
-    for (const origin of origins)
-      await expect(withSessionLock(`${origin}/paid`, async () => origin)).resolves.toBe(origin);
+    for (const url of urls) await expect(withSessionLock(url, async () => url)).resolves.toBe(url);
 
     const names = await readdir(join(home, ".tempo", "wallet", "session-locks"));
-    expect(names.length).toBeGreaterThan(0);
-    expect(names.every((name) => /^[0-9a-f]{2}\.lock$/.test(name))).toBe(true);
+    expect(names).toHaveLength(3);
+    expect(names.every((name) => /^[0-9a-f]{64}\.lock$/.test(name))).toBe(true);
   });
 });
 
 async function lockFiles() {
   const home = await useTempHome();
   return { path: join(home, "locks", "test.lock"), log: join(home, "critical.log") };
+}
+
+/** Logs entering and leaving a critical section that lasts `ms`. */
+async function holdFor(log: string, ms: number) {
+  await appendFile(log, "enter\n");
+  await sleep(ms);
+  await appendFile(log, "exit\n");
 }
 
 /** How many critical sections `log` records, and the most that overlapped. */
