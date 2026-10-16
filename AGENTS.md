@@ -10,6 +10,7 @@
 - `src/cli/` holds the plumbing: argv preprocessing, the MCP server, the `--describe` builders, incur's builtin `mcp` and `skills`, and the completion scripts.
 - Workarounds for upstream bugs live in `src/cli/incur-compat.ts` (incur, including `patches/`) and `src/provider/accounts-compat.ts` (accounts SDK), each with the upstream fix that makes it removable.
 - `tempo request` is `src/request-cli.ts`, and its implementation is in `src/request/`, one module per concern.
+- `src/shared/errors.ts` holds the error code registry, one code per line in sorted order, and the generic constructors every command uses; a constructor for one domain's error lives with that domain, like `accessKeyLimitError` in `src/wallet/access-key.ts`.
 
 ## Friction logging
 

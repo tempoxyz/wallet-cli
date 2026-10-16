@@ -27,22 +27,22 @@ const token = "0x20c0000000000000000000000000000000000000";
 
 describe("errorCodes", () => {
   const expected: [WalletErrorCode, number, boolean][] = [
-    ["E_USAGE", 2, false],
-    ["E_NOT_FOUND", 2, false],
-    ["E_NETWORK", 3, false],
-    ["E_HTTP", 3, false],
-    ["E_RPC", 3, false],
-    ["E_POLL_TIMEOUT", 3, true],
-    ["E_PAYMENT", 4, false],
-    ["E_PAYMENT_OUTCOME_UNKNOWN", 4, false],
-    ["E_NOT_AUTHENTICATED", 4, false],
-    ["E_LOGIN_DENIED", 4, false],
-    ["E_LOGIN_EXPIRED", 4, false],
     ["E_AUTH_REFRESH_REQUIRED", 4, false],
+    ["E_HTTP", 3, false],
+    ["E_INSUFFICIENT_FUNDS", 4, false],
     ["E_KEY_EXPIRED", 4, false],
     ["E_LIMIT_EXCEEDED", 4, false],
-    ["E_INSUFFICIENT_FUNDS", 4, false],
+    ["E_LOGIN_DENIED", 4, false],
+    ["E_LOGIN_EXPIRED", 4, false],
+    ["E_NETWORK", 3, false],
+    ["E_NOT_AUTHENTICATED", 4, false],
+    ["E_NOT_FOUND", 2, false],
+    ["E_PAYMENT", 4, false],
+    ["E_PAYMENT_OUTCOME_UNKNOWN", 4, false],
+    ["E_POLL_TIMEOUT", 3, true],
+    ["E_RPC", 3, false],
     ["E_RUNTIME", 1, false],
+    ["E_USAGE", 2, false],
   ];
 
   it("lists every code", () => {

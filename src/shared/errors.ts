@@ -1,87 +1,29 @@
 import { Errors } from "incur";
 
-/** Every error code the CLI reports, with its process exit code and default retryability. */
+/**
+ * Every error code the CLI reports, with its process exit code and default retryability.
+ *
+ * Keep one code per line, sorted by code, so a new code is one added line and changes that add
+ * different codes do not conflict. `oxfmt-ignore` keeps the formatter from wrapping the lines.
+ */
+// oxfmt-ignore
 export const errorCodes = {
-  E_USAGE: {
-    exitCode: 2,
-    retryable: false,
-    description: "Invalid arguments, input, or local configuration.",
-  },
-  E_NOT_FOUND: {
-    exitCode: 2,
-    retryable: false,
-    description: "A required session, key, or record was not found.",
-  },
-  E_NETWORK: {
-    exitCode: 3,
-    retryable: false,
-    description: "A network request failed or was refused.",
-  },
-  E_HTTP: {
-    exitCode: 3,
-    retryable: false,
-    description: "The server returned an HTTP error status.",
-  },
-  E_RPC: {
-    exitCode: 3,
-    retryable: false,
-    description: "An RPC read failed; reported inline in command output.",
-  },
-  E_POLL_TIMEOUT: {
-    exitCode: 3,
-    retryable: true,
-    description: "Stopped waiting before the expected result arrived.",
-  },
-  E_PAYMENT: {
-    exitCode: 4,
-    retryable: false,
-    description: "The payment challenge or settlement was rejected.",
-  },
-  E_PAYMENT_OUTCOME_UNKNOWN: {
-    exitCode: 4,
-    retryable: false,
-    description: "A payment or transaction may have completed; check before retrying.",
-  },
-  E_NOT_AUTHENTICATED: {
-    exitCode: 4,
-    retryable: false,
-    description: "No wallet is logged in.",
-  },
-  E_LOGIN_DENIED: {
-    exitCode: 4,
-    retryable: false,
-    description: "The login request was denied in the wallet app.",
-  },
-  E_LOGIN_EXPIRED: {
-    exitCode: 4,
-    retryable: false,
-    description: "The login code expired before it was approved.",
-  },
-  E_AUTH_REFRESH_REQUIRED: {
-    exitCode: 4,
-    retryable: false,
-    description: "The access key must be refreshed with 'tempo wallet refresh'.",
-  },
-  E_KEY_EXPIRED: {
-    exitCode: 4,
-    retryable: false,
-    description: "The access key has expired.",
-  },
-  E_LIMIT_EXCEEDED: {
-    exitCode: 4,
-    retryable: false,
-    description: "The amount exceeds a spending limit, --max-spend, or a reviewed swap bound.",
-  },
-  E_INSUFFICIENT_FUNDS: {
-    exitCode: 4,
-    retryable: false,
-    description: "The wallet balance is too low.",
-  },
-  E_RUNTIME: {
-    exitCode: 1,
-    retryable: false,
-    description: "An unexpected internal failure.",
-  },
+  E_AUTH_REFRESH_REQUIRED: { exitCode: 4, retryable: false, description: "The access key must be refreshed with 'tempo wallet refresh'." },
+  E_HTTP: { exitCode: 3, retryable: false, description: "The server returned an HTTP error status." },
+  E_INSUFFICIENT_FUNDS: { exitCode: 4, retryable: false, description: "The wallet balance is too low." },
+  E_KEY_EXPIRED: { exitCode: 4, retryable: false, description: "The access key has expired." },
+  E_LIMIT_EXCEEDED: { exitCode: 4, retryable: false, description: "The amount exceeds a spending limit, --max-spend, or a reviewed swap bound." },
+  E_LOGIN_DENIED: { exitCode: 4, retryable: false, description: "The login request was denied in the wallet app." },
+  E_LOGIN_EXPIRED: { exitCode: 4, retryable: false, description: "The login code expired before it was approved." },
+  E_NETWORK: { exitCode: 3, retryable: false, description: "A network request failed or was refused." },
+  E_NOT_AUTHENTICATED: { exitCode: 4, retryable: false, description: "No wallet is logged in." },
+  E_NOT_FOUND: { exitCode: 2, retryable: false, description: "A required session, key, or record was not found." },
+  E_PAYMENT: { exitCode: 4, retryable: false, description: "The payment challenge or settlement was rejected." },
+  E_PAYMENT_OUTCOME_UNKNOWN: { exitCode: 4, retryable: false, description: "A payment or transaction may have completed; check before retrying." },
+  E_POLL_TIMEOUT: { exitCode: 3, retryable: true, description: "Stopped waiting before the expected result arrived." },
+  E_RPC: { exitCode: 3, retryable: false, description: "An RPC read failed; reported inline in command output." },
+  E_RUNTIME: { exitCode: 1, retryable: false, description: "An unexpected internal failure." },
+  E_USAGE: { exitCode: 2, retryable: false, description: "Invalid arguments, input, or local configuration." },
 } as const satisfies Record<string, { exitCode: number; retryable: boolean; description: string }>;
 
 export type WalletErrorCode = keyof typeof errorCodes;
