@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { channelsDbPath, querySql, runSql, sqlString } from "../shared/process.js";
+import { channelsDbPath, maxDecimalSql, querySql, runSql, sqlString } from "../shared/process.js";
 import {
   getArray,
   getRecord,
@@ -12,6 +12,7 @@ import {
   stringValue,
 } from "../shared/utils.js";
 import { networkName } from "../shared/network.js";
+import { migrateLegacySessions } from "./legacy-sessions.js";
 
 export type PersistedSessionRecord = {
   accepted_cumulative: bigint;
@@ -155,7 +156,8 @@ export function originFromUrl(url: string) {
 }
 
 /**
- * Creates or migrates the channels table. Safe to run from concurrent processes: each
+ * Creates or migrates the channels table, then moves in the sessions of the databases earlier
+ * releases kept (see `migrateLegacySessions`). Safe to run from concurrent processes: each
  * statement is idempotent and waits out another process's lock.
  */
 export async function ensureChannelsTable() {
@@ -190,6 +192,7 @@ export async function ensureChannelsTable() {
   await addColumnIfMissing("server_spent TEXT NOT NULL DEFAULT '0'");
   await addColumnIfMissing("session_protocol TEXT NOT NULL DEFAULT 'v1'");
   await addColumnIfMissing("descriptor_json TEXT");
+  await migrateLegacySessions();
 }
 
 async function addColumnIfMissing(definition: string) {
@@ -197,15 +200,6 @@ async function addColumnIfMissing(definition: string) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.includes("duplicate column name")) throw error;
   });
-}
-
-function maxDecimalSql(left: string, right: string) {
-  return `CASE
-      WHEN LENGTH(${left}) > LENGTH(${right}) THEN ${left}
-      WHEN LENGTH(${left}) < LENGTH(${right}) THEN ${right}
-      WHEN ${left} >= ${right} THEN ${left}
-      ELSE ${right}
-    END`;
 }
 
 function decodeRecord(row: unknown): PersistedSessionRecord[] {

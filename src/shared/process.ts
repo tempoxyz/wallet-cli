@@ -86,15 +86,14 @@ export async function querySql(sql: string): Promise<unknown> {
   return JSON.parse((await runSqlite(["-json"], sql)) || "[]");
 }
 
-function runSqlite(options: readonly string[], sql: string) {
+/** Like `querySql`, against the database at `path` opened read-only, so a missing one fails. */
+export async function queryReadOnlySql(path: string, sql: string): Promise<unknown> {
+  return JSON.parse((await runSqlite(["-json", "-readonly"], sql, path)) || "[]");
+}
+
+function runSqlite(options: readonly string[], sql: string, path = channelsDbPath()) {
   // `.timeout` sets the busy timeout without printing a row, unlike `PRAGMA busy_timeout`.
-  return runProcess(sqlite3, [
-    ...options,
-    "-cmd",
-    `.timeout ${sqliteBusyTimeoutMs}`,
-    channelsDbPath(),
-    sql,
-  ]);
+  return runProcess(sqlite3, [...options, "-cmd", `.timeout ${sqliteBusyTimeoutMs}`, path, sql]);
 }
 
 export function channelsDbPath() {
@@ -103,4 +102,14 @@ export function channelsDbPath() {
 
 export function sqlString(value: string) {
   return `'${value.replaceAll("'", "''")}'`;
+}
+
+/** The larger of two SQL expressions holding non-negative decimal integers stored as text. */
+export function maxDecimalSql(left: string, right: string) {
+  return `CASE
+      WHEN LENGTH(${left}) > LENGTH(${right}) THEN ${left}
+      WHEN LENGTH(${left}) < LENGTH(${right}) THEN ${right}
+      WHEN ${left} >= ${right} THEN ${left}
+      ELSE ${right}
+    END`;
 }
