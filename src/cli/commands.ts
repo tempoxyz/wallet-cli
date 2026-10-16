@@ -1,3 +1,5 @@
+import address from "../commands/address.js";
+import balance from "../commands/balance.js";
 import completions from "../commands/completions.js";
 import debug from "../commands/debug.js";
 import doctor from "../commands/doctor.js";
@@ -23,6 +25,8 @@ export const commands: WalletCommand[] = [
   refresh,
   logout,
   whoami,
+  balance,
+  address,
   keys,
   revoke,
   transfer,

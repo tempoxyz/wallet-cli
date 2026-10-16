@@ -15,6 +15,8 @@ const topLevel = [
   "refresh",
   "logout",
   "whoami",
+  "balance",
+  "address",
   "keys",
   "revoke",
   "transfer",
