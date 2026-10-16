@@ -1,5 +1,4 @@
-import type { Stats } from "node:fs";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -9,7 +8,7 @@ import {
   maxDecimalSql,
   queryExistingDbSql,
   querySql,
-  runSql,
+  runSqlScript,
   sqlString,
 } from "../shared/process.js";
 import { getArray, getRecord, stringValue } from "../shared/utils.js";
@@ -66,106 +65,120 @@ const amounts = new Set(["deposit", "cumulative_amount", "accepted_cumulative", 
 /** Close times, which a merge also never lowers: a requested close stays requested. */
 const closeTimes = new Set(["close_requested_at", "grace_ready_at"]);
 
+/** The columns a placeholder that `sessions list --orphaned` stores leaves blank or zero. */
+const identity = new Set([
+  "origin",
+  "request_url",
+  "payee",
+  "authorized_signer",
+  "salt",
+  "challenge_echo",
+]);
+
 /** How far a channel's close has gone; a merge keeps the furthest, so a close is never undone. */
 function closeRankSql(state: string) {
   return `CASE ${state} WHEN 'closing' THEN 1 WHEN 'finalizable' THEN 2 WHEN 'finalized' THEN 3 ELSE 0 END`;
 }
 
-// The signature each legacy database had when this process last imported it, or found it imported.
-const imported = new Map<string, string>();
+// The real paths of the legacy databases this process knows were imported.
+const imported = new Set<string>();
 
 // When a legacy database last failed to import in this process. It is retried once this long has
 // passed, so one command warns about it once and a long-lived MCP server still retries it.
 const failedAt = new Map<string, number>();
 const retryAfterMs = 60_000;
 
+type LegacyDb = { path: string; realPath: string; deviceInode: string };
+
 /**
- * Copies the sessions of each legacy session database into `channels.db`, leaving the legacy files
- * in place. `channels.db` records each database's size and modification time, and its WAL's, when
- * it was imported, and a database is read again only once they change, as when an older CLI still
- * writes to it. Importing again changes nothing: for a channel `channels.db` already holds, see
- * `insertSql`. A database that cannot be imported is reported on stderr and retried later.
+ * Copies the sessions of each legacy session database into `channels.db` once, leaving the legacy
+ * files as they are. `channels.db` records each database it imported by real path and by device
+ * and inode, and never reads it again, so a channel this CLI deletes once it is closed or
+ * invalidated stays deleted. Sessions an older CLI creates in it afterwards are not copied: that
+ * CLI keeps managing them. A database that cannot be imported is reported on stderr and retried
+ * by a later command.
  */
 export async function importLegacySessions() {
   const now = Date.now();
   const store = await stat(channelsDbPath()).catch(() => undefined);
-  const pending: { path: string; signature: string }[] = [];
+  const pending: LegacyDb[] = [];
   for (const path of legacySessionDbPaths()) {
     if (now - (failedAt.get(path) ?? -Infinity) < retryAfterMs) continue;
     const db = await stat(path).catch(() => undefined);
     // A legacy path that is `channels.db` itself, through a symlink, holds nothing to copy.
     if (!db?.isFile() || (db.dev === store?.dev && db.ino === store.ino)) continue;
-    const signature = await fileSignature(path, db);
-    if (imported.get(path) !== signature) pending.push({ path, signature });
+    const realPath = await realpath(path).catch(() => undefined);
+    if (realPath === undefined || imported.has(realPath)) continue;
+    pending.push({ path, realPath, deviceInode: `${db.dev}:${db.ino}` });
   }
   if (pending.length === 0) return;
 
-  let recorded: Map<string, string>;
+  let recorded: { realPaths: Set<string>; deviceInodes: Set<string> };
   try {
-    recorded = await recordedSignatures();
+    recorded = await recordedImports();
   } catch (error) {
     for (const { path } of pending) fail(path, error);
     return;
   }
-  for (const { path, signature } of pending) {
-    const problem =
-      recorded.get(path) === signature
-        ? undefined
-        : await importLegacyDb(path, signature).catch((error: unknown) => errorMessage(error));
-    if (problem !== undefined) fail(path, problem);
+  for (const db of pending) {
+    const done = recorded.realPaths.has(db.realPath) || recorded.deviceInodes.has(db.deviceInode);
+    const problem = done
+      ? undefined
+      : await importLegacyDb(db).catch((error: unknown) => errorMessage(error));
+    if (problem !== undefined) fail(db.path, problem);
     else {
-      imported.set(path, signature);
-      failedAt.delete(path);
+      imported.add(db.realPath);
+      failedAt.delete(db.path);
     }
   }
 }
 
 /**
- * Copies the sessions of the database at `path` into `channels.db`, then records `signature`, its
- * signature before it was read. Resolves the reason when it cannot.
+ * Copies the sessions of `db` into `channels.db` and records it as imported, in one transaction
+ * that copies nothing when another run recorded it first. Resolves the reason when it cannot.
  */
-async function importLegacyDb(path: string, signature: string) {
-  const tables = await legacyTables(path);
-  const inserts: string[] = [];
+async function importLegacyDb(db: LegacyDb) {
+  const tables = await legacyTables(db.path);
+  const realPath = sqlString(db.realPath);
+  const deviceInode = sqlString(db.deviceInode);
+  const unrecorded = `NOT EXISTS (SELECT 1 FROM main.legacy_session_imports
+    WHERE real_path = ${realPath} OR device_inode = ${deviceInode})`;
+  // Each statement writes `channels.db`, so the first takes its write lock: no other run can
+  // record the database between that statement's check and the commit.
+  const statements = [`ATTACH ${sqlString(existingDbUri(db.path))} AS legacy`, "BEGIN"];
   for (const table of ["channels", "sessions"]) {
     const available = tables.get(table);
     if (!available) continue;
-    const insert = insertSql(table, available, tables.get("pending_closes"));
-    if (!insert) return `its ${table} table lacks a column a session needs`;
-    inserts.push(insert);
+    const copy = copySql(table, available, tables.get("pending_closes"), unrecorded);
+    if (!copy) return `its ${table} table lacks a column a session needs`;
+    statements.push(copy);
   }
-  // One statement per call, each applied whole or not at all, and the signature only after all of
-  // them: the shell runs the rest of a script after a statement in it fails.
-  const attach = `ATTACH ${sqlString(existingDbUri(path))} AS legacy;`;
-  for (const insert of inserts) await runSql(`${attach}\n${insert}`);
-  // A database written while it was read changed its signature since, so the next run reads it again.
-  await runSql(`INSERT INTO legacy_session_imports (path, signature)
-    VALUES (${sqlString(path)}, ${sqlString(signature)})
-    ON CONFLICT(path) DO UPDATE SET signature = excluded.signature`);
+  statements.push(
+    `INSERT INTO main.legacy_session_imports (real_path, device_inode)
+      VALUES (${realPath}, ${deviceInode}) ON CONFLICT(real_path) DO NOTHING`,
+    "COMMIT",
+  );
+  await runSqlScript(statements.map((statement) => `${statement};\n`).join(""));
   return undefined;
 }
 
-/** The size and modification time of the database at `path`, `db`, and of its WAL. */
-async function fileSignature(path: string, db: Stats) {
-  const wal = await stat(`${path}-wal`).catch(() => undefined);
-  return `${db.size}:${db.mtimeMs}${wal ? ` wal ${wal.size}:${wal.mtimeMs}` : ""}`;
-}
-
-/** The signature `channels.db` recorded for each legacy database it imported. */
-async function recordedSignatures() {
+/** The legacy databases `channels.db` records as imported. */
+async function recordedImports() {
   const rows = getArray(
     await querySql(`CREATE TABLE IF NOT EXISTS legacy_session_imports (
-        path TEXT PRIMARY KEY,
-        signature TEXT NOT NULL
+        real_path TEXT PRIMARY KEY,
+        device_inode TEXT NOT NULL
       );
-      SELECT path, signature FROM legacy_session_imports`),
+      SELECT real_path, device_inode FROM legacy_session_imports`),
   );
-  return new Map(
-    rows.map((row) => {
-      const item = getRecord(row);
-      return [stringValue(item.path), stringValue(item.signature)] as const;
-    }),
-  );
+  const realPaths = new Set<string>();
+  const deviceInodes = new Set<string>();
+  for (const row of rows) {
+    const item = getRecord(row);
+    realPaths.add(stringValue(item.real_path));
+    deviceInodes.add(stringValue(item.device_inode));
+  }
+  return { realPaths, deviceInodes };
 }
 
 /** The legacy session tables in the database at `path`, and their columns. */
@@ -188,16 +201,18 @@ async function legacyTables(path: string) {
 }
 
 /**
- * Copies `table`'s sessions into `channels`, a channel in `pending_closes` as closing until its
- * `ready_at`. For a channel `channels` already holds, amounts and close times keep the higher
- * value, the state the further close, and every other column comes from the record with the later
- * `last_used_at`; on a tie the stored record wins. `undefined` when `table` lacks a column a
- * session needs.
+ * Copies `table`'s sessions into `channels` where `condition` holds, a channel in
+ * `pending_closes` as closing until its `ready_at`. For a channel `channels` already holds,
+ * amounts and close times keep the higher value, and the state the further close. A stored
+ * placeholder, which `sessions list --orphaned` saves without an origin, takes the legacy
+ * record's identity and state; otherwise every other column comes from the record with the later
+ * `last_used_at`, on a tie the stored one. `undefined` when `table` lacks a column a session needs.
  */
-function insertSql(
+function copySql(
   table: string,
   available: ReadonlySet<string>,
   pendingCloses: ReadonlySet<string> | undefined,
+  condition: string,
 ) {
   const values = columns.map((column) => valueSql(column, available));
   if (values.includes(undefined)) return undefined;
@@ -210,6 +225,7 @@ function insertSql(
     return value;
   });
 
+  const placeholder = "(channels.state = 'orphaned' OR channels.origin = '')";
   const newer = "excluded.last_used_at > channels.last_used_at";
   const updates = columns
     .filter(({ name }) => name !== "channel_id")
@@ -221,17 +237,18 @@ function insertSql(
         return `state = CASE
           WHEN ${closeRankSql("excluded.state")} > ${closeRankSql("channels.state")} THEN excluded.state
           WHEN ${closeRankSql("excluded.state")} < ${closeRankSql("channels.state")} THEN channels.state
-          WHEN ${newer} THEN excluded.state
+          WHEN ${placeholder} OR ${newer} THEN excluded.state
           ELSE channels.state
         END`;
-      return `${name} = CASE WHEN ${newer} THEN excluded.${name} ELSE channels.${name} END`;
+      const legacyWins = identity.has(name) ? `${placeholder} OR ${newer}` : newer;
+      return `${name} = CASE WHEN ${legacyWins} THEN excluded.${name} ELSE channels.${name} END`;
     });
 
   return `INSERT INTO main.channels (version, ${columns.map(({ name }) => name).join(", ")})
     SELECT 1, ${selected.join(", ")}
     FROM legacy.${table} AS s
     ${closes ? "LEFT JOIN legacy.pending_closes AS pc ON LOWER(pc.channel_id) = LOWER(s.channel_id)" : ""}
-    WHERE LENGTH(s.channel_id) = 66 AND s.channel_id LIKE '0x%'
+    WHERE LENGTH(s.channel_id) = 66 AND s.channel_id LIKE '0x%' AND ${condition}
     ON CONFLICT(channel_id) DO UPDATE SET ${updates.join(",\n      ")}`;
 }
 

@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, readdir, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -15,7 +15,7 @@ import {
   upsertSessionRecord,
   type PersistedSessionRecord,
 } from "../src/payment/session-store.js";
-import { querySql, runProcess, runSql, sqlite3 } from "../src/shared/process.js";
+import { querySql, runProcess, runSql, runSqlScript, sqlite3 } from "../src/shared/process.js";
 import { testAccessKey, testWallet, testWallet2, usdc, useTempHome } from "./helpers.js";
 
 const execFileAsync = promisify(execFile);
@@ -290,6 +290,24 @@ const legacyPaths = [
 
 const allSchemas = Object.keys(schemas) as Schema[];
 
+describe("runSqlScript", () => {
+  it.each([
+    { name: "applies a script that succeeds", conflict: false, marked: 1 },
+    { name: "commits nothing when a statement fails", conflict: true, marked: 0 },
+  ])("$name", async ({ conflict, marked }) => {
+    await useTempHome();
+    await runSql("CREATE TABLE t (id INTEGER PRIMARY KEY); CREATE TABLE m (x)");
+    if (conflict) await runSql("INSERT INTO t VALUES (1)");
+
+    const run = runSqlScript(
+      "BEGIN;\nINSERT INTO t VALUES (1);\nINSERT INTO m VALUES (1);\nCOMMIT;\n",
+    );
+
+    await (conflict ? expect(run).rejects.toThrow("UNIQUE constraint failed") : run);
+    expect(await querySql("SELECT COUNT(*) AS n FROM m")).toEqual([{ n: marked }]);
+  });
+});
+
 describe("legacy session import", () => {
   it.each(legacyPaths.flatMap((legacy) => allSchemas.map((schema) => ({ ...legacy, schema }))))(
     "copies a $schema table from $name through its WAL and leaves the file",
@@ -445,37 +463,71 @@ describe("legacy session import", () => {
     ).toEqual([]);
   });
 
-  it("reads a database again only after an older CLI writes to it", async () => {
+  it("imports each database once, so a channel deleted since never comes back", async () => {
     await useTempHome();
     const path = legacySessionDbPaths()[2]!;
     await seedLegacy(path, "sessions", [{ channel_id: channelId, origin, chain_id: 42431 }]);
-    // Reading the database may checkpoint its WAL; the next run reads it once more, then not again.
     await ensureChannelsTable();
-    await ensureChannelsTable();
-    const first = await allChannels();
-    expect(await querySql("SELECT path FROM legacy_session_imports")).toEqual([{ path }]);
+    expect(await querySql("SELECT real_path FROM legacy_session_imports")).toEqual([
+      { real_path: await realpath(path) },
+    ]);
 
-    // Another run skips the unchanged database, so a session closed since is not copied back.
+    // The channel is closed or invalidated and deleted, then an older CLI changes the database.
     await runSql("DELETE FROM channels");
+    await seedLegacy(path, "sessions", [{ channel_id: otherChannelId, origin: otherOrigin }]);
+    await runProcess(sqlite3, [
+      path,
+      `UPDATE sessions SET cumulative_amount = '3000', last_used_at = 20 WHERE channel_id = '${channelId}'`,
+    ]);
+
     await ensureChannelsTable();
     expect(await allChannels()).toEqual([]);
     expect((await listSessions()).sessions).toEqual([]);
-
-    // A session an older CLI adds later is copied, with the rest of the database again.
-    await seedLegacy(path, "sessions", [{ channel_id: otherChannelId, origin: otherOrigin }]);
-    await ensureChannelsTable();
-    expect(await records()).toEqual([
-      expect.objectContaining({ channel_id: channelId.toLowerCase() }),
-      expect.objectContaining({ channel_id: otherChannelId }),
-    ]);
-    const second = await allChannels();
-
-    // Copying it again after an unrelated write changes nothing.
-    await runProcess(sqlite3, [path, "UPDATE sessions SET tick_cost = '101'"]);
-    await ensureChannelsTable();
-    expect(await allChannels()).toEqual(second);
-    expect(getChannelIds(second)).toEqual([...getChannelIds(first), otherChannelId]);
     await expectKept(path, "sessions", 2);
+  });
+
+  it.each([
+    { name: "a symlink", alias: symlink },
+    { name: "a hard link", alias: link },
+  ])("skips a database already imported when $name reaches it", async ({ alias }) => {
+    await useTempHome();
+    const [, imported, other] = legacySessionDbPaths();
+    await seedLegacy(imported!, "sessions", [{ channel_id: channelId, origin }]);
+    await ensureChannelsTable();
+    await runSql("DELETE FROM channels");
+
+    await alias(imported!, other!);
+    await ensureChannelsTable();
+
+    expect(await allChannels()).toEqual([]);
+  });
+
+  it("gives a placeholder from orphan discovery the legacy record's identity", async () => {
+    await useTempHome();
+    await upsertSessionRecord(
+      current({
+        authorized_signer: "0x0000000000000000000000000000000000000000",
+        challenge_echo: "{}",
+        last_used_at: 1_000,
+        origin: "",
+        payee: "0x0000000000000000000000000000000000000000",
+        request_url: "",
+        salt: "0x00",
+        state: "orphaned",
+      }),
+    );
+    await seedLegacy(legacySessionDbPaths()[2]!, "sessions", [{ channel_id: channelId, origin }]);
+
+    await ensureChannelsTable();
+
+    expect(await records()).toEqual([
+      expect.objectContaining({
+        ...copied({ channel_id: channelId, origin }, "sessions"),
+        accepted_cumulative: 2_000n,
+        last_used_at: 1_000,
+        server_spent: 2_000n,
+      }),
+    ]);
   });
 
   it("copies every legacy database under concurrent runs", async () => {
@@ -526,7 +578,9 @@ describe("legacy session import", () => {
 
     expect(await allChannels()).toEqual([]);
     expect(await readdir(dirname(path))).toContain(basename(path));
-    expect(await querySql("SELECT path FROM legacy_session_imports")).toEqual([{ path }]);
+    expect(await querySql("SELECT real_path FROM legacy_session_imports")).toEqual([
+      { real_path: await realpath(path) },
+    ]);
   });
 
   it.each([
@@ -567,7 +621,3 @@ describe("legacy session import", () => {
     },
   );
 });
-
-function getChannelIds(rows: unknown) {
-  return (rows as { channel_id: string }[]).map((row) => row.channel_id);
-}

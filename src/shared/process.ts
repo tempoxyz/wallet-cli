@@ -49,15 +49,18 @@ export function canPrompt(agent: boolean) {
 /** The sqlite3 binary the session store runs, looked up on PATH. */
 export const sqlite3 = "sqlite3";
 
-/** Runs `command` and resolves with its stdout; `signal` kills it and rejects. */
+/**
+ * Runs `command`, writing `input` to its stdin, and resolves with its stdout; `signal` kills it and
+ * rejects.
+ */
 export function runProcess(
   command: string,
   args: readonly string[],
-  options: { signal?: AbortSignal | undefined } = {},
+  options: { input?: string | undefined; signal?: AbortSignal | undefined } = {},
 ) {
   return new Promise<string>((resolve, reject) => {
     const child = spawn(command, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       ...(options.signal ? { signal: options.signal } : {}),
     });
     let stdout = "";
@@ -66,6 +69,9 @@ export function runProcess(
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
+    // A command that exits without reading its stdin fails the write; its exit code reports it.
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(options.input);
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve(stdout);
@@ -80,6 +86,19 @@ const sqliteBusyTimeoutMs = 5_000;
 
 export async function runSql(sql: string) {
   await runSqlite([], sql);
+}
+
+/**
+ * Runs `sql` against channels.db, stopping at its first failing statement, so a
+ * `BEGIN; ...; COMMIT;` script applies whole or not at all. `runSql` cannot: the shell runs the
+ * rest of a SQL argument after a statement in it fails, even with `-bail`.
+ */
+export async function runSqlScript(sql: string) {
+  await runProcess(
+    sqlite3,
+    ["-bail", "-cmd", `.timeout ${sqliteBusyTimeoutMs}`, channelsDbPath()],
+    { input: sql },
+  );
 }
 
 /** Runs a query against channels.db and returns its rows as parsed `sqlite3 -json` output. */
