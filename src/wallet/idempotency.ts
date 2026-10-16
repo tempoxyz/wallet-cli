@@ -136,7 +136,12 @@ export async function pruneIdempotencyRecords(now = nowSeconds()) {
  */
 async function withRecordsLock<T>(fn: () => Promise<T>) {
   await mkdir(idempotencyDir(), { recursive: true, mode: 0o700 });
-  return withFileLock(join(idempotencyDir(), ".lock"), "idempotency lock", fn);
+  // The lock file stays, so it lives beside the records directory rather than in it.
+  return withFileLock(
+    join(homedir(), ".tempo", "wallet", "idempotency.lock"),
+    "idempotency lock",
+    fn,
+  );
 }
 
 function scopeOf(record: IdempotencyRecord): IdempotencyScope {
