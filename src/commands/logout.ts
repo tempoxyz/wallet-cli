@@ -210,6 +210,12 @@ export async function logoutHandler(
       throw usageError("Wallet not logged out.");
   }
 
+  // A pending login must not bring the wallet back after logout. It is cancelled before any key is
+  // revoked or the wallet store changes, so a logout that cannot cancel it fails having changed
+  // nothing.
+  const notCancelled = await cancelLoggedOutPendingLogin(network, logoutCommand(flags));
+  if (notCancelled) return context.error(notCancelled);
+
   const revoked: WalletState["accessKeys"][number][] = [];
   if (revocable.length > 0) {
     const walletNetwork = chainNetwork(walletChainId);
@@ -273,10 +279,6 @@ export async function logoutHandler(
           ]),
     ...(unchecked ? [unchecked] : []),
   ].join("; ");
-  // A pending login must not bring the wallet back after logout. It is cancelled before the wallet
-  // store changes, so a logout that cannot cancel it fails with the wallet still stored.
-  const notCancelled = await cancelLoggedOutPendingLogin(network, logoutCommand(flags));
-  if (notCancelled) return context.error(notCancelled);
   await saveWalletState(next);
   // The logged-in wallet's pending funding must not hand its checkout to whoever logs in next.
   await clearLoggedOutPendingFund(network);
