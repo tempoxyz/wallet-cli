@@ -1054,25 +1054,70 @@ describe("logout --revoke", () => {
     });
   });
 
-  // Another process logs the wallet in on testnet while the logout waits at its prompt.
-  it("keeps a login on another network that lands while the prompt waits", async () => {
-    await setup(walletState());
-    const login = walletState({ chainId: testnet.chainId, accessKeys: [key, testnetKey] });
+  // Another process changes the store while a logout of mainnet waits at its prompt. The SDK
+  // drops the key the logout revokes from the store.
+  it.each([
+    {
+      name: "a refresh on mainnet",
+      before: walletState(),
+      changed: walletState({ accessKeys: [key, key2] }),
+      after: { accessKeys: [key2], chainId: mainnet.chainId },
+    },
+    {
+      name: "a login on testnet",
+      before: walletState(),
+      changed: walletState({ chainId: testnet.chainId, accessKeys: [key, testnetKey] }),
+      after: { accessKeys: [testnetKey], chainId: testnet.chainId },
+    },
+  ])("stops without writing after $name made meanwhile", async ({ before, changed, after }) => {
+    await setup(before);
     const app = walletApp({ dropsRevokedKey: true });
+    const command = "tempo wallet logout --revoke --network mainnet";
 
     const output = await logoutHandler({ network: "mainnet", revoke: true }, runContext(false), {
       confirm: async () => {
-        await writeWalletState(login);
+        await writeWalletState(changed);
         return true;
       },
       createProvider: app.createProvider,
       readKey: keychain("revoked"),
     });
 
-    expect(output).toMatchObject({ keys: [removed(key, true)] });
+    expect(output).toEqual({
+      code: "E_USAGE",
+      message: `The wallet changed while logging out of mainnet, so it was not logged out (revoked on-chain: ${testAccessKey}). Run '${command}' again.`,
+      exitCode: 2,
+      retryable: true,
+      cta: { commands: [{ command }] },
+    });
     expect(await loadWalletState()).toMatchObject({
       accounts: [{ address: testWallet }],
-      accessKeys: [testnetKey],
+      ...after,
+    });
+  });
+
+  it("logs out after a change only to keys on another network made meanwhile", async () => {
+    await setup(bothNetworks);
+    const changed = walletState({ accessKeys: [key, testnetKey, otherWalletKey] });
+    const app = walletApp({ dropsRevokedKey: true });
+
+    const output = await logoutHandler({ network: "mainnet", revoke: true }, runContext(false), {
+      confirm: async () => {
+        await writeWalletState(changed);
+        return true;
+      },
+      createProvider: app.createProvider,
+      readKey: keychain("revoked"),
+    });
+
+    expect(output).toMatchObject({
+      disconnected: false,
+      keys: [removed(key, true)],
+      message: expect.stringContaining("still logged in on testnet"),
+    });
+    expect(await loadWalletState()).toMatchObject({
+      accounts: [{ address: testWallet }],
+      accessKeys: [testnetKey, otherWalletKey],
       chainId: testnet.chainId,
     });
   });
