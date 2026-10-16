@@ -493,7 +493,11 @@ async function ensurePrivateWalletDirectory(path: string) {
   await chmodIfSupported(walletDir, privateDirMode);
 }
 
-/** Replaces `path` with `contents` through a renamed temporary file, readable only by the owner. */
+/**
+ * Replaces `path` with `contents` through a renamed temporary file, readable only by the owner. The
+ * mode is set before the rename, which keeps it: the file at `path` afterwards may already be
+ * another process's, or gone.
+ */
 export async function writePrivateFile(path: string, contents: string) {
   const tempPath = join(
     dirname(path),
@@ -503,7 +507,6 @@ export async function writePrivateFile(path: string, contents: string) {
     await writeFile(tempPath, contents, { mode: privateFileMode });
     await chmodIfSupported(tempPath, privateFileMode);
     await rename(tempPath, path);
-    await chmodIfSupported(path, privateFileMode);
   } catch (error) {
     await unlink(tempPath).catch(() => undefined);
     throw error;
