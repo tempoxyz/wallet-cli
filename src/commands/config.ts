@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
-
 import { Cli } from "incur";
 
 import { destructive, readOnly, type WalletCommand } from "../cli/command.js";
@@ -157,8 +155,8 @@ export async function configSetHandler(
   const network = "perNetwork" in setting ? await changedNetwork(options) : undefined;
   const verified =
     network && "perNetwork" in setting ? await setting.verify(parsed, network) : undefined;
-  const saved = network ? { ...networkValues(config[name]), [network.name]: parsed } : parsed;
-  if (!options.yes && !isDeepStrictEqual(config[name], saved)) {
+  const current = network ? networkValues(config[name])[network.name] : config[name];
+  if (!options.yes && current !== parsed) {
     const change: Change = {
       action: "set",
       name,
@@ -166,12 +164,16 @@ export async function configSetHandler(
       network,
       verified,
       config,
-      next: { ...config, [name]: saved },
+      next: {
+        ...config,
+        [name]: network ? { ...networkValues(config[name]), [network.name]: parsed } : parsed,
+      },
     };
     const refusal = await confirmChange(change, options, context, dependencies);
     if (refusal) return context.error(refusal);
   }
-  const next = await saveConfigValue(name, saved, options.yes ? {} : { expected: config[name] });
+  // `--yes` or not, the save applies only over the value this command read.
+  const next = await saveConfigValue(name, parsed, { network: network?.name, expected: current });
   return await effectiveSettings([name], options, undefined, next);
 }
 
@@ -190,19 +192,23 @@ export async function configUnsetHandler(
   const name = settingKey(key);
   const config = loadConfig();
   const network = "perNetwork" in configSettings[name] ? await changedNetwork(options) : undefined;
-  let saved: Readonly<Record<string, string>> | undefined;
-  if (network) {
-    const { [network.name]: _removed, ...others } = networkValues(config[name]);
-    saved = Object.keys(others).length > 0 ? others : undefined;
-  }
-  if (!options.yes && !isDeepStrictEqual(config[name], saved)) {
+  const current = network ? networkValues(config[name])[network.name] : config[name];
+  if (!options.yes && current !== undefined) {
     const { [name]: _removed, ...others } = config;
-    const next = saved === undefined ? others : { ...config, [name]: saved };
+    let next: Config = others;
+    if (network) {
+      const { [network.name]: _entry, ...otherNetworks } = networkValues(config[name]);
+      if (Object.keys(otherNetworks).length > 0) next = { ...config, [name]: otherNetworks };
+    }
     const change: Change = { action: "unset", name, value: undefined, network, config, next };
     const refusal = await confirmChange(change, options, context, dependencies);
     if (refusal) return context.error(refusal);
   }
-  const next = await saveConfigValue(name, saved, options.yes ? {} : { expected: config[name] });
+  // `--yes` or not, the removal applies only over the value this command read.
+  const next = await saveConfigValue(name, undefined, {
+    network: network?.name,
+    expected: current,
+  });
   return await effectiveSettings([name], options, undefined, next);
 }
 

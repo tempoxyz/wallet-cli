@@ -92,17 +92,19 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 /**
- * Saves `value` as `key`, or removes `key` when `value` is `undefined`, keeping the other settings.
- * Each change rewrites the whole file, so changes hold the config lock to keep concurrent ones
- * from overwriting each other; `writePrivateFile` replaces it atomically, readable only by the
- * owner. With `expected`, the change applies only while `key` still holds it (`undefined` when it
- * is not set), checked under the lock, so a change confirmed against one value is never applied
- * over another; otherwise nothing is written and it fails with a retryable `E_USAGE`.
+ * Saves `value` as `key`, or for a setting saved per network as `network`'s entry of it, or removes
+ * it when `value` is `undefined`, keeping every other setting and network as the file holds them.
+ * Each change rewrites the whole file, so changes hold the config lock and apply to the file as
+ * it is under it, never to an earlier read, which keeps concurrent ones from overwriting each
+ * other; `writePrivateFile` replaces it atomically, readable only by the owner. With `expected`,
+ * the change applies only while the value it changes still is `expected` (`undefined` when it is
+ * not set), checked under the lock, so a change decided on one value is never applied over
+ * another; otherwise nothing is written and it fails with a retryable `E_USAGE`.
  */
 export async function saveConfigValue(
   key: ConfigKey,
-  value: string | Readonly<Record<string, string>> | undefined,
-  options: { expected?: unknown } = {},
+  value: string | undefined,
+  options: { network?: string | undefined; expected?: unknown } = {},
 ): Promise<Config> {
   const path = configPath();
   await ensurePrivateWalletDirectory(path);
@@ -110,16 +112,26 @@ export async function saveConfigValue(
     // Read the file itself, not the command's snapshot: this is the value the change replaces.
     const config = readConfigFile();
     const { [key]: saved, ...others } = config;
-    if ("expected" in options && !isDeepStrictEqual(saved, options.expected))
+    const { network } = options;
+    // A value that is not an object of networks holds none, and the change replaces it.
+    const entries = network === undefined ? undefined : isRecord(saved) ? saved : {};
+    const current = network === undefined ? saved : entries?.[network];
+    if ("expected" in options && !isDeepStrictEqual(current, options.expected))
       throw walletError({
         code: "E_USAGE",
-        message: `${key} changed in ${path} while this command ran, so nothing was changed. Rerun the command to review the new value.`,
+        message: `${network === undefined ? key : `${key} for ${network}`} changed in ${path} while this command ran, so nothing was changed. Rerun the command to review the new value.`,
         retryable: true,
       });
-    if (isDeepStrictEqual(saved, value)) return config;
-    const next = value === undefined ? others : { ...config, [key]: value };
-    await writePrivateFile(path, JSON.stringify(next, null, 2));
-    return next;
+    if (current === value && (network === undefined || entries === saved)) return config;
+    let next: unknown = value;
+    if (network !== undefined) {
+      const { [network]: _changed, ...otherNetworks } = entries ?? {};
+      const nextEntries = value === undefined ? otherNetworks : { ...entries, [network]: value };
+      next = Object.keys(nextEntries).length > 0 ? nextEntries : undefined;
+    }
+    const written = next === undefined ? others : { ...config, [key]: next };
+    await writePrivateFile(path, JSON.stringify(written, null, 2));
+    return written;
   });
 }
 

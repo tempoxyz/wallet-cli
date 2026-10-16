@@ -193,7 +193,7 @@ it("checks an rpc-url saved for a network against its chain, as a safety net", a
   await useTempHome();
   vi.stubEnv("TEMPO_RPC_URL", undefined);
   // Saved for mainnet once it answered there, the endpoint has since moved to testnet.
-  await saveConfigValue("rpc-url", { mainnet: rpc.url });
+  await saveConfigValue("rpc-url", rpc.url, { network: "mainnet" });
 
   await expect(requireRpcChain(4217)).rejects.toMatchObject({
     code: "E_USAGE",

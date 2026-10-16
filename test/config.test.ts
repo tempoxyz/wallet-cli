@@ -88,6 +88,12 @@ async function writeConfig(body: string) {
   await writeFile(configPath(), body);
 }
 
+/** Saves each network's rpc-url as `config set rpc-url --network` does, without checking it. */
+async function saveRpcUrls(urls: Partial<Record<"mainnet" | "testnet", string>>) {
+  for (const [network, url] of Object.entries(urls))
+    await saveConfigValue("rpc-url", url, { network });
+}
+
 /** `config set` with `--yes`, so it needs no prompt. */
 function confirmedSet(key: string, value: string, network?: string) {
   return configSetHandler(key, value, { network, yes: true }, runContext());
@@ -372,7 +378,7 @@ describe("rpc-url, saved per network", () => {
       };
 
       for (const action of ["set", "unset"] as const) {
-        await saveConfigValue("rpc-url", { testnet: old });
+        await saveRpcUrls({ testnet: old });
         const { run, question, refusal, command, saved } = runs[action];
         const confirm = vi.fn(async () => answer);
         const context = runContext(agent);
@@ -461,7 +467,7 @@ describe("rpc-url, saved per network", () => {
 
   it("serves every network from TEMPO_RPC_URL, over each network's saved rpc-url", async () => {
     await useTempHome();
-    await saveConfigValue("rpc-url", { mainnet: "https://mainnet.example.com" });
+    await saveRpcUrls({ mainnet: "https://mainnet.example.com" });
     vi.stubEnv("TEMPO_RPC_URL", "http://127.0.0.1:9");
 
     expect([rpcUrl(4217), rpcUrl(42431)]).toEqual(["http://127.0.0.1:9", "http://127.0.0.1:9"]);
@@ -662,15 +668,72 @@ describe("a change made while another is confirmed", () => {
     },
   );
 
-  it("applies a --yes change over a newer value", async () => {
+  it("refuses a --yes change over a newer value too, leaving it", async () => {
     await useTempHome();
     await saveConfigValue("max-spend", "5");
     race.afterRead = () => writeFileSync(configPath(), JSON.stringify({ "max-spend": "7" }));
 
-    expect(await confirmedSet("max-spend", "50")).toEqual({
-      "max-spend": { value: "50", source: "config" },
+    await expect(confirmedSet("max-spend", "50")).rejects.toMatchObject({
+      code: "E_USAGE",
+      retryable: true,
     });
-    expect(await savedConfig()).toEqual({ "max-spend": "50" });
+    expect(await savedConfig()).toEqual({ "max-spend": "7" });
+  });
+
+  // A setting saved per network changes only its network's entry, under the lock, so a change to
+  // another network while the command runs, or verifies its endpoint, survives.
+  it.each([
+    {
+      name: "a --yes set on testnet",
+      run: (url: string) => confirmedSet("rpc-url", url, "testnet"),
+      before: { mainnet: "https://mainnet-old.example.com" },
+      saved: (url: string) => ({ mainnet: "https://mainnet-new.example.com", testnet: url }),
+    },
+    {
+      name: "a --yes unset on testnet",
+      run: () => configUnsetHandler("rpc-url", { network: "testnet", yes: true }, runContext()),
+      before: {
+        mainnet: "https://mainnet-old.example.com",
+        testnet: "https://testnet.example.com",
+      },
+      saved: () => ({ mainnet: "https://mainnet-new.example.com" }),
+    },
+  ])("keeps another network's rpc-url changed during $name", async ({ run, before, saved }) => {
+    await useTempHome();
+    vi.stubEnv("TEMPO_RPC_URL", undefined);
+    const rpc = await chainRpc(42431);
+    await saveRpcUrls(before);
+    // Another process saves a new mainnet rpc-url just after this command reads the file.
+    race.afterRead = () =>
+      writeFileSync(
+        configPath(),
+        JSON.stringify({ "rpc-url": { ...before, mainnet: "https://mainnet-new.example.com" } }),
+      );
+
+    await run(rpc.url);
+
+    expect(await savedConfig()).toEqual({ "rpc-url": saved(rpc.url) });
+  });
+
+  it("refuses a --yes rpc-url change over a newer value for the same network", async () => {
+    await useTempHome();
+    vi.stubEnv("TEMPO_RPC_URL", undefined);
+    const rpc = await chainRpc(42431);
+    await saveRpcUrls({ testnet: "https://testnet-old.example.com" });
+    race.afterRead = () =>
+      writeFileSync(
+        configPath(),
+        JSON.stringify({ "rpc-url": { testnet: "https://testnet-new.example.com" } }),
+      );
+
+    await expect(confirmedSet("rpc-url", rpc.url, "testnet")).rejects.toMatchObject({
+      code: "E_USAGE",
+      retryable: true,
+      message: expect.stringContaining("rpc-url for testnet changed in"),
+    });
+    expect(await savedConfig()).toEqual({
+      "rpc-url": { testnet: "https://testnet-new.example.com" },
+    });
   });
 });
 
@@ -793,7 +856,7 @@ describe("precedence", () => {
     vi.stubEnv(configSettings[key].env, env);
     if (key !== "rpc-url") vi.stubEnv("TEMPO_RPC_URL", undefined);
     if (chainId) await saveWalletState(walletState({ chainId }));
-    if (saved) await saveConfigValue(key, key === "rpc-url" ? { mainnet: saved } : saved);
+    if (saved) await saveConfigValue(key, saved, key === "rpc-url" ? { network: "mainnet" } : {});
 
     if (key === "network") {
       const { network, source } = await networkSetting(flag);
@@ -834,7 +897,7 @@ describe("precedence", () => {
       expect(rpc.requests).toEqual([]);
 
       // Saved for mainnet, the endpoint reports testnet; testnet's own default needs no check.
-      await saveConfigValue("rpc-url", { mainnet: rpc.url });
+      await saveRpcUrls({ mainnet: rpc.url });
       const servesChain = rpcChainCheck();
 
       expect(await servesChain(42431)).toBe(true);
@@ -904,7 +967,7 @@ describe("precedence", () => {
       );
       const rpc = await chainRpc(42431);
       try {
-        await saveConfigValue("rpc-url", { mainnet: rpc.url, testnet: rpc.url });
+        await saveRpcUrls({ mainnet: rpc.url, testnet: rpc.url });
 
         expect(await read()).toEqual(expected);
         expect(rpc.requests).toContain("eth_chainId");
@@ -993,7 +1056,7 @@ describe("one command's settings", () => {
     vi.stubEnv("TEMPO_RPC_URL", undefined);
     const { read, first, next } = readers[key];
     const saved = (value: string) => (key === "rpc-url" ? { mainnet: value } : value);
-    await saveConfigValue(key, saved(first));
+    await saveConfigValue(key, first, key === "rpc-url" ? { network: "mainnet" } : {});
 
     await withConfigSnapshot(async () => {
       expect(await read()).toBe(first);
@@ -1016,7 +1079,7 @@ describe("one command's settings", () => {
         writeFileSync(configPath(), JSON.stringify({ "rpc-url": { mainnet: next.url } })),
     });
     try {
-      await saveConfigValue("rpc-url", { mainnet: first.url });
+      await saveRpcUrls({ mainnet: first.url });
 
       const output = (await walletJson(["keys", "list"])) as { keys: { balance: string | null }[] };
 
