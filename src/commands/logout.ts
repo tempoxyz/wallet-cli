@@ -125,7 +125,8 @@ export async function logoutHandler(
     ? keys.length > 0 || (state.accounts.length > 0 && storedChainId(state) === network.chainId)
     : state.accounts.length > 0 || state.accessKeys.length > 0;
   if (!wasLoggedIn) {
-    await clearLoggedOutPendingLogin(network);
+    const notCancelled = await cancelLoggedOutPendingLogin(network, logoutCommand(flags));
+    if (notCancelled) return context.error(notCancelled);
     await clearLoggedOutPendingFund(network);
     return {
       was_logged_in: false,
@@ -272,10 +273,12 @@ export async function logoutHandler(
           ]),
     ...(unchecked ? [unchecked] : []),
   ].join("; ");
+  // A pending login must not bring the wallet back after logout. It is cancelled before the wallet
+  // store changes, so a logout that cannot cancel it fails with the wallet still stored.
+  const notCancelled = await cancelLoggedOutPendingLogin(network, logoutCommand(flags));
+  if (notCancelled) return context.error(notCancelled);
   await saveWalletState(next);
-  // A pending login must not bring the wallet back after logout, and the logged-in wallet's pending
-  // funding must not hand its checkout to whoever logs in next.
-  await clearLoggedOutPendingLogin(network);
+  // The logged-in wallet's pending funding must not hand its checkout to whoever logs in next.
   await clearLoggedOutPendingFund(network);
 
   return {
@@ -311,11 +314,24 @@ function loggedOutState(state: WalletState, network: Network | undefined): Walle
   return { ...state, accessKeys, chainId: kept.chainId };
 }
 
-/** Cancels the pending login when it is for a network logged out. */
-async function clearLoggedOutPendingLogin(network: Network | undefined) {
-  if (!network) return await clearPendingLogin();
-  const pending = await loadPendingLogin();
-  if (pending?.network === network.name) await clearPendingLogin(pending.registration.device_code);
+/**
+ * Cancels the pending login when it is for a network logged out. Returns the retryable error to
+ * fail the logout with when it cannot, naming `command` to rerun.
+ */
+async function cancelLoggedOutPendingLogin(network: Network | undefined, command: string) {
+  try {
+    if (!network) return await clearPendingLogin();
+    const pending = await loadPendingLogin();
+    if (pending?.network === network.name)
+      await clearPendingLogin(pending.registration.device_code);
+  } catch (error) {
+    return commandError(
+      walletErrorCode(error, "E_RUNTIME"),
+      `Not logged out: the pending login could not be cancelled. ${error instanceof Error ? error.message : String(error)} Rerun '${command}' to retry.`,
+      command,
+      { retryable: true },
+    );
+  }
 }
 
 /**
@@ -445,9 +461,9 @@ function sameKey(key: WalletState["accessKeys"][number]) {
 }
 
 /** The wallet error code a failure carries, or `E_NETWORK` for a failed wallet-app request. */
-function walletErrorCode(error: unknown): WalletErrorCode {
+function walletErrorCode(error: unknown, fallback: WalletErrorCode = "E_NETWORK"): WalletErrorCode {
   const code = (error as { code?: unknown } | null | undefined)?.code;
   return typeof code === "string" && Object.hasOwn(errorCodes, code)
     ? (code as WalletErrorCode)
-    : "E_NETWORK";
+    : fallback;
 }

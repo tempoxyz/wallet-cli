@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -289,17 +289,33 @@ describe("logout scope", () => {
     },
   );
 
-  it("logs out of the login's network when its pending login cannot be cleared", async () => {
+  it("fails without changing anything when it cannot cancel the pending login, until a retry can", async () => {
     await setup(bothNetworks);
     await savePendingLogin(pendingLogin("testnet"));
     // sqlite3 cannot lock a lock file that is not a database.
-    await writeFile(join(homedir(), ".tempo", "wallet", "pending-login.lock"), "not a database");
+    const lock = join(homedir(), ".tempo", "wallet", "pending-login.lock");
+    await writeFile(lock, "not a database");
+    const before = await loadWalletState();
+    const command = "tempo wallet logout --network testnet";
 
-    const output = await logoutHandler({ network: "testnet" }, runContext(true));
-
-    expect(output).not.toHaveProperty("code");
-    expect((await loadWalletState()).accessKeys.map((key) => key.chainId)).not.toContain(42431);
+    expect(await logoutHandler({ network: "testnet" }, runContext(true))).toMatchObject({
+      code: "E_RUNTIME",
+      retryable: true,
+      message: expect.stringMatching(
+        new RegExp(
+          `^Not logged out: the pending login could not be cancelled\\. sqlite3 failed to lock [\\s\\S]* Rerun '${command}' to retry\\.$`,
+        ),
+      ),
+      cta: { commands: [{ command }] },
+    });
+    expect(await loadWalletState()).toEqual(before);
     expect(await loadPendingLogin()).toEqual(pendingLogin("testnet"));
+
+    await rm(lock);
+    expect(await logoutHandler({ network: "testnet" }, runContext(true))).toMatchObject({
+      was_logged_in: true,
+    });
+    expect(await loadPendingLogin()).toBeUndefined();
   });
 });
 

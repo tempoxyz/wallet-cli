@@ -257,9 +257,14 @@ export async function savePendingLogin(pending: PendingLogin) {
 /**
  * Removes the pending login. With `deviceCode`, removes it only while it is still that login,
  * so a process finishing an older login leaves a newer one in place: the check and the removal
- * hold the lock `savePendingLogin` writes under, so no login is saved between them.
+ * hold the lock `savePendingLogin` writes under, so no login is saved between them. A lock that
+ * cannot be taken fails the clear, unless `bestEffort` leaves the file instead, for a caller
+ * that has already stored its result.
  */
-export async function clearPendingLogin(deviceCode?: string | undefined) {
+export async function clearPendingLogin(
+  deviceCode?: string | undefined,
+  { bestEffort = false }: { bestEffort?: boolean | undefined } = {},
+) {
   if (deviceCode === undefined) return await removePendingLogin();
   const isThisLogin = async () =>
     (await loadPendingLogin())?.registration.device_code === deviceCode;
@@ -270,9 +275,7 @@ export async function clearPendingLogin(deviceCode?: string | undefined) {
     locked = true;
     if (await isThisLogin()) await removePendingLogin();
   }).catch((error: unknown) => {
-    // Callers clear after their login or logout is stored, so a lock that cannot be taken leaves
-    // the file, for `login status` or the next login to replace, rather than failing them.
-    if (locked) throw error;
+    if (locked || !bestEffort) throw error;
   });
 }
 
