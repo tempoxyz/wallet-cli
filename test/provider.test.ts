@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   ),
   create: vi.fn((_options: Record<string, unknown>) => ({
     request: vi.fn(),
-    store: { persist: { hasHydrated: () => true } },
+    ready: vi.fn(async (): Promise<void> => undefined),
   })),
   filesystem: vi.fn(() => ({ key: "storage" })),
 }));

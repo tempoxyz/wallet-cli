@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, vi } from "vitest";
-import { toHex } from "viem";
 
 import { loadWallet } from "../src/shared/require-wallet.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
@@ -212,11 +211,10 @@ export async function readyWallet(network?: string, requireKey = true) {
  * `dropsRevokedKey`, a `wallet_revokeAccessKey` removes the key from the wallet store, as the SDK
  * does once the wallet app returns, whether or not the chain shows it revoked.
  */
-export function walletApp(chainId = 4217, { dropsRevokedKey = false } = {}) {
+export function walletApp({ dropsRevokedKey = false } = {}) {
   const request = vi.fn();
   request.mockImplementation(
     async ({ method, params }: { method: string; params?: [{ accessKeyAddress: string }] }) => {
-      if (method === "eth_chainId") return toHex(chainId);
       if (method === "wallet_connect") return { accounts: [] };
       if (method === "wallet_revokeAccessKey" && dropsRevokedKey) {
         const state = await loadWalletState();

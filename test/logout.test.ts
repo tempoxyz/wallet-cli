@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { toHex } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { logoutHandler } from "../src/commands/logout.js";
@@ -650,14 +651,17 @@ describe("logout --revoke", () => {
       noBrowser: scenario.options.browser === false,
     });
     expect(app.request.mock.calls).toEqual(
-      scenario.revoked.flatMap((revoked) => [
-        [{ method: "eth_chainId" }],
-        [
-          {
-            method: "wallet_revokeAccessKey",
-            params: [{ address: testWallet, accessKeyAddress: revoked.address }],
-          },
-        ],
+      scenario.revoked.map((revoked) => [
+        {
+          method: "wallet_revokeAccessKey",
+          params: [
+            {
+              address: testWallet,
+              accessKeyAddress: revoked.address,
+              chainId: toHex(mainnet.chainId),
+            },
+          ],
+        },
       ]),
     );
     expect(readKey.mock.calls).toEqual(
@@ -773,7 +777,7 @@ describe("logout --revoke", () => {
   ])("removes $name, revoking only what the chain shows published", async (scenario) => {
     const { state, options, statuses, revoked } = scenario;
     await setup(state);
-    const app = walletApp(mainnet.chainId, { dropsRevokedKey: true });
+    const app = walletApp({ dropsRevokedKey: true });
     const readKey = keychain(...statuses);
     const context = runContext(true);
 
@@ -807,7 +811,7 @@ describe("logout --revoke", () => {
 
   it("keeps everything when the chain cannot be read for an expired key", async () => {
     await setup(walletState({ accessKeys: [{ ...key2, expiry: 1 }] }));
-    const app = walletApp(mainnet.chainId, { dropsRevokedKey: true });
+    const app = walletApp({ dropsRevokedKey: true });
     const readKey = vi.fn(async () => {
       throw new Error("Unable to read access key on-chain.");
     });
@@ -844,7 +848,6 @@ describe("logout --revoke", () => {
   it.each<{
     name: string;
     state?: WalletState;
-    chainId?: number;
     statuses: ("revoked" | "published")[];
     request?: () => Promise<never>;
     code: string;
@@ -872,15 +875,6 @@ describe("logout --revoke", () => {
       kept: [key],
     },
     {
-      name: "the wallet app is on another chain",
-      statuses: [],
-      chainId: testnet.chainId,
-      code: "E_USAGE",
-      exitCode: 2,
-      message: `Not logged out: access key ${testAccessKey} on mainnet was not revoked, so it stays on this machine with the wallet. Wallet is not configured for the requested network. Run 'tempo wallet login'. Rerun '${retry}' to retry, or rerun without --revoke to remove the keys without revoking them.`,
-      kept: [key],
-    },
-    {
       name: "a later key is not revoked",
       state: walletState({ accessKeys: [key, key2] }),
       statuses: ["revoked", "published"],
@@ -891,23 +885,11 @@ describe("logout --revoke", () => {
     },
   ])(
     "keeps the key and the wallet when $name",
-    async ({
-      state = walletState(),
-      chainId,
-      statuses,
-      request,
-      code,
-      exitCode,
-      message,
-      kept,
-    }) => {
+    async ({ state = walletState(), statuses, request, code, exitCode, message, kept }) => {
       await setup(state);
       await savePendingLogin(pendingLogin("mainnet"));
-      const app = walletApp(chainId, { dropsRevokedKey: true });
-      if (request)
-        app.request.mockImplementation(async ({ method }: { method: string }) =>
-          method === "eth_chainId" ? "0x1079" : await request(),
-        );
+      const app = walletApp({ dropsRevokedKey: true });
+      if (request) app.request.mockImplementation(request);
       const readKey = keychain(...statuses);
 
       const output = await logoutHandler({ revoke: true, yes: true }, runContext(true), {
@@ -980,7 +962,7 @@ describe("logout --revoke", () => {
     await setup(bothNetworks);
 
     for (const network of [mainnet, testnet]) {
-      const app = walletApp(network.chainId);
+      const app = walletApp();
       const output = await logoutHandler(
         { network: network.name, revoke: true, yes: true },
         runContext(true),
