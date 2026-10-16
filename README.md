@@ -245,7 +245,10 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 - `sessions list`: List payment sessions. Options: `--orphaned`, `--all`.
 - `sessions close [url]`: Request a session close, then withdraw after the grace period with --finalize. Options: `--all`, `--orphaned`, `--finalize`, `--cooperative`, `--dry-run`, `--yes`.
 - `sessions sync`: Sync local sessions with on-chain state. Options: `--origin`.
-- `services [serviceId]`: Browse the MPP service directory. Options: `--search`, `--refresh`.
+- `services`: Browse the MPP service directory. Options: `--refresh`.
+- `services list`: List every service in the MPP service directory. Options: `--refresh`.
+- `services search <query>`: Search services by name, id, description, tags, or category; every word must match. Options: `--refresh`.
+- `services show <serviceId>`: Show a service's endpoints, prices, and docs. Options: `--refresh`.
 - `mcp add`: Register as MCP server. Options: `--agent`, `--command` (`-c`), `--no-global`.
 - `skills add`: Sync skill files to agents. Options: `--depth`, `--no-global`.
 - `skills list`: List skills.
@@ -263,30 +266,33 @@ Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--js
 
 <!-- generated:mcp-tools start -->
 
-| Tool             | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
-| ---------------- | -------------- | ----------------- | ---------------- | --------------- |
-| `address`        | true           | false             | true             | false           |
-| `balance`        | true           | false             | true             | true            |
-| `completions`    | true           | false             | true             | false           |
-| `debug`          | true           | false             | true             | true            |
-| `doctor`         | true           | false             | true             | true            |
-| `fund`           | false          | false             | false            | true            |
-| `fund_status`    | false          | false             | true             | true            |
-| `keys_list`      | true           | false             | true             | true            |
-| `keys_update`    | false          | true              | false            | true            |
-| `login`          | false          | true              | false            | true            |
-| `login_status`   | false          | true              | true             | true            |
-| `logout`         | false          | true              | true             | true            |
-| `refresh`        | false          | true              | false            | true            |
-| `revoke`         | false          | true              | true             | true            |
-| `services`       | true           | false             | true             | true            |
-| `sessions_close` | false          | true              | false            | true            |
-| `sessions_list`  | false          | false             | true             | true            |
-| `sessions_sync`  | false          | true              | true             | true            |
-| `swap`           | false          | true              | false            | true            |
-| `transfer`       | false          | true              | false            | true            |
-| `tx_status`      | true           | false             | true             | true            |
-| `whoami`         | true           | false             | true             | true            |
+| Tool              | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
+| ----------------- | -------------- | ----------------- | ---------------- | --------------- |
+| `address`         | true           | false             | true             | false           |
+| `balance`         | true           | false             | true             | true            |
+| `completions`     | true           | false             | true             | false           |
+| `debug`           | true           | false             | true             | true            |
+| `doctor`          | true           | false             | true             | true            |
+| `fund`            | false          | false             | false            | true            |
+| `fund_status`     | false          | false             | true             | true            |
+| `keys_list`       | true           | false             | true             | true            |
+| `keys_update`     | false          | true              | false            | true            |
+| `login`           | false          | true              | false            | true            |
+| `login_status`    | false          | true              | true             | true            |
+| `logout`          | false          | true              | true             | true            |
+| `refresh`         | false          | true              | false            | true            |
+| `revoke`          | false          | true              | true             | true            |
+| `services`        | true           | false             | true             | true            |
+| `services_list`   | true           | false             | true             | true            |
+| `services_search` | true           | false             | true             | true            |
+| `services_show`   | true           | false             | true             | true            |
+| `sessions_close`  | false          | true              | false            | true            |
+| `sessions_list`   | false          | false             | true             | true            |
+| `sessions_sync`   | false          | true              | true             | true            |
+| `swap`            | false          | true              | false            | true            |
+| `transfer`        | false          | true              | false            | true            |
+| `tx_status`       | true           | false             | true             | true            |
+| `whoami`          | true           | false             | true             | true            |
 
 <!-- generated:mcp-tools end -->
 

@@ -36,6 +36,9 @@ const toolHints = [
   ["refresh", false, true, false, true],
   ["revoke", false, true, true, true],
   ["services", true, false, true, true],
+  ["services_list", true, false, true, true],
+  ["services_search", true, false, true, true],
+  ["services_show", true, false, true, true],
   ["sessions_close", false, true, false, true],
   ["sessions_list", false, false, true, true],
   ["sessions_sync", false, true, true, true],
@@ -333,6 +336,69 @@ describe("MCP tools", () => {
     expect(response.result.structuredContent).toMatchObject({ id: "weather" });
     expect(response.result.structuredContent).not.toHaveProperty("services");
     expect(JSON.parse(firstToolText(response))).toMatchObject({ id: "weather" });
+  });
+
+  // Each subcommand tool against the deprecated `services` call it replaces.
+  it.each([
+    { tool: "services_list", arguments: {}, deprecated: {}, data: { services: { length: 5 } } },
+    {
+      tool: "services_list",
+      arguments: {},
+      deprecated: { serviceId: "list" },
+      data: { services: { length: 5 } },
+    },
+    {
+      tool: "services_search",
+      arguments: { query: "forecast" },
+      deprecated: { search: "forecast" },
+      data: { services: [{ id: "weather" }] },
+    },
+    {
+      tool: "services_search",
+      arguments: { query: "__no_match__" },
+      deprecated: { serviceId: "list", search: "__no_match__" },
+      data: { services: [] },
+    },
+    {
+      tool: "services_show",
+      arguments: { serviceId: "weather" },
+      deprecated: { serviceId: "weather" },
+      data: { id: "weather", endpoints: [{ payment: { price: "0.0001" } }] },
+    },
+  ])("$tool $arguments returns what services $deprecated does", async (call) => {
+    const [response, deprecated] = await Promise.all([
+      mcpCall({ name: call.tool, arguments: call.arguments }),
+      mcpCall({ name: "services", arguments: call.deprecated }),
+    ]);
+
+    expect(response.error).toBeUndefined();
+    expect(response.result.isError).not.toBe(true);
+    expect(response.result.structuredContent).toMatchObject(call.data);
+    expect(JSON.parse(firstToolText(response))).toEqual(response.result.structuredContent);
+    expect(deprecated.result).toEqual(response.result);
+  });
+
+  it("shows a service whose id names a subcommand through services_show", async () => {
+    const response = await mcpCall({ name: "services_show", arguments: { serviceId: "list" } });
+
+    expect(response.result.isError).not.toBe(true);
+    expect(response.result.structuredContent).toMatchObject({ id: "list" });
+  });
+
+  it("marks the services tool deprecated in favor of the subcommand tools", async () => {
+    const response = await mcpRequest<{ tools: { name: string; description?: string }[] }>(
+      "tools/list",
+      {},
+    );
+
+    const descriptions = Object.fromEntries(
+      response.result.tools.map((tool) => [tool.name, tool.description]),
+    );
+    expect(descriptions.services).toMatch(
+      /^Deprecated: use services_list, services_search, or services_show\./,
+    );
+    for (const name of ["services_list", "services_search", "services_show"])
+      expect(descriptions[name]).not.toContain("Deprecated");
   });
 });
 

@@ -1,7 +1,8 @@
 import { Mcp, type Cli } from "incur";
 
-import { staleListFetchedAt } from "../commands/services.js";
-import { servicesMcpOutput } from "../schemas/services.js";
+import { deprecatedCommand } from "../commands/services/deprecated.js";
+import { staleListFetchedAt } from "../commands/services/directory.js";
+import { servicesListMcpOutput, servicesMcpOutput } from "../schemas/services.js";
 import { version } from "../shared/constants.js";
 import {
   commandMap,
@@ -26,7 +27,10 @@ export async function serveMcp(
   });
 }
 
-/** The command tree `serveMcp` serves: each tool annotated, and bare `sessions` left out. */
+/**
+ * The command tree `serveMcp` serves: each tool annotated, bare `sessions` left out, and the
+ * deprecated `services` tool in place of bare `services`.
+ */
 export function createMcpCommands(
   mounted: Map<string, unknown>,
   commands: readonly WalletCommand[],
@@ -42,24 +46,44 @@ export function createMcpCommands(
     const { root: _root, ...group } = sessionsGroup;
     mcpCommands.set("sessions", group);
   }
-  const servicesCommand = mcpCommands.get("services");
-  if (isRunnableCommand(servicesCommand)) {
+  const servicesGroup = mcpCommands.get("services");
+  if (isCommandGroup(servicesGroup)) {
+    const commands = new Map(servicesGroup.commands);
+    for (const name of ["list", "search"]) {
+      const command = commands.get(name);
+      if (isRunnableCommand(command))
+        commands.set(name, wrapServiceList(command, servicesListMcpOutput));
+    }
     mcpCommands.set("services", {
-      ...servicesCommand,
-      output: servicesMcpOutput,
-      async run(context: unknown) {
-        const value = await servicesCommand.run(context);
-        // MCP structuredContent must be a top-level object. Keep normal CLI output unchanged.
-        if (Array.isArray(value)) {
-          const fetchedAt = staleListFetchedAt(value);
-          return { services: value, ...(fetchedAt ? { stale: true, fetched_at: fetchedAt } : {}) };
-        }
-        return value;
-      },
+      ...servicesGroup,
+      // Bare `services` lists in the CLI; the `services` tool stays the deprecated one for a release.
+      // Its `run` takes incur's typed context, which `RunnableCommand` leaves unknown.
+      root: wrapServiceList(
+        mcpTool(deprecatedCommand as RunnableCommand, ["services"], annotations),
+        servicesMcpOutput,
+      ),
+      commands,
     });
   }
 
   return mcpCommands;
+}
+
+/**
+ * MCP structuredContent must be a top-level object, so a service list becomes `{ services }`,
+ * with `stale` and `fetched_at` when it came from an expired cache. CLI output stays a list.
+ */
+function wrapServiceList(command: RunnableCommand, output: unknown) {
+  return {
+    ...command,
+    output,
+    async run(context: unknown) {
+      const value = await command.run(context);
+      if (!Array.isArray(value)) return value;
+      const fetchedAt = staleListFetchedAt(value);
+      return { services: value, ...(fetchedAt ? { stale: true, fetched_at: fetchedAt } : {}) };
+    },
+  };
 }
 
 /**
