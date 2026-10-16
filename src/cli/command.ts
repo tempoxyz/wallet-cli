@@ -1,5 +1,6 @@
 import { Cli, type Mcp, type z } from "incur";
 
+import { walletError } from "../shared/errors.js";
 import type { Describe } from "./describe.js";
 
 /** What each command module default-exports for `tempo wallet` to mount and describe. */
@@ -28,7 +29,8 @@ export const destructive = { readOnlyHint: false, destructiveHint: true };
 export function commandMap(cli: Cli.Cli<any, any, any, any, any>) {
   // incur keys this map by the default Cli type; the globals generic does not change the entry.
   const entries = Cli.toCommands.get(cli as never);
-  if (!entries) throw new Error("Unable to access wallet commands");
+  if (!entries)
+    throw walletError({ code: "E_RUNTIME", message: "Unable to access wallet commands" });
   return entries as Map<string, unknown>;
 }
 
