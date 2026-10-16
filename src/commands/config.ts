@@ -135,6 +135,8 @@ export async function configGetHandler(key: string | undefined, flags: Flags = {
 /**
  * Checks `value` and saves it as `key` once the change is confirmed (see `confirmChange`), then
  * reports `key` as `configGetHandler` does. Saving the value already saved needs no confirmation.
+ * Without `--yes`, the save applies only while `key` still holds the value the confirmation, or
+ * the finding that nothing changes, was based on.
  */
 export async function configSetHandler(
   key: string,
@@ -146,7 +148,7 @@ export async function configSetHandler(
   const name = settingKey(key);
   const saved = configSettings[name].parse(value);
   const config = loadConfig();
-  if (config[name] !== saved) {
+  if (!options.yes && config[name] !== saved) {
     const change: Change = {
       action: "set",
       name,
@@ -157,13 +159,14 @@ export async function configSetHandler(
     const refusal = await confirmChange(change, options, context, dependencies);
     if (refusal) return context.error(refusal);
   }
-  await saveConfigValue(name, saved);
+  await saveConfigValue(name, saved, options.yes ? {} : { expected: config[name] });
   return await effectiveSettings([name], options);
 }
 
 /**
  * Removes the saved `key` once the removal is confirmed (see `confirmChange`), then reports `key`
- * as `configGetHandler` does. With nothing saved, there is nothing to confirm or remove.
+ * as `configGetHandler` does. With nothing saved, there is nothing to confirm or remove. Without
+ * `--yes`, the removal applies only while `key` still holds the value it was confirmed against.
  */
 export async function configUnsetHandler(
   key: string,
@@ -173,13 +176,13 @@ export async function configUnsetHandler(
 ) {
   const name = settingKey(key);
   const config = loadConfig();
-  if (config[name] !== undefined) {
+  if (!options.yes && config[name] !== undefined) {
     const { [name]: _removed, ...next } = config;
     const change: Change = { action: "unset", name, value: undefined, config, next };
     const refusal = await confirmChange(change, options, context, dependencies);
     if (refusal) return context.error(refusal);
   }
-  await saveConfigValue(name, undefined);
+  await saveConfigValue(name, undefined, options.yes ? {} : { expected: config[name] });
   return await effectiveSettings([name], options);
 }
 
@@ -194,10 +197,10 @@ type Change = {
 };
 
 /**
- * Confirms `change`, since a setting decides what later payments and RPC calls use: `--yes`
- * confirms it, a run that can prompt shows the setting's value before and after and asks on the
- * terminal, and any other run changes nothing and gets the refusal to return, whose `cta` is the
- * same command plus `--yes`. A declined prompt throws.
+ * Confirms `change`, since a setting decides what later payments and RPC calls use: a run that can
+ * prompt shows the setting's value before and after and asks on the terminal, and any other run
+ * changes nothing and gets the refusal to return, whose `cta` is the same command plus `--yes`. A
+ * declined prompt throws.
  */
 async function confirmChange(
   change: Change,
@@ -205,7 +208,6 @@ async function confirmChange(
   context: CommandContext,
   { confirm = confirmPrompt }: Dependencies,
 ) {
-  if (options.yes) return undefined;
   const setting = configSettings[change.name];
   const state = await loadWalletState();
   const [before, after] = await Promise.all([
@@ -216,15 +218,20 @@ async function confirmChange(
   const value = change.value === undefined ? undefined : shown(change.name, change.value);
   const verb = change.action === "set" ? "Save" : "Remove";
   if (context.agent) {
-    const argv = ["tempo", "wallet", "config", change.action, change.name];
-    const command = [...argv, ...(value === undefined ? [] : [value]), "--yes"]
+    // A cta ends up in agent context and logs, so a value that can carry a credential stays out
+    // of it. Its placeholder fails `parse`, so running the cta unchanged saves nothing.
+    const redacted = value !== change.value;
+    const placeholder = `<${change.name}>`;
+    const argument = value === undefined ? [] : [redacted ? placeholder : value];
+    const command = ["tempo", "wallet", "config", change.action, change.name, ...argument, "--yes"]
       .map(shellQuote)
       .join(" ");
-    const full =
-      value !== change.value ? ` Use the full ${change.name} in place of each <redacted>.` : "";
+    const fill = redacted
+      ? ` Replace ${placeholder} with the full ${change.name}, which is left out since it can carry a credential.`
+      : "";
     return commandError(
       "E_USAGE",
-      `${change.action === "set" ? "Saving" : "Removing"} ${change.name} changes what later commands use, so it needs confirmation: it goes from ${before} to ${after}.${warning ? ` ${warning}` : ""} Run '${command}' to confirm.${full}`,
+      `${change.action === "set" ? "Saving" : "Removing"} ${change.name} changes what later commands use, so it needs confirmation: it goes from ${before} to ${after}.${warning ? ` ${warning}` : ""} Run '${command}' to confirm.${fill}`,
       command,
     );
   }

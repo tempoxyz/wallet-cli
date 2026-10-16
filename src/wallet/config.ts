@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { Errors } from "incur";
 
 import { withFileLock } from "../payment/session-lock.js";
 import type { ConfigKey } from "../schemas/config.js";
-import { errorCodes } from "../shared/errors.js";
+import { errorCodes, walletError } from "../shared/errors.js";
 import { ensurePrivateWalletDirectory, writePrivateFile } from "./store.js";
 
 /**
@@ -56,15 +57,27 @@ export function configValue<value>(
  * Saves `value` as `key`, or removes `key` when `value` is `undefined`, keeping the other settings.
  * Each change rewrites the whole file, so changes hold the config lock to keep concurrent ones
  * from overwriting each other; `writePrivateFile` replaces it atomically, readable only by the
- * owner.
+ * owner. With `expected`, the change applies only while `key` still holds it (`undefined` when it
+ * is not set), checked under the lock, so a change confirmed against one value is never applied
+ * over another; otherwise nothing is written and it fails with a retryable `E_USAGE`.
  */
-export async function saveConfigValue(key: ConfigKey, value: string | undefined) {
+export async function saveConfigValue(
+  key: ConfigKey,
+  value: string | undefined,
+  options: { expected?: unknown } = {},
+) {
   const path = configPath();
   await ensurePrivateWalletDirectory(path);
   await withFileLock(join(dirname(path), "config.lock"), "config lock", async () => {
     const config = loadConfig();
     const { [key]: saved, ...others } = config;
-    if (value === undefined && saved === undefined) return;
+    if ("expected" in options && !isDeepStrictEqual(saved, options.expected))
+      throw walletError({
+        code: "E_USAGE",
+        message: `${key} changed in ${path} while this command ran, so nothing was changed. Rerun the command to review the new value.`,
+        retryable: true,
+      });
+    if (saved === value) return;
     const next = value === undefined ? others : { ...config, [key]: value };
     await writePrivateFile(path, JSON.stringify(next, null, 2));
   });

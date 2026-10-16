@@ -134,16 +134,22 @@ export async function currentWhoamiOutput(options: {
         )
       : undefined);
   const token = key?.limits?.[0]?.token ?? tokenAddress(options.chain);
+  const servesChain = rpcChainCheck();
   const [balance, assets, sessions, details, chainKey] = await Promise.all([
-    tokenBalance({ chain: options.chain, token, walletAddress: options.walletAddress }),
+    tokenBalance({
+      chain: options.chain,
+      token,
+      walletAddress: options.walletAddress,
+      servesChain,
+    }),
     fetchWalletAssets({
       chain: options.chain,
       walletAddress: options.walletAddress,
     }),
     sessionStats({ token, walletAddress: options.walletAddress }),
-    tokenDetails(key ? keyTokens(key) : [{ chain: options.chain, token, read: true }]),
+    tokenDetails(key ? keyTokens(key) : [{ chain: options.chain, token, read: true }], servesChain),
     // `key` is always the logged-in wallet's.
-    key ? readChainKey(key, rpcChainCheck()) : undefined,
+    key ? readChainKey(key, servesChain) : undefined,
   ]);
   const symbol = details.get(tokenKey(options.chain, token))?.symbol ?? null;
   const balances = walletBalances({

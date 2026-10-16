@@ -15,7 +15,12 @@ import {
   tokenMetadata,
 } from "../shared/tokens.js";
 import { assetBalances, fetchWalletAssets, type WalletAsset } from "../wallet/balances.js";
-import { balanceQueryError, statusQueryTimeout, tokenBalance } from "../wallet/key-output.js";
+import {
+  balanceQueryError,
+  rpcChainCheck,
+  statusQueryTimeout,
+  tokenBalance,
+} from "../wallet/key-output.js";
 
 export default {
   command: Cli.create("balance", {
@@ -80,7 +85,7 @@ async function onChainBalance(
   walletAddress: string,
 ): Promise<WalletAsset | undefined> {
   const [balance, metadata] = await Promise.all([
-    tokenBalance({ chain, token, walletAddress }),
+    tokenBalance({ chain, token, walletAddress, servesChain: rpcChainCheck() }),
     tokenMetadata(token, chain, (address) =>
       readTokenMetadata(address, chain, { timeout: statusQueryTimeout, retryCount: 0 }),
     ).catch(() => undefined),

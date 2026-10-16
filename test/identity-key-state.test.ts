@@ -386,12 +386,18 @@ describe("TEMPO_RPC_URL chain check", () => {
       expect(options).toEqual({ timeout: 3_000, retryCount: 0 });
   });
 
-  it("checks whoami's key chain once", async () => {
+  it("checks whoami's key chain once, and reads nothing from another chain", async () => {
     mocks.getChainId.mockResolvedValue(42431);
 
     const output = await whoami([key]);
 
-    expect(output).toMatchObject({ ready: true, key: { status: "ready", published: null } });
+    // The balance read on the other chain is dropped, so whoami cannot call the wallet ready.
+    expect(output).toMatchObject({
+      ready: false,
+      balance: { error: { code: "E_RPC" } },
+      balances: [],
+      key: { status: "ready", published: null, balance: null },
+    });
     expect(mocks.getChainId.mock.calls).toEqual([[4217]]);
     expect(mocks.getRemainingLimit).not.toHaveBeenCalled();
   });

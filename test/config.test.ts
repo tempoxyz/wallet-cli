@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
@@ -7,13 +8,15 @@ import { promisify } from "node:util";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { balanceHandler } from "../src/commands/balance.js";
 import { configGetHandler, configSetHandler, configUnsetHandler } from "../src/commands/config.js";
 import { keysHandler } from "../src/commands/keys.js";
 import { logoutHandler } from "../src/commands/logout.js";
+import { whoamiHandler } from "../src/commands/whoami.js";
 import { parseRequestArgs } from "../src/request/args.js";
 import { resolvePaymentNetwork } from "../src/request/identity.js";
 import { defaultMaxSpend, maxSpendSetting, resolveMaxSpend } from "../src/request/spend.js";
-import { configSettings, type ConfigKey } from "../src/schemas/config.js";
+import { configKeys, configSettings, type ConfigKey } from "../src/schemas/config.js";
 import {
   explicitNetwork,
   networkSetting,
@@ -25,7 +28,25 @@ import { configPath, saveConfigValue, type ConfigSource } from "../src/wallet/co
 import { rpcChainCheck } from "../src/wallet/key-output.js";
 import { loadWalletState, saveWalletState } from "../src/wallet/store.js";
 import { cliBundle } from "./cli-bundle.js";
-import { runContext, testPrivateKey, useTempHome, walletState } from "./helpers.js";
+import { readyWallet, runContext, testPrivateKey, useTempHome, walletState } from "./helpers.js";
+
+const race = vi.hoisted(() => ({ afterRead: undefined as (() => void) | undefined }));
+
+// Lets a test change the config file just after a command reads it, as another process could.
+// The store's own reads, under the config lock, are not affected.
+vi.mock("../src/wallet/config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/wallet/config.js")>();
+  return {
+    ...actual,
+    loadConfig: () => {
+      const config = actual.loadConfig();
+      const afterRead = race.afterRead;
+      race.afterRead = undefined;
+      afterRead?.();
+      return config;
+    },
+  };
+});
 
 const execFileAsync = promisify(execFile);
 
@@ -220,9 +241,9 @@ describe("confirming a change", () => {
       key: "rpc-url",
       saved: "https://old.example.com",
       value: "https://rpc.example.com/v2/apikey",
-      // Output never shows the URL's path, which can carry an API key.
+      // Output never shows the URL's path, which can carry an API key, and the cta leaves it out.
       shown: "https://rpc.example.com/<redacted>",
-      quoted: "'https://rpc.example.com/<redacted>'",
+      placeholder: "<rpc-url>",
       before: setting("https://old.example.com", "config"),
       set: setting("https://rpc.example.com/<redacted>", "config"),
       unset: setting(moderatoRpc, "default"),
@@ -266,8 +287,9 @@ describe("confirming a change", () => {
     const after = scenario[action];
     const warning = action === "set" ? scenario.warning : undefined;
     const argument = action === "set" ? ` ${scenario.shown ?? value}` : "";
-    const quotedArgument = action === "set" ? ` ${scenario.quoted ?? value}` : "";
-    const command = `tempo wallet config ${action} ${key}${quotedArgument} --yes`;
+    const placeholder = action === "set" ? scenario.placeholder : undefined;
+    const ctaArgument = action === "set" ? ` ${placeholder ? `'${placeholder}'` : value}` : "";
+    const command = `tempo wallet config ${action} ${key}${ctaArgument} --yes`;
     const verb = action === "set" ? "Save" : "Remove";
 
     if (agent && !yes) {
@@ -279,8 +301,10 @@ describe("confirming a change", () => {
           `${action === "set" ? "Saving" : "Removing"} ${key} changes what later commands use, so it needs confirmation: it goes from ${label(scenario.before)} to ${label(after)}.`,
           ...(warning ? [warning] : []),
           `Run '${command}' to confirm.`,
-          ...(argument.includes("<redacted>")
-            ? [`Use the full ${key} in place of each <redacted>.`]
+          ...(placeholder
+            ? [
+                `Replace ${placeholder} with the full ${key}, which is left out since it can carry a credential.`,
+              ]
             : []),
         ].join(" "),
         cta: { commands: [{ command }] },
@@ -337,6 +361,57 @@ describe("confirming a change", () => {
     expect(await savedConfig()).toBeUndefined();
   });
 
+  it.each([
+    {
+      url: "https://rpc.example.com/v2/apikey",
+      command: "tempo wallet config set rpc-url '<rpc-url>' --yes",
+      saves: false,
+    },
+    {
+      url: "https://user:secret@rpc.example.com",
+      command: "tempo wallet config set rpc-url '<rpc-url>' --yes",
+      saves: false,
+    },
+    {
+      url: "http://127.0.0.1:8545",
+      command: "tempo wallet config set rpc-url http://127.0.0.1:8545 --yes",
+      saves: true,
+    },
+  ])(
+    "an rpc-url cta for $url saves the URL only when it can carry it whole",
+    async ({ url, command, saves }) => {
+      await useTempHome();
+      vi.stubEnv("TEMPO_RPC_URL", undefined);
+
+      const refusal = await configSetHandler("rpc-url", url, {}, runContext());
+      expect(refusal).toMatchObject({ cta: { commands: [{ command }] } });
+      expect(JSON.stringify(refusal)).not.toContain("secret");
+      expect(JSON.stringify(refusal)).not.toContain("apikey");
+
+      // Run the cta as given: a placeholder fails validation, so nothing is saved.
+      const [, , , action, key, argument] = command.split(" ");
+      const run = confirmedSet(key!, argument!.replace(/^'(.*)'$/, "$1"));
+      if (saves) {
+        expect(action).toBe("set");
+        await expect(run).resolves.toEqual({ "rpc-url": { value: url, source: "config" } });
+        expect(await savedConfig()).toEqual({ "rpc-url": url });
+      } else {
+        await expect(run).rejects.toMatchObject({
+          code: "E_USAGE",
+          message: "rpc-url must be an http(s) URL",
+        });
+        expect(await savedConfig()).toBeUndefined();
+      }
+    },
+  );
+
+  it.each(configKeys.filter((key) => "redact" in configSettings[key]))(
+    "the %s placeholder in a cta is not a valid setting",
+    (key) => {
+      expect(() => configSettings[key].parse(`<${key}>`)).toThrow();
+    },
+  );
+
   it("refuses a CLI change without --yes, with the confirmed command as its cta", async () => {
     await useTempHome();
 
@@ -351,6 +426,78 @@ describe("confirming a change", () => {
     });
     expect(await savedConfig()).toBeUndefined();
   }, 30_000);
+});
+
+describe("a change made while another is confirmed", () => {
+  const changes = [
+    {
+      name: "set over the value it found already saved",
+      saved: "50",
+      action: "set",
+      yes: false,
+      concurrent: "5",
+    },
+    {
+      name: "unset finding nothing saved",
+      saved: undefined,
+      action: "unset",
+      yes: false,
+      concurrent: "5",
+    },
+    {
+      name: "set confirmed at the prompt",
+      saved: "5",
+      action: "set",
+      yes: false,
+      prompt: true,
+      concurrent: "7",
+    },
+    {
+      name: "unset confirmed at the prompt",
+      saved: "5",
+      action: "unset",
+      yes: false,
+      prompt: true,
+      concurrent: "7",
+    },
+  ] as const;
+
+  it.each(changes)(
+    "leaves the newer value for a $name",
+    async ({ saved, action, yes, concurrent, ...change }) => {
+      await useTempHome();
+      if (saved) await saveConfigValue("max-spend", saved);
+      // Another process saves `concurrent` just after this command reads the file.
+      race.afterRead = () =>
+        writeFileSync(configPath(), JSON.stringify({ "max-spend": concurrent }));
+      const prompt = "prompt" in change;
+      const context = runContext(!prompt);
+      const confirm = vi.fn(async () => true);
+      const run =
+        action === "set"
+          ? configSetHandler("max-spend", "50", { yes }, context, { confirm })
+          : configUnsetHandler("max-spend", { yes }, context, { confirm });
+
+      await expect(run).rejects.toMatchObject({
+        code: "E_USAGE",
+        retryable: true,
+        message: `max-spend changed in ${configPath()} while this command ran, so nothing was changed. Rerun the command to review the new value.`,
+      });
+      expect(confirm).toHaveBeenCalledTimes(prompt ? 1 : 0);
+      expect(await savedConfig()).toEqual({ "max-spend": concurrent });
+    },
+  );
+
+  it("applies a --yes change over a newer value", async () => {
+    await useTempHome();
+    await saveConfigValue("max-spend", "5");
+    race.afterRead = () => writeFileSync(configPath(), JSON.stringify({ "max-spend": "7" }));
+
+    expect(await confirmedSet("max-spend", "50")).toEqual({
+      "max-spend": { value: "50", source: "config" },
+    });
+    expect(await savedConfig()).toEqual({ "max-spend": "50" });
+  });
 });
 
 describe("precedence", () => {
@@ -533,6 +680,75 @@ describe("precedence", () => {
       await rpc.close();
     }
   });
+
+  // One saved endpoint serves both networks' reads, so each balance counts only on the chain the
+  // endpoint reports; the other network's balance is unknown, never this chain's.
+  it.each([
+    {
+      command: "keys list",
+      read: async () =>
+        (await keysHandler({})).keys.map(({ chain_id, balance }) => ({ chain_id, balance })),
+      expected: [
+        { chain_id: 4217, balance: null },
+        { chain_id: 42431, balance: "7" },
+      ],
+    },
+    {
+      command: "whoami on mainnet",
+      read: async () => {
+        const { balance, ready } = (await whoamiHandler({ network: "mainnet" })) as {
+          balance: { available: string | null };
+          ready: boolean;
+        };
+        return { available: balance.available, ready };
+      },
+      expected: { available: null, ready: false },
+    },
+    {
+      command: "whoami on testnet",
+      read: async () => {
+        const { balance } = (await whoamiHandler({ network: "testnet" })) as {
+          balance: { available: string | null };
+        };
+        return { available: balance.available };
+      },
+      expected: { available: "7" },
+    },
+    {
+      command: "balance on mainnet",
+      read: () =>
+        readyWallet("mainnet", false)
+          .then((wallet) => balanceHandler(wallet, {}))
+          .catch((error: { code: string }) => error.code),
+      expected: "E_NETWORK",
+    },
+    {
+      command: "balance on testnet",
+      read: async () =>
+        (await balanceHandler(await readyWallet("testnet", false), {})).balances.map(
+          ({ balance }) => balance,
+        ),
+      expected: ["7"],
+    },
+  ])(
+    "$command reads no balance through a saved rpc-url on another chain",
+    async ({ read, expected }) => {
+      await useTempHome();
+      vi.stubEnv("TEMPO_RPC_URL", undefined);
+      await saveWalletState(
+        walletState({ accessKeys: [walletState().accessKeys[0]!, testnetKey] }),
+      );
+      const rpc = await chainRpc(42431);
+      try {
+        await saveConfigValue("rpc-url", rpc.url);
+
+        expect(await read()).toEqual(expected);
+        expect(rpc.requests).toContain("eth_chainId");
+      } finally {
+        await rpc.close();
+      }
+    },
+  );
 
   it("tempo request pays on the saved network and caps spending at the saved max-spend", async () => {
     await useTempHome();
@@ -882,17 +1098,33 @@ async function walletJson(args: string[]) {
   return JSON.parse(stdout) as unknown;
 }
 
-/** A JSON-RPC endpoint on `chainId` that records each method it is asked. */
+/**
+ * A JSON-RPC endpoint on `chainId` that records each method it is asked. It answers `balanceOf`
+ * with 7 tokens and fails any other call, as for an access key the chain does not hold.
+ */
 async function chainRpc(chainId: number) {
   const requests: string[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => (body += chunk));
     request.on("end", () => {
-      const { id, method } = JSON.parse(body) as { id: number; method: string };
+      const { id, method, params } = JSON.parse(body) as {
+        id: number;
+        method: string;
+        params?: [{ data?: string }?];
+      };
       requests.push(method);
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ jsonrpc: "2.0", id, result: `0x${chainId.toString(16)}` }));
+      const balanceOf = method === "eth_call" && params?.[0]?.data?.startsWith("0x70a08231");
+      response.end(
+        JSON.stringify(
+          method === "eth_chainId"
+            ? { jsonrpc: "2.0", id, result: `0x${chainId.toString(16)}` }
+            : balanceOf
+              ? { jsonrpc: "2.0", id, result: `0x${7_000_000n.toString(16).padStart(64, "0")}` }
+              : { jsonrpc: "2.0", id, error: { code: -32000, message: "execution reverted" } },
+        ),
+      );
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
