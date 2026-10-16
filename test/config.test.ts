@@ -57,6 +57,16 @@ async function writeConfig(body: string) {
   await writeFile(configPath(), body);
 }
 
+/** `config set` with `--yes`, so it needs no prompt. */
+function confirmedSet(key: string, value: string, network?: string) {
+  return configSetHandler(key, value, { network, yes: true }, runContext());
+}
+
+/** `config unset` with `--yes`, so it needs no prompt. */
+function confirmedUnset(key: string) {
+  return configUnsetHandler(key, { yes: true }, runContext());
+}
+
 describe("config set, get, and unset", () => {
   it.each([
     {
@@ -82,15 +92,15 @@ describe("config set, get, and unset", () => {
     vi.stubEnv("TEMPO_RPC_URL", undefined);
     const configured = { [key]: { value: saved, source: "config" } };
 
-    expect(await configSetHandler(key, input)).toEqual(configured);
+    expect(await confirmedSet(key, input)).toEqual(configured);
     expect(await savedConfig()).toEqual({ [key]: saved });
     expect(await configGetHandler(key)).toEqual(configured);
-    expect(await configSetHandler(key, input)).toEqual(configured);
+    expect(await confirmedSet(key, input)).toEqual(configured);
     expect(await savedConfig()).toEqual({ [key]: saved });
 
-    expect(await configUnsetHandler(key)).toEqual({ [key]: fallback });
+    expect(await confirmedUnset(key)).toEqual({ [key]: fallback });
     expect(await savedConfig()).toEqual({});
-    expect(await configUnsetHandler(key)).toEqual({ [key]: fallback });
+    expect(await confirmedUnset(key)).toEqual({ [key]: fallback });
     expect(await savedConfig()).toEqual({});
   });
 
@@ -111,7 +121,7 @@ describe("config set, get, and unset", () => {
     await useTempHome();
     await saveConfigValue("max-spend", "3");
 
-    await expect(configSetHandler(key, value)).rejects.toMatchObject({
+    await expect(confirmedSet(key, value)).rejects.toMatchObject({
       code: "E_USAGE",
       exitCode: 2,
       message,
@@ -122,15 +132,15 @@ describe("config set, get, and unset", () => {
   it.each(["0.000001", "1", "10.5", "1000000.123456"])("saves max-spend %s", async (value) => {
     await useTempHome();
 
-    expect(await configSetHandler("max-spend", value)).toEqual({
+    expect(await confirmedSet("max-spend", value)).toEqual({
       "max-spend": { value, source: "config" },
     });
   });
 
   it.each([
     { command: "get", run: (key: string) => configGetHandler(key) },
-    { command: "set", run: (key: string) => configSetHandler(key, "5") },
-    { command: "unset", run: (key: string) => configUnsetHandler(key) },
+    { command: "set", run: (key: string) => confirmedSet(key, "5") },
+    { command: "unset", run: (key: string) => confirmedUnset(key) },
   ])("config $command refuses an unknown key, listing the valid ones", async ({ run }) => {
     await useTempHome();
 
@@ -186,11 +196,161 @@ describe("config set, get, and unset", () => {
       },
     };
 
-    expect(await configSetHandler("rpc-url", url)).toEqual(shown);
+    expect(await confirmedSet("rpc-url", url)).toEqual(shown);
     expect(await configGetHandler("rpc-url")).toEqual(shown);
     expect(await savedConfig()).toEqual({ "rpc-url": url });
     expect(rpcUrl(4217)).toBe(url);
   });
+});
+
+describe("confirming a change", () => {
+  const setting = (value: string, source: ConfigSource) => ({ value, source });
+  const label = ({ value, source }: { value: string; source: ConfigSource }) =>
+    `${value} (${source})`;
+  const changes = [
+    {
+      key: "network",
+      saved: "mainnet",
+      value: "testnet",
+      before: setting("mainnet", "config"),
+      set: setting("testnet", "config"),
+      unset: setting("testnet", "login"),
+    },
+    {
+      key: "rpc-url",
+      saved: "https://old.example.com",
+      value: "https://rpc.example.com/v2/apikey",
+      // Output never shows the URL's path, which can carry an API key.
+      shown: "https://rpc.example.com/<redacted>",
+      quoted: "'https://rpc.example.com/<redacted>'",
+      before: setting("https://old.example.com", "config"),
+      set: setting("https://rpc.example.com/<redacted>", "config"),
+      unset: setting(moderatoRpc, "default"),
+      warning:
+        "The new rpc-url will receive all of the CLI's RPC traffic on every network, including balance and channel reads.",
+    },
+    {
+      key: "max-spend",
+      saved: "5",
+      value: "50",
+      before: setting("5", "config"),
+      set: setting("50", "config"),
+      unset: setting("10", "default"),
+    },
+  ];
+  const runs = [
+    { run: "a confirmed prompt", agent: false, yes: false, answer: true, changed: true },
+    { run: "a declined prompt", agent: false, yes: false, answer: false, changed: false },
+    { run: "an agent run with --yes", agent: true, yes: true, answer: false, changed: true },
+    { run: "an agent run without --yes", agent: true, yes: false, answer: false, changed: false },
+  ];
+
+  it.each(
+    changes.flatMap((change) =>
+      (["set", "unset"] as const).flatMap((action) =>
+        runs.map((run) => ({ ...change, ...run, action })),
+      ),
+    ),
+  )("$action $key on $run", async (scenario) => {
+    const { key, saved, value, action, agent, yes, answer, changed } = scenario;
+    await useTempHome();
+    vi.stubEnv("TEMPO_RPC_URL", undefined);
+    await saveWalletState(walletState({ chainId: 42431, accessKeys: [testnetKey] }));
+    await saveConfigValue(key as ConfigKey, saved);
+    const confirm = vi.fn(async () => answer);
+    const context = runContext(agent);
+    const result =
+      action === "set"
+        ? configSetHandler(key, value, { yes }, context, { confirm })
+        : configUnsetHandler(key, { yes }, context, { confirm });
+    const after = scenario[action];
+    const warning = action === "set" ? scenario.warning : undefined;
+    const argument = action === "set" ? ` ${scenario.shown ?? value}` : "";
+    const quotedArgument = action === "set" ? ` ${scenario.quoted ?? value}` : "";
+    const command = `tempo wallet config ${action} ${key}${quotedArgument} --yes`;
+    const verb = action === "set" ? "Save" : "Remove";
+
+    if (agent && !yes) {
+      const refusal = {
+        code: "E_USAGE",
+        exitCode: 2,
+        retryable: false,
+        message: [
+          `${action === "set" ? "Saving" : "Removing"} ${key} changes what later commands use, so it needs confirmation: it goes from ${label(scenario.before)} to ${label(after)}.`,
+          ...(warning ? [warning] : []),
+          `Run '${command}' to confirm.`,
+          ...(argument.includes("<redacted>")
+            ? [`Use the full ${key} in place of each <redacted>.`]
+            : []),
+        ].join(" "),
+        cta: { commands: [{ command }] },
+      };
+      expect(await result).toEqual(refusal);
+      expect(context.error).toHaveBeenCalledWith(refusal);
+    } else if (changed) expect(await result).toEqual({ [key]: after });
+    else
+      await expect(result).rejects.toMatchObject({
+        code: "E_USAGE",
+        message: `${key} not ${action === "set" ? "saved" : "removed"}: not confirmed at the prompt`,
+      });
+
+    expect(confirm.mock.calls).toEqual(
+      agent
+        ? []
+        : [
+            [
+              [
+                `${verb} ${key}${argument}`,
+                `  now:   ${label(scenario.before)}`,
+                `  after: ${label(after)}`,
+                ...(warning ? [warning] : []),
+                `${verb} this setting?`,
+              ].join("\n"),
+            ],
+          ],
+    );
+    expect(await savedConfig()).toEqual(
+      !changed ? { [key]: saved } : action === "set" ? { [key]: value } : {},
+    );
+  });
+
+  it.each([
+    { action: "set", run: () => configSetHandler("max-spend", "5", {}, runContext()) },
+    { action: "unset", run: () => configUnsetHandler("max-spend", {}, runContext()) },
+  ])("needs no confirmation for a $action that changes nothing", async ({ action, run }) => {
+    await useTempHome();
+    if (action === "set") await saveConfigValue("max-spend", "5");
+
+    expect(await run()).toMatchObject({
+      "max-spend": { source: action === "set" ? "config" : "default" },
+    });
+  });
+
+  it("notes when the variable that overrides a setting keeps it from changing", async () => {
+    await useTempHome();
+    vi.stubEnv("TEMPO_MAX_SPEND", "4");
+    const context = runContext();
+
+    expect(await configSetHandler("max-spend", "50", {}, context)).toMatchObject({
+      message: expect.stringContaining("it goes from 4 (env) to 4 (env)"),
+    });
+    expect(await savedConfig()).toBeUndefined();
+  });
+
+  it("refuses a CLI change without --yes, with the confirmed command as its cta", async () => {
+    await useTempHome();
+
+    const error = await walletJson(["config", "set", "max-spend", "50"]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({ code: 2 });
+    expect(JSON.parse((error as { stdout: string }).stdout)).toMatchObject({
+      code: "E_USAGE",
+      cta: { commands: [{ command: "tempo wallet config set max-spend 50 --yes" }] },
+    });
+    expect(await savedConfig()).toBeUndefined();
+  }, 30_000);
 });
 
 describe("precedence", () => {
@@ -409,7 +569,7 @@ describe("the saved network and the logged-in chain", () => {
       network: { value: "mainnet", source: "config" },
     });
 
-    expect(await walletJson(["config", "unset", "network"])).toEqual({
+    expect(await walletJson(["config", "unset", "network", "--yes"])).toEqual({
       network: { value: "testnet", source: "login" },
     });
     expect(await walletJson(["whoami"])).toMatchObject({
@@ -539,10 +699,10 @@ describe("an invalid config file", () => {
     await useTempHome();
     await writeConfig('{"network":"typo","future-setting":["kept"],"max-spend":"0"}');
 
-    expect(await configUnsetHandler("network")).toEqual({
+    expect(await confirmedUnset("network")).toEqual({
       network: { value: "mainnet", source: "default" },
     });
-    expect(await configSetHandler("max-spend", "5")).toEqual({
+    expect(await confirmedSet("max-spend", "5")).toEqual({
       "max-spend": { value: "5", source: "config" },
     });
     expect(await savedConfig()).toEqual({ "future-setting": ["kept"], "max-spend": "5" });
@@ -552,11 +712,11 @@ describe("an invalid config file", () => {
     await useTempHome();
     await writeConfig("{");
 
-    await expect(configSetHandler("network", "testnet")).rejects.toMatchObject({
+    await expect(confirmedSet("network", "testnet")).rejects.toMatchObject({
       code: "E_USAGE",
       message: `Config file ${configPath()} is not valid JSON. ${fix}`,
     });
-    await expect(configUnsetHandler("network")).rejects.toMatchObject({ code: "E_USAGE" });
+    await expect(confirmedUnset("network")).rejects.toMatchObject({ code: "E_USAGE" });
     expect(await readFile(configPath(), "utf8")).toBe("{");
   });
 });
@@ -570,7 +730,7 @@ describe("the config file", () => {
       await writeConfig("{}");
       await chmod(configPath(), 0o644);
 
-      await configSetHandler("network", "testnet");
+      await confirmedSet("network", "testnet");
 
       expect((await stat(configPath())).mode & 0o777).toBe(0o600);
       expect((await stat(dirname(configPath()))).mode & 0o777).toBe(0o700);
@@ -586,9 +746,9 @@ describe("the config file", () => {
     await useTempHome();
 
     await Promise.all([
-      configSetHandler("network", "testnet"),
-      configSetHandler("rpc-url", "https://rpc.example.com"),
-      configSetHandler("max-spend", "5"),
+      confirmedSet("network", "testnet"),
+      confirmedSet("rpc-url", "https://rpc.example.com"),
+      confirmedSet("max-spend", "5"),
     ]);
     expect(await savedConfig()).toEqual({
       network: "testnet",
@@ -596,7 +756,7 @@ describe("the config file", () => {
       "max-spend": "5",
     });
 
-    await Promise.all([configUnsetHandler("network"), configUnsetHandler("max-spend")]);
+    await Promise.all([confirmedUnset("network"), confirmedUnset("max-spend")]);
     expect(await savedConfig()).toEqual({ "rpc-url": "https://rpc.example.com" });
   });
 
@@ -604,9 +764,9 @@ describe("the config file", () => {
     await useTempHome();
 
     await Promise.all([
-      walletJson(["config", "set", "network", "testnet"]),
-      walletJson(["config", "set", "rpc-url", "https://rpc.example.com"]),
-      walletJson(["config", "set", "max-spend", "5"]),
+      walletJson(["config", "set", "network", "testnet", "--yes"]),
+      walletJson(["config", "set", "rpc-url", "https://rpc.example.com", "--yes"]),
+      walletJson(["config", "set", "max-spend", "5", "--yes"]),
     ]);
 
     expect(await savedConfig()).toEqual({
@@ -640,13 +800,13 @@ describe("MCP tools", () => {
       },
       config_set: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: true,
         openWorldHint: false,
       },
       config_unset: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: true,
         openWorldHint: false,
       },
@@ -661,20 +821,31 @@ describe("MCP tools", () => {
     });
 
     const responses = await mcpSession([
-      call("config_set", { key: "max-spend", value: "5" }),
+      call("config_set", { key: "max-spend", value: "5", yes: true }),
       call("config_get", {}),
+      call("config_set", { key: "max-spend", value: "50" }),
       call("config_unset", { key: "max-spend" }),
+      call("config_unset", { key: "max-spend", yes: true }),
       call("config_get", { key: "max-spend" }),
-      call("config_set", { key: "max_spend", value: "5" }),
+      call("config_set", { key: "max_spend", value: "5", yes: true }),
     ]);
     const results = responses.map(
       (response) =>
         (
           response as {
-            result: { isError?: boolean; structuredContent?: unknown; content: { text: string }[] };
+            result: {
+              isError?: boolean;
+              structuredContent?: unknown;
+              content: { text: string }[];
+              _meta?: unknown;
+            };
           }
         ).result,
     );
+    const refused = (command: string) => ({
+      isError: true,
+      _meta: { cta: { commands: [{ command }] } },
+    });
 
     expect(results[0]).toMatchObject({
       structuredContent: { "max-spend": { value: "5", source: "config" } },
@@ -685,14 +856,17 @@ describe("MCP tools", () => {
         "max-spend": { value: "5", source: "config" },
       },
     });
-    expect(results[2]).toMatchObject({
+    // Without `yes`, an agent's change is refused, naming the command that confirms it.
+    expect(results[2]).toMatchObject(refused("tempo wallet config set max-spend 50 --yes"));
+    expect(results[3]).toMatchObject(refused("tempo wallet config unset max-spend --yes"));
+    expect(results[4]).toMatchObject({
       structuredContent: { "max-spend": { value: "10", source: "default" } },
     });
-    expect(results[3]).toMatchObject({
+    expect(results[5]).toMatchObject({
       structuredContent: { "max-spend": { value: "10", source: "default" } },
     });
-    expect(results[4]).toMatchObject({ isError: true });
-    expect(results[4]!.content[0]!.text).toContain(
+    expect(results[6]).toMatchObject({ isError: true });
+    expect(results[6]!.content[0]!.text).toContain(
       "Unknown config key: max_spend. Valid keys: network, rpc-url, max-spend",
     );
     expect(await savedConfig()).toEqual({});

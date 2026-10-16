@@ -15,6 +15,9 @@ import { ensurePrivateWalletDirectory, writePrivateFile } from "./store.js";
  */
 export type ConfigSource = "flag" | "env" | "config" | "login" | "default";
 
+/** The config file's settings by name, as `loadConfig` reads them. */
+export type Config = Readonly<Record<string, unknown>>;
+
 /**
  * The settings `tempo wallet config set` saves: a JSON object of strings by setting name. Names
  * this version does not know, as a newer one may save, are kept and ignored.
@@ -24,12 +27,17 @@ export function configPath() {
 }
 
 /**
- * The saved value of `key`, checked with `parse`; `undefined` when it is not set. Each read sees
- * the file as it is now, so a long-running MCP server follows changes from other processes. A file
- * that is not a JSON object, or a value `parse` rejects, fails with `ConfigFileError`.
+ * The saved value of `key` in `config`, checked with `parse`; `undefined` when it is not set.
+ * `config` is the file as it is now unless a caller passes the settings a change would leave, so
+ * a long-running MCP server follows changes from other processes. A file that is not a JSON
+ * object, or a value `parse` rejects, fails with `ConfigFileError`.
  */
-export function configValue<value>(key: ConfigKey, parse: (value: string) => value) {
-  const saved = readConfig()[key];
+export function configValue<value>(
+  key: ConfigKey,
+  parse: (value: string) => value,
+  config: Config = loadConfig(),
+) {
+  const saved = config[key];
   if (saved === undefined) return undefined;
   const invalid = (reason: string) =>
     new ConfigFileError(
@@ -54,7 +62,7 @@ export async function saveConfigValue(key: ConfigKey, value: string | undefined)
   const path = configPath();
   await ensurePrivateWalletDirectory(path);
   await withFileLock(join(dirname(path), "config.lock"), "config lock", async () => {
-    const config = readConfig();
+    const config = loadConfig();
     const { [key]: saved, ...others } = config;
     if (value === undefined && saved === undefined) return;
     const next = value === undefined ? others : { ...config, [key]: value };
@@ -63,7 +71,7 @@ export async function saveConfigValue(key: ConfigKey, value: string | undefined)
 }
 
 /** The config file's settings; none when it does not exist. */
-function readConfig(): Record<string, unknown> {
+export function loadConfig(): Config {
   let text: string;
   try {
     text = readFileSync(configPath(), "utf8");
@@ -80,7 +88,7 @@ function readConfig(): Record<string, unknown> {
   }
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new ConfigFileError("is not a JSON object", unreadableFix);
-  return value as Record<string, unknown>;
+  return value as Config;
 }
 
 const unreadableFix = "Fix it, or delete it to clear every setting.";

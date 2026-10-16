@@ -3,7 +3,7 @@ import { parseUnits } from "viem";
 
 import { errorCodes, paymentError, usageError } from "../shared/errors.js";
 import type { Network } from "../shared/network.js";
-import { configValue, type ConfigSource } from "../wallet/config.js";
+import { configValue, type Config, type ConfigSource } from "../wallet/config.js";
 import { requestNetwork } from "./identity.js";
 import type { RequestOptions } from "./options.js";
 
@@ -23,10 +23,13 @@ export function resolveMaxSpend(value?: string) {
 }
 
 /**
- * The spending cap and where it came from: `--max-spend`, then `TEMPO_MAX_SPEND`, then the config
- * file's `max-spend`, then `defaultMaxSpend`.
+ * The spending cap and where it came from: `--max-spend`, then `TEMPO_MAX_SPEND`, then the saved
+ * `max-spend` in `config` (by default, the config file), then `defaultMaxSpend`.
  */
-export function maxSpendSetting(flag?: string): { value: string; source: ConfigSource } {
+export function maxSpendSetting(
+  flag?: string,
+  config?: Config,
+): { value: string; source: ConfigSource } {
   const env = process.env.TEMPO_MAX_SPEND?.trim() || undefined;
   const explicit = flag ?? env;
   if (explicit !== undefined) {
@@ -36,7 +39,7 @@ export function maxSpendSetting(flag?: string): { value: string; source: ConfigS
       );
     return { value: explicit, source: flag !== undefined ? "flag" : "env" };
   }
-  const saved = configValue("max-spend", parseMaxSpend);
+  const saved = configValue("max-spend", parseMaxSpend, config);
   return saved === undefined
     ? { value: defaultMaxSpend, source: "default" }
     : { value: saved, source: "config" };

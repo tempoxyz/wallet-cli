@@ -8,8 +8,9 @@ import {
   rpcUrl,
   rpcUrlOverride,
 } from "../shared/network.js";
-import type { ConfigSource } from "../wallet/config.js";
+import type { Config, ConfigSource } from "../wallet/config.js";
 import type { WalletState } from "../wallet/store.js";
+import { globalOptionShape } from "./shared.js";
 
 type Setting = { value: string; source: ConfigSource };
 
@@ -17,16 +18,18 @@ type Setting = { value: string; source: ConfigSource };
  * The settings `tempo wallet config` saves, by name, each with the environment variable that
  * overrides it. `parse` checks a value and returns what is saved. `effective` is the value a
  * command with `flag` as its `--network` uses, and where it came from, from the resolver that
- * applies the setting. `redact` shows the value as `doctor` shows a URL, since an RPC URL can
- * carry an API key. A new setting is one entry here, read with `configValue` in its resolver.
+ * applies the setting to `config` (by default, the config file). `redact` shows the value as
+ * `doctor` shows a URL, since an RPC URL can carry an API key. `warning` is what saving a new
+ * value also does, shown before it is confirmed. A new setting is one entry here, read with
+ * `configValue` in its resolver.
  */
 export const configSettings = {
   network: {
     about: "mainnet or testnet",
     env: "TEMPO_WALLET_NETWORK",
     parse: (value: string) => parseNetwork(value).name,
-    async effective(flag: string | undefined, state?: WalletState): Promise<Setting> {
-      const { network, source } = await networkSetting(flag, state);
+    async effective(flag: string | undefined, state?: WalletState, config?: Config) {
+      const { network, source } = await networkSetting(flag, state, config);
       return { value: network.name, source };
     },
   },
@@ -34,19 +37,22 @@ export const configSettings = {
     about: "an http(s) URL that serves every network",
     env: "TEMPO_RPC_URL",
     parse: parseRpcUrl,
-    async effective(flag: string | undefined, state?: WalletState): Promise<Setting> {
-      const override = rpcUrlOverride();
+    async effective(flag: string | undefined, state?: WalletState, config?: Config) {
+      const override = rpcUrlOverride(config);
       if (override) return override;
-      const { network } = await networkSetting(flag, state);
-      return { value: rpcUrl(network.chainId), source: "default" };
+      const { network } = await networkSetting(flag, state, config);
+      return { value: rpcUrl(network.chainId, config), source: "default" as const };
     },
     redact: true,
+    warning:
+      "The new rpc-url will receive all of the CLI's RPC traffic on every network, including balance and channel reads.",
   },
   "max-spend": {
     about: "a positive amount in payment token units",
     env: "TEMPO_MAX_SPEND",
     parse: parseMaxSpend,
-    effective: (): Setting => maxSpendSetting(),
+    effective: (_flag: string | undefined, _state?: WalletState, config?: Config) =>
+      maxSpendSetting(undefined, config),
   },
 } satisfies Record<
   string,
@@ -54,8 +60,13 @@ export const configSettings = {
     about: string;
     env: string;
     parse: (value: string) => string;
-    effective: (flag: string | undefined, state?: WalletState) => Setting | Promise<Setting>;
+    effective: (
+      flag: string | undefined,
+      state?: WalletState,
+      config?: Config,
+    ) => Setting | Promise<Setting>;
     redact?: boolean;
+    warning?: string;
   }
 >;
 
@@ -80,6 +91,15 @@ export const configSetArgs = z.object({
 
 export const configUnsetArgs = z.object({
   key: z.string().describe(`Setting: ${keyList}`),
+});
+
+/** `set` and `unset` change what later payments and RPC calls use, so they need confirmation. */
+export const configChangeOptions = z.object({
+  ...globalOptionShape,
+  yes: z
+    .boolean()
+    .optional()
+    .describe("Change the setting without the confirmation prompt; required for agent runs"),
 });
 
 const settingOutput = z.object({

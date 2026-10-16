@@ -253,8 +253,8 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 - `skills add`: Sync skill files to agents. Options: `--depth`, `--no-global`.
 - `skills list`: List skills.
 - `config get [key]`: Show each setting's effective value and where it comes from.
-- `config set <key> <value>`: Save a setting for later commands.
-- `config unset <key>`: Remove a saved setting.
+- `config set <key> <value>`: Save a setting for later commands. Options: `--yes`.
+- `config unset <key>`: Remove a saved setting. Options: `--yes`.
 - `doctor`: Diagnose login, access key, RPC, sqlite3, and environment setup.
 - `debug`: Deprecated: use 'doctor'.
 - `completions [bash|zsh|fish|nushell|powershell|elvish]`: Generate shell completions script.
@@ -275,8 +275,8 @@ Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--js
 | `balance`         | true           | false             | true             | true            |
 | `completions`     | true           | false             | true             | false           |
 | `config_get`      | true           | false             | true             | false           |
-| `config_set`      | false          | false             | true             | false           |
-| `config_unset`    | false          | false             | true             | false           |
+| `config_set`      | false          | true              | true             | false           |
+| `config_unset`    | false          | true              | true             | false           |
 | `debug`           | true           | false             | true             | true            |
 | `doctor`          | true           | false             | true             | true            |
 | `fund`            | false          | false             | false            | true            |

@@ -1,8 +1,9 @@
 import { Cli } from "incur";
 
-import { nonDestructive, readOnly, type WalletCommand } from "../cli/command.js";
-import { positional } from "../cli/describe.js";
+import { destructive, readOnly, type WalletCommand } from "../cli/command.js";
+import { flag, positional } from "../cli/describe.js";
 import {
+  configChangeOptions,
   configGetArgs,
   configKeys,
   configOutput,
@@ -12,10 +13,25 @@ import {
   type ConfigKey,
 } from "../schemas/config.js";
 import { cliGlobals, globalAlias, globalOptions } from "../schemas/shared.js";
-import { usageError } from "../shared/errors.js";
-import { configValue, saveConfigValue, type ConfigSource } from "../wallet/config.js";
+import { commandError, usageError, type CommandContext } from "../shared/errors.js";
+import { shellQuote } from "../shared/next.js";
+import { canPrompt, confirm as confirmPrompt } from "../shared/process.js";
+import {
+  ConfigFileError,
+  configValue,
+  loadConfig,
+  saveConfigValue,
+  type Config,
+  type ConfigSource,
+} from "../wallet/config.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
 import { redactUrl } from "./doctor.js";
+
+const yesArg = flag(
+  "yes",
+  "--yes",
+  "Change the setting without the confirmation prompt; required for agent runs",
+);
 
 // Mounted groups share the root globals; declaring them types `globals` in their commands.
 export default {
@@ -33,32 +49,42 @@ export default {
         return configGetHandler(args.key, globals);
       },
     })
+    // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
     .command("set", {
       description: "Save a setting for later commands",
       args: configSetArgs,
-      options: globalOptions,
+      options: configChangeOptions,
       alias: globalAlias,
       output: configOutput,
-      async run({ args, globals }) {
-        return configSetHandler(args.key, args.value, globals);
+      async run(context) {
+        return configSetHandler(
+          context.args.key,
+          context.args.value,
+          { ...context.globals, yes: context.options.yes },
+          { ...context, agent: !canPrompt(context.agent) },
+        );
       },
     })
     .command("unset", {
       description: "Remove a saved setting",
       args: configUnsetArgs,
-      options: globalOptions,
+      options: configChangeOptions,
       alias: globalAlias,
       output: configOutput,
-      async run({ args, globals }) {
-        return configUnsetHandler(args.key, globals);
+      async run(context) {
+        return configUnsetHandler(
+          context.args.key,
+          { ...context.globals, yes: context.options.yes },
+          { ...context, agent: !canPrompt(context.agent) },
+        );
       },
     }),
   annotations: {
     config_get: { ...readOnly, openWorldHint: false },
-    // Saving or removing a setting changes only the local config file, and repeating it changes
-    // nothing more.
-    config_set: { ...nonDestructive, idempotentHint: true, openWorldHint: false },
-    config_unset: { ...nonDestructive, idempotentHint: true, openWorldHint: false },
+    // Saving or removing a setting can raise the spending cap, send RPC traffic to another server,
+    // or switch the network later payments use; repeating it changes nothing more.
+    config_set: { ...destructive, idempotentHint: true, openWorldHint: false },
+    config_unset: { ...destructive, idempotentHint: true, openWorldHint: false },
   },
   describe: {
     name: "config",
@@ -75,18 +101,25 @@ export default {
         args: [
           positional("key", configSetArgs.shape.key.description ?? ""),
           positional("value", configSetArgs.shape.value.description ?? ""),
+          yesArg,
         ],
       },
       {
         name: "unset",
         about: "Remove a saved setting",
-        args: [positional("key", configUnsetArgs.shape.key.description ?? "")],
+        args: [positional("key", configUnsetArgs.shape.key.description ?? ""), yesArg],
       },
     ],
   },
 } satisfies WalletCommand;
 
 type Flags = { network?: string | undefined };
+
+type ChangeOptions = Flags & { yes?: boolean | undefined };
+
+type Dependencies = { confirm?: (question: string) => Promise<boolean> };
+
+type Setting = { value: string; source: ConfigSource };
 
 /**
  * Every setting, or only `key`, with the value a command run with `flags` uses and where it comes
@@ -99,32 +132,142 @@ export async function configGetHandler(key: string | undefined, flags: Flags = {
   return await effectiveSettings(keys, flags, await loadWalletState());
 }
 
-/** Checks `value` and saves it as `key`, then reports `key` as `configGetHandler` does. */
-export async function configSetHandler(key: string, value: string, flags: Flags = {}) {
+/**
+ * Checks `value` and saves it as `key` once the change is confirmed (see `confirmChange`), then
+ * reports `key` as `configGetHandler` does. Saving the value already saved needs no confirmation.
+ */
+export async function configSetHandler(
+  key: string,
+  value: string,
+  options: ChangeOptions,
+  context: CommandContext,
+  dependencies: Dependencies = {},
+) {
   const name = settingKey(key);
-  await saveConfigValue(name, configSettings[name].parse(value));
-  return await effectiveSettings([name], flags);
+  const saved = configSettings[name].parse(value);
+  const config = loadConfig();
+  if (config[name] !== saved) {
+    const change: Change = {
+      action: "set",
+      name,
+      value: saved,
+      config,
+      next: { ...config, [name]: saved },
+    };
+    const refusal = await confirmChange(change, options, context, dependencies);
+    if (refusal) return context.error(refusal);
+  }
+  await saveConfigValue(name, saved);
+  return await effectiveSettings([name], options);
 }
 
-/** Removes the saved `key`, if any, then reports `key` as `configGetHandler` does. */
-export async function configUnsetHandler(key: string, flags: Flags = {}) {
+/**
+ * Removes the saved `key` once the removal is confirmed (see `confirmChange`), then reports `key`
+ * as `configGetHandler` does. With nothing saved, there is nothing to confirm or remove.
+ */
+export async function configUnsetHandler(
+  key: string,
+  options: ChangeOptions,
+  context: CommandContext,
+  dependencies: Dependencies = {},
+) {
   const name = settingKey(key);
+  const config = loadConfig();
+  if (config[name] !== undefined) {
+    const { [name]: _removed, ...next } = config;
+    const change: Change = { action: "unset", name, value: undefined, config, next };
+    const refusal = await confirmChange(change, options, context, dependencies);
+    if (refusal) return context.error(refusal);
+  }
   await saveConfigValue(name, undefined);
-  return await effectiveSettings([name], flags);
+  return await effectiveSettings([name], options);
+}
+
+type Change = {
+  action: "set" | "unset";
+  name: ConfigKey;
+  /** The value `set` saves. */
+  value: string | undefined;
+  /** The settings now, and the settings the change leaves. */
+  config: Config;
+  next: Config;
+};
+
+/**
+ * Confirms `change`, since a setting decides what later payments and RPC calls use: `--yes`
+ * confirms it, a run that can prompt shows the setting's value before and after and asks on the
+ * terminal, and any other run changes nothing and gets the refusal to return, whose `cta` is the
+ * same command plus `--yes`. A declined prompt throws.
+ */
+async function confirmChange(
+  change: Change,
+  options: ChangeOptions,
+  context: CommandContext,
+  { confirm = confirmPrompt }: Dependencies,
+) {
+  if (options.yes) return undefined;
+  const setting = configSettings[change.name];
+  const state = await loadWalletState();
+  const [before, after] = await Promise.all([
+    describeSetting(change.name, options, state, change.config),
+    describeSetting(change.name, options, state, change.next),
+  ]);
+  const warning = change.action === "set" && "warning" in setting ? setting.warning : undefined;
+  const value = change.value === undefined ? undefined : shown(change.name, change.value);
+  const verb = change.action === "set" ? "Save" : "Remove";
+  if (context.agent) {
+    const argv = ["tempo", "wallet", "config", change.action, change.name];
+    const command = [...argv, ...(value === undefined ? [] : [value]), "--yes"]
+      .map(shellQuote)
+      .join(" ");
+    const full =
+      value !== change.value ? ` Use the full ${change.name} in place of each <redacted>.` : "";
+    return commandError(
+      "E_USAGE",
+      `${change.action === "set" ? "Saving" : "Removing"} ${change.name} changes what later commands use, so it needs confirmation: it goes from ${before} to ${after}.${warning ? ` ${warning}` : ""} Run '${command}' to confirm.${full}`,
+      command,
+    );
+  }
+  const question = [
+    `${verb} ${change.name}${value === undefined ? "" : ` ${value}`}`,
+    `  now:   ${before}`,
+    `  after: ${after}`,
+    ...(warning ? [warning] : []),
+    `${verb} this setting?`,
+  ].join("\n");
+  if (!(await confirm(question)))
+    throw usageError(
+      `${change.name} not ${change.action === "set" ? "saved" : "removed"}: not confirmed at the prompt`,
+    );
+  return undefined;
+}
+
+/** `name`'s effective value under `config` and where it comes from, as the prompt shows it. */
+async function describeSetting(name: ConfigKey, flags: Flags, state: WalletState, config: Config) {
+  try {
+    const { value, source } = await configSettings[name].effective(flags.network, state, config);
+    return `${shown(name, value)} (${source})`;
+  } catch (error) {
+    // The change replaces or removes a saved value the config file holds but cannot apply.
+    if (error instanceof ConfigFileError) return "an invalid saved value";
+    throw error;
+  }
 }
 
 async function effectiveSettings(keys: readonly ConfigKey[], flags: Flags, state?: WalletState) {
   const settings = await Promise.all(
     keys.map(async (key) => {
-      const setting = configSettings[key];
-      const { value, source } = await setting.effective(flags.network, state);
-      const shown = "redact" in setting && setting.redact ? redactUrl(value) : value;
-      return [key, { value: shown, source }] as const;
+      const { value, source } = await configSettings[key].effective(flags.network, state);
+      return [key, { value: shown(key, value), source }] as const;
     }),
   );
-  return Object.fromEntries(settings) as Partial<
-    Record<ConfigKey, { value: string; source: ConfigSource }>
-  >;
+  return Object.fromEntries(settings) as Partial<Record<ConfigKey, Setting>>;
+}
+
+/** `value` as output shows it: redacted for a setting whose value can carry a credential. */
+function shown(key: ConfigKey, value: string) {
+  const setting = configSettings[key];
+  return "redact" in setting && setting.redact ? redactUrl(value) : value;
 }
 
 function settingKey(key: string): ConfigKey {

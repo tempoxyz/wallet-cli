@@ -1,7 +1,7 @@
 import { createPublicClient, http, type Address, type HttpTransportConfig } from "viem";
 import { Chain } from "viem/tempo";
 
-import { configValue, type ConfigSource } from "../wallet/config.js";
+import { configValue, type Config, type ConfigSource } from "../wallet/config.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
 import { usageError } from "./errors.js";
 
@@ -26,18 +26,19 @@ export async function resolveNetwork(
 }
 
 /**
- * `resolveNetwork`'s network and where it came from. A saved `network` beats the logged-in
- * chain, which is only where the last login or refresh switched the wallet, so commands never
- * leave a network the user chose.
+ * `resolveNetwork`'s network and where it came from, reading the saved `network` from `config`
+ * (by default, the config file). A saved `network` beats the logged-in chain, which is only where
+ * the last login or refresh switched the wallet, so commands never leave a network the user chose.
  */
 export async function networkSetting(
   flag: string | undefined,
   state?: WalletState,
+  config?: Config,
 ): Promise<{ network: Network; source: ConfigSource }> {
   if (flag !== undefined) return { network: parseNetwork(flag), source: "flag" };
   const env = process.env.TEMPO_WALLET_NETWORK;
   if (env !== undefined) return { network: parseNetwork(env), source: "env" };
-  const saved = configValue("network", parseNetwork);
+  const saved = configValue("network", parseNetwork, config);
   if (saved) return { network: saved, source: "config" };
   const wallet = state ?? (await loadWalletState());
   const loggedIn = wallet.accounts[wallet.activeAccount ?? 0] !== undefined;
@@ -78,21 +79,23 @@ export function networkFields(chain: number) {
   return { chain_id: chain, network: networkName(chain) };
 }
 
-export function rpcUrl(chain: number) {
-  const override = rpcUrlOverride();
+export function rpcUrl(chain: number, config?: Config) {
+  const override = rpcUrlOverride(config);
   if (override) return override.value;
   if (chain === 42431) return "https://rpc.moderato.tempo.xyz";
   return "https://rpc.mainnet.tempo.xyz";
 }
 
 /**
- * The one endpoint that replaces every network's default RPC: `TEMPO_RPC_URL`, then the config
- * file's `rpc-url`. It serves whichever chain it is on, so reads that must reach a given network
- * check its chain first; see `rpcChainCheck`.
+ * The one endpoint that replaces every network's default RPC: `TEMPO_RPC_URL`, then the saved
+ * `rpc-url` in `config` (by default, the config file). It serves whichever chain it is on, so
+ * reads that must reach a given network check its chain first; see `rpcChainCheck`.
  */
-export function rpcUrlOverride(): { value: string; source: "env" | "config" } | undefined {
+export function rpcUrlOverride(
+  config?: Config,
+): { value: string; source: "env" | "config" } | undefined {
   if (process.env.TEMPO_RPC_URL) return { value: process.env.TEMPO_RPC_URL, source: "env" };
-  const saved = configValue("rpc-url", parseRpcUrl);
+  const saved = configValue("rpc-url", parseRpcUrl, config);
   return saved === undefined ? undefined : { value: saved, source: "config" };
 }
 
