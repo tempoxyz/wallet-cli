@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { env, platform } from "node:process";
 import { createInterface } from "node:readline/promises";
+import { pathToFileURL } from "node:url";
 
 /** Opens `url` in the default browser, unless `TEMPO_NO_BROWSER` is set (headless hosts, agents). */
 export function openExternal(url: string) {
@@ -86,14 +87,28 @@ export async function querySql(sql: string): Promise<unknown> {
   return JSON.parse((await runSqlite(["-json"], sql)) || "[]");
 }
 
-/** Like `querySql`, against the database at `path` opened read-only, so a missing one fails. */
-export async function queryReadOnlySql(path: string, sql: string): Promise<unknown> {
-  return JSON.parse((await runSqlite(["-json", "-readonly"], sql, path)) || "[]");
+/** Like `querySql`, against the existing database at `path`; see `existingDbUri`. */
+export async function queryExistingDbSql(path: string, sql: string): Promise<unknown> {
+  return JSON.parse((await runSqlite(["-json"], sql, existingDbUri(path))) || "[]");
 }
 
-function runSqlite(options: readonly string[], sql: string, path = channelsDbPath()) {
+/**
+ * A URI that opens the database at `path` as any SQLite client does, applying its WAL, but fails
+ * instead of creating it when it is missing. Usable in `ATTACH`.
+ */
+export function existingDbUri(path: string) {
+  return `${pathToFileURL(path).href}?mode=rw`;
+}
+
+function runSqlite(options: readonly string[], sql: string, database = channelsDbPath()) {
   // `.timeout` sets the busy timeout without printing a row, unlike `PRAGMA busy_timeout`.
-  return runProcess(sqlite3, [...options, "-cmd", `.timeout ${sqliteBusyTimeoutMs}`, path, sql]);
+  return runProcess(sqlite3, [
+    ...options,
+    "-cmd",
+    `.timeout ${sqliteBusyTimeoutMs}`,
+    database,
+    sql,
+  ]);
 }
 
 export function channelsDbPath() {

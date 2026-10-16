@@ -12,7 +12,7 @@ import {
   stringValue,
 } from "../shared/utils.js";
 import { networkName } from "../shared/network.js";
-import { migrateLegacySessions } from "./legacy-sessions.js";
+import { importLegacySessions } from "./legacy-sessions.js";
 
 export type PersistedSessionRecord = {
   accepted_cumulative: bigint;
@@ -156,8 +156,8 @@ export function originFromUrl(url: string) {
 }
 
 /**
- * Creates or migrates the channels table, then moves in the sessions of the databases earlier
- * releases kept (see `migrateLegacySessions`). Safe to run from concurrent processes: each
+ * Creates or migrates the channels table, then copies in the sessions of the databases earlier
+ * releases kept (see `importLegacySessions`). Safe to run from concurrent processes: each
  * statement is idempotent and waits out another process's lock.
  */
 export async function ensureChannelsTable() {
@@ -192,7 +192,7 @@ export async function ensureChannelsTable() {
   await addColumnIfMissing("server_spent TEXT NOT NULL DEFAULT '0'");
   await addColumnIfMissing("session_protocol TEXT NOT NULL DEFAULT 'v1'");
   await addColumnIfMissing("descriptor_json TEXT");
-  await migrateLegacySessions();
+  await importLegacySessions();
 }
 
 async function addColumnIfMissing(definition: string) {
