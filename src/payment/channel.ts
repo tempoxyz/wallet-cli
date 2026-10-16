@@ -11,6 +11,7 @@ import {
 import {
   createTempoPublicClient,
   escrowContract,
+  requireRpcChain,
   tokenAddress,
   type Network,
 } from "../shared/network.js";
@@ -30,6 +31,7 @@ export type OnChainDiscoveredChannel = {
 };
 
 export async function findAllChannelsForPayer(options: { network: Network; payer: Address }) {
+  await requireRpcChain(options.network.chainId);
   const chain = options.network.chainId;
   const publicClient = createTempoPublicClient(chain);
   const latest = (await publicClient.getBlockNumber()).valueOf() - logHeadMargin;
@@ -86,6 +88,7 @@ export async function getOnChainChannel(options: {
   escrowContract: Address;
   network: Network;
 }) {
+  await requireRpcChain(options.network.chainId);
   const client = createTempoPublicClient(options.network.chainId);
   if (isPrecompileEscrow(options.escrowContract)) {
     const { deposit, settled, closeRequestedAt } = await readPrecompileChannel(
@@ -122,6 +125,7 @@ export async function getOnChainChannel(options: {
  * come from the record. `rpc` lets a dry run bound the reads.
  */
 export async function readOnChainChannel(record: PersistedSessionRecord, rpc: RpcOptions = {}) {
+  await requireRpcChain(record.chain_id);
   const client = createTempoPublicClient(record.chain_id, rpc);
   if (isPrecompileEscrow(record.escrow_contract)) {
     const { deposit, settled, closeRequestedAt } = await readPrecompileChannel(

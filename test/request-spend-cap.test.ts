@@ -81,6 +81,8 @@ beforeEach(() => {
   vi.stubEnv("TEMPO_PRIVATE_KEY", testPrivateKey);
   vi.stubEnv("TEMPO_WALLET_NETWORK", "mainnet");
   vi.stubEnv("TEMPO_MAX_SPEND", "");
+  // The stubbed public client reads the chain, so no RPC override needs a chain check.
+  vi.stubEnv("TEMPO_RPC_URL", undefined);
 });
 
 afterEach(async () => {
@@ -137,12 +139,16 @@ async function service(options: {
     if (req.url === "/rpc") {
       let body = "";
       for await (const chunk of req) body += chunk;
-      const { id } = JSON.parse(body) as { id: number };
-      const result = encodeFunctionResult({
-        abi: TempoAbis.tip20ChannelReserve,
-        functionName: "getChannelState",
-        result: { settled: 0n, deposit: onChain.deposit, closeRequestedAt: 0 },
-      });
+      const { id, method } = JSON.parse(body) as { id: number; method: string };
+      // The RPC is on mainnet, so a session read passes the TEMPO_RPC_URL check.
+      const result =
+        method === "eth_chainId"
+          ? "0x1079"
+          : encodeFunctionResult({
+              abi: TempoAbis.tip20ChannelReserve,
+              functionName: "getChannelState",
+              result: { settled: 0n, deposit: onChain.deposit, closeRequestedAt: 0 },
+            });
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
       return;

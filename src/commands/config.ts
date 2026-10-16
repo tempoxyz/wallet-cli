@@ -1,8 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { Cli } from "incur";
 
 import { destructive, readOnly, type WalletCommand } from "../cli/command.js";
 import { flag, positional } from "../cli/describe.js";
 import {
+  checkSetting,
   configChangeOptions,
   configGetArgs,
   configKeys,
@@ -14,11 +17,11 @@ import {
 } from "../schemas/config.js";
 import { cliGlobals, globalAlias, globalOptions } from "../schemas/shared.js";
 import { commandError, usageError, type CommandContext } from "../shared/errors.js";
+import { networkSetting, networks, type Network } from "../shared/network.js";
 import { shellQuote } from "../shared/next.js";
 import { canPrompt, confirm as confirmPrompt } from "../shared/process.js";
 import {
   ConfigFileError,
-  configValue,
   loadConfig,
   saveConfigValue,
   type Config,
@@ -123,20 +126,22 @@ type Setting = { value: string; source: ConfigSource };
 
 /**
  * Every setting, or only `key`, with the value a command run with `flags` uses and where it comes
- * from. Each setting shown is checked in the config file, even one its environment variable
- * overrides, so a bad saved value is reported before it is needed.
+ * from; a setting saved per network shows each network's. Each setting shown is checked in the
+ * config file, even one its environment variable overrides, so a bad saved value is reported
+ * before it is needed.
  */
 export async function configGetHandler(key: string | undefined, flags: Flags = {}) {
   const keys = key === undefined ? configKeys : [settingKey(key)];
-  for (const name of keys) configValue(name, configSettings[name].parse);
+  for (const name of keys) checkSetting(name);
   return await effectiveSettings(keys, flags, await loadWalletState());
 }
 
 /**
  * Checks `value` and saves it as `key` once the change is confirmed (see `confirmChange`), then
- * reports `key` as `configGetHandler` does. Saving the value already saved needs no confirmation.
- * Without `--yes`, the save applies only while `key` still holds the value the confirmation, or
- * the finding that nothing changes, was based on.
+ * reports `key` as `configGetHandler` does. A setting saved per network is saved for the network
+ * the command resolves, once `verify` shows `value` serves it. Saving the value already saved
+ * needs no confirmation. Without `--yes`, the save applies only while `key` still holds the value
+ * the confirmation, or the finding that nothing changes, was based on.
  */
 export async function configSetHandler(
   key: string,
@@ -146,13 +151,20 @@ export async function configSetHandler(
   dependencies: Dependencies = {},
 ) {
   const name = settingKey(key);
-  const saved = configSettings[name].parse(value);
+  const setting = configSettings[name];
+  const parsed = setting.parse(value);
   const config = loadConfig();
-  if (!options.yes && config[name] !== saved) {
+  const network = "perNetwork" in setting ? await changedNetwork(options) : undefined;
+  const verified =
+    network && "perNetwork" in setting ? await setting.verify(parsed, network) : undefined;
+  const saved = network ? { ...networkValues(config[name]), [network.name]: parsed } : parsed;
+  if (!options.yes && !isDeepStrictEqual(config[name], saved)) {
     const change: Change = {
       action: "set",
       name,
-      value: saved,
+      value: parsed,
+      network,
+      verified,
       config,
       next: { ...config, [name]: saved },
     };
@@ -164,9 +176,10 @@ export async function configSetHandler(
 }
 
 /**
- * Removes the saved `key` once the removal is confirmed (see `confirmChange`), then reports `key`
- * as `configGetHandler` does. With nothing saved, there is nothing to confirm or remove. Without
- * `--yes`, the removal applies only while `key` still holds the value it was confirmed against.
+ * Removes the saved `key`, for the network the command resolves when it is saved per network,
+ * once the removal is confirmed (see `confirmChange`), then reports `key` as `configGetHandler`
+ * does. With nothing saved, there is nothing to confirm or remove. Without `--yes`, the removal
+ * applies only while `key` still holds the value it was confirmed against.
  */
 export async function configUnsetHandler(
   key: string,
@@ -176,18 +189,33 @@ export async function configUnsetHandler(
 ) {
   const name = settingKey(key);
   const config = loadConfig();
-  if (!options.yes && config[name] !== undefined) {
-    const { [name]: _removed, ...next } = config;
-    const change: Change = { action: "unset", name, value: undefined, config, next };
+  const network = "perNetwork" in configSettings[name] ? await changedNetwork(options) : undefined;
+  let saved: Readonly<Record<string, string>> | undefined;
+  if (network) {
+    const { [network.name]: _removed, ...others } = networkValues(config[name]);
+    saved = Object.keys(others).length > 0 ? others : undefined;
+  }
+  if (!options.yes && !isDeepStrictEqual(config[name], saved)) {
+    const { [name]: _removed, ...others } = config;
+    const next = saved === undefined ? others : { ...config, [name]: saved };
+    const change: Change = { action: "unset", name, value: undefined, network, config, next };
     const refusal = await confirmChange(change, options, context, dependencies);
     if (refusal) return context.error(refusal);
   }
-  const next = await saveConfigValue(
-    name,
-    undefined,
-    options.yes ? {} : { expected: config[name] },
-  );
+  const next = await saveConfigValue(name, saved, options.yes ? {} : { expected: config[name] });
   return await effectiveSettings([name], options, undefined, next);
+}
+
+/** The network a change to a per-network setting applies to: `--network`, else commands' own. */
+async function changedNetwork(flags: Flags) {
+  return (await networkSetting(flags.network)).network;
+}
+
+/** A per-network setting's saved values by network, or none when it holds no object. */
+function networkValues(saved: unknown): Record<string, string> {
+  return saved && typeof saved === "object" && !Array.isArray(saved)
+    ? { ...(saved as Record<string, string>) }
+    : {};
 }
 
 type Change = {
@@ -195,6 +223,9 @@ type Change = {
   name: ConfigKey;
   /** The value `set` saves. */
   value: string | undefined;
+  /** The network a per-network setting changes on, and the chain `set` verified there. */
+  network?: Network | undefined;
+  verified?: number | undefined;
   /** The settings now, and the settings the change leaves. */
   config: Config;
   next: Config;
@@ -215,11 +246,14 @@ async function confirmChange(
   const setting = configSettings[change.name];
   const state = await loadWalletState();
   const [before, after] = await Promise.all([
-    describeSetting(change.name, options, state, change.config),
-    describeSetting(change.name, options, state, change.next),
+    describeSetting(change, options, state, change.config),
+    describeSetting(change, options, state, change.next),
   ]);
   const warning = change.action === "set" && "warning" in setting ? setting.warning : undefined;
   const value = change.value === undefined ? undefined : shown(change.name, change.value);
+  const scope = change.network ? ` for ${change.network.name}` : "";
+  const verified =
+    change.verified === undefined ? "" : `, and the endpoint answered chain ${change.verified}`;
   const verb = change.action === "set" ? "Save" : "Remove";
   if (context.agent) {
     // A cta ends up in agent context and logs, so a value that can carry a credential stays out
@@ -227,7 +261,9 @@ async function confirmChange(
     const redacted = value !== change.value;
     const placeholder = `<${change.name}>`;
     const argument = value === undefined ? [] : [redacted ? placeholder : value];
-    const command = ["tempo", "wallet", "config", change.action, change.name, ...argument, "--yes"]
+    const network = change.network ? ["--network", change.network.name] : [];
+    const command = ["tempo", "wallet", "config", change.action, change.name, ...argument]
+      .concat(network, "--yes")
       .map(shellQuote)
       .join(" ");
     const fill = redacted
@@ -235,12 +271,12 @@ async function confirmChange(
       : "";
     return commandError(
       "E_USAGE",
-      `${change.action === "set" ? "Saving" : "Removing"} ${change.name} changes what later commands use, so it needs confirmation: it goes from ${before} to ${after}.${warning ? ` ${warning}` : ""} Run '${command}' to confirm.${fill}`,
+      `${change.action === "set" ? "Saving" : "Removing"} ${change.name}${scope} changes what later commands use, so it needs confirmation: it goes from ${before} to ${after}${verified}.${warning ? ` ${warning}` : ""} Run '${command}' to confirm.${fill}`,
       command,
     );
   }
   const question = [
-    `${verb} ${change.name}${value === undefined ? "" : ` ${value}`}`,
+    `${verb} ${change.name}${value === undefined ? "" : ` ${value}`}${scope}${change.verified === undefined ? "" : `, verified on chain ${change.verified}`}`,
     `  now:   ${before}`,
     `  after: ${after}`,
     ...(warning ? [warning] : []),
@@ -253,16 +289,31 @@ async function confirmChange(
   return undefined;
 }
 
-/** `name`'s effective value under `config` and where it comes from, as the prompt shows it. */
-async function describeSetting(name: ConfigKey, flags: Flags, state: WalletState, config: Config) {
+/**
+ * The changed setting's effective value under `config`, on the changed network for a per-network
+ * setting, and where it comes from, as the prompt shows it.
+ */
+async function describeSetting(change: Change, flags: Flags, state: WalletState, config: Config) {
   try {
-    const { value, source } = await configSettings[name].effective(flags.network, state, config);
-    return `${shown(name, value)} (${source})`;
+    const { value, source } = await effectiveOn(change.name, flags, state, config, change.network);
+    return `${shown(change.name, value)} (${source})`;
   } catch (error) {
     // The change replaces or removes a saved value the config file holds but cannot apply.
     if (error instanceof ConfigFileError) return "an invalid saved value";
     throw error;
   }
+}
+
+function effectiveOn(
+  name: ConfigKey,
+  flags: Flags,
+  state: WalletState | undefined,
+  config: Config | undefined,
+  network: Network | undefined,
+): Setting | Promise<Setting> {
+  const setting = configSettings[name];
+  if ("perNetwork" in setting) return setting.effective(network ?? networks[0]!, config);
+  return setting.effective(flags.network, state, config);
 }
 
 /** `keys` as `config` (by default, `loadConfig`'s) leaves them; `set` passes what it saved. */
@@ -274,11 +325,25 @@ async function effectiveSettings(
 ) {
   const settings = await Promise.all(
     keys.map(async (key) => {
-      const { value, source } = await configSettings[key].effective(flags.network, state, config);
-      return [key, { value: shown(key, value), source }] as const;
+      const shownSetting = ({ value, source }: Setting) => ({ value: shown(key, value), source });
+      if (!("perNetwork" in configSettings[key]))
+        return [
+          key,
+          shownSetting(await effectiveOn(key, flags, state, config, undefined)),
+        ] as const;
+      const byNetwork = networks.map(
+        async (network) =>
+          [
+            network.name,
+            shownSetting(await effectiveOn(key, flags, state, config, network)),
+          ] as const,
+      );
+      return [key, Object.fromEntries(await Promise.all(byNetwork))] as const;
     }),
   );
-  return Object.fromEntries(settings) as Partial<Record<ConfigKey, Setting>>;
+  return Object.fromEntries(settings) as Partial<
+    Record<ConfigKey, Setting | Record<Network["name"], Setting>>
+  >;
 }
 
 /** `value` as output shows it: redacted for a setting whose value can carry a credential. */

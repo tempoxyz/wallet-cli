@@ -21,7 +21,8 @@ export type ConfigSource = "flag" | "env" | "config" | "login" | "default";
 export type Config = Readonly<Record<string, unknown>>;
 
 /**
- * The settings `tempo wallet config set` saves: a JSON object of strings by setting name. Names
+ * The settings `tempo wallet config set` saves: a JSON object by setting name, each a string or,
+ * for a setting saved per network such as `rpc-url`, an object of strings by network name. Names
  * this version does not know, as a newer one may save, are kept and ignored.
  */
 export function configPath() {
@@ -38,19 +39,56 @@ export function configValue<value>(
   parse: (value: string) => value,
   config: Config = loadConfig(),
 ) {
+  return savedString(key, config[key], parse, `tempo wallet config unset ${key}`);
+}
+
+/**
+ * The value of `key` saved for `network` in `config`, checked with `parse`, for a setting saved
+ * per network; `undefined` when it is not set for `network`. A saved value that is not an object
+ * of strings by network fails with `ConfigFileError`, as an invalid entry for `network` does.
+ */
+export function networkConfigValue<value>(
+  key: ConfigKey,
+  network: string,
+  parse: (value: string) => value,
+  config: Config = loadConfig(),
+) {
   const saved = config[key];
   if (saved === undefined) return undefined;
-  const invalid = (reason: string) =>
-    new ConfigFileError(
-      `has an invalid ${key} (${reason})`,
-      `Run 'tempo wallet config unset ${key}', or fix the file.`,
-    );
-  if (typeof saved !== "string") throw invalid("expected a string");
+  if (!isRecord(saved))
+    throw invalidSetting(key, "expected an object by network", `tempo wallet config unset ${key}`);
+  return savedString(
+    `${key} for ${network}`,
+    saved[network],
+    parse,
+    `tempo wallet config unset ${key} --network ${network}`,
+  );
+}
+
+function savedString<value>(
+  name: string,
+  saved: unknown,
+  parse: (value: string) => value,
+  unset: string,
+) {
+  if (saved === undefined) return undefined;
+  if (typeof saved !== "string") throw invalidSetting(name, "expected a string", unset);
   try {
     return parse(saved);
   } catch (error) {
-    throw invalid(error instanceof Error ? error.message : String(error));
+    throw invalidSetting(name, error instanceof Error ? error.message : String(error), unset);
   }
+}
+
+function invalidSetting(name: string, reason: string, unset: string) {
+  return new ConfigFileError(
+    `has an invalid ${name} (${reason})`,
+    `Run '${unset}', or fix the file.`,
+  );
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
@@ -63,7 +101,7 @@ export function configValue<value>(
  */
 export async function saveConfigValue(
   key: ConfigKey,
-  value: string | undefined,
+  value: string | Readonly<Record<string, string>> | undefined,
   options: { expected?: unknown } = {},
 ): Promise<Config> {
   const path = configPath();
@@ -78,15 +116,18 @@ export async function saveConfigValue(
         message: `${key} changed in ${path} while this command ran, so nothing was changed. Rerun the command to review the new value.`,
         retryable: true,
       });
-    if (saved === value) return config;
+    if (isDeepStrictEqual(saved, value)) return config;
     const next = value === undefined ? others : { ...config, [key]: value };
     await writePrivateFile(path, JSON.stringify(next, null, 2));
     return next;
   });
 }
 
-/** Each running command's view of the config file; see `withConfigSnapshot`. */
-const snapshots = new AsyncLocalStorage<{ read?: { config: Config } | { error: unknown } }>();
+/** Each running command's view of the config file, and what it found once; see `withConfigSnapshot`. */
+const snapshots = new AsyncLocalStorage<{
+  read?: { config: Config } | { error: unknown };
+  cached: Map<string, unknown>;
+}>();
 
 /**
  * Runs `fn`, one command, with one view of the config file: its first read is kept for every later
@@ -95,7 +136,18 @@ const snapshots = new AsyncLocalStorage<{ read?: { config: Config } | { error: u
  * meanwhile applies to the next command.
  */
 export function withConfigSnapshot<result>(fn: () => result) {
-  return snapshots.run({}, fn);
+  return snapshots.run({ cached: new Map() }, fn);
+}
+
+/**
+ * `compute`'s value for `key`, computed once per command (see `withConfigSnapshot`), such as what
+ * the command's one RPC endpoint reports; outside a command, computed on every call.
+ */
+export function commandCached<value>(key: string, compute: () => value): value {
+  const cached = snapshots.getStore()?.cached;
+  if (!cached) return compute();
+  if (!cached.has(key)) cached.set(key, compute());
+  return cached.get(key) as value;
 }
 
 /** incur middleware that runs each command, a CLI run or an MCP tool call, in `withConfigSnapshot`. */
@@ -135,9 +187,8 @@ function readConfigFile(): Config {
   } catch {
     throw new ConfigFileError("is not valid JSON", unreadableFix);
   }
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new ConfigFileError("is not a JSON object", unreadableFix);
-  return value as Config;
+  if (!isRecord(value)) throw new ConfigFileError("is not a JSON object", unreadableFix);
+  return value;
 }
 
 const unreadableFix = "Fix it, or delete it to clear every setting.";

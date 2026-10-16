@@ -204,14 +204,18 @@ async function service(options: {
     if (req.url === "/rpc") {
       let body = "";
       for await (const chunk of req) body += chunk;
-      const call = JSON.parse(body) as { id: number; params: [{ data: Hex }] };
-      const result = call.params[0].data.startsWith(balanceOf)
-        ? encodeFunctionResult({ abi: erc20Abi, functionName: "balanceOf", result: 10n ** 12n })
-        : encodeFunctionResult({
-            abi: TempoAbis.tip20ChannelReserve,
-            functionName: "getChannelState",
-            result: { settled: 0n, deposit: onChain.deposit, closeRequestedAt: 0 },
-          });
+      const call = JSON.parse(body) as { id: number; method: string; params: [{ data: Hex }] };
+      // The RPC is on mainnet, so the session reads pass the TEMPO_RPC_URL check.
+      const result =
+        call.method === "eth_chainId"
+          ? "0x1079"
+          : call.params[0].data.startsWith(balanceOf)
+            ? encodeFunctionResult({ abi: erc20Abi, functionName: "balanceOf", result: 10n ** 12n })
+            : encodeFunctionResult({
+                abi: TempoAbis.tip20ChannelReserve,
+                functionName: "getChannelState",
+                result: { settled: 0n, deposit: onChain.deposit, closeRequestedAt: 0 },
+              });
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, result }));
       return;

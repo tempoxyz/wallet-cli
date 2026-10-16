@@ -5,7 +5,7 @@ import { Cli } from "incur";
 import { HttpRequestError, TimeoutError } from "viem";
 
 import { readOnly, type WalletCommand } from "../cli/command.js";
-import { configKeys, configSettings } from "../schemas/config.js";
+import { checkSetting, configKeys } from "../schemas/config.js";
 import { doctorOutput } from "../schemas/doctor.js";
 import { cliGlobals, globalAlias, globalOptions } from "../schemas/shared.js";
 import { sdkVersions, version } from "../shared/constants.js";
@@ -407,7 +407,7 @@ async function rpcCheck(network: Network, timeout: number): Promise<Result<RpcSe
         "rpc",
         section,
         "fail",
-        `RPC ${url} is on chain ${chainId}, not ${network.name} (${network.chainId}). ${rpcHint()}`,
+        `RPC ${url} is on chain ${chainId}, not ${network.name} (${network.chainId}). ${rpcHint(network)}`,
       );
 }
 
@@ -417,7 +417,7 @@ function rpcFailed(network: Network, reason: string): Result<RpcSection> {
     "rpc",
     { url, ok: false, chain_id: null, chain_matches: null, latency_ms: null },
     "fail",
-    `RPC ${url} ${reason}. ${rpcHint()}`,
+    `RPC ${url} ${reason}. ${rpcHint(network)}`,
   );
 }
 
@@ -439,11 +439,13 @@ function rpcFailure(error: unknown, timeout: number) {
     : "did not return a chain ID";
 }
 
-function rpcHint() {
+function rpcHint(network: Network) {
   try {
-    const override = rpcUrlOverride();
+    const override = rpcUrlOverride(network.chainId);
     if (override?.source === "env") return "Check TEMPO_RPC_URL.";
-    return override ? "Check the saved rpc-url setting." : "Check your network connection.";
+    return override
+      ? `Check the rpc-url saved for ${network.name}.`
+      : "Check your network connection.";
   } catch (error) {
     if (error instanceof ConfigFileError) return `Fix ${error.path}.`;
     throw error;
@@ -558,7 +560,7 @@ function envCheck(): Check {
 /** The error an invalid config file fails other commands with, if it does. */
 function configProblem() {
   try {
-    for (const key of configKeys) configValue(key, configSettings[key].parse);
+    for (const key of configKeys) checkSetting(key);
     return undefined;
   } catch (error) {
     if (error instanceof ConfigFileError) return error.message;

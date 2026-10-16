@@ -30,6 +30,8 @@ import {
 
 beforeEach(() => {
   vi.stubEnv("TEMPO_WALLET_NETWORK", undefined);
+  // The stubbed key readers stand in for the chain, so no RPC override needs a chain check.
+  vi.stubEnv("TEMPO_RPC_URL", undefined);
   // Any wallet-app or RPC request fails, so no test reaches a real service.
   vi.stubGlobal(
     "fetch",

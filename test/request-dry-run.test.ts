@@ -242,6 +242,8 @@ async function rpcFixture(options: { balance: Read; channels: Read; closed: stri
             ...(result ? { result } : { error: { code: -32000, message: "unavailable" } }),
           }),
         );
+      // The RPC is on mainnet, so a session read passes the TEMPO_RPC_URL check.
+      if (call.method === "eth_chainId") return reply("0x1079");
       const { to, data } = call.params[0];
       const read = data.startsWith(balanceOf)
         ? options.balance
@@ -567,7 +569,9 @@ it.each<{
   expect(requestDryRunOutput.parse(output)).toEqual(output);
   expect(create).not.toHaveBeenCalled();
   expect(service.authorized()).toBe(0);
-  expect(rpc.methods.filter((method) => method !== "eth_call")).toEqual([]);
+  expect(rpc.methods.filter((method) => method !== "eth_call" && method !== "eth_chainId")).toEqual(
+    [],
+  );
   // Stale stored sessions are left for the payment to delete.
   expect(await readSessionRecordsByOrigin(service.url)).toHaveLength(row.stored?.length ?? 0);
 });

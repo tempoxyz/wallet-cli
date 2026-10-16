@@ -341,9 +341,20 @@ const gatedStates = [
 ];
 
 describe("wallet CLI login and access key checks", () => {
-  // Any RPC or wallet-approval request means the command ran past the check.
+  // Any RPC or wallet-approval request means the command ran past the check. The RPC is on
+  // mainnet, which the chain check before a revocation or close reads without counting.
   const requests: string[] = [];
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    const rpc = /"method":"eth_chainId"/.test(body)
+      ? (JSON.parse(body) as { id: number })
+      : undefined;
+    if (rpc) {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: "0x1079" }));
+      return;
+    }
     requests.push(`${request.method} ${request.url}`);
     response.statusCode = 500;
     response.end();

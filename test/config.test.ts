@@ -20,6 +20,8 @@ import { configKeys, configSettings, type ConfigKey } from "../src/schemas/confi
 import {
   explicitNetwork,
   networkSetting,
+  networks,
+  parseRpcUrl,
   resolveNetwork,
   rpcUrl,
   rpcUrlOverride,
@@ -65,8 +67,11 @@ beforeEach(() => {
   vi.stubEnv("TEMPO_PRIVATE_KEY", undefined);
 });
 
-afterEach(() => {
+const endpoints: (() => Promise<void>)[] = [];
+
+afterEach(async () => {
   vi.unstubAllEnvs();
+  await Promise.all(endpoints.splice(0).map((close) => close()));
 });
 
 /** The config file as saved, or `undefined` when there is none. */
@@ -102,12 +107,6 @@ describe("config set, get, and unset", () => {
       fallback: { value: "mainnet", source: "default" },
     },
     {
-      key: "rpc-url",
-      input: "http://127.0.0.1:8545",
-      saved: "http://127.0.0.1:8545",
-      fallback: { value: mainnetRpc, source: "default" },
-    },
-    {
       key: "max-spend",
       input: "2.5",
       saved: "2.5",
@@ -138,6 +137,12 @@ describe("config set, get, and unset", () => {
     { key: "rpc-url", value: "ftp://rpc.example.com", message: "rpc-url must be an http(s) URL" },
     { key: "rpc-url", value: "file:///etc/hosts", message: "rpc-url must be an http(s) URL" },
     { key: "rpc-url", value: "", message: "rpc-url must be an http(s) URL" },
+    {
+      key: "rpc-url",
+      value: "https://:secret@rpc.example.com",
+      message:
+        "rpc-url has a password but no username; RPC requests send credentials only as user:password@, so add the username",
+    },
     ...["0", "0.000000", "-1", "1.0000001", "1e3", "abc", " 5", ""].map((value) => ({
       key: "max-spend",
       value,
@@ -185,7 +190,10 @@ describe("config set, get, and unset", () => {
       chainId: undefined,
       expected: {
         network: { value: "mainnet", source: "default" },
-        "rpc-url": { value: mainnetRpc, source: "default" },
+        "rpc-url": {
+          mainnet: { value: mainnetRpc, source: "default" },
+          testnet: { value: moderatoRpc, source: "default" },
+        },
         "max-spend": { value: "10", source: "default" },
       },
     },
@@ -194,7 +202,10 @@ describe("config set, get, and unset", () => {
       chainId: 42431,
       expected: {
         network: { value: "testnet", source: "login" },
-        "rpc-url": { value: moderatoRpc, source: "default" },
+        "rpc-url": {
+          mainnet: { value: mainnetRpc, source: "default" },
+          testnet: { value: moderatoRpc, source: "default" },
+        },
         "max-spend": { value: "10", source: "default" },
       },
     },
@@ -210,22 +221,250 @@ describe("config set, get, and unset", () => {
       "max-spend",
     ]);
   });
+});
 
-  it("shows a saved rpc-url without its credentials, but saves it whole", async () => {
-    await useTempHome();
+describe("rpc-url, saved per network", () => {
+  const defaults = {
+    mainnet: { value: mainnetRpc, source: "default" },
+    testnet: { value: moderatoRpc, source: "default" },
+  };
+
+  beforeEach(() => {
     vi.stubEnv("TEMPO_RPC_URL", undefined);
-    const url = "https://user:secret@rpc.example.com/v2/apikey?token=abc";
+  });
+
+  it.each(networks)("is saved, shown, and removed for $name alone", async (network) => {
+    await useTempHome();
+    const rpc = await chainRpc(network.chainId);
+    const configured = {
+      "rpc-url": { ...defaults, [network.name]: { value: rpc.url, source: "config" } },
+    };
+
+    expect(await confirmedSet("rpc-url", rpc.url, network.name)).toEqual(configured);
+    expect(await savedConfig()).toEqual({ "rpc-url": { [network.name]: rpc.url } });
+    expect(await configGetHandler("rpc-url")).toEqual(configured);
+    // A client for each chain uses only its own network's URL.
+    for (const other of networks)
+      expect(rpcUrl(other.chainId)).toBe(other === network ? rpc.url : defaults[other.name].value);
+
+    expect(
+      await configUnsetHandler("rpc-url", { network: network.name, yes: true }, runContext()),
+    ).toEqual({
+      "rpc-url": defaults,
+    });
+    expect(await savedConfig()).toEqual({});
+  });
+
+  it("keeps each network's rpc-url apart", async () => {
+    await useTempHome();
+    const mainnetEndpoint = await chainRpc(4217);
+    const testnetEndpoint = await chainRpc(42431);
+    await confirmedSet("rpc-url", mainnetEndpoint.url, "mainnet");
+    await confirmedSet("rpc-url", testnetEndpoint.url, "testnet");
+
+    expect(await configGetHandler("rpc-url")).toEqual({
+      "rpc-url": {
+        mainnet: { value: mainnetEndpoint.url, source: "config" },
+        testnet: { value: testnetEndpoint.url, source: "config" },
+      },
+    });
+    expect([rpcUrl(4217), rpcUrl(42431)]).toEqual([mainnetEndpoint.url, testnetEndpoint.url]);
+
+    await configUnsetHandler("rpc-url", { network: "testnet", yes: true }, runContext());
+    expect(await savedConfig()).toEqual({ "rpc-url": { mainnet: mainnetEndpoint.url } });
+    // Without --network, a change applies to the network commands use.
+    await saveConfigValue("network", "mainnet");
+    await confirmedUnset("rpc-url");
+    expect(await savedConfig()).toEqual({ network: "mainnet" });
+  });
+
+  it.each([
+    { name: "on mainnet's chain", network: "mainnet", serves: 4217, saved: true },
+    { name: "on testnet's chain", network: "testnet", serves: 42431, saved: true },
+    {
+      name: "on testnet's chain, for mainnet",
+      network: "mainnet",
+      serves: 42431,
+      message:
+        "rpc-url is on tempo-moderato (chain 42431), not mainnet (chain 4217), so it was not saved. Pass --network testnet to save it for testnet.",
+      retryable: false,
+    },
+    {
+      name: "on another chain",
+      network: "testnet",
+      serves: 1,
+      message: "rpc-url is on chain-1 (chain 1), not testnet (chain 42431), so it was not saved.",
+      retryable: false,
+    },
+    {
+      name: "that cannot be reached",
+      network: "mainnet",
+      serves: undefined,
+      message:
+        "rpc-url did not answer eth_chainId within 3 seconds, so it was not saved for mainnet. Check that it is reachable, then retry.",
+      retryable: true,
+    },
+  ] as const)(
+    "is checked against its network's chain before it is saved: an endpoint $name",
+    async ({ network, serves, saved, message, retryable }) => {
+      await useTempHome();
+      // A closed loopback port stands in for an endpoint that cannot be reached.
+      const url = serves === undefined ? "http://127.0.0.1:9" : (await chainRpc(serves)).url;
+      const confirm = vi.fn(async () => true);
+
+      for (const run of [
+        () => confirmedSet("rpc-url", url, network),
+        () => configSetHandler("rpc-url", url, { network }, runContext(false), { confirm }),
+      ]) {
+        if (saved) await expect(run()).resolves.toMatchObject({ "rpc-url": {} });
+        else await expect(run()).rejects.toMatchObject({ code: "E_USAGE", message, retryable });
+      }
+      // A refused endpoint is refused before any prompt; a saved one is unchanged the second time.
+      expect(confirm).not.toHaveBeenCalled();
+      expect(await savedConfig()).toEqual(saved ? { "rpc-url": { [network]: url } } : undefined);
+    },
+  );
+
+  it.each([
+    { run: "a confirmed prompt", agent: false, yes: false, answer: true, changed: true },
+    { run: "a declined prompt", agent: false, yes: false, answer: false, changed: false },
+    { run: "an agent run with --yes", agent: true, yes: true, answer: false, changed: true },
+    { run: "an agent run without --yes", agent: true, yes: false, answer: false, changed: false },
+  ])(
+    "set and unset on $run show the network, the verified chain, and the URL without its path",
+    async ({ agent, yes, answer, changed }) => {
+      await useTempHome();
+      await saveWalletState(walletState({ chainId: 42431, accessKeys: [testnetKey] }));
+      const rpc = await chainRpc(42431);
+      const url = `${rpc.url}/v2/apikey`;
+      const shown = `${rpc.url}/<redacted>`;
+      const old = "https://old.example.com";
+      const warning =
+        "The new rpc-url will receive all of the CLI's RPC traffic on that network, including balance and channel reads.";
+      const runs = {
+        set: {
+          run: (context: ReturnType<typeof runContext>, confirm: () => Promise<boolean>) =>
+            configSetHandler("rpc-url", url, { yes }, context, { confirm }),
+          question: [
+            `Save rpc-url ${shown} for testnet, verified on chain 42431`,
+            `  now:   ${old} (config)`,
+            `  after: ${shown} (config)`,
+            warning,
+            "Save this setting?",
+          ],
+          refusal: `Saving rpc-url for testnet changes what later commands use, so it needs confirmation: it goes from ${old} (config) to ${shown} (config), and the endpoint answered chain 42431. ${warning} Run 'tempo wallet config set rpc-url '<rpc-url>' --network testnet --yes' to confirm. Replace <rpc-url> with the full rpc-url, which is left out since it can carry a credential.`,
+          command: "tempo wallet config set rpc-url '<rpc-url>' --network testnet --yes",
+          saved: { "rpc-url": { testnet: url } },
+        },
+        unset: {
+          run: (context: ReturnType<typeof runContext>, confirm: () => Promise<boolean>) =>
+            configUnsetHandler("rpc-url", { yes }, context, { confirm }),
+          question: [
+            "Remove rpc-url for testnet",
+            `  now:   ${old} (config)`,
+            `  after: ${moderatoRpc} (default)`,
+            "Remove this setting?",
+          ],
+          refusal: `Removing rpc-url for testnet changes what later commands use, so it needs confirmation: it goes from ${old} (config) to ${moderatoRpc} (default). Run 'tempo wallet config unset rpc-url --network testnet --yes' to confirm.`,
+          command: "tempo wallet config unset rpc-url --network testnet --yes",
+          saved: {},
+        },
+      };
+
+      for (const action of ["set", "unset"] as const) {
+        await saveConfigValue("rpc-url", { testnet: old });
+        const { run, question, refusal, command, saved } = runs[action];
+        const confirm = vi.fn(async () => answer);
+        const context = runContext(agent);
+        const result = run(context, confirm);
+
+        if (agent && !yes) {
+          const expected = { code: "E_USAGE", message: refusal, cta: { commands: [{ command }] } };
+          expect(await result).toMatchObject(expected);
+          expect(JSON.stringify(await result)).not.toContain("apikey");
+        } else if (changed) await expect(result).resolves.toMatchObject({ "rpc-url": {} });
+        else await expect(result).rejects.toMatchObject({ code: "E_USAGE" });
+        expect(confirm.mock.calls).toEqual(agent ? [] : [[question.join("\n")]]);
+        expect(await savedConfig()).toEqual(changed ? saved : { "rpc-url": { testnet: old } });
+      }
+    },
+  );
+
+  it.each([
+    {
+      path: "/v2/apikey",
+      command: "tempo wallet config set rpc-url '<rpc-url>' --network mainnet --yes",
+    },
+    {
+      userinfo: "user:secret@",
+      command: "tempo wallet config set rpc-url '<rpc-url>' --network mainnet --yes",
+    },
+    { command: undefined },
+  ])(
+    "an rpc-url cta carries the URL only when nothing in it can be a credential: $command",
+    async ({ path = "", userinfo = "", command }) => {
+      await useTempHome();
+      const rpc = await chainRpc(4217);
+      const url = rpc.url.replace("//", `//${userinfo}`) + path;
+      const cta = command ?? `tempo wallet config set rpc-url ${url} --network mainnet --yes`;
+
+      const refusal = await configSetHandler("rpc-url", url, { network: "mainnet" }, runContext());
+      expect(refusal).toMatchObject({ cta: { commands: [{ command: cta }] } });
+      expect(JSON.stringify(refusal)).not.toContain("secret");
+      expect(JSON.stringify(refusal)).not.toContain("apikey");
+
+      // Run the cta as given: a placeholder fails validation, so nothing is saved.
+      const argument = cta.split(" ")[5]!.replace(/^'(.*)'$/, "$1");
+      const run = confirmedSet("rpc-url", argument, "mainnet");
+      if (command === undefined) {
+        await expect(run).resolves.toMatchObject({ "rpc-url": { mainnet: { value: url } } });
+        expect(await savedConfig()).toEqual({ "rpc-url": { mainnet: url } });
+      } else {
+        await expect(run).rejects.toMatchObject({
+          code: "E_USAGE",
+          message: "rpc-url must be an http(s) URL",
+        });
+        expect(await savedConfig()).toBeUndefined();
+      }
+    },
+  );
+
+  it("is shown without its credentials, but saved whole", async () => {
+    await useTempHome();
+    const rpc = await chainRpc(4217);
+    const url = `${rpc.url.replace("//", "//user:secret@")}/v2/apikey?token=abc`;
     const shown = {
       "rpc-url": {
-        value: "https://<redacted>@rpc.example.com/<redacted>?<redacted>",
-        source: "config",
+        mainnet: {
+          value: `${rpc.url.replace("//", "//<redacted>@")}/<redacted>?<redacted>`,
+          source: "config",
+        },
+        testnet: defaults.testnet,
       },
     };
 
-    expect(await confirmedSet("rpc-url", url)).toEqual(shown);
+    expect(await confirmedSet("rpc-url", url, "mainnet")).toEqual(shown);
     expect(await configGetHandler("rpc-url")).toEqual(shown);
-    expect(await savedConfig()).toEqual({ "rpc-url": url });
+    expect(await savedConfig()).toEqual({ "rpc-url": { mainnet: url } });
     expect(rpcUrl(4217)).toBe(url);
+  });
+
+  it.each([
+    { url: "https://user:secret@rpc.example.com", accepted: true },
+    { url: "https://user@rpc.example.com", accepted: true },
+    { url: "https://:secret@rpc.example.com", accepted: false },
+    { url: "https://rpc.example.com:8443/v2/key?x=1#frag", accepted: true },
+  ])("parses $url: $accepted", ({ url, accepted }) => {
+    if (accepted) expect(parseRpcUrl(url)).toBe(url);
+    else expect(() => parseRpcUrl(url)).toThrow();
+  });
+
+  it("serves every network from TEMPO_RPC_URL, over each network's saved rpc-url", async () => {
+    await useTempHome();
+    await saveConfigValue("rpc-url", { mainnet: "https://mainnet.example.com" });
+    vi.stubEnv("TEMPO_RPC_URL", "http://127.0.0.1:9");
+
+    expect([rpcUrl(4217), rpcUrl(42431)]).toEqual(["http://127.0.0.1:9", "http://127.0.0.1:9"]);
   });
 });
 
@@ -241,19 +480,6 @@ describe("confirming a change", () => {
       before: setting("mainnet", "config"),
       set: setting("testnet", "config"),
       unset: setting("testnet", "login"),
-    },
-    {
-      key: "rpc-url",
-      saved: "https://old.example.com",
-      value: "https://rpc.example.com/v2/apikey",
-      // Output never shows the URL's path, which can carry an API key, and the cta leaves it out.
-      shown: "https://rpc.example.com/<redacted>",
-      placeholder: "<rpc-url>",
-      before: setting("https://old.example.com", "config"),
-      set: setting("https://rpc.example.com/<redacted>", "config"),
-      unset: setting(moderatoRpc, "default"),
-      warning:
-        "The new rpc-url will receive all of the CLI's RPC traffic on every network, including balance and channel reads.",
     },
     {
       key: "max-spend",
@@ -290,11 +516,8 @@ describe("confirming a change", () => {
         ? configSetHandler(key, value, { yes }, context, { confirm })
         : configUnsetHandler(key, { yes }, context, { confirm });
     const after = scenario[action];
-    const warning = action === "set" ? scenario.warning : undefined;
-    const argument = action === "set" ? ` ${scenario.shown ?? value}` : "";
-    const placeholder = action === "set" ? scenario.placeholder : undefined;
-    const ctaArgument = action === "set" ? ` ${placeholder ? `'${placeholder}'` : value}` : "";
-    const command = `tempo wallet config ${action} ${key}${ctaArgument} --yes`;
+    const argument = action === "set" ? ` ${value}` : "";
+    const command = `tempo wallet config ${action} ${key}${argument} --yes`;
     const verb = action === "set" ? "Save" : "Remove";
 
     if (agent && !yes) {
@@ -302,16 +525,7 @@ describe("confirming a change", () => {
         code: "E_USAGE",
         exitCode: 2,
         retryable: false,
-        message: [
-          `${action === "set" ? "Saving" : "Removing"} ${key} changes what later commands use, so it needs confirmation: it goes from ${label(scenario.before)} to ${label(after)}.`,
-          ...(warning ? [warning] : []),
-          `Run '${command}' to confirm.`,
-          ...(placeholder
-            ? [
-                `Replace ${placeholder} with the full ${key}, which is left out since it can carry a credential.`,
-              ]
-            : []),
-        ].join(" "),
+        message: `${action === "set" ? "Saving" : "Removing"} ${key} changes what later commands use, so it needs confirmation: it goes from ${label(scenario.before)} to ${label(after)}. Run '${command}' to confirm.`,
         cta: { commands: [{ command }] },
       };
       expect(await result).toEqual(refusal);
@@ -332,7 +546,6 @@ describe("confirming a change", () => {
                 `${verb} ${key}${argument}`,
                 `  now:   ${label(scenario.before)}`,
                 `  after: ${label(after)}`,
-                ...(warning ? [warning] : []),
                 `${verb} this setting?`,
               ].join("\n"),
             ],
@@ -365,50 +578,6 @@ describe("confirming a change", () => {
     });
     expect(await savedConfig()).toBeUndefined();
   });
-
-  it.each([
-    {
-      url: "https://rpc.example.com/v2/apikey",
-      command: "tempo wallet config set rpc-url '<rpc-url>' --yes",
-      saves: false,
-    },
-    {
-      url: "https://user:secret@rpc.example.com",
-      command: "tempo wallet config set rpc-url '<rpc-url>' --yes",
-      saves: false,
-    },
-    {
-      url: "http://127.0.0.1:8545",
-      command: "tempo wallet config set rpc-url http://127.0.0.1:8545 --yes",
-      saves: true,
-    },
-  ])(
-    "an rpc-url cta for $url saves the URL only when it can carry it whole",
-    async ({ url, command, saves }) => {
-      await useTempHome();
-      vi.stubEnv("TEMPO_RPC_URL", undefined);
-
-      const refusal = await configSetHandler("rpc-url", url, {}, runContext());
-      expect(refusal).toMatchObject({ cta: { commands: [{ command }] } });
-      expect(JSON.stringify(refusal)).not.toContain("secret");
-      expect(JSON.stringify(refusal)).not.toContain("apikey");
-
-      // Run the cta as given: a placeholder fails validation, so nothing is saved.
-      const [, , , action, key, argument] = command.split(" ");
-      const run = confirmedSet(key!, argument!.replace(/^'(.*)'$/, "$1"));
-      if (saves) {
-        expect(action).toBe("set");
-        await expect(run).resolves.toEqual({ "rpc-url": { value: url, source: "config" } });
-        expect(await savedConfig()).toEqual({ "rpc-url": url });
-      } else {
-        await expect(run).rejects.toMatchObject({
-          code: "E_USAGE",
-          message: "rpc-url must be an http(s) URL",
-        });
-        expect(await savedConfig()).toBeUndefined();
-      }
-    },
-  );
 
   it.each(configKeys.filter((key) => "redact" in configSettings[key]))(
     "the %s placeholder in a cta is not a valid setting",
@@ -624,7 +793,7 @@ describe("precedence", () => {
     vi.stubEnv(configSettings[key].env, env);
     if (key !== "rpc-url") vi.stubEnv("TEMPO_RPC_URL", undefined);
     if (chainId) await saveWalletState(walletState({ chainId }));
-    if (saved) await saveConfigValue(key, saved);
+    if (saved) await saveConfigValue(key, key === "rpc-url" ? { mainnet: saved } : saved);
 
     if (key === "network") {
       const { network, source } = await networkSetting(flag);
@@ -633,10 +802,11 @@ describe("precedence", () => {
       expect(await configGetHandler(key, { network: flag })).toEqual({ [key]: expected });
     }
     if (key === "rpc-url") {
-      expect({ value: rpcUrl(4217), source: rpcUrlOverride()?.source ?? "default" }).toEqual(
-        expected,
-      );
-      expect(await configGetHandler(key)).toEqual({ [key]: expected });
+      expect({
+        value: rpcUrl(4217),
+        source: rpcUrlOverride(4217)?.source ?? "default",
+      }).toEqual(expected);
+      expect(await configGetHandler(key)).toMatchObject({ [key]: { mainnet: expected } });
     }
     if (key === "max-spend") {
       expect(maxSpendSetting(flag)).toEqual(expected);
@@ -645,18 +815,6 @@ describe("precedence", () => {
       );
       if (flag === undefined) expect(await configGetHandler(key)).toEqual({ [key]: expected });
     }
-  });
-
-  it.each([
-    { source: "TEMPO_RPC_URL", env: "http://127.0.0.1:9", saved: undefined },
-    { source: "a saved rpc-url", env: undefined, saved: "https://rpc.example.com" },
-  ])("$source serves every network", async ({ env, saved }) => {
-    await useTempHome();
-    vi.stubEnv("TEMPO_RPC_URL", env);
-    if (saved) await saveConfigValue("rpc-url", saved);
-
-    expect(rpcUrl(4217)).toBe(env ?? saved);
-    expect(rpcUrl(42431)).toBe(env ?? saved);
   });
 
   it("uses each network's default RPC without an override", async () => {
@@ -675,19 +833,20 @@ describe("precedence", () => {
       expect(await rpcChainCheck()(42431)).toBe(true);
       expect(rpc.requests).toEqual([]);
 
-      await saveConfigValue("rpc-url", rpc.url);
+      // Saved for mainnet, the endpoint reports testnet; testnet's own default needs no check.
+      await saveConfigValue("rpc-url", { mainnet: rpc.url });
       const servesChain = rpcChainCheck();
 
       expect(await servesChain(42431)).toBe(true);
       expect(await servesChain(4217)).toBe(false);
-      expect(rpc.requests).toEqual(["eth_chainId", "eth_chainId"]);
+      expect(rpc.requests).toEqual(["eth_chainId"]);
     } finally {
       await rpc.close();
     }
   });
 
-  // One saved endpoint serves both networks' reads, so each balance counts only on the chain the
-  // endpoint reports; the other network's balance is unknown, never this chain's.
+  // An endpoint saved for both networks serves both networks' reads, as one now on another chain
+  // can, so each balance counts only on the chain it reports; the other's is unknown, never its.
   it.each([
     {
       command: "keys list",
@@ -745,7 +904,7 @@ describe("precedence", () => {
       );
       const rpc = await chainRpc(42431);
       try {
-        await saveConfigValue("rpc-url", rpc.url);
+        await saveConfigValue("rpc-url", { mainnet: rpc.url, testnet: rpc.url });
 
         expect(await read()).toEqual(expected);
         expect(rpc.requests).toContain("eth_chainId");
@@ -833,12 +992,13 @@ describe("one command's settings", () => {
     await useTempHome();
     vi.stubEnv("TEMPO_RPC_URL", undefined);
     const { read, first, next } = readers[key];
-    await saveConfigValue(key, first);
+    const saved = (value: string) => (key === "rpc-url" ? { mainnet: value } : value);
+    await saveConfigValue(key, saved(first));
 
     await withConfigSnapshot(async () => {
       expect(await read()).toBe(first);
       // Another process saves a new value while this command runs.
-      writeFileSync(configPath(), JSON.stringify({ [key]: next }));
+      writeFileSync(configPath(), JSON.stringify({ [key]: saved(next) }));
       expect(await read()).toBe(first);
     });
     // The next command reads it.
@@ -852,10 +1012,11 @@ describe("one command's settings", () => {
     const next = await chainRpc(42431);
     // Once its chain is checked, another process points the saved rpc-url at the other chain.
     const first = await chainRpc(4217, {
-      onChainId: () => writeFileSync(configPath(), JSON.stringify({ "rpc-url": next.url })),
+      onChainId: () =>
+        writeFileSync(configPath(), JSON.stringify({ "rpc-url": { mainnet: next.url } })),
     });
     try {
-      await saveConfigValue("rpc-url", first.url);
+      await saveConfigValue("rpc-url", { mainnet: first.url });
 
       const output = (await walletJson(["keys", "list"])) as { keys: { balance: string | null }[] };
 
@@ -913,10 +1074,16 @@ describe("an invalid config file", () => {
       problem: `has an invalid network (Unsupported network: TESTNET). ${unset("network")}`,
     },
     {
-      name: "holds a non-http rpc-url",
-      body: '{"rpc-url":"ftp://rpc.example.com"}',
+      name: "holds an rpc-url that is not saved per network",
+      body: '{"rpc-url":"https://rpc.example.com"}',
       keys: ["rpc-url"],
-      problem: `has an invalid rpc-url (rpc-url must be an http(s) URL). ${unset("rpc-url")}`,
+      problem: `has an invalid rpc-url (expected an object by network). ${unset("rpc-url")}`,
+    },
+    {
+      name: "holds a non-http rpc-url for mainnet",
+      body: '{"rpc-url":{"mainnet":"ftp://rpc.example.com"}}',
+      keys: ["rpc-url"],
+      problem: `has an invalid rpc-url for mainnet (rpc-url must be an http(s) URL). ${unset("rpc-url --network mainnet")}`,
     },
     {
       name: "holds a zero max-spend",
@@ -1023,34 +1190,36 @@ describe("the config file", () => {
 
   it("keeps every setting from concurrent changes", async () => {
     await useTempHome();
+    const rpc = await chainRpc(4217);
 
     await Promise.all([
       confirmedSet("network", "testnet"),
-      confirmedSet("rpc-url", "https://rpc.example.com"),
+      confirmedSet("rpc-url", rpc.url, "mainnet"),
       confirmedSet("max-spend", "5"),
     ]);
     expect(await savedConfig()).toEqual({
       network: "testnet",
-      "rpc-url": "https://rpc.example.com",
+      "rpc-url": { mainnet: rpc.url },
       "max-spend": "5",
     });
 
     await Promise.all([confirmedUnset("network"), confirmedUnset("max-spend")]);
-    expect(await savedConfig()).toEqual({ "rpc-url": "https://rpc.example.com" });
+    expect(await savedConfig()).toEqual({ "rpc-url": { mainnet: rpc.url } });
   });
 
   it("keeps every setting from concurrent processes", async () => {
     await useTempHome();
+    const rpc = await chainRpc(4217);
 
     await Promise.all([
       walletJson(["config", "set", "network", "testnet", "--yes"]),
-      walletJson(["config", "set", "rpc-url", "https://rpc.example.com", "--yes"]),
+      walletJson(["config", "set", "rpc-url", rpc.url, "--network", "mainnet", "--yes"]),
       walletJson(["config", "set", "max-spend", "5", "--yes"]),
     ]);
 
     expect(await savedConfig()).toEqual({
       network: "testnet",
-      "rpc-url": "https://rpc.example.com",
+      "rpc-url": { mainnet: rpc.url },
       "max-spend": "5",
     });
   }, 30_000);
@@ -1194,11 +1363,9 @@ async function chainRpc(chainId: number, { onChainId }: { onChainId?: () => void
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Expected listening address");
-  return {
-    url: `http://127.0.0.1:${address.port}`,
-    requests,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-  };
+  const close = () => new Promise<void>((resolve) => server.close(() => resolve()));
+  endpoints.push(close);
+  return { url: `http://127.0.0.1:${address.port}`, requests, close };
 }
 
 /** Sends each request to one `tempo wallet --mcp` process once the last is answered. */

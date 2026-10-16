@@ -551,7 +551,9 @@ describe("environment", () => {
   it("follows a saved network and rpc-url, naming the setting when the RPC is on another chain", async () => {
     await writeWalletState(walletState());
     // Written directly: the config lock would run the stub sqlite3 on PATH.
-    await writeConfigFile('{"network":"testnet","rpc-url":"https://rpc.example.com/v2/key"}');
+    await writeConfigFile(
+      '{"network":"testnet","rpc-url":{"testnet":"https://rpc.example.com/v2/key"}}',
+    );
 
     const report = await doctor();
 
@@ -561,7 +563,7 @@ describe("environment", () => {
       name: "rpc",
       status: "fail",
       message:
-        "RPC https://rpc.example.com/<redacted> is on chain 4217, not testnet (42431). Check the saved rpc-url setting.",
+        "RPC https://rpc.example.com/<redacted> is on chain 4217, not testnet (42431). Check the rpc-url saved for testnet.",
     });
     expect(check(report, "env")).toMatchObject({ status: "ok" });
   });

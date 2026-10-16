@@ -58,6 +58,8 @@ describe("sessions utilities", () => {
   it("returns a bare channel target for a dry-run close of an unknown channel id", async () => {
     await useTempHome();
     await writeWalletState(walletState());
+    // The close it reviews reads the channel, so an RPC override would need a chain check.
+    vi.stubEnv("TEMPO_RPC_URL", undefined);
 
     expect(await dryRunCloseSessions(await readyWallet(), { target: validChannelId })).toEqual({
       targets: [{ channel_id: validChannelId }],
@@ -155,8 +157,13 @@ describe("sessions utilities", () => {
       }
       const rpc = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
         id: number;
+        method: string;
         params: [{ data: Hex }];
       };
+      response.setHeader("content-type", "application/json");
+      // The RPC is on mainnet, so the session reads pass the TEMPO_RPC_URL check.
+      if (rpc.method === "eth_chainId")
+        return response.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: "0x1079" }));
       const call = decodeFunctionData({ abi: escrowAbi, data: rpc.params[0].data });
       const result =
         call.functionName === "CLOSE_GRACE_PERIOD"

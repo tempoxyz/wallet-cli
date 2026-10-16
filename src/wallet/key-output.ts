@@ -109,7 +109,7 @@ type ChainKey = { published: boolean | null; remaining: Map<string, bigint | nul
 export function rpcChainCheck() {
   const checks = new Map<number, Promise<boolean>>();
   return (chain: number) => {
-    if (!rpcUrlOverride()) return Promise.resolve(true);
+    if (!rpcUrlOverride(chain)) return Promise.resolve(true);
     let check = checks.get(chain);
     if (!check) {
       const client = createTempoPublicClient(chain, { timeout: statusQueryTimeout, retryCount: 0 });

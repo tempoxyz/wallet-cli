@@ -5,7 +5,7 @@ import { Actions } from "viem/tempo";
 
 import { requireRevokeChain } from "../provider/accounts-compat.js";
 import { networkError } from "../shared/errors.js";
-import { createTempoPublicClient } from "../shared/network.js";
+import { createTempoPublicClient, requireRpcChain } from "../shared/network.js";
 import { localAccessKeyStatus } from "./access-key.js";
 import type { WalletState } from "./store.js";
 
@@ -32,6 +32,9 @@ export async function revokeThroughWallet(options: {
   target: { chainId: number; walletAddress: Address; accessKeyAddress: Address };
 }) {
   const { provider, readKey, stored, target } = options;
+  // The revocation counts only once the chain shows it, so nothing is sent through an RPC that
+  // cannot show it.
+  await requireRpcChain(target.chainId);
   // A key that is not published yet is authorized and revoked in one transaction; revoking it
   // alone would leave its signed authorization publishable.
   const keyAuthorization =
@@ -73,6 +76,8 @@ export async function readAccessKeyOnChain(options: {
   walletAddress: Address;
   accessKeyAddress: Address;
 }): Promise<OnChainKey> {
+  // Whether a key is revoked, or is revoked at all, rests on this read.
+  await requireRpcChain(options.chainId);
   const metadata = await Actions.accessKey
     .getMetadata(createTempoPublicClient(options.chainId), {
       account: options.walletAddress,

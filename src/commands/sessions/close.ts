@@ -25,6 +25,7 @@ import {
   escrowContract,
   networkName,
   parseNetwork,
+  requireRpcChain,
   storedChainId,
   tokenAddress,
   tokenDecimals,
@@ -148,6 +149,8 @@ type CloseSummaryOutput = {
 export async function dryRunCloseSessions({ network }: Wallet, options: CloseOptions) {
   validateCloseOptions(options);
   const targets = await closeTargets(options, network, { dryRun: true });
+  // The close this reviews would read the channels, so refuse an RPC on another chain now.
+  if (targets.some(hasChannel)) await requireRpcChain(network.chainId);
   return {
     targets: targets.map((record) => {
       if (!record.virtual) return closeTarget(record);
@@ -179,6 +182,8 @@ export async function closeSessions(
   const summary = closeSummary();
   const targets = await closeTargets(options, network, { walletChainId: storedChainId(state) });
   const closable = targets.filter(hasChannel);
+  // Refused for every target at once, before the prompt, rather than as each one's error.
+  if (closable.length > 0) await requireRpcChain(network.chainId);
   if (!options.yes && closable.length > 0) {
     if (context.agent) {
       const command = continuationCommand(confirmedCloseArgv(options), network);

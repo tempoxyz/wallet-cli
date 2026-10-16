@@ -219,7 +219,9 @@ describe("MCP tools", () => {
       expect(response.result.isError).toBe(true);
       expect(firstToolText(response)).toContain(message);
       // Only reads reach the chain; nothing is signed, sent, or handed to the wallet app.
-      expect(host.requests.filter((request) => request !== "eth_call")).toEqual([]);
+      expect(
+        host.requests.filter((request) => request !== "eth_call" && request !== "eth_chainId"),
+      ).toEqual([]);
       expect(await readWalletStoreJson()).toEqual(stored);
     } finally {
       await host.close();
