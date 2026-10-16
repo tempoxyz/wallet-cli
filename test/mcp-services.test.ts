@@ -164,6 +164,59 @@ describe("MCP tools", () => {
     });
   });
 
+  // A retired argument stays in its tool's schema for a release, refused with the CLI's message.
+  it.each([
+    {
+      name: "transfer",
+      arguments: { credits: true, "amount-cents": 1, to: testWallet, value: "0" },
+      message: "--value was removed: transfers carry no ETH value.",
+    },
+    {
+      name: "fund",
+      arguments: { claim: "CODE", browser: false },
+      message:
+        "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
+    },
+    {
+      name: "transfer",
+      arguments: { mach: true, "amount-cents": 2, "mpp-challenge": "x", "dry-run": true },
+      message:
+        "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
+    },
+  ])("refuses $name $arguments and sends nothing", async ({ name, arguments: args, message }) => {
+    await writeWalletState(walletState());
+    const host = await recordingHost();
+    vi.stubEnv("TEMPO_AUTH_URL", host.url);
+    vi.stubEnv("TEMPO_RPC_URL", host.url);
+    try {
+      const response = await mcpCall({ name, arguments: { ...args, network: "mainnet" } });
+
+      expect(response.result.isError).toBe(true);
+      expect(firstToolText(response)).toContain(message);
+      expect(host.requests).toEqual([]);
+    } finally {
+      await host.close();
+    }
+  });
+
+  it("marks retired arguments as removed in the tool schemas", async () => {
+    const response = await mcpRequest<{
+      tools: {
+        name: string;
+        inputSchema: { properties: Record<string, { description?: string }> };
+      }[];
+    }>("tools/list", {});
+
+    const property = (tool: string, name: string) =>
+      response.result.tools.find((item) => item.name === tool)?.inputSchema.properties[name];
+    expect(property("transfer", "value")?.description).toBe(
+      "Removed: --value was removed: transfers carry no ETH value.",
+    );
+    expect(property("fund", "claim")?.description).toMatch(/^Removed: --claim was removed;/);
+    expect(property("fund_status", "claim")).toBeUndefined();
+    expect(property("send", "value")).toBeUndefined();
+  });
+
   it("returns the login code and URL as the tool result, then finishes in a later call", async () => {
     const host = deviceCodeHost((poll) => (poll < 2 ? "pending" : "approve"));
     const server = await host.listen();

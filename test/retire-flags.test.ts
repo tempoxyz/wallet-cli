@@ -172,6 +172,34 @@ describe("retireFlags", () => {
     });
   });
 
+  it.each([
+    // `--credits` keeps its recipient, calldata, and amount.
+    ["transfer", "--credits", "--to=0xabc", "--data=0x12", "--amount-cents=100"],
+    ["transfer", "--amount-cents=100", "--to=0xabc", "--credits=true"],
+    // MACH refuses these itself, naming its own replacements.
+    ["transfer", "--mach", "--to=0xabc", "--data=0x12", "--amount-cents=2"],
+    // A group's retired flags are its own command's, not its subcommands'.
+    ["fund", "status", "--claim", "CODE"],
+  ])("leaves %j to the command", (...args) => {
+    expect(retireFlags(args, commands)).toEqual({ args });
+  });
+
+  // An explicit false selects no mode, so the run is a token transfer.
+  it.each([["--credits=false"], ["--mach", "false"]])(
+    "refuses a token transfer's --to with %j",
+    (...mode) => {
+      expect(retireFlags(["transfer", "1", "USDC.e", "--to", "0xabc", ...mode], commands)).toEqual({
+        args: ["transfer", "1", "USDC.e", ...mode],
+        error: {
+          ...usage,
+          message:
+            "--to sets the MPP Credits recipient of 'tempo wallet transfer --credits'; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
+          ...cta(`tempo wallet send 1 USDC.e 0xabc ${mode.join(" ")}`),
+        },
+      });
+    },
+  );
+
   it("leaves transfer --mach and --credits to transfer", () => {
     for (const flag of ["--mach", "--credits"])
       expect(retireFlags(["transfer", flag], commands)).toEqual({ args: ["transfer", flag] });

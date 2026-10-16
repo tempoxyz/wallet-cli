@@ -1204,6 +1204,105 @@ describe("tempo wallet send and transfer", () => {
     expect(requests).toEqual([]);
   });
 
+  // Each legacy flag fails with what replaces it before the command parses its options or runs,
+  // and its `cta` is the equivalent command when the run's arguments give one.
+  const retired = {
+    to: "--to sets the MPP Credits recipient of 'tempo wallet transfer --credits'; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
+    data: "--data sets the MPP Credits calldata of 'tempo wallet transfer --credits'; a token transfer sends no calldata.",
+    cents:
+      "--amount-cents sets the MPP Credits amount of 'tempo wallet transfer --credits'; pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
+    value: "--value was removed: transfers carry no ETH value.",
+    machCents:
+      "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
+    claim:
+      "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
+  };
+  const cta = (...argv: string[]) => ["tempo", "wallet", ...argv].map(shellQuote).join(" ");
+  const json = ["--format", "json"];
+
+  it.each<{ argv: string[]; message: string; command?: string }>([
+    {
+      argv: ["transfer", "1", usdcToken, "--to", recipient],
+      message: retired.to,
+      command: cta("send", "1", usdcToken, recipient, ...json),
+    },
+    {
+      argv: ["transfer", "1", usdcToken, `--to=${recipient}`, "--yes"],
+      message: retired.to,
+      command: cta("send", "1", usdcToken, recipient, "--yes", ...json),
+    },
+    {
+      argv: ["send", "1", usdcToken, "--to", recipient, "--dry-run"],
+      message: retired.to,
+      command: cta("send", "1", usdcToken, recipient, "--dry-run", ...json),
+    },
+    { argv: ["send", "--to", recipient], message: retired.to },
+    { argv: ["transfer", ...tokens, "--data", "0x12", "--yes"], message: retired.data },
+    { argv: ["send", ...tokens, "--data", "0x12", "--yes"], message: retired.data },
+    { argv: ["transfer", "--amount-cents", "100", "--to", recipient], message: retired.cents },
+    { argv: ["send", ...tokens, "--amount-cents", "100", "--yes"], message: retired.cents },
+    {
+      argv: ["transfer", ...tokens, "--value", "0", "--yes"],
+      message: retired.value,
+      command: cta("send", ...tokens, "--yes", ...json),
+    },
+    {
+      argv: ["send", ...tokens, "--value=0x0", "--yes"],
+      message: retired.value,
+      command: cta("send", ...tokens, "--yes", ...json),
+    },
+    {
+      argv: ["transfer", "--credits", "--amount-cents", "100", "--to", recipient, "--value", "0"],
+      message: retired.value,
+      command: cta("transfer", "--credits", "--amount-cents=100", `--to=${recipient}`, ...json),
+    },
+    // A nonzero value has no equivalent.
+    {
+      argv: ["transfer", "--credits", "--amount-cents", "100", "--to", recipient, "--value", "1"],
+      message: retired.value,
+    },
+    {
+      argv: ["transfer", "--mach", "--amount-cents", "2", "--mpp-challenge", machChallenge],
+      message: retired.machCents,
+      command: cta("transfer", "--mach", "--max-spend", "0.02", "--mpp-challenge", machChallenge),
+    },
+    {
+      argv: ["fund", "--claim", "CODE", "--no-browser"],
+      message: retired.claim,
+      command: cta("fund", "--no-browser", ...json, "--referral-code", "CODE"),
+    },
+  ])("$argv fails with its replacement and sends nothing", async ({ argv, message, command }) => {
+    const home = await useTempHome();
+    await writeWalletState(walletState());
+    requests.length = 0;
+
+    const result = await walletCli(argv, { home, terminal: undefined, input: "" });
+
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stdout)).toEqual({
+      code: "E_USAGE",
+      message,
+      retryable: false,
+      ...(command ? { cta: { description: "Suggested command:", commands: [{ command }] } } : {}),
+    });
+    expect(result.stderr).toBe("");
+    expect(requests).toEqual([]);
+  });
+
+  // `--credits` still takes its recipient, calldata, and amount.
+  it("transfer --credits keeps --to, --data, and --amount-cents", async () => {
+    const home = await useTempHome();
+    await writeWalletState(walletState());
+
+    const result = await walletCli(
+      ["transfer", "--credits", "--amount-cents", "100", "--to", recipient, "--data", "0x12"],
+      { home, terminal: undefined, input: "" },
+    );
+
+    expect(requests).toContain("POST /api/coinflow/redeem/auth-msg");
+    expect(result.stdout).not.toContain("E_USAGE");
+  });
+
   /**
    * Runs the wallet CLI as an agent (`--format json`), or with output to a `terminal`, and with
    * stdin a terminal too when it names both.

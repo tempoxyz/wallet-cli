@@ -1,10 +1,12 @@
-import { Mcp, type Cli } from "incur";
+import { Mcp, z, type Cli } from "incur";
 
 import { deprecatedCommand } from "../commands/services/deprecated.js";
 import { staleListFetchedAt } from "../commands/services/directory.js";
 import { servicesListMcpOutput, servicesMcpOutput } from "../schemas/services.js";
 import { version } from "../shared/constants.js";
+import { errorCodes } from "../shared/errors.js";
 import { configSnapshot } from "../wallet/config.js";
+import type { RetiredFlag } from "./argv.js";
 import {
   commandMap,
   isCommandGroup,
@@ -29,8 +31,8 @@ export async function serveMcp(
 }
 
 /**
- * The command tree `serveMcp` serves: each tool annotated, bare `sessions` left out, and the
- * deprecated `services` tool in place of bare `services`.
+ * The command tree `serveMcp` serves: each tool annotated, bare `sessions` left out, the
+ * deprecated `services` tool in place of bare `services`, and retired arguments refused.
  */
 export function createMcpCommands(
   mounted: Map<string, unknown>,
@@ -40,7 +42,14 @@ export function createMcpCommands(
   const annotations = Object.fromEntries(
     commands.flatMap((command) => Object.entries(command.annotations ?? {})),
   );
-  const mcpCommands = mcpTools(mounted, annotations);
+  // The retired flags each tool took as arguments, by tool name; see `refuseRetired`.
+  const retired = Object.fromEntries(
+    commands.flatMap(({ command, retiredFlags = [] }) => {
+      const flags = retiredFlags.filter((flag) => flag.mcp);
+      return command && flags.length > 0 ? [[command.name, flags]] : [];
+    }),
+  );
+  const mcpCommands = mcpTools(mounted, annotations, retired);
   const sessionsGroup = mcpCommands.get("sessions");
   if (isCommandGroup(sessionsGroup)) {
     // Bare `sessions` is CLI shorthand; MCP already exposes `sessions_list`.
@@ -60,7 +69,7 @@ export function createMcpCommands(
       // Bare `services` lists in the CLI; the `services` tool stays the deprecated one for a release.
       // Its `run` takes incur's typed context, which `RunnableCommand` leaves unknown.
       root: wrapServiceList(
-        mcpTool(deprecatedCommand as RunnableCommand, ["services"], annotations),
+        mcpTool(deprecatedCommand as RunnableCommand, ["services"], annotations, retired),
         servicesMcpOutput,
       ),
       commands,
@@ -94,6 +103,7 @@ function wrapServiceList(command: RunnableCommand, output: unknown) {
 function mcpTools(
   commands: Map<string, unknown>,
   annotations: Record<string, Mcp.ToolAnnotations>,
+  retired: Record<string, readonly RetiredFlag[]>,
   prefix: readonly string[] = [],
 ): Map<string, unknown> {
   return new Map(
@@ -106,12 +116,12 @@ function mcpTools(
             ...entry,
             // A group root (bare `login`) is a tool of its own.
             ...(isRunnableCommand(entry.root)
-              ? { root: mcpTool(entry.root, path, annotations) }
+              ? { root: mcpTool(entry.root, path, annotations, retired) }
               : {}),
-            commands: mcpTools(entry.commands, annotations, path),
+            commands: mcpTools(entry.commands, annotations, retired, path),
           },
         ];
-      return [name, isRunnableCommand(entry) ? mcpTool(entry, path, annotations) : entry];
+      return [name, isRunnableCommand(entry) ? mcpTool(entry, path, annotations, retired) : entry];
     }),
   );
 }
@@ -120,6 +130,53 @@ function mcpTool(
   entry: RunnableCommand,
   path: readonly string[],
   annotations: Record<string, Mcp.ToolAnnotations>,
+  retired: Record<string, readonly RetiredFlag[]>,
 ) {
-  return withMcpGlobal({ ...entry, mcp: { annotations: annotations[path.join("_")] } });
+  const name = path.join("_");
+  return withMcpGlobal(
+    refuseRetired({ ...entry, mcp: { annotations: annotations[name] } }, retired[name] ?? []),
+  );
+}
+
+/**
+ * Keeps each argument a tool took before its flag was retired in the tool's input schema for a
+ * release, and refuses it with the CLI's message, so a client still passing one is told what
+ * replaces it instead of having it ignored.
+ */
+function refuseRetired<command extends RunnableCommand>(
+  entry: command,
+  retired: readonly RetiredFlag[],
+) {
+  if (retired.length === 0) return entry;
+  const key = ({ flag }: RetiredFlag) => flag.slice(2);
+  const message = (flag: RetiredFlag, value?: string) =>
+    flag.replacement({ given: [], args: [], value }).message;
+  const shape = Object.fromEntries(
+    retired.map((flag) => [
+      key(flag),
+      z
+        .unknown()
+        .optional()
+        .describe(`Removed: ${message(flag)}`),
+    ]),
+  );
+  return {
+    ...entry,
+    options: (entry.options ?? z.object({})).extend(shape),
+    run(context: { options: Record<string, unknown>; error: (error: object) => never }) {
+      // An explicit false selects nothing, as on the CLI.
+      const flag = retired.find((flag) => {
+        const value = context.options[key(flag)];
+        return value !== undefined && value !== false;
+      });
+      if (!flag) return entry.run(context);
+      const { exitCode, retryable } = errorCodes.E_USAGE;
+      return context.error({
+        code: "E_USAGE",
+        message: message(flag, String(context.options[key(flag)])),
+        exitCode,
+        retryable,
+      });
+    },
+  };
 }

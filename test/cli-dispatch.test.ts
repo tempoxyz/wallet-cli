@@ -359,7 +359,7 @@ describe("fund", () => {
   it.each([
     [["fund", ...handoff]],
     [["fund", "--crypto", ...handoff]],
-    [["fund", "--claim", "REF123", ...handoff]],
+    [["fund", "--referral-code", "REF123", ...handoff]],
     [["fund", "--mach", ...handoff, "-n", "mainnet"]],
   ])("%j renders the same keys in toon and JSON", async (args) => {
     await useTempHome();

@@ -231,7 +231,7 @@ const continuations: {
         options: {
           network: option,
           "dry-run": true,
-          "amount-cents": 2,
+          "max-spend": "0.02",
           "mpp-challenge": `WWW-Authenticate: ${machChallenge(chain)}`,
           "mpp-client-id": "agent 1",
         },

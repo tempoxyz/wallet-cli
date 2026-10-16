@@ -82,7 +82,6 @@ describe("legacy credit spending", () => {
         "amount-cents": 100,
         to: recipient,
         data: "0xabcdef",
-        value: "0",
         "dry-run": true,
       },
     });
@@ -668,8 +667,6 @@ describe("legacy credit spending", () => {
     { to: recipient },
     { data: "0x" },
     { data: "0xabcdef" },
-    { value: "0" },
-    { value: "1" },
   ])("rejects direct-transfer flags alongside either challenge input: %j", async (flags) => {
     const fetch = vi.spyOn(globalThis, "fetch");
     for (const input of [{ "mpp-challenge": challenge }, { "mpp-challenge-file": "ignored.txt" }]) {
@@ -722,7 +719,6 @@ describe("legacy credit spending", () => {
     { "amount-cents": 0, to: recipient },
     { "amount-cents": -1, to: recipient },
     { "amount-cents": 1.5, to: recipient },
-    { "amount-cents": 100, to: recipient, value: "1" },
     { "amount-cents": Number.MAX_SAFE_INTEGER + 1, to: recipient },
     { "amount-cents": 99, "mpp-challenge": challenge },
     { "max-spend": "0.99", "mpp-challenge": challenge },
