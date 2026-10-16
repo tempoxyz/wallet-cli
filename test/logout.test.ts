@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -287,6 +288,19 @@ describe("logout scope", () => {
       expect(await loadPendingLogin()).toEqual(kept ? pendingLogin("testnet") : undefined);
     },
   );
+
+  it("logs out of the login's network when its pending login cannot be cleared", async () => {
+    await setup(bothNetworks);
+    await savePendingLogin(pendingLogin("testnet"));
+    // sqlite3 cannot lock a lock file that is not a database.
+    await writeFile(join(homedir(), ".tempo", "wallet", "pending-login.lock"), "not a database");
+
+    const output = await logoutHandler({ network: "testnet" }, runContext(true));
+
+    expect(output).not.toHaveProperty("code");
+    expect((await loadWalletState()).accessKeys.map((key) => key.chainId)).not.toContain(42431);
+    expect(await loadPendingLogin()).toEqual(pendingLogin("testnet"));
+  });
 });
 
 describe("logout with sessions holding deposits", () => {

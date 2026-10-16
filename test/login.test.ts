@@ -1,4 +1,5 @@
-import { stat } from "node:fs/promises";
+import { rm, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -248,6 +249,33 @@ describe("login status", () => {
     expect(await loginStatusHandler(options)).toMatchObject(result);
     expect(host.polls).toHaveLength(polls);
     expect(Boolean(await loadPendingLogin())).toBe(kept);
+  });
+
+  it("returns an approved login when its pending login cannot be cleared", async () => {
+    const home = await useTempHome();
+    const host = useHost(["approve"]);
+    await loginHandler({ network: "testnet", browser: false, wait: false });
+    // sqlite3 cannot lock a lock file that is not a database.
+    const lock = join(home, ".tempo", "wallet", "pending-login.lock");
+    await writeFile(lock, "not a database");
+
+    expect(await loginStatusHandler({})).toMatchObject({ accounts: [testWallet], chainId: 42431 });
+    expect(await loadWalletState()).toMatchObject({
+      accounts: [{ address: testWallet }],
+      accessKeys: [{ address: registeredKey(host).capabilities.authorizeAccessKey.address }],
+      chainId: 42431,
+    });
+    expect((await loadPendingLogin())?.registration.device_code).toBe("device-1");
+
+    // Once the lock works again, a new login replaces the leftover one.
+    await rm(lock);
+    expect(await loginHandler({ network: "mainnet", browser: false, wait: false })).toMatchObject({
+      status: "pending",
+    });
+    expect(await loadPendingLogin()).toMatchObject({
+      network: "mainnet",
+      registration: { device_code: "device-2" },
+    });
   });
 
   it.each(["deny", "expire"] as const)(
