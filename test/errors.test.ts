@@ -174,9 +174,11 @@ describe("typed error sites", () => {
     });
   });
 
-  // Bare `Error` throws allowed under src/, keyed `<file>: <line>`, each with a one-line reason:
-  // a programmer-error assertion no user can reach, or an upstream API that needs a plain `Error`.
-  const allowedBareErrors: Record<string, string> = {};
+  // Bare `Error` throws allowed under src/, as `src/<file>: <trimmed line text>` and a one-line
+  // reason: a programmer-error assertion no user can reach, or an upstream API that needs a plain
+  // `Error`. Keyed by text so edits that shift lines keep matching; list a repeated line once per
+  // occurrence.
+  const allowedBareErrors: [site: string, reason: string][] = [];
 
   it("throws typed errors instead of bare Error", async () => {
     const found: string[] = [];
@@ -186,6 +188,6 @@ describe("typed error sites", () => {
       for (const line of source.split("\n"))
         if (/\bthrow\s+(new\s+)?Error\(/.test(line)) found.push(`src/${file}: ${line.trim()}`);
     }
-    expect(found.sort()).toEqual(Object.keys(allowedBareErrors).sort());
+    expect(found.sort()).toEqual(allowedBareErrors.map(([site]) => site).sort());
   });
 });
