@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { rmSync } from "node:fs";
-import { mkdir, open, readFile, unlink } from "node:fs/promises";
+import { closeSync, fstatSync, openSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdir, readFile } from "node:fs/promises";
 import { devNull, homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -116,46 +116,77 @@ function tryLock(path: string, waitMs: number) {
  * has exited, as after SIGKILL, fails with `E_RUNTIME` naming it, for the user to remove.
  */
 async function pidFileLock(path: string, label: string): Promise<Release> {
-  const deadline = Date.now() + lockTimeoutMs;
-  while (true) {
-    const handle = await open(path, "wx", 0o600).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== "EEXIST") throw error;
-    });
-    if (handle) {
-      try {
-        await handle.writeFile(`${process.pid}\n`);
-      } catch (error) {
-        await unlink(path);
-        throw error;
-      } finally {
-        await handle.close();
-      }
-      const unwatch = removeOnSignal(path);
-      return async () => {
-        unwatch();
-        await unlink(path).catch(() => undefined);
-      };
+  // The signal handler is installed before the file is created and removed after it is deleted.
+  // Signal handlers run between event loop turns, and the file is created and recorded, or deleted
+  // and forgotten, within one turn, so a signal cannot leave it behind. It deletes the file only
+  // while the path still names the one this process created.
+  let created: FileId | undefined;
+  const remove = () => {
+    if (created && sameFile(path, created)) rmSync(path, { force: true });
+    created = undefined;
+  };
+  const unwatch = onEndingSignal(remove);
+  try {
+    const deadline = Date.now() + lockTimeoutMs;
+    while (true) {
+      created = createPidFile(path);
+      if (created)
+        return async () => {
+          remove();
+          unwatch();
+        };
+      const pid = await exitedHolder(path);
+      if (pid !== undefined) throw staleLockError(label, path, pid);
+      if (Date.now() > deadline) throw timeoutError(label, path);
+      await sleep(100);
     }
-    const pid = await exitedHolder(path);
-    if (pid !== undefined) throw staleLockError(label, path, pid);
-    if (Date.now() > deadline) throw timeoutError(label, path);
-    await sleep(100);
+  } catch (error) {
+    unwatch();
+    throw error;
   }
+}
+
+type FileId = { dev: bigint; ino: bigint };
+
+/** Creates the file at `path` holding this process's pid; `undefined` if it already exists. */
+function createPidFile(path: string): FileId | undefined {
+  let fd: number;
+  try {
+    fd = openSync(path, "wx", 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return undefined;
+    throw error;
+  }
+  try {
+    const { dev, ino } = fstatSync(fd, { bigint: true });
+    writeFileSync(fd, `${process.pid}\n`);
+    return { dev, ino };
+  } catch (error) {
+    rmSync(path, { force: true });
+    throw error;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function sameFile(path: string, id: FileId) {
+  const stats = statSync(path, { bigint: true, throwIfNoEntry: false });
+  return stats?.dev === id.dev && stats.ino === id.ino;
 }
 
 const endingSignals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
 /**
- * Until the returned function is called, deletes this process's pid file at `path` when a signal
- * that ends the process by default arrives, then raises the signal again so it still does.
+ * Until the returned function is called, runs `cleanup` when a signal that ends the process by
+ * default arrives, then raises the signal again so it still does.
  */
-function removeOnSignal(path: string) {
+function onEndingSignal(cleanup: () => void) {
   const unwatch = () => {
     for (const signal of endingSignals) process.removeListener(signal, onSignal);
   };
   const onSignal = (signal: NodeJS.Signals) => {
     unwatch();
-    rmSync(path, { force: true });
+    cleanup();
     process.kill(process.pid, signal);
   };
   for (const signal of endingSignals) process.on(signal, onSignal);

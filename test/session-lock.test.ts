@@ -167,6 +167,21 @@ describe("withFileLock without sqlite3", () => {
     },
   );
 
+  it.each([
+    ["while it writes the pid file", "create"],
+    ["while it deletes the pid file", "release"],
+  ] as const)("removes the pid file when SIGINT arrives %s", async (_name, window) => {
+    const { path, log } = await lockFiles();
+    await withoutSqlite3();
+    const holder = await startHolder(path, log, 0, window);
+    holder.start();
+    await holder.exited;
+
+    expect(holder.output()).toContain("signaled");
+    await expect(readFile(`${path}.pid`)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(withFileLock(path, "test lock", async () => "next")).resolves.toBe("next");
+  });
+
   it("refuses the pid file of a holder SIGKILL ended, leaving it for the user to remove", async () => {
     const { path, log } = await lockFiles();
     await withoutSqlite3();
@@ -290,11 +305,18 @@ async function killHolding(holder: Holder, signal: NodeJS.Signals = "SIGKILL") {
  * Starts test/fixtures/lock-holder.ts for the lock at `path`, resolving once it is ready for
  * `start` to send it after the lock.
  */
-async function startHolder(path: string, log: string, holdMs: number) {
-  const child = spawn(process.execPath, ["--import", "tsx", holderScript, path, log, `${holdMs}`], {
+async function startHolder(
+  path: string,
+  log: string,
+  holdMs: number,
+  signalDuring?: "create" | "release",
+) {
+  const args = [holderScript, path, log, `${holdMs}`, ...(signalDuring ? [signalDuring] : [])];
+  const child = spawn(process.execPath, ["--import", "tsx", ...args], {
     stdio: ["pipe", "pipe", "inherit"],
   });
-  const exited = once(child, "exit").then(([code]) => code as number | null);
+  // `close` comes after the last of its output.
+  const exited = once(child, "close").then(([code]) => code as number | null);
   let output = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => (output += chunk));
@@ -312,6 +334,7 @@ async function startHolder(path: string, log: string, holdMs: number) {
     pid: child.pid,
     exited,
     printed,
+    output: () => output,
     start: () => child.stdin.end(),
     kill: (signal: NodeJS.Signals) => child.kill(signal),
   };
