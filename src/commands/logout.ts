@@ -25,7 +25,7 @@ import {
 } from "../shared/errors.js";
 import { continuationCommand, nextStep, shellQuote } from "../shared/next.js";
 import { canPrompt, channelsDbPath, confirm as confirmPrompt } from "../shared/process.js";
-import { createProvider, settleWalletStore } from "../provider.js";
+import { createRevokeProvider } from "../provider.js";
 import {
   clearPendingFund,
   clearPendingLogin,
@@ -194,7 +194,7 @@ export async function logoutHandler(
   const revoked: WalletState["accessKeys"][number][] = [];
   if (revocable.length > 0) {
     // One provider revokes the keys on every network: each revocation names its key's.
-    const provider = await (dependencies.createProvider ?? createProvider)({
+    const provider = await (dependencies.createProvider ?? createRevokeProvider)({
       network: chainNetwork(storedChainId(state)),
       noBrowser: options.browser === false,
     });
@@ -215,19 +215,7 @@ export async function logoutHandler(
         revoked.push(key);
         continue;
       }
-      // Only the revoked keys go. The SDK drops a key from the store once the wallet app returns,
-      // even when the chain does not show it revoked, so this one is restored, in the store as it
-      // is now so that a login another process made since the command read it survives.
-      await settleWalletStore();
-      await updateWalletState((current) => {
-        const accessKeys = current.accessKeys.filter(
-          (candidate) => !revoked.some(sameKey(candidate)),
-        );
-        return {
-          ...current,
-          accessKeys: accessKeys.some(sameKey(key)) ? accessKeys : [...accessKeys, key],
-        };
-      });
+      await removeRevoked(revoked);
       const command = logoutCommand(flags);
       return context.error(
         commandError(
@@ -237,20 +225,19 @@ export async function logoutHandler(
         ),
       );
     }
-    // The SDK writes the store after each revocation; let those writes land before this one.
-    await settleWalletStore();
   }
 
   // Another process can change the store while the prompt or the wallet app waits. A login or
   // refresh that changes what this logout covers stops it before it writes, so that login is kept
   // and a rerun logs out of the store as it is; a change only to keys on other networks is kept.
   const current = await loadWalletState();
-  if (scopeChanged(current, state, network, revoked)) {
+  if (scopeChanged(current, state, network)) {
+    await removeRevoked(revoked);
     const command = logoutCommand(flags);
     return context.error(
       commandError(
         "E_USAGE",
-        `The wallet changed while logging out of ${where}, so it was not logged out${revoked.length > 0 ? ` (revoked on-chain: ${revoked.map((key) => key.address.toLowerCase()).join(", ")})` : ""}. Run '${command}' again.`,
+        `The wallet changed while logging out of ${where}, so it was not logged out${revoked.length > 0 ? ` (revoked on-chain and removed: ${revoked.map((key) => key.address.toLowerCase()).join(", ")})` : ""}. Run '${command}' again.`,
         command,
         { retryable: true },
       ),
@@ -454,24 +441,29 @@ function keyTarget(key: WalletState["accessKeys"][number]) {
 }
 
 /**
+ * Removes the keys a logout that stops early has revoked, and only them, from the store as it is
+ * now; the provider that revoked them never writes the store.
+ */
+async function removeRevoked(revoked: WalletState["accessKeys"]) {
+  if (revoked.length === 0) return;
+  await updateWalletState((current) => ({
+    ...current,
+    accessKeys: current.accessKeys.filter((candidate) => !revoked.some(sameKey(candidate))),
+  }));
+}
+
+/**
  * Whether `current` differs from `state`, the store the logout read, in what logging out of
  * `network` (every network without one) covers: the wallets, the active wallet, the stored network,
- * or the keys on the networks logged out. The keys it `revoked` do not count, since the SDK drops
- * them from the store.
+ * or the keys on the networks logged out.
  */
-function scopeChanged(
-  current: WalletState,
-  state: WalletState,
-  network: Network | undefined,
-  revoked: WalletState["accessKeys"],
-) {
+function scopeChanged(current: WalletState, state: WalletState, network: Network | undefined) {
   const scope = (store: WalletState) => ({
     accounts: store.accounts.map((account) => account.address.toLowerCase()),
     activeAccount: store.activeAccount ?? 0,
     chainId: storedChainId(store),
     accessKeys: store.accessKeys
       .filter((key) => network === undefined || key.chainId === network.chainId)
-      .filter((key) => !revoked.some(sameKey(key)))
       .map((key) => `${key.chainId}:${key.access.toLowerCase()}:${key.address.toLowerCase()}`)
       .sort(),
   });

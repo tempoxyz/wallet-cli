@@ -22,6 +22,7 @@ import {
   testWallet2,
   usdc,
   useTempHome,
+  approvingDeviceCode,
   walletApp,
   walletState,
   writeWalletState,
@@ -87,10 +88,10 @@ describe("keys revoke", () => {
       status: "revoked" as const,
       kept: [],
     },
-  ])("$name, after the SDK drops it from the store", async ({ status, error, kept }) => {
+  ])("$name", async ({ status, error, kept }) => {
     await useTempHome();
     await writeWalletState(walletState());
-    const app = walletApp({ dropsRevokedKey: true });
+    const app = walletApp();
 
     const result = await revokeHandler(
       await readyWallet(undefined, false),
@@ -216,12 +217,12 @@ describe("keys revoke", () => {
   };
   it.each([
     { name: "removes the revoked key", status: "revoked" as const, kept: [testnetKey] },
-    { name: "keeps a key not revoked", status: "published" as const, kept: [testnetKey, key] },
+    { name: "keeps a key not revoked", status: "published" as const, kept: [key, testnetKey] },
   ])("$name and keeps a login on another network made meanwhile", async ({ status, kept }) => {
     await useTempHome();
     await writeWalletState(walletState());
     const login = walletState({ chainId: testnet.chainId, accessKeys: [key, testnetKey] });
-    const app = walletApp({ dropsRevokedKey: true });
+    const app = walletApp();
 
     const result = await revokeHandler(
       await readyWallet(),
@@ -252,6 +253,31 @@ describe("keys revoke", () => {
     expect(await loadWalletState()).toMatchObject({
       accounts: [{ address: testWallet }],
       accessKeys: kept,
+      chainId: testnet.chainId,
+    });
+  });
+
+  // The SDK saves its store once the wallet app returns, which must not undo a login another
+  // process made while the wallet app waited for approval.
+  it("keeps a login on another network made while the wallet app waits, with the real SDK", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const login = walletState({ chainId: testnet.chainId, accessKeys: [key, testnetKey] });
+    approvingDeviceCode(() => writeWalletState(login));
+
+    const result = await revokeHandler(
+      await readyWallet(),
+      { accessKey: testAccessKey },
+      { yes: true, browser: false },
+      runContext(true),
+      { readKey: keychain("revoked") },
+    );
+    await Storage.filesystem().getItem("store");
+
+    expect(result).toMatchObject({ status: "success", local_key_removed: true });
+    expect(await loadWalletState()).toMatchObject({
+      accounts: [{ address: testWallet }],
+      accessKeys: [testnetKey],
       chainId: testnet.chainId,
     });
   });

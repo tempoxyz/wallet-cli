@@ -17,7 +17,24 @@ export async function createProvider(options: {
   network: Network;
   noBrowser?: boolean | undefined;
 }): Promise<CoreProvider.Provider> {
-  const adapter = cli({
+  return await walletProvider(cliAdapter(options), options.network);
+}
+
+/**
+ * `createProvider` for revoking access keys, whose SDK reads the wallet store but never writes it.
+ * Once the wallet app returns a revocation, the SDK saves its whole store as it loaded it, which
+ * would undo a login another process made while the wallet app waited. The command removes the
+ * revoked key from the store itself.
+ */
+export async function createRevokeProvider(options: {
+  network: Network;
+  noBrowser?: boolean | undefined;
+}): Promise<CoreProvider.Provider> {
+  return await walletProvider(cliAdapter(options), options.network, { saves: false });
+}
+
+function cliAdapter(options: { noBrowser?: boolean | undefined }) {
+  return cli({
     host: deviceCodeUrl(),
     open(url, prompt) {
       const code = prompt.userCode.replace(/^(.{4})(.{4})$/, "$1-$2");
@@ -26,7 +43,6 @@ export async function createProvider(options: {
       if (!options.noBrowser) openExternal(url);
     },
   });
-  return await walletProvider(adapter, options.network);
 }
 
 /**
@@ -39,18 +55,23 @@ type ChainHold = { held: boolean; chainId?: unknown };
 const chainHolds = new WeakMap<object, ChainHold>();
 
 /**
- * A provider on `adapter` that saves to the wallet store through `walletStorage`. It resolves once
- * the provider has loaded the store, since the SDK's `getAccount` throws until then. A store that
- * fails to load, or does not load within the SDK's `hydrationTimeout` (10 seconds by default),
- * fails with a retryable `E_RUNTIME`, so no command runs on an empty store.
+ * A provider on `adapter` that saves to the wallet store through `walletStorage`, or with `saves`
+ * false only reads it. It resolves once the provider has loaded the store, since the SDK's
+ * `getAccount` throws until then. A store that fails to load, or does not load within the SDK's
+ * `hydrationTimeout` (10 seconds by default), fails with a retryable `E_RUNTIME`, so no command
+ * runs on an empty store.
  */
-async function walletProvider(adapter: Adapter.Adapter, network: Network) {
+async function walletProvider(
+  adapter: Adapter.Adapter,
+  network: Network,
+  { saves = true }: { saves?: boolean } = {},
+) {
   const hold: ChainHold = { held: false };
   const provider = CoreProvider.create({
     adapter: releaseOnApproval(adapter, hold),
     // Pull mode is the local-account-friendly MPP path for a CLI.
     mpp: { mode: "pull" },
-    storage: walletStorage(hold),
+    storage: saves ? walletStorage(hold) : readOnlyStorage(),
     testnet: network.name === "testnet",
     transports: walletTransports(),
   });
@@ -99,6 +120,11 @@ function walletStorage(hold: ChainHold): ReturnType<typeof Storage.filesystem> {
       });
     },
   };
+}
+
+/** `Storage.filesystem()` without its writes. */
+function readOnlyStorage(): ReturnType<typeof Storage.filesystem> {
+  return { ...Storage.filesystem(), setItem() {}, removeItem() {} };
 }
 
 /**

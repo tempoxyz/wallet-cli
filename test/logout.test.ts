@@ -21,6 +21,7 @@ import {
 } from "../src/wallet/store.js";
 import { cliBundle } from "./cli-bundle.js";
 import {
+  approvingDeviceCode,
   keychain,
   runContext,
   testAccessKey,
@@ -778,7 +779,7 @@ describe("logout --revoke", () => {
   ])("removes $name, revoking only what the chain shows published", async (scenario) => {
     const { state, options, statuses, revoked } = scenario;
     await setup(state);
-    const app = walletApp({ dropsRevokedKey: true });
+    const app = walletApp();
     const readKey = keychain(...statuses);
     const context = runContext(true);
 
@@ -812,7 +813,7 @@ describe("logout --revoke", () => {
 
   it("keeps everything when the chain cannot be read for an expired key", async () => {
     await setup(walletState({ accessKeys: [{ ...key2, expiry: 1 }] }));
-    const app = walletApp({ dropsRevokedKey: true });
+    const app = walletApp();
     const readKey = vi.fn(async () => {
       throw new Error("Unable to read access key on-chain.");
     });
@@ -889,7 +890,7 @@ describe("logout --revoke", () => {
     async ({ state = walletState(), statuses, request, code, exitCode, message, kept }) => {
       await setup(state);
       await savePendingLogin(pendingLogin("mainnet"));
-      const app = walletApp({ dropsRevokedKey: true });
+      const app = walletApp();
       if (request) app.request.mockImplementation(request);
       const readKey = keychain(...statuses);
 
@@ -1032,7 +1033,7 @@ describe("logout --revoke", () => {
 
   it("keeps the key and the wallet when a key on another network is not revoked", async () => {
     await setup(bothNetworks);
-    const app = walletApp({ dropsRevokedKey: true });
+    const app = walletApp();
     const command = "tempo wallet logout --revoke --yes --network testnet";
 
     const output = await logoutHandler(
@@ -1054,8 +1055,7 @@ describe("logout --revoke", () => {
     });
   });
 
-  // Another process changes the store while a logout of mainnet waits at its prompt. The SDK
-  // drops the key the logout revokes from the store.
+  // Another process changes the store while a logout of mainnet waits at its prompt.
   it.each([
     {
       name: "a refresh on mainnet",
@@ -1071,7 +1071,7 @@ describe("logout --revoke", () => {
     },
   ])("stops without writing after $name made meanwhile", async ({ before, changed, after }) => {
     await setup(before);
-    const app = walletApp({ dropsRevokedKey: true });
+    const app = walletApp();
     const command = "tempo wallet logout --revoke --network mainnet";
 
     const output = await logoutHandler({ network: "mainnet", revoke: true }, runContext(false), {
@@ -1085,7 +1085,7 @@ describe("logout --revoke", () => {
 
     expect(output).toEqual({
       code: "E_USAGE",
-      message: `The wallet changed while logging out of mainnet, so it was not logged out (revoked on-chain: ${testAccessKey}). Run '${command}' again.`,
+      message: `The wallet changed while logging out of mainnet, so it was not logged out (revoked on-chain and removed: ${testAccessKey}). Run '${command}' again.`,
       exitCode: 2,
       retryable: true,
       cta: { commands: [{ command }] },
@@ -1096,10 +1096,37 @@ describe("logout --revoke", () => {
     });
   });
 
+  // The SDK saves its store once the wallet app returns, which must not hide a login another
+  // process made while the wallet app waited for approval.
+  it("stops after a login on another network made while the wallet app waits, with the real SDK", async () => {
+    await setup(walletState());
+    const login = walletState({ chainId: testnet.chainId, accessKeys: [key, testnetKey] });
+    approvingDeviceCode(() => writeWalletState(login));
+    const command = "tempo wallet logout --revoke --yes --no-browser --network mainnet";
+
+    const output = await logoutHandler(
+      { network: "mainnet", revoke: true, yes: true, browser: false },
+      runContext(true),
+      { readKey: keychain("revoked") },
+    );
+    await Storage.filesystem().getItem("store");
+
+    expect(output).toMatchObject({
+      code: "E_USAGE",
+      retryable: true,
+      cta: { commands: [{ command }] },
+    });
+    expect(await loadWalletState()).toMatchObject({
+      accounts: [{ address: testWallet }],
+      accessKeys: [testnetKey],
+      chainId: testnet.chainId,
+    });
+  });
+
   it("logs out after a change only to keys on another network made meanwhile", async () => {
     await setup(bothNetworks);
     const changed = walletState({ accessKeys: [key, testnetKey, otherWalletKey] });
-    const app = walletApp({ dropsRevokedKey: true });
+    const app = walletApp();
 
     const output = await logoutHandler({ network: "mainnet", revoke: true }, runContext(false), {
       confirm: async () => {
