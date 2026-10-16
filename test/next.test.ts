@@ -23,8 +23,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
   createProvider: vi.fn(async () => ({ request: mocks.request })),
 }));
 
-import { updateAccessKeyHandler } from "../src/commands/keys.js";
-import { revokeHandler } from "../src/commands/revoke.js";
+import { revokeHandler, updateAccessKeyHandler } from "../src/commands/keys.js";
 import { runFundingFlow } from "../src/commands/fund.js";
 import { loginHandler } from "../src/commands/login.js";
 import { closeSessions, dryRunCloseSessions } from "../src/commands/sessions/close.js";
@@ -249,7 +248,7 @@ const continuations: {
     ],
   },
   {
-    name: "revoke --dry-run reruns with --yes",
+    name: "keys revoke --dry-run reruns with --yes",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return revokeHandler(
@@ -259,7 +258,7 @@ const continuations: {
         runContext(),
       );
     },
-    argv: ["wallet", "revoke", testAccessKey.toLowerCase(), "--yes"],
+    argv: ["wallet", "keys", "revoke", testAccessKey.toLowerCase(), "--yes"],
   },
   {
     name: "keys update confirms the new limit with keys list",

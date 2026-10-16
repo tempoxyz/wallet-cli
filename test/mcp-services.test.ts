@@ -29,6 +29,7 @@ const toolHints = [
   ["fund", false, false, false, true],
   ["fund_status", false, false, true, true],
   ["keys_list", true, false, true, true],
+  ["keys_revoke", false, true, true, true],
   ["keys_update", false, true, false, true],
   ["login", false, true, false, true],
   ["login_status", false, true, true, true],
@@ -158,6 +159,7 @@ describe("MCP tools", () => {
         "fund",
         "fund_status",
         "keys_list",
+        "keys_revoke",
         "keys_update",
         "login",
         "login_status",
@@ -166,6 +168,38 @@ describe("MCP tools", () => {
     );
     expect(names).not.toContain("keys");
     expect(names).not.toContain("sessions");
+  });
+
+  // `revoke` is the deprecated name of `keys_revoke`, kept for existing clients.
+  it("exposes keys_revoke and its deprecated revoke alias with the same schemas", async () => {
+    const response = await mcpRequest<{
+      tools: { name: string; description: string; inputSchema: unknown; outputSchema: unknown }[];
+    }>("tools/list", {});
+
+    expect(response.error).toBeUndefined();
+    const tool = (name: string) => response.result.tools.find((item) => item.name === name);
+    expect(tool("keys_revoke")?.description).toBe("Revoke an access key");
+    expect(tool("revoke")?.description).toBe("Deprecated: use 'keys revoke'");
+    expect(tool("revoke")?.inputSchema).toEqual(tool("keys_revoke")?.inputSchema);
+    expect(tool("revoke")?.outputSchema).toEqual(tool("keys_revoke")?.outputSchema);
+  });
+
+  it("returns the same keys_revoke dry run from the revoke alias", async () => {
+    await writeWalletState(walletState());
+    const args = { accessKey: testAccessKey, "dry-run": true, network: "mainnet" };
+
+    const [alias, command] = await Promise.all(
+      ["revoke", "keys_revoke"].map((name) => mcpCall({ name, arguments: args })),
+    );
+
+    expect(alias!.result.isError).not.toBe(true);
+    expect(alias!.result).toEqual(command!.result);
+    expect(JSON.parse(firstToolText(alias!))).toMatchObject({
+      status: "dry_run",
+      _next: {
+        command: `tempo wallet keys revoke ${testAccessKey.toLowerCase()} --yes --network mainnet`,
+      },
+    });
   });
 
   it("annotates every tool with its read, destructive, idempotent, and network hints", async () => {
@@ -193,11 +227,11 @@ describe("MCP tools", () => {
       arguments: { amount: "1", tokenIn: "USDC.e", tokenOut: "pathUSD" },
       message: "Swap not submitted: review the quote with --dry-run, then pass --yes",
     },
-    {
-      name: "revoke",
+    ...["keys_revoke", "revoke"].map((name) => ({
+      name,
       arguments: { accessKey: testAccessKey },
       message: "Revocation cannot be undone, so it needs confirmation.",
-    },
+    })),
     {
       name: "sessions_close",
       arguments: { url: `0x${"a".repeat(64)}` },

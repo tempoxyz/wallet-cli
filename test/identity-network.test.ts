@@ -28,9 +28,8 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 }));
 
 import { doctorHandler } from "../src/commands/doctor.js";
-import { keysHandler, updateAccessKeyHandler } from "../src/commands/keys.js";
+import { keysHandler, revokeHandler, updateAccessKeyHandler } from "../src/commands/keys.js";
 import { refreshHandler } from "../src/commands/refresh.js";
-import { revokeHandler } from "../src/commands/revoke.js";
 import { whoamiHandler } from "../src/commands/whoami.js";
 import { loginHandler } from "../src/commands/login.js";
 import { listSessions } from "../src/commands/sessions/list.js";
@@ -325,7 +324,7 @@ it.each(loggedOutCommands)("$command defaults to mainnet when logged out", async
 
 const keyManagementCommands = [
   {
-    command: "revoke --dry-run",
+    command: "keys revoke --dry-run",
     run: async (network?: string) =>
       revokeHandler(
         await readyWallet(network),
@@ -391,7 +390,7 @@ it.each(chainlessSelections.filter(({ accepted }) => accepted))(
   async ({ env, flag, run }) => {
     await useTempHome();
     vi.stubEnv("TEMPO_WALLET_NETWORK", env);
-    // The mainnet key has the address `revoke` names.
+    // The mainnet key has the address `keys revoke` names.
     await writeStoreWithoutChain([{ ...walletState().accessKeys[0]!, address: testAccessKey2 }]);
 
     expect(await run(flag)).toMatchObject(mainnet);

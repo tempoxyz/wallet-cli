@@ -7,11 +7,10 @@ import { Parser } from "incur";
 import { describe, expect, it } from "vitest";
 
 import { fundOptions } from "../src/schemas/fund.js";
-import { updateAccessKeyOptions } from "../src/schemas/keys.js";
+import { revokeOptions, updateAccessKeyOptions } from "../src/schemas/keys.js";
 import { loginOptions } from "../src/schemas/login.js";
 import { logoutOptions } from "../src/schemas/logout.js";
 import { refreshOptions } from "../src/schemas/refresh.js";
-import { revokeOptions } from "../src/schemas/revoke.js";
 import { appUrl } from "../src/shared/network.js";
 import { cliBundle } from "./cli-bundle.js";
 import { useTempHome } from "./helpers.js";
@@ -214,6 +213,7 @@ describe("generated CLI metadata", () => {
     { command: ["transfer"] },
     { command: ["revoke"] },
     { command: ["keys", "update"] },
+    { command: ["keys", "revoke"] },
     { command: ["login"] },
     { command: ["sessions", "close"] },
     { command: ["logout"] },
@@ -345,7 +345,7 @@ describe("generated CLI metadata", () => {
     expect(services?.args).toBeUndefined();
 
     const keys = manifest.subcommands.find((command) => command.name === "keys");
-    expect(keys?.subcommands?.map((command) => command.name)).toEqual(["list", "update"]);
+    expect(keys?.subcommands?.map((command) => command.name)).toEqual(["list", "update", "revoke"]);
     expect(manifest.subcommands.some((command) => command.name === "update-access-key")).toBe(
       false,
     );
@@ -409,6 +409,26 @@ describe("generated CLI metadata", () => {
     expect(help).toContain("Deprecated: use 'doctor'");
   });
 
+  it("documents keys revoke and its deprecated revoke alias", async () => {
+    type Command = { name: string; about: string; subcommands?: Command[] | undefined };
+    const manifest = JSON.parse(await walletCli(["--describe"])) as Command;
+    const keys = manifest.subcommands?.find((command) => command.name === "keys");
+    const revoke = manifest.subcommands?.find((command) => command.name === "revoke");
+    expect(keys?.subcommands?.find((command) => command.name === "revoke")?.about).toBe(
+      "Revoke an access key",
+    );
+    expect(revoke?.about).toBe("Deprecated: use 'keys revoke'");
+
+    expect(await walletCli(["--help"])).toMatch(/revoke\s+Deprecated: use 'keys revoke'/);
+    expect(await walletCli(["keys", "--help"])).toMatch(/revoke\s+Revoke an access key/);
+    // The alias takes the same arguments and returns the same output.
+    const [alias, command] = await Promise.all([
+      walletCli(["revoke", "--schema", "--format", "json"]),
+      walletCli(["keys", "revoke", "--schema", "--format", "json"]),
+    ]);
+    expect(JSON.parse(alias)).toEqual(JSON.parse(command));
+  });
+
   it("returns side-effect-free schema for built-in integration commands", async () => {
     const mcpAdd = JSON.parse(await walletCli(["mcp", "add", "--schema", "--format", "json"])) as {
       options: { properties: { agent: { description: string } } };
@@ -435,7 +455,7 @@ describe("generated CLI metadata", () => {
     { command: "refresh", options: refreshOptions, argv: [] },
     { command: "fund", options: fundOptions, argv: [] },
     { command: "keys update", options: updateAccessKeyOptions, argv: ["--limit", "250"] },
-    { command: "revoke", options: revokeOptions, argv: ["--yes"] },
+    { command: "keys revoke", options: revokeOptions, argv: ["--yes"] },
     { command: "logout", options: logoutOptions, argv: ["--revoke"] },
   ])("accepts --no-browser for $command", ({ options, argv }) => {
     expect(Parser.parse(argv, { options }).options).toMatchObject({ browser: true });
@@ -447,6 +467,7 @@ describe("generated CLI metadata", () => {
   it.each([
     { command: ["refresh"], flags: ["--no-browser"] },
     { command: ["keys", "update"], flags: ["--no-browser"] },
+    { command: ["keys", "revoke"], flags: ["--dry-run", "--yes", "--no-browser"] },
     { command: ["revoke"], flags: ["--dry-run", "--yes", "--no-browser"] },
     { command: ["logout"], flags: ["--revoke", "--yes", "--no-browser"] },
     { command: ["sessions", "close"], flags: ["--dry-run", "--yes"] },

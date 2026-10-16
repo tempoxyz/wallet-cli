@@ -235,7 +235,8 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 - `address`: Show the wallet address. Options: `--qr`.
 - `keys list`: List keys and their spending limits.
 - `keys update [accessKey]`: Update an access key spending limit. Options: `--limit`, `--token`, `--no-browser`.
-- `revoke <accessKey>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
+- `keys revoke <accessKey>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
+- `revoke <accessKey>`: Deprecated: use 'keys revoke'. Options: `--dry-run`, `--yes`, `--no-browser`.
 - `transfer [amount] [token] [to]`: Transfer tokens to an address. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--credits`, `--max-spend`, `--amount-cents`, `--to`, `--data`, `--value`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
 - `swap <amount> <tokenIn> <tokenOut>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
 - `tx status <txHash>`: Show a transaction's status on chain.
@@ -276,6 +277,7 @@ Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--js
 | `fund`            | false          | false             | false            | true            |
 | `fund_status`     | false          | false             | true             | true            |
 | `keys_list`       | true           | false             | true             | true            |
+| `keys_revoke`     | false          | true              | true             | true            |
 | `keys_update`     | false          | true              | false            | true            |
 | `login`           | false          | true              | false            | true            |
 | `login_status`    | false          | true              | true             | true            |
