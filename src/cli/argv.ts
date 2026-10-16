@@ -170,14 +170,18 @@ function normalizeServicesOutputAliases(args: readonly string[]) {
  */
 export type RetiredFlag = {
   flag: `--${string}`;
-  /** Whether the flag takes a value, which is stripped with it. */
+  /**
+   * Whether the flag takes a value, which is stripped with it. Otherwise it is a boolean: an
+   * explicit false (`--flag=false`, `--flag false`, or `--no-flag`) selects nothing, so it is
+   * stripped without an error.
+   */
   takesValue?: boolean | undefined;
   /**
    * The error's message and, when it can be built from the run's argv, the command to run
-   * instead, from its command name on. `args` are the tokens after the command name without the
-   * flag, and `value` is the flag's value.
+   * instead, from its command name on. `given` are the tokens after the command name as given,
+   * `args` the same without the flag, and `value` is the flag's value.
    */
-  replacement: (retired: { args: string[]; value: string | undefined }) => {
+  replacement: (retired: { given: string[]; args: string[]; value: string | undefined }) => {
     message: string;
     argv?: string[] | undefined;
   };
@@ -185,7 +189,7 @@ export type RetiredFlag = {
 
 /**
  * Strips the `retiredFlags` of the command `args` names, each with its value, before incur parses
- * `args`. `error` is the usage error for the first one, which the CLI returns from middleware
+ * `args`. `error` is the usage error for the first one set, which the CLI returns from middleware
  * before the command parses its options or runs, so nothing is sent. Its `cta` is the replacement
  * command, keeping the tokens before the command name. Stops at `--`.
  */
@@ -199,6 +203,7 @@ export function retireFlags(args: readonly string[], commands: readonly WalletCo
   const before = args.slice(0, index);
   const after = args.slice(index + 1);
   const rest: string[] = [];
+  let stripped = false;
   let found: { flag: RetiredFlag; value: string | undefined } | undefined;
   for (let i = 0; i < after.length; i++) {
     const arg = after[i]!;
@@ -206,18 +211,34 @@ export function retireFlags(args: readonly string[], commands: readonly WalletCo
       rest.push(...after.slice(i));
       break;
     }
-    const flag = retired.find((entry) => arg === entry.flag || arg.startsWith(`${entry.flag}=`));
+    const flag = retired.find(
+      (entry) =>
+        arg === entry.flag ||
+        arg.startsWith(`${entry.flag}=`) ||
+        (!entry.takesValue && arg === `--no-${entry.flag.slice(2)}`),
+    );
     if (!flag) {
       rest.push(arg);
       continue;
     }
-    const bound = arg === flag.flag ? undefined : arg.slice(flag.flag.length + 1);
-    const value = bound ?? (flag.takesValue ? after[++i] : undefined);
-    found ??= { flag, value };
+    stripped = true;
+    const bound = arg.startsWith(`${flag.flag}=`) ? arg.slice(flag.flag.length + 1) : undefined;
+    if (flag.takesValue) {
+      const value = bound ?? after[++i];
+      found ??= { flag, value };
+      continue;
+    }
+    const literal = bound === undefined && isBooleanLiteral(after[i + 1]) ? after[++i] : bound;
+    if (arg !== `--no-${flag.flag.slice(2)}` && literal !== "false")
+      found ??= { flag, value: literal };
   }
-  if (!found) return { args: [...args] };
+  if (!found) return { args: stripped ? [...before, name!, ...rest] : [...args] };
 
-  const { message, argv } = found.flag.replacement({ args: rest, value: found.value });
+  const { message, argv } = found.flag.replacement({
+    given: [...after],
+    args: rest,
+    value: found.value,
+  });
   const { exitCode, retryable } = errorCodes.E_USAGE;
   return {
     args: [...before, name!, ...rest],

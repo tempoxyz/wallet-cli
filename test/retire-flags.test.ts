@@ -21,8 +21,12 @@ const dropped: RetiredFlag = {
   flag: "--gone",
   replacement: () => ({ message: "--gone was removed" }),
 };
+const moved: RetiredFlag = {
+  flag: "--mode",
+  replacement: ({ given }) => ({ message: "--mode moved to other", argv: ["other", ...given] }),
+};
 const demo: WalletCommand[] = [
-  { command: Cli.create("demo", { run: () => ({}) }), retiredFlags: [renamed, dropped] },
+  { command: Cli.create("demo", { run: () => ({}) }), retiredFlags: [renamed, dropped, moved] },
   { command: Cli.create("other", { run: () => ({}) }) },
 ];
 const usage = { code: "E_USAGE", exitCode: 2, retryable: false };
@@ -98,6 +102,40 @@ describe("retireFlags", () => {
     expect(retireFlags(args, demo)).toEqual({ args: stripped, error: { ...usage, ...error } });
   });
 
+  it.each([
+    ["demo", "--gone=false", "a"],
+    ["demo", "--gone", "false", "a"],
+    ["demo", "--no-gone", "a"],
+    ["demo", "a", "--no-mode", "--mode=false"],
+  ])("strips an explicit false in %j without an error", (...args) => {
+    expect(retireFlags(args, demo)).toEqual({ args: ["demo", "a"] });
+  });
+
+  it.each([
+    ["demo", "--gone=true", "a"],
+    ["demo", "--gone", "true", "a"],
+  ])("refuses an explicit true in %j", (...args) => {
+    expect(retireFlags(args, demo)).toEqual({
+      args: ["demo", "a"],
+      error: { ...usage, message: "--gone was removed" },
+    });
+  });
+
+  it.each([
+    ["a", "--mode", "--yes"],
+    ["a", "--mode=true", "--yes"],
+    ["a", "--mode", "true", "--yes"],
+  ])("keeps the flags of %j as given in the cta", (...given) => {
+    expect(retireFlags(["demo", ...given], demo)).toEqual({
+      args: ["demo", "a", "--yes"],
+      error: {
+        ...usage,
+        message: "--mode moved to other",
+        ...cta(`tempo wallet other ${given.join(" ")}`),
+      },
+    });
+  });
+
   it("leaves argv unchanged during shell completion", () => {
     vi.stubEnv("COMPLETE", "zsh");
     expect(retireFlags(["demo", "--gone"], demo)).toEqual({ args: ["demo", "--gone"] });
@@ -118,6 +156,19 @@ describe("retireFlags", () => {
     expect(retireFlags(["send", flag, "--dry-run", "-n", "testnet"], commands)).toEqual({
       args: ["send", "--dry-run", "-n", "testnet"],
       error: { ...usage, message, ...cta(`tempo wallet transfer ${flag} --dry-run -n testnet`) },
+    });
+  });
+
+  it.each([
+    ["--mach=false"],
+    ["--mach", "false"],
+    ["--no-mach"],
+    ["--credits=false"],
+    ["--credits", "false"],
+    ["--no-credits"],
+  ])("runs send %j as a token send", (...flag) => {
+    expect(retireFlags(["send", "1", "USDC.e", "0xabc", ...flag, "--yes"], commands)).toEqual({
+      args: ["send", "1", "USDC.e", "0xabc", "--yes"],
     });
   });
 

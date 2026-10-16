@@ -59,13 +59,16 @@ export const sendCommand = {
 
 export const sendAnnotations = { ...destructive, idempotentHint: false, openWorldHint: true };
 
-/** `send` takes no `transfer` mode: `--mach` and `--credits` pay with `transfer` instead. */
+/**
+ * `send` takes no `transfer` mode: `--mach` and `--credits` pay with `transfer` instead, which the
+ * `cta` runs with the arguments as given. An explicit false selects no mode, so `send` runs.
+ */
 function transferMode(flag: "--mach" | "--credits", purpose: string): RetiredFlag {
   return {
     flag,
-    replacement: ({ args }) => ({
+    replacement: ({ given }) => ({
       message: `'send' sends tokens only; to ${purpose}, use 'tempo wallet transfer ${flag}'.`,
-      argv: ["transfer", flag, ...args],
+      argv: ["transfer", ...given],
     }),
   };
 }

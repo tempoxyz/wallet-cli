@@ -1163,37 +1163,44 @@ describe("tempo wallet send and transfer", () => {
   const creditsMessage =
     "'send' sends tokens only; to spend legacy MPP Credits, use 'tempo wallet transfer --credits'.";
 
+  // The `cta` runs the arguments as given under `transfer`; an explicit false selects no mode, so
+  // the run is a token send, which without --yes sends nothing.
   it.each([
     {
-      flag: "--mach",
       argv: ["--mach", "--max-spend", "1", "--mpp-challenge", machChallenge],
       message: machMessage,
     },
-    {
-      flag: "--credits",
-      argv: ["--amount-cents", "100", "--to", recipient, "--credits"],
-      message: creditsMessage,
-    },
-    { flag: "--mach=true", argv: [...tokens, "--mach=true", "--yes"], message: machMessage },
-  ])("send $flag names the transfer command and sends nothing", async ({ flag, argv, message }) => {
+    { argv: ["--amount-cents", "100", "--to", recipient, "--credits"], message: creditsMessage },
+    { argv: [...tokens, "--mach=true", "--yes"], message: machMessage },
+    { argv: [...tokens, "--mach", "true", "--yes"], message: machMessage },
+    { argv: [...tokens, "--credits=true"], message: creditsMessage },
+    { argv: [...tokens, "--mach=false"], message: undefined },
+    { argv: [...tokens, "--mach", "false"], message: undefined },
+    { argv: [...tokens, "--credits=false"], message: undefined },
+    { argv: [...tokens, "--credits", "false"], message: undefined },
+    { argv: [...tokens, "--no-mach"], message: undefined },
+    { argv: [...tokens, "--no-credits"], message: undefined },
+  ])("send $argv sends nothing", async ({ argv, message }) => {
     const home = await useTempHome();
     await writeWalletState(walletState());
     requests.length = 0;
 
     const result = await walletCli(["send", ...argv], { home, terminal: undefined, input: "" });
 
-    const mode = flag.replace(/=.*/, "");
-    const rest = argv.filter((arg) => arg !== flag);
-    const command = ["tempo", "wallet", "transfer", mode, ...rest, "--format", "json"]
+    const command = ["tempo", "wallet", "transfer", ...argv, "--format", "json"]
       .map(shellQuote)
       .join(" ");
     expect(result.code).toBe(2);
-    expect(JSON.parse(result.stdout)).toEqual({
-      code: "E_USAGE",
-      message,
-      retryable: false,
-      cta: { description: "Suggested command:", commands: [{ command }] },
-    });
+    expect(JSON.parse(result.stdout)).toEqual(
+      message
+        ? {
+            code: "E_USAGE",
+            message,
+            retryable: false,
+            cta: { description: "Suggested command:", commands: [{ command }] },
+          }
+        : { code: "E_USAGE", message: notReviewed, retryable: false },
+    );
     expect(requests).toEqual([]);
   });
 
