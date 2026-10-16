@@ -419,6 +419,17 @@ describe("service directory", () => {
         message,
       });
     });
+
+    // The CLI drops a query's leading dashes so it is never read as a flag; see normalizeServicesArgs.
+    it.each(["--language", "-language", "--translate service", "--", "-"])(
+      "matches %j as it does without its leading dashes",
+      async (search) => {
+        mockFetchOk(searchDirectory);
+        expect(await searchServices({ query: search })).toEqual(
+          await searchServices({ query: search.replace(/^-+/, "") }),
+        );
+      },
+    );
   });
 
   it.each([

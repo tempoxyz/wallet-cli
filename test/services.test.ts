@@ -30,6 +30,7 @@ describe("normalizeServicesArgs", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     warn.mockRestore();
     if (isTTY) Object.defineProperty(process.stdout, "isTTY", isTTY);
     else delete (process.stdout as { isTTY?: boolean }).isTTY;
@@ -39,96 +40,175 @@ describe("normalizeServicesArgs", () => {
     expect([...commandMap(services.command!).keys()]).toEqual(servicesSubcommands);
   });
 
-  it.each([
-    // Current forms are left as they are, with a subcommand moved to just after `services`.
-    { args: ["services"], expected: ["services"] },
-    { args: ["services", "--refresh"], expected: ["services", "--refresh"] },
-    { args: ["services", "list"], expected: ["services", "list"] },
-    { args: ["services", "search", "ai"], expected: ["services", "search", "ai"] },
-    { args: ["services", "show", "weather"], expected: ["services", "show", "weather"] },
-    { args: ["services", "--refresh", "list"], expected: ["services", "list", "--refresh"] },
-    {
-      args: ["services", "--filter-output", "id"],
-      expected: ["services", "--filter-output", "id"],
-    },
-    { args: ["whoami", "weather"], expected: ["whoami", "weather"] },
-    // Shell completion passes its words after `--`.
-    { args: ["--", "services", "we"], expected: ["--", "services", "we"] },
+  // [argv, what incur gets, the notice on a terminal]; a subcommand comes just after `services`,
+  // then its one value, then the flags.
+  it.each<[string[], string[], string?]>([
+    // Current forms.
+    [["services"], ["services"]],
+    [
+      ["services", "--refresh"],
+      ["services", "--refresh"],
+    ],
+    [
+      ["services", "list"],
+      ["services", "list"],
+    ],
+    [
+      ["services", "search", "ai"],
+      ["services", "search", "ai"],
+    ],
+    [
+      ["services", "show", "weather"],
+      ["services", "show", "weather"],
+    ],
+    [
+      ["services", "--refresh", "list"],
+      ["services", "list", "--refresh"],
+    ],
+    [
+      ["services", "show", "weather", "extra"],
+      ["services", "show", "weather"],
+    ],
+    [
+      ["services", "--filter-output", "id"],
+      ["services", "--filter-output", "id"],
+    ],
+    [
+      ["whoami", "weather"],
+      ["whoami", "weather"],
+    ],
+    // An unquoted query is one query.
+    [
+      ["services", "search", "image", "generation"],
+      ["services", "search", "image generation"],
+    ],
+    [
+      ["services", "search", "image", "-v", "generation"],
+      ["services", "search", "image generation", "-v"],
+    ],
     // A subcommand name wins over an id; `show` reaches services with those ids.
-    { args: ["services", "search"], expected: ["services", "search"] },
-    { args: ["services", "show"], expected: ["services", "show"] },
-    { args: ["services", "show", "list"], expected: ["services", "show", "list"] },
-    { args: ["services", "show", "search"], expected: ["services", "show", "search"] },
+    [
+      ["services", "search"],
+      ["services", "search"],
+    ],
+    [
+      ["services", "show"],
+      ["services", "show"],
+    ],
+    [
+      ["services", "show", "list"],
+      ["services", "show", "list"],
+    ],
+    [
+      ["services", "show", "search"],
+      ["services", "show", "search"],
+    ],
+    // `true` or `false` after a boolean flag is its value, not an id.
+    [["services", "--refresh", "false"], ["services"]],
+    [
+      ["services", "--refresh", "false", "list"],
+      ["services", "list"],
+    ],
+    [
+      ["services", "--refresh", "true", "list"],
+      ["services", "list", "--refresh"],
+    ],
+    [
+      ["services", "show", "-v", "false", "weather"],
+      ["services", "show", "weather"],
+    ],
+    [["services", "--refresh", "false", "weather"], ["services", "show", "weather"], showNotice],
+    [
+      ["services", "--refresh", "true", "weather"],
+      ["services", "show", "weather", "--refresh"],
+      showNotice,
+    ],
+    // Everything after `--` is a positional, and none is passed on as a flag.
+    [
+      ["services", "show", "--", "weather"],
+      ["services", "show", "weather"],
+    ],
+    [
+      ["services", "search", "--", "--mcp"],
+      ["services", "search", "mcp"],
+    ],
+    [["services", "--", "weather"], ["services", "show", "weather"], showNotice],
+    [["services", "--", "edgar-search"], ["services", "show", "edgar-search"], showNotice],
+    [["services", "--", "--mcp"], ["services", "show"], showNotice],
     // `services <id>` is `services show <id>`, including ids incur takes for a subcommand typo.
-    {
-      args: ["services", "weather"],
-      expected: ["services", "show", "weather"],
-      notice: showNotice,
-    },
-    {
-      args: ["services", "edgar-search"],
-      expected: ["services", "show", "edgar-search"],
-      notice: showNotice,
-    },
-    { args: ["services", "aisa"], expected: ["services", "show", "aisa"], notice: showNotice },
-    {
-      args: ["services", "--refresh", "weather"],
-      expected: ["services", "show", "--refresh", "weather"],
-      notice: showNotice,
-    },
-    {
-      args: ["-n", "testnet", "services", "weather"],
-      expected: ["-n", "testnet", "services", "show", "weather"],
-      notice: showNotice,
-    },
+    [["services", "weather"], ["services", "show", "weather"], showNotice],
+    [["services", "edgar-search"], ["services", "show", "edgar-search"], showNotice],
+    [["services", "aisa"], ["services", "show", "aisa"], showNotice],
+    [
+      ["services", "edgar-search", "--help"],
+      ["services", "show", "edgar-search", "--help"],
+      showNotice,
+    ],
+    [
+      ["services", "--refresh", "weather"],
+      ["services", "show", "weather", "--refresh"],
+      showNotice,
+    ],
+    [
+      ["-n", "testnet", "services", "weather"],
+      ["-n", "testnet", "services", "show", "weather"],
+      showNotice,
+    ],
     // An id wins over `--search`, as it did.
-    {
-      args: ["services", "weather", "--search", "ai"],
-      expected: ["services", "show", "weather"],
-      notice: showNotice,
-    },
+    [["services", "weather", "--search", "ai"], ["services", "show", "weather"], showNotice],
+    [["services", "--search", "", "weather"], ["services", "show", "weather"], showNotice],
     // `services [list] --search <query>` is `services search <query>`.
-    {
-      args: ["services", "--search", "ai"],
-      expected: ["services", "search", "ai"],
-      notice: searchNotice,
-    },
-    {
-      args: ["services", "--search=ai"],
-      expected: ["services", "search", "ai"],
-      notice: searchNotice,
-    },
-    {
-      args: ["services", "list", "--search", "image generation", "--refresh"],
-      expected: ["services", "search", "image generation", "--refresh"],
-      notice: searchNotice,
-    },
-    {
-      args: ["services", "--search", "ai", "list"],
-      expected: ["services", "search", "ai"],
-      notice: searchNotice,
-    },
-    {
-      args: ["services", "--search", "old", "--search", "ai"],
-      expected: ["services", "search", "ai"],
-      notice: searchNotice,
-    },
+    [["services", "--search", "ai"], ["services", "search", "ai"], searchNotice],
+    [["services", "--search=ai"], ["services", "search", "ai"], searchNotice],
+    [
+      ["services", "list", "--search", "image generation", "--refresh"],
+      ["services", "search", "image generation", "--refresh"],
+      searchNotice,
+    ],
+    [["services", "--search", "ai", "list"], ["services", "search", "ai"], searchNotice],
+    [["services", "--search", "old", "--search", "ai"], ["services", "search", "ai"], searchNotice],
+    // An empty query still lists everything.
+    [["services", "--search", ""], ["services", "search", ""], searchNotice],
+    [["services", "--search="], ["services", "search", ""], searchNotice],
+    [["services", "--search", "--"], ["services", "search", ""], searchNotice],
+    [["services", "--search=--"], ["services", "search", ""], searchNotice],
+    [
+      ["services", "--search", "", "--refresh"],
+      ["services", "search", "", "--refresh"],
+      searchNotice,
+    ],
+    // A query that looks like a flag is never passed on as one; search ignores dashes.
+    [["services", "--search=--mcp"], ["services", "search", "mcp"], searchNotice],
+    [["services", "--search", "--mcp"], ["services", "search", "mcp"], searchNotice],
+    [["services", "--search=--help"], ["services", "search", "help"], searchNotice],
+    [["services", "--search=-foo"], ["services", "search", "foo"], searchNotice],
+    [["services", "--search", "-foo"], ["services", "search", "foo"], searchNotice],
     // Output aliases become `--format`, and an explicit format is an agent's: no notice.
-    {
-      args: ["services", "-j", "weather"],
-      expected: ["services", "show", "--format", "json", "weather"],
-    },
-    {
-      args: ["services", "weather", "--json"],
-      expected: ["services", "show", "weather", "--json"],
-    },
-    {
-      args: ["services", "--search", "ai", "--format", "toon"],
-      expected: ["services", "search", "ai", "--format", "toon"],
-    },
-  ])("rewrites $args", ({ args, expected, notice }) => {
+    [
+      ["services", "-j", "weather"],
+      ["services", "show", "weather", "--format", "json"],
+    ],
+    [
+      ["services", "weather", "--json"],
+      ["services", "show", "weather", "--json"],
+    ],
+    [
+      ["services", "--search", "ai", "--format", "toon"],
+      ["services", "search", "ai", "--format", "toon"],
+    ],
+  ])("rewrites %j to %j", (args, expected, notice) => {
     expect(normalizeServicesArgs(args)).toEqual(expected);
     expect(warn.mock.calls).toEqual(notice ? [[notice]] : []);
+  });
+
+  it.each([
+    ["--", "services", "we"],
+    ["--", "services", "--search", "fo"],
+    ["--", "services", "--refresh", "false", ""],
+  ])("leaves the completion words %j in place", (...args) => {
+    vi.stubEnv("COMPLETE", "bash");
+    expect(normalizeServicesArgs(args)).toEqual(args);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it.each([false, undefined])("prints no notice when stdout isTTY is %j", (value) => {
@@ -178,12 +258,52 @@ describe("tempo wallet services", () => {
       data: [{ id: "weather" }],
       notice: searchNotice,
     },
+    {
+      command: ["services", "list"],
+      form: ["services", "--search", ""],
+      data: { length: 5 },
+      notice: searchNotice,
+    },
+    {
+      command: ["services", "list"],
+      form: ["services", "--search", "--"],
+      data: { length: 5 },
+      notice: searchNotice,
+    },
+    {
+      command: ["services", "list"],
+      form: ["services", "--search=--"],
+      data: { length: 5 },
+      notice: searchNotice,
+    },
+    {
+      command: ["services", "search", "forecast conditions"],
+      form: ["services", "search", "forecast", "conditions"],
+      data: [{ id: "weather" }],
+    },
+    {
+      command: ["services", "list"],
+      form: ["services", "--refresh", "false", "list"],
+      data: { length: 5 },
+    },
+    {
+      command: ["services", "show", "weather"],
+      form: ["services", "--refresh", "false", "weather"],
+      data: { id: "weather" },
+      notice: showNotice,
+    },
+    {
+      command: ["services", "show", "edgar-search"],
+      form: ["services", "--", "edgar-search"],
+      data: { id: "edgar-search" },
+      notice: showNotice,
+    },
   ])(
     "$form returns what $command does, with any deprecation noted on a terminal only",
     async ({ command, form, data, notice }) => {
       const [commandJson, formJson] = await Promise.all([
-        wallet([...command, "--format", "json"], home),
-        wallet([...form, "--format", "json"], home),
+        wallet(["--format", "json", ...command], home),
+        wallet(["--format", "json", ...form], home),
       ]);
       expect(formJson).toEqual(commandJson);
       expect(commandJson).toMatchObject({ code: 0, stderr: "" });
@@ -224,9 +344,24 @@ describe("tempo wallet services", () => {
     });
   });
 
+  // A query that looks like an entrypoint flag is searched for, never run as `--mcp` or `--help`.
+  it.each([
+    ["services", "--search=--mcp"],
+    ["services", "--search", "--mcp"],
+    ["services", "search", "--", "--mcp"],
+    ["services", "--search=--help"],
+    ["services", "--search=-foo"],
+    ["services", "--search", "-foo"],
+  ])("%j searches for its query", async (...args) => {
+    const result = await wallet(["--format", "json", ...args], home);
+    expect(result).toMatchObject({ code: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual([]);
+  });
+
   it.each([
     ["services", "edgar-search", "--help"],
     ["help", "services", "edgar-search"],
+    ["help", "services", "weather"],
   ])("%j shows the help of services show", async (...args) => {
     const result = await wallet(args, home);
     expect(result.code).toBe(0);
