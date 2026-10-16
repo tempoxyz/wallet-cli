@@ -21,7 +21,12 @@ import { requireWalletChain, withWallet, type Wallet } from "../shared/require-w
 import { canPrompt, confirm as confirmPrompt } from "../shared/process.js";
 import { resolveTokenAddress, tokenMetadata } from "../shared/tokens.js";
 import { createProvider, settleWalletStore } from "../provider.js";
-import { loadWalletState, saveWalletState, type WalletState } from "../wallet/store.js";
+import {
+  loadWalletState,
+  saveWalletState,
+  updateWalletState,
+  type WalletState,
+} from "../wallet/store.js";
 import { accessKeyMatches } from "../wallet/access-key.js";
 import {
   currentKeyOutput,
@@ -385,7 +390,8 @@ export async function revokeHandler(
     accessKeyMatches(candidate, { chainId: selectedChainId, walletAddress }),
   );
   const isRevoked = (candidate: WalletState["accessKeys"][number]) =>
-    walletKeys.includes(candidate) && candidate.address.toLowerCase() === output.access_key;
+    accessKeyMatches(candidate, { chainId: selectedChainId, walletAddress }) &&
+    candidate.address.toLowerCase() === output.access_key;
   const stored = walletKeys.find(isRevoked);
   // A key created on another device is not stored here, but the chain shows whether it belongs
   // to the wallet. A mistyped address is neither stored nor authorized.
@@ -455,22 +461,30 @@ export async function revokeHandler(
   });
   const revoked = await revokeThroughWallet({ provider, readKey, stored, target });
   // The SDK drops the key from the store once the wallet app returns, even when the chain does
-  // not show it revoked; let that write land, then restore the key from the snapshot.
+  // not show it revoked; let that write land. Only the key changes, in the store as it is now, so
+  // a login another process made since the command read it, as while the prompt waited, survives.
   await settleWalletStore();
   if (!revoked) {
-    if (stored) await saveWalletState(state);
+    if (stored)
+      await updateWalletState((current) =>
+        current.accessKeys.some(isRevoked)
+          ? current
+          : { ...current, accessKeys: [...current.accessKeys, stored] },
+      );
     throw networkError(
       `The wallet app returned, but access key ${output.access_key} is not revoked on ${network.name}, so nothing was removed locally. Rerun the command to retry.`,
     );
   }
 
-  const accessKeys = state.accessKeys.filter((candidate) => !isRevoked(candidate));
-  const localKeyRemoved = accessKeys.length !== state.accessKeys.length;
-  if (localKeyRemoved) await saveWalletState({ ...state, accessKeys });
+  if (stored)
+    await updateWalletState((current) => ({
+      ...current,
+      accessKeys: current.accessKeys.filter((candidate) => !isRevoked(candidate)),
+    }));
 
   return {
     ...output,
     status: "success" as const,
-    local_key_removed: localKeyRemoved,
+    local_key_removed: stored !== undefined,
   };
 }

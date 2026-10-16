@@ -207,6 +207,55 @@ describe("keys revoke", () => {
     expect((await loadWalletState()).accessKeys).toEqual([key]);
   });
 
+  // Another process logs the wallet in on testnet while the revoke waits at its prompt.
+  const testnetKey = {
+    ...key,
+    address: testAccessKey2,
+    privateKey: testPrivateKey2,
+    chainId: testnet.chainId,
+  };
+  it.each([
+    { name: "removes the revoked key", status: "revoked" as const, kept: [testnetKey] },
+    { name: "keeps a key not revoked", status: "published" as const, kept: [testnetKey, key] },
+  ])("$name and keeps a login on another network made meanwhile", async ({ status, kept }) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const login = walletState({ chainId: testnet.chainId, accessKeys: [key, testnetKey] });
+    const app = walletApp({ dropsRevokedKey: true });
+
+    const result = await revokeHandler(
+      await readyWallet(),
+      { accessKey: testAccessKey },
+      {},
+      runContext(false),
+      {
+        confirm: async () => {
+          await writeWalletState(login);
+          return true;
+        },
+        createProvider: app.createProvider,
+        readKey: keychain(status),
+      },
+    ).catch((value: unknown) => value);
+
+    expect(result).toMatchObject(
+      status === "revoked"
+        ? { status: "success", local_key_removed: true }
+        : { code: "E_NETWORK", exitCode: 3 },
+    );
+    expect(app.request).toHaveBeenCalledExactlyOnceWith({
+      method: "wallet_revokeAccessKey",
+      params: [
+        { address: testWallet, accessKeyAddress: testAccessKey, chainId: toHex(mainnet.chainId) },
+      ],
+    });
+    expect(await loadWalletState()).toMatchObject({
+      accounts: [{ address: testWallet }],
+      accessKeys: kept,
+      chainId: testnet.chainId,
+    });
+  });
+
   it.each([mainnet, testnet])(
     "the wallet SDK provider created for $name targets the logged-in chain",
     async (network) => {

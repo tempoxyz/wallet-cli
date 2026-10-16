@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import { Cli } from "incur";
 import type { Address } from "viem";
 
@@ -32,7 +33,7 @@ import {
   loadPendingFund,
   loadPendingLogin,
   loadWalletState,
-  saveWalletState,
+  updateWalletState,
   type WalletState,
 } from "../wallet/store.js";
 import { localAccessKeyStatus } from "../wallet/access-key.js";
@@ -150,32 +151,6 @@ export async function logoutHandler(
       (await readKey(keyTarget(key))).status === "published"
     )
       revocable.push(key);
-  // `wallet_revokeAccessKey` takes no chain, so the wallet app revokes on the stored chain only.
-  const walletChainId = storedChainId(state);
-  const elsewhere = revocable.find((key) => key.chainId !== walletChainId);
-  if (elsewhere) {
-    const walletNetwork = chainNetwork(walletChainId);
-    const keyNetwork = chainNetwork(elsewhere.chainId);
-    const reason = `The wallet app revokes access keys only on the network the wallet is logged in on (${walletNetwork.name}), not on ${keyNetwork.name}.`;
-    if (revocable.some((key) => key.chainId === walletChainId)) {
-      const command = logoutCommand({ ...flags, network: walletNetwork });
-      return context.error(
-        commandError(
-          "E_USAGE",
-          `${reason} Run '${command}' to revoke the ${walletNetwork.name} keys first; the wallet then stays logged in on ${keyNetwork.name}, where '${logoutCommand({ ...flags, network: keyNetwork })}' revokes the rest.`,
-          command,
-        ),
-      );
-    }
-    const command = continuationCommand(["wallet", "login"], keyNetwork);
-    return context.error(
-      commandError(
-        "E_USAGE",
-        `${reason} Run '${command}', then rerun '${logoutCommand(flags)}', or rerun without --revoke to remove the keys without revoking them.`,
-        command,
-      ),
-    );
-  }
 
   const next = loggedOutState(state, network);
   const disconnected = next.accounts.length === 0;
@@ -218,9 +193,9 @@ export async function logoutHandler(
 
   const revoked: WalletState["accessKeys"][number][] = [];
   if (revocable.length > 0) {
-    const walletNetwork = chainNetwork(walletChainId);
+    // One provider revokes the keys on every network: each revocation names its key's.
     const provider = await (dependencies.createProvider ?? createProvider)({
-      network: walletNetwork,
+      network: chainNetwork(storedChainId(state)),
       noBrowser: options.browser === false,
     });
     for (const key of revocable) {
@@ -241,17 +216,23 @@ export async function logoutHandler(
         continue;
       }
       // Only the revoked keys go. The SDK drops a key from the store once the wallet app returns,
-      // even when the chain does not show it revoked, so the rest are restored from the snapshot.
+      // even when the chain does not show it revoked, so this one is restored, in the store as it
+      // is now so that a login another process made since the command read it survives.
       await settleWalletStore();
-      await saveWalletState({
-        ...state,
-        accessKeys: state.accessKeys.filter((candidate) => !revoked.some(sameKey(candidate))),
+      await updateWalletState((current) => {
+        const accessKeys = current.accessKeys.filter(
+          (candidate) => !revoked.some(sameKey(candidate)),
+        );
+        return {
+          ...current,
+          accessKeys: accessKeys.some(sameKey(key)) ? accessKeys : [...accessKeys, key],
+        };
       });
       const command = logoutCommand(flags);
       return context.error(
         commandError(
           walletErrorCode(failure),
-          `Not logged out: access key ${key.address.toLowerCase()} on ${walletNetwork.name} was not revoked, so it stays on this machine with the wallet${revoked.length > 0 ? ` (revoked and removed: ${revoked.map((candidate) => candidate.address.toLowerCase()).join(", ")})` : ""}. ${failure instanceof Error ? failure.message : String(failure)} Rerun '${command}' to retry, or rerun without --revoke to remove the keys without revoking them.`,
+          `Not logged out: access key ${key.address.toLowerCase()} on ${chainNetwork(key.chainId).name} was not revoked, so it stays on this machine with the wallet${revoked.length > 0 ? ` (revoked and removed: ${revoked.map((candidate) => candidate.address.toLowerCase()).join(", ")})` : ""}. ${failure instanceof Error ? failure.message : String(failure)} Rerun '${command}' to retry, or rerun without --revoke to remove the keys without revoking them.`,
           command,
         ),
       );
@@ -279,7 +260,13 @@ export async function logoutHandler(
           ]),
     ...(unchecked ? [unchecked] : []),
   ].join("; ");
-  await saveWalletState(next);
+  // A login another process made since the command read the store, as while the prompt waited,
+  // survives: the logout removes the keys it covered from the store as it is now, and moves or
+  // removes the wallet only while the store still has the wallet and network it read.
+  await updateWalletState((current) => ({
+    ...(sameLogin(current, state) ? next : current),
+    accessKeys: current.accessKeys.filter((candidate) => !keys.some(sameKey(candidate))),
+  }));
   // The logged-in wallet's pending funding must not hand its checkout to whoever logs in next.
   await clearLoggedOutPendingFund(network);
 
@@ -453,6 +440,16 @@ function keyTarget(key: WalletState["accessKeys"][number]) {
     walletAddress: key.access as Address,
     accessKeyAddress: key.address as Address,
   };
+}
+
+/** Whether two stores have the same wallets, active wallet, and network. */
+function sameLogin(a: WalletState, b: WalletState) {
+  const login = (state: WalletState) => ({
+    accounts: state.accounts.map((account) => account.address.toLowerCase()),
+    activeAccount: state.activeAccount ?? 0,
+    chainId: storedChainId(state),
+  });
+  return isDeepStrictEqual(login(a), login(b));
 }
 
 function sameKey(key: WalletState["accessKeys"][number]) {

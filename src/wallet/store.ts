@@ -194,6 +194,15 @@ export async function saveWalletState(state: WalletState) {
   );
 }
 
+/**
+ * Saves `update` applied to the wallet store as it is now, read just before the write, so a change
+ * another process made since the command first read the store, such as a login, survives. Settle
+ * the SDK's own queued writes first (`settleWalletStore`).
+ */
+export async function updateWalletState(update: (current: WalletState) => WalletState) {
+  await saveWalletState(update(await loadWalletState()));
+}
+
 export function walletStorePath() {
   return join(homedir(), ".tempo", "wallet", "store.json");
 }
