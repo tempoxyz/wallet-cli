@@ -483,3 +483,43 @@ it("suggests raising the cap or a one-time charge for a reused session past it",
   });
   expect(seen).toEqual([false]);
 });
+
+const noSqlite3 =
+  "sqlite3 was not found on PATH. Payment sessions need it: install sqlite3, then retry.";
+
+it.each([
+  {
+    intent: "auto",
+    args: [],
+    failed: {
+      message: `Session payment failed: ${noSqlite3}\nA one-time charge of 0.5 is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --max-spend 0.5 --payment-intent charge.`,
+    },
+  },
+  {
+    intent: "session",
+    args: ["--payment-intent", "session"],
+    failed: {
+      message: noSqlite3,
+      payload: { cta: { commands: [{ command: "tempo wallet doctor" }] } },
+    },
+  },
+])(
+  "without sqlite3, fails a session offer under --payment-intent $intent before paying",
+  async ({ args, failed }) => {
+    await useTempHome();
+    const { origin, seen } = await service({
+      intent: "session",
+      amount: "1000000",
+      charge: "500000",
+    });
+    vi.stubEnv("PATH", "/nonexistent-tempo-test-bin");
+
+    await expect(run(args, `${origin}/paid`)).rejects.toMatchObject({
+      code: "E_PAYMENT",
+      exitCode: 4,
+      ...failed,
+    });
+    expect(seen).toEqual([false]);
+    expect(credentialOptions).toEqual([]);
+  },
+);
