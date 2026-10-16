@@ -1,6 +1,7 @@
 import { createPublicClient, http, type Address, type HttpTransportConfig } from "viem";
 import { Chain } from "viem/tempo";
 
+import { configValue, type ConfigSource } from "../wallet/config.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
 import { usageError } from "./errors.js";
 
@@ -13,16 +14,34 @@ const testnet: Network = { name: "testnet", chainId: 42431 };
 
 /**
  * Selects the network for a command: the `--network` flag, then `TEMPO_WALLET_NETWORK`,
- * then the logged-in wallet's chain, then mainnet. Resolve once per command, passing the
- * wallet `state` the command already loaded so both read the same snapshot.
+ * then the config file's `network`, then the logged-in wallet's chain, then mainnet. Resolve
+ * once per command, passing the wallet `state` the command already loaded so both read the
+ * same snapshot.
  */
 export async function resolveNetwork(
   flag: string | undefined,
   state?: WalletState,
 ): Promise<Network> {
-  const explicit = explicitNetwork(flag);
-  if (explicit) return explicit;
-  return walletNetwork(state ?? (await loadWalletState()));
+  return (await networkSetting(flag, state)).network;
+}
+
+/**
+ * `resolveNetwork`'s network and where it came from. A saved `network` beats the logged-in
+ * chain, which is only where the last login or refresh switched the wallet, so commands never
+ * leave a network the user chose.
+ */
+export async function networkSetting(
+  flag: string | undefined,
+  state?: WalletState,
+): Promise<{ network: Network; source: ConfigSource }> {
+  if (flag !== undefined) return { network: parseNetwork(flag), source: "flag" };
+  const env = process.env.TEMPO_WALLET_NETWORK;
+  if (env !== undefined) return { network: parseNetwork(env), source: "env" };
+  const saved = configValue("network", parseNetwork);
+  if (saved) return { network: saved, source: "config" };
+  const wallet = state ?? (await loadWalletState());
+  const loggedIn = wallet.accounts[wallet.activeAccount ?? 0] !== undefined;
+  return { network: walletNetwork(wallet), source: loggedIn ? "login" : "default" };
 }
 
 /** The logged-in wallet's network, or mainnet when no wallet is logged in. */
@@ -60,9 +79,28 @@ export function networkFields(chain: number) {
 }
 
 export function rpcUrl(chain: number) {
-  if (process.env.TEMPO_RPC_URL) return process.env.TEMPO_RPC_URL;
+  const override = rpcUrlOverride();
+  if (override) return override.value;
   if (chain === 42431) return "https://rpc.moderato.tempo.xyz";
   return "https://rpc.mainnet.tempo.xyz";
+}
+
+/**
+ * The one endpoint that replaces every network's default RPC: `TEMPO_RPC_URL`, then the config
+ * file's `rpc-url`. It serves whichever chain it is on, so reads that must reach a given network
+ * check its chain first; see `rpcChainCheck`.
+ */
+export function rpcUrlOverride(): { value: string; source: "env" | "config" } | undefined {
+  if (process.env.TEMPO_RPC_URL) return { value: process.env.TEMPO_RPC_URL, source: "env" };
+  const saved = configValue("rpc-url", parseRpcUrl);
+  return saved === undefined ? undefined : { value: saved, source: "config" };
+}
+
+/** Checks an `rpc-url` setting: an http(s) URL. */
+export function parseRpcUrl(value: string) {
+  if (!URL.canParse(value) || !/^https?:$/.test(new URL(value).protocol))
+    throw usageError("rpc-url must be an http(s) URL");
+  return value;
 }
 
 export function escrowContract(chain: number) {

@@ -6,7 +6,7 @@ export const cliGlobals = z.object({
     .string()
     .optional()
     .describe(
-      "Network to use: mainnet or testnet (default: TEMPO_WALLET_NETWORK, then the logged-in wallet's network)",
+      "Network to use: mainnet or testnet (default: TEMPO_WALLET_NETWORK, then the saved network setting, then the logged-in wallet's network)",
     ),
 });
 

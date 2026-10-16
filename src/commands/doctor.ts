@@ -5,6 +5,7 @@ import { Cli } from "incur";
 import { HttpRequestError, TimeoutError } from "viem";
 
 import { readOnly, type WalletCommand } from "../cli/command.js";
+import { configKeys, configSettings } from "../schemas/config.js";
 import { doctorOutput } from "../schemas/doctor.js";
 import { cliGlobals, globalAlias, globalOptions } from "../schemas/shared.js";
 import { sdkVersions, version } from "../shared/constants.js";
@@ -15,6 +16,7 @@ import {
   networkName,
   parseNetwork,
   rpcUrl,
+  rpcUrlOverride,
   storedChainId,
   walletNetwork,
   type Network,
@@ -22,6 +24,7 @@ import {
 import { nextStep } from "../shared/next.js";
 import { channelsDbPath, runProcess, sqlite3 } from "../shared/process.js";
 import { formatUnixTimestamp, sanitizeText } from "../shared/utils.js";
+import { ConfigFileError, configValue } from "../wallet/config.js";
 import {
   accessKeyMatches,
   localAccessKeyStatus,
@@ -135,7 +138,11 @@ export async function doctorHandler(
     (reason): StoreRead => ({ error: reason }),
   );
   const state = "state" in store ? store.state : undefined;
-  const network = flagNetwork ?? envNetwork() ?? walletNetwork(state ?? emptyWalletState());
+  const network =
+    flagNetwork ??
+    envNetwork() ??
+    unlessConfigInvalid(() => configValue("network", parseNetwork)) ??
+    walletNetwork(state ?? emptyWalletState());
 
   const [rpc, key, sqliteResult, sessionStoreResult] = await Promise.all([
     bounded(deadline, rpcCheck(network, timeout), (reason) => rpcFailed(network, reason)),
@@ -378,7 +385,7 @@ async function keyCheck(state: WalletState | undefined, network: Network) {
 
 /** Asks the RPC for its chain once, without retries, timing the round trip. */
 async function rpcCheck(network: Network, timeout: number): Promise<Result<RpcSection>> {
-  const url = redactUrl(rpcUrl(network.chainId));
+  const url = rpcLabel(network);
   const started = performance.now();
   let chainId: number;
   try {
@@ -405,7 +412,7 @@ async function rpcCheck(network: Network, timeout: number): Promise<Result<RpcSe
 }
 
 function rpcFailed(network: Network, reason: string): Result<RpcSection> {
-  const url = redactUrl(rpcUrl(network.chainId));
+  const url = rpcLabel(network);
   return result(
     "rpc",
     { url, ok: false, chain_id: null, chain_matches: null, latency_ms: null },
@@ -414,8 +421,15 @@ function rpcFailed(network: Network, reason: string): Result<RpcSection> {
   );
 }
 
+/** The redacted RPC URL; `<redacted>` while an invalid config file hides it. */
+function rpcLabel(network: Network) {
+  return unlessConfigInvalid(() => redactUrl(rpcUrl(network.chainId))) ?? redacted;
+}
+
 /** Why `eth_chainId` failed, without the error's own text, which can repeat the RPC URL. */
 function rpcFailure(error: unknown, timeout: number) {
+  if (error instanceof ConfigFileError)
+    return "was not checked, since the config file is not valid";
   if (error instanceof TimeoutError) return `did not answer within ${timeout}ms`;
   if (error instanceof HttpRequestError)
     return error.status === undefined ? "could not be reached" : `answered HTTP ${error.status}`;
@@ -426,7 +440,14 @@ function rpcFailure(error: unknown, timeout: number) {
 }
 
 function rpcHint() {
-  return process.env.TEMPO_RPC_URL ? "Check TEMPO_RPC_URL." : "Check your network connection.";
+  try {
+    const override = rpcUrlOverride();
+    if (override?.source === "env") return "Check TEMPO_RPC_URL.";
+    return override ? "Check the saved rpc-url setting." : "Check your network connection.";
+  } catch (error) {
+    if (error instanceof ConfigFileError) return `Fix ${error.path}.`;
+    throw error;
+  }
 }
 
 /** Runs `sqlite3 --version` from PATH, the binary the session store uses. */
@@ -505,9 +526,13 @@ function accessError(path: string, mode: number) {
   );
 }
 
-/** Fails for an override that breaks other commands: an unknown network or a non-http(s) app URL. */
+/**
+ * Fails for an override that breaks other commands: an unknown network, a non-http(s) app URL, or
+ * a config file that is not valid, with every saved setting checked.
+ */
 function envCheck(): Check {
   const authUrl = process.env.TEMPO_AUTH_URL;
+  const config = configProblem();
   const problems = [
     ...(process.env.TEMPO_WALLET_NETWORK !== undefined && envNetwork() === null
       ? [
@@ -519,6 +544,7 @@ function envCheck(): Check {
           "TEMPO_AUTH_URL is not an http(s) URL, so login and other wallet app requests fail. Set it to the wallet app URL, or unset it.",
         ]
       : []),
+    ...(config ? [config] : []),
   ];
   if (problems.length) return { name: "env", status: "fail", message: problems.join(" ") };
   const set = Object.keys(envOverrides).filter((name) => process.env[name] !== undefined);
@@ -527,6 +553,27 @@ function envCheck(): Check {
     status: "ok",
     message: set.length ? `Overrides set: ${set.join(", ")}.` : "No overrides are set.",
   };
+}
+
+/** The error an invalid config file fails other commands with, if it does. */
+function configProblem() {
+  try {
+    for (const key of configKeys) configValue(key, configSettings[key].parse);
+    return undefined;
+  } catch (error) {
+    if (error instanceof ConfigFileError) return error.message;
+    throw error;
+  }
+}
+
+/** `read`'s value, or `undefined` when the config file is not valid, which `envCheck` reports. */
+function unlessConfigInvalid<value>(read: () => value) {
+  try {
+    return read();
+  } catch (error) {
+    if (error instanceof ConfigFileError) return undefined;
+    throw error;
+  }
 }
 
 function isHttpUrl(value: string) {

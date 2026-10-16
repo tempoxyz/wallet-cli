@@ -506,7 +506,8 @@ function parseTomlValue(value: string) {
   return trimmed;
 }
 
-async function ensurePrivateWalletDirectory(path: string) {
+/** Creates the directory holding `path` and its parent, `~/.tempo`, accessible only by the owner. */
+export async function ensurePrivateWalletDirectory(path: string) {
   const walletDir = dirname(path);
   const tempoDir = dirname(walletDir);
   await mkdir(tempoDir, { recursive: true, mode: privateDirMode });

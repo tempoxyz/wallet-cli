@@ -1,6 +1,7 @@
 import address from "../commands/address.js";
 import balance from "../commands/balance.js";
 import completions from "../commands/completions.js";
+import config from "../commands/config.js";
 import debug from "../commands/debug.js";
 import doctor from "../commands/doctor.js";
 import fund from "../commands/fund.js";
@@ -37,6 +38,7 @@ export const commands: WalletCommand[] = [
   services,
   mcp,
   skills,
+  config,
   doctor,
   debug,
   completions,

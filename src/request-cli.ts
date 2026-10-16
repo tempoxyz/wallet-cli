@@ -11,7 +11,7 @@ import { version } from "./shared/constants.js";
 import { continuationCommand } from "./shared/next.js";
 import { WalletRequiredError } from "./shared/require-wallet.js";
 
-const maxSpendHelp = `Hard cap for cumulative payment spend in token units (or TEMPO_MAX_SPEND; default ${defaultMaxSpend})`;
+const maxSpendHelp = `Hard cap for cumulative payment spend in token units (or TEMPO_MAX_SPEND, then the saved max-spend setting; default ${defaultMaxSpend})`;
 
 const args = z.object({
   url: z.string().describe("URL to request"),

@@ -1,0 +1,9 @@
+---
+wallet-cli: minor
+---
+
+Added `tempo wallet config get [key]`, `config set <key> <value>`, and `config unset <key>`, which save `network`, `rpc-url`, and `max-spend` in `~/.tempo/wallet/config.json`, readable only by you. A command's flag, then the setting's environment variable (`TEMPO_WALLET_NETWORK`, `TEMPO_RPC_URL`, or `TEMPO_MAX_SPEND`), still beats the saved value, which beats the built-in default. `config get` reports each setting's effective `value` and its `source` (`flag`, `env`, `config`, `login`, or `default`), showing `rpc-url` redacted as `doctor` does. An unknown key fails with `E_USAGE` listing the valid ones, and a config file that is not valid fails the commands that read it with `E_USAGE` naming the file; `doctor` reports it instead.
+
+A saved `network` also beats the logged-in wallet's network, as `TEMPO_WALLET_NETWORK` does, so commands stay on it after a `login --network` elsewhere until you pass `--network` or change the setting. It does not narrow `keys list` or `logout`, which still cover every network unless `--network` or `TEMPO_WALLET_NETWORK` selects one. A saved `rpc-url` is one endpoint for every network, like `TEMPO_RPC_URL`, so `whoami` and `keys list` trust its key reads only once its chain matches. A saved `max-spend` must be positive and counts as an explicit cap, like `TEMPO_MAX_SPEND`: it allows MACH payments and refuses subscription offers.
+
+Over MCP, `config_get` is read-only, and `config_set` and `config_unset` are idempotent, non-destructive changes.

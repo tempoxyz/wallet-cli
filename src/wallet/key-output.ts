@@ -1,7 +1,12 @@
 import { erc20Abi, formatUnits, type Address } from "viem";
 import { Actions } from "viem/tempo";
 
-import { createTempoPublicClient, networkFields, tokenAddress } from "../shared/network.js";
+import {
+  createTempoPublicClient,
+  networkFields,
+  rpcUrlOverride,
+  tokenAddress,
+} from "../shared/network.js";
 import { knownToken, readTokenMetadata, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, formatTokenUnits, formatUnixTimestamp } from "../shared/utils.js";
 import { localAccessKeyStatus } from "./access-key.js";
@@ -97,14 +102,14 @@ function accessKeyLimitsOutput(
 type ChainKey = { published: boolean | null; remaining: Map<string, bigint | null> };
 
 /**
- * Whether reads for a chain reach it. `TEMPO_RPC_URL` serves every network, so with it set each
- * distinct chain asks the endpoint's `eth_chainId` once, bounded and without retries, and a failed
- * call counts as another chain. The per-chain default URLs need no check.
+ * Whether reads for a chain reach it. `TEMPO_RPC_URL` or a saved `rpc-url` serves every network,
+ * so with one set each distinct chain asks the endpoint's `eth_chainId` once, bounded and without
+ * retries, and a failed call counts as another chain. The per-chain default URLs need no check.
  */
 export function rpcChainCheck() {
   const checks = new Map<number, Promise<boolean>>();
   return (chain: number) => {
-    if (!process.env.TEMPO_RPC_URL) return Promise.resolve(true);
+    if (!rpcUrlOverride()) return Promise.resolve(true);
     let check = checks.get(chain);
     if (!check) {
       const client = createTempoPublicClient(chain, { timeout: statusQueryTimeout, retryCount: 0 });
