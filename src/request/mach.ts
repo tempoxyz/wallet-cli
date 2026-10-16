@@ -5,17 +5,12 @@ import { call, readContract } from "viem/actions";
 import { Transaction as TempoTransaction } from "viem/tempo";
 
 import { CtaError } from "../cli/incur-compat.js";
-import {
-  accessKeyLimitError,
-  commandError,
-  networkError,
-  paymentError,
-  walletError,
-} from "../shared/errors.js";
+import { commandError, networkError, paymentError, walletError } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
 import { createTempoPublicClient, type Network } from "../shared/network.js";
 import { continuationCommand } from "../shared/next.js";
 import { stringValue } from "../shared/utils.js";
+import { accessKeyLimitError } from "../wallet/access-key.js";
 import type { WalletState } from "../wallet/store.js";
 import { requestNetwork, storedAccessKeyLimit } from "./identity.js";
 import type { RequestOptions } from "./options.js";

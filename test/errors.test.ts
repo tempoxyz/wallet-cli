@@ -9,7 +9,6 @@ import { executeRequest } from "../src/request/run.js";
 import { requireSessionDescriptor } from "../src/payment/session-descriptor.js";
 import { ctaErrors } from "../src/cli/incur-compat.js";
 import {
-  accessKeyLimitError,
   errorCodes,
   httpError,
   networkError,
@@ -20,6 +19,7 @@ import {
   type WalletErrorCode,
 } from "../src/shared/errors.js";
 import { walletProblem, WalletRequiredError } from "../src/shared/require-wallet.js";
+import { accessKeyLimitError } from "../src/wallet/access-key.js";
 
 const root = resolve(import.meta.dirname, "..");
 const key = "0x4cdadb819a7fc083b72ada08288a96424f34c8a0";

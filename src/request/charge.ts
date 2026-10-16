@@ -6,9 +6,10 @@ import { formatUnits, parseUnits, type Address } from "viem";
 
 import { paymentReceipt, receiptTxHash, transactionHash } from "../payment/receipt.js";
 import { withSessionLock } from "../payment/session-lock.js";
-import { accessKeyLimitError, paymentError } from "../shared/errors.js";
+import { paymentError } from "../shared/errors.js";
 import { readTokenMetadata, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { getRecord, sanitizeText, stringValue } from "../shared/utils.js";
+import { accessKeyLimitError } from "../wallet/access-key.js";
 import {
   challengeAmount,
   chargeChallengeFromHeader,

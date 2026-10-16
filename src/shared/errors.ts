@@ -1,9 +1,5 @@
 import { Errors } from "incur";
 
-import { CtaError } from "../cli/incur-compat.js";
-import type { Network } from "./network.js";
-import { continuationCommand } from "./next.js";
-
 /** Every error code the CLI reports, with its process exit code and default retryability. */
 export const errorCodes = {
   E_USAGE: {
@@ -142,32 +138,6 @@ export type CommandContext = {
   agent: boolean;
   error: (error: CommandErrorPayload) => never;
 };
-
-/**
- * E_LIMIT_EXCEEDED for an access key whose spending limit cannot cover `amount` (token units) of
- * `token`, with the `tempo wallet keys update` that sets the limit to that amount as its `cta`.
- * `label` names the token in the message.
- */
-export function accessKeyLimitError(options: {
-  key: string;
-  token: string;
-  label: string;
-  amount: string;
-  network: Network;
-}) {
-  const { key, token, label, amount, network } = options;
-  const command = continuationCommand(
-    ["wallet", "keys", "update", key.toLowerCase(), "--token", token, "--limit", amount],
-    network,
-  );
-  return new CtaError(
-    commandError(
-      "E_LIMIT_EXCEEDED",
-      `The access key cannot spend ${amount} ${label}. Ask the wallet owner to run '${command}', then retry.`,
-      command,
-    ),
-  );
-}
 
 export function usageError(message: string) {
   return walletError({ code: "E_USAGE", message });
