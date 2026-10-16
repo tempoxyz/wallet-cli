@@ -28,6 +28,8 @@
     "check:lint": "vp lint",
     "check:types": "pnpm typecheck",
     "dev": "node --import tsx src/cli.ts",
+    "docs:check": "tsx scripts/docs.ts check",
+    "docs:generate": "tsx scripts/docs.ts generate",
     "format": "vp fmt",
     "lint": "vp lint --fix",
     "package": "tsx scripts/package.ts",

@@ -2,28 +2,14 @@
 import { Cli } from "incur";
 
 import { expandHelp, normalizeServicesOutputAliases } from "./cli/argv.js";
-import { handleBuiltinSchema, mcp, skills } from "./cli/builtins.js";
-import { commandMap, type WalletCommand } from "./cli/command.js";
+import { handleBuiltinSchema } from "./cli/builtins.js";
+import { commandMap } from "./cli/command.js";
+import { commands } from "./cli/commands.js";
 import { walletCompletions } from "./cli/completions.js";
 import { describeCli } from "./cli/describe.js";
 import { bindCommandOptions } from "./cli/incur-compat.js";
 import { serveMcp } from "./cli/mcp.js";
-import completions from "./commands/completions.js";
-import debug from "./commands/debug.js";
-import doctor from "./commands/doctor.js";
-import fund from "./commands/fund.js";
-import keys from "./commands/keys.js";
-import login from "./commands/login.js";
-import logout from "./commands/logout.js";
-import refresh from "./commands/refresh.js";
-import revoke from "./commands/revoke.js";
-import services from "./commands/services.js";
 import { closeCommandFailed } from "./commands/sessions/close.js";
-import sessions from "./commands/sessions/index.js";
-import swap from "./commands/swap.js";
-import transfer from "./commands/transfer/index.js";
-import tx from "./commands/tx.js";
-import whoami from "./commands/whoami.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";
 import { ctaErrors } from "./shared/errors.js";
@@ -46,28 +32,6 @@ const cli = Cli.create("tempo wallet", {
 
 // Returns a thrown CtaError through `c.error`, so it keeps its cta; `serveMcp` registers it too.
 cli.use(ctaErrors);
-
-// `--describe` lists these in this order. Shell completions offer the mounted commands in the
-// same order, then incur's builtin `mcp` and `skills`, which incur mounts itself.
-const commands: WalletCommand[] = [
-  login,
-  refresh,
-  logout,
-  whoami,
-  keys,
-  revoke,
-  transfer,
-  swap,
-  tx,
-  fund,
-  sessions,
-  services,
-  mcp,
-  skills,
-  doctor,
-  debug,
-  completions,
-];
 
 for (const { command } of commands) if (command) cli.command(command);
 
