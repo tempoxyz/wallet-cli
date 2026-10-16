@@ -1,27 +1,18 @@
-import { Cli } from "incur";
-import { encodeFunctionData, getAddress, parseAbiItem, toHex, type Address, type Hex } from "viem";
+import type { z } from "incur";
+import { encodeFunctionData, toHex, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { Abis as TempoAbis, Channel as TempoChannel } from "viem/tempo";
+import { Abis as TempoAbis } from "viem/tempo";
 import { Challenge, Credential } from "mppx";
 
-import { destructive, nonDestructive, type WalletCommand } from "../cli/command.js";
-import { flag, option, positional } from "../cli/describe.js";
+import { destructive } from "../../cli/command.js";
+import { flag, positional } from "../../cli/describe.js";
 import {
   sessionsCloseArgs,
   sessionsCloseCommandOutput,
   sessionsCloseOptions,
-  sessionsListOptions,
-  sessionsListOutput,
-  sessionsSyncOptions,
-} from "../schemas/sessions.js";
-import { cliGlobals, globalAlias } from "../schemas/shared.js";
-import {
-  defaultGracePeriodSeconds,
-  escrowAbi,
-  logHeadMargin,
-  logQueryBlockRange,
-  logScanDepth,
-} from "../shared/constants.js";
+} from "../../schemas/sessions.js";
+import { globalAlias, type cliGlobals } from "../../schemas/shared.js";
+import { escrowAbi } from "../../shared/constants.js";
 import {
   commandError,
   paymentError,
@@ -29,203 +20,105 @@ import {
   usageError,
   walletError,
   type CommandContext,
-} from "../shared/errors.js";
+} from "../../shared/errors.js";
 import {
-  createTempoPublicClient,
   escrowContract,
-  networkFields,
   networkName,
   parseNetwork,
-  resolveNetwork,
   storedChainId,
   tokenAddress,
   tokenDecimals,
   type Network,
-} from "../shared/network.js";
-import {
-  canPrompt,
-  confirm as confirmPrompt,
-  querySql,
-  runSql,
-  sqlString,
-} from "../shared/process.js";
-import { tokenSymbol } from "../shared/tokens.js";
+} from "../../shared/network.js";
+import { canPrompt, confirm as confirmPrompt } from "../../shared/process.js";
+import { tokenSymbol } from "../../shared/tokens.js";
 import {
   decodeBase64UrlJson,
   formatTokenUnits,
   formatUnixTimestamp,
-  getArray,
   getRecord,
   isChannelId,
   normalizeOrigin,
   nowSeconds,
-  parseOnChainBigInt,
-  parseStoredBigInt,
-  safeNumber,
   sanitizeText,
   stringValue,
-} from "../shared/utils.js";
-import { continuationCommand, nextStep } from "../shared/next.js";
-import { withWallet, type Wallet } from "../shared/require-wallet.js";
-import { createProvider, requireSender } from "../provider.js";
-import { requireSessionDescriptor } from "../payment/session-descriptor.js";
-import { ensureChannelsTable } from "../payment/session-store.js";
-import { loadWalletState } from "../wallet/store.js";
+} from "../../shared/utils.js";
+import { continuationCommand, nextStep } from "../../shared/next.js";
+import { withWallet, type Wallet } from "../../shared/require-wallet.js";
+import { createProvider, requireSender } from "../../provider.js";
+import { getOnChainChannel, isPrecompileEscrow, readGracePeriod } from "../../payment/channel.js";
+import { requireSessionDescriptor } from "../../payment/session-descriptor.js";
+import { loadWalletState } from "../../wallet/store.js";
+import {
+  deleteChannelRecord,
+  discoverAndPersistOrphanedChannels,
+  readChannelRecords,
+  sessionStatus,
+  updateChannelCloseState,
+  type ChannelRecord,
+  type ChannelState,
+} from "./records.js";
 
 /** Whether a `sessions close` left a channel unclosed; a one-shot CLI run then exits 1. */
 export let closeCommandFailed = false;
 
-// Bare `tempo wallet sessions` lists sessions.
-export default {
-  command: Cli.create("sessions", {
-    description: "Manage payment sessions",
-    globals: cliGlobals,
-    options: sessionsListOptions,
-    alias: globalAlias,
-    output: sessionsListOutput,
-    async run({ globals, options }) {
-      return listSessions({
-        all: options.all,
-        network: globals.network,
-        orphaned: options.orphaned,
-      });
-    },
-  })
-    .command("list", {
-      description: "List payment sessions",
-      options: sessionsListOptions,
-      alias: globalAlias,
-      output: sessionsListOutput,
-      async run({ globals, options }) {
-        return listSessions({
-          all: options.all,
-          network: globals.network,
-          orphaned: options.orphaned,
-        });
-      },
-    })
-    .command("close", {
-      description: "Request a session close, then withdraw after the grace period with --finalize",
-      args: sessionsCloseArgs,
-      options: sessionsCloseOptions,
-      alias: globalAlias,
-      output: sessionsCloseCommandOutput,
-      // Close and withdraw transactions fall back to wallet app approval, so channel funds stay
-      // recoverable without a usable access key.
-      // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
-      run: withWallet(
-        async (context, wallet) => {
-          const { args, options } = context;
-          const close = {
-            all: options.all,
-            cooperative: options.cooperative,
-            finalize: options.finalize,
-            orphaned: options.orphaned,
-            target: args.url,
-            yes: options.yes,
-          };
-          if (options["dry-run"]) return dryRunCloseSessions(wallet, close);
-          const summary = await closeSessions(wallet, close, {
-            ...context,
-            agent: !canPrompt(context.agent),
-          });
-          closeCommandFailed = summary.failed > 0;
-          return summary;
-        },
-        { requireKey: "never" },
-      ),
-    })
-    .command("sync", {
-      description: "Sync local sessions with on-chain state",
-      options: sessionsSyncOptions,
-      alias: globalAlias,
-      output: sessionsListOutput,
-      async run({ globals, options }) {
-        return syncSessions({ network: globals.network, origin: options.origin });
-      },
-    }),
-  annotations: {
-    sessions_close: { ...destructive, idempotentHint: false, openWorldHint: true },
-    // With `all` or `orphaned`, stores channels discovered on-chain that were not stored yet.
-    sessions_list: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
-    // Deletes stored sessions whose channel the chain shows finalized or does not hold.
-    sessions_sync: { ...destructive, idempotentHint: true, openWorldHint: true },
-  },
-  describe: {
-    name: "sessions",
-    about: "Manage payment sessions",
-    subcommands: [
-      {
-        name: "list",
-        about: "List payment sessions",
-        args: [
-          flag("orphaned", "--orphaned", "Include on-chain orphaned discovery"),
-          flag("all", "--all", "Include local sessions and orphaned discovery"),
-        ],
-      },
-      {
-        name: "close",
-        about: "Request a session close, then withdraw after the grace period with --finalize",
-        args: [
-          positional("url", "URL, origin, or channel ID (0x...) to close"),
-          flag("all", "--all", "Close all active sessions and on-chain channels"),
-          flag("orphaned", "--orphaned", "Close only orphaned on-chain channels"),
-          flag("finalize", "--finalize", "Withdraw channels whose close grace period has ended"),
-          flag(
-            "cooperative",
-            "--cooperative",
-            "Close now through the session's server instead of waiting out the grace period",
-          ),
-          flag("dry_run", "--dry-run", "Show what would be closed without executing"),
-          flag("yes", "--yes", "Close without the confirmation prompt; required for agent runs"),
-        ],
-      },
-      {
-        name: "sync",
-        about: "Sync local sessions with on-chain state",
-        args: [
-          option("origin", "--origin", "Re-sync a specific origin's close state from on-chain", {
-            valueName: "ORIGIN",
-          }),
-        ],
-      },
-    ],
-  },
-} satisfies WalletCommand;
-
-export type ChannelState = "active" | "closing" | "finalizable" | "finalized" | "orphaned";
-
-export type ChannelRecord = {
-  channel_id: string;
-  network: string;
-  origin: string;
-  request_url: string;
-  chain_id: number;
-  escrow_contract: string;
-  payer: string;
-  authorized_signer: string;
-  token: string;
-  deposit: bigint;
-  cumulative_amount: bigint;
-  accepted_cumulative: bigint;
-  challenge_echo: string;
-  session_protocol: string;
-  descriptor_json?: string | undefined;
-  state: ChannelState;
-  close_requested_at: number;
-  grace_ready_at: number;
-  created_at: number;
-  last_used_at: number;
-  virtual?: boolean | undefined;
+// The definition is declared apart from the group's `.command()`, so its run context is typed here.
+type CloseContext = CommandContext & {
+  args: z.output<typeof sessionsCloseArgs>;
+  globals: z.output<typeof cliGlobals>;
+  options: z.output<typeof sessionsCloseOptions>;
 };
 
-type OnChainDiscoveredChannel = {
-  channelId: string;
-  escrowContract: Address;
-  token: Address;
-  deposit: bigint;
-  settled: bigint;
-  closeRequestedAt: bigint;
+export const closeCommand = {
+  description: "Request a session close, then withdraw after the grace period with --finalize",
+  args: sessionsCloseArgs,
+  options: sessionsCloseOptions,
+  alias: globalAlias,
+  output: sessionsCloseCommandOutput,
+  // Close and withdraw transactions fall back to wallet app approval, so channel funds stay
+  // recoverable without a usable access key.
+  // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
+  run: withWallet(
+    async (context: CloseContext, wallet) => {
+      const { args, options } = context;
+      const close = {
+        all: options.all,
+        cooperative: options.cooperative,
+        finalize: options.finalize,
+        orphaned: options.orphaned,
+        target: args.url,
+        yes: options.yes,
+      };
+      if (options["dry-run"]) return dryRunCloseSessions(wallet, close);
+      const summary = await closeSessions(wallet, close, {
+        ...context,
+        agent: !canPrompt(context.agent),
+      });
+      closeCommandFailed = summary.failed > 0;
+      return summary;
+    },
+    { requireKey: "never" },
+  ),
+};
+
+export const closeAnnotations = { ...destructive, idempotentHint: false, openWorldHint: true };
+
+export const closeDescribe = {
+  name: "close",
+  about: "Request a session close, then withdraw after the grace period with --finalize",
+  args: [
+    positional("url", "URL, origin, or channel ID (0x...) to close"),
+    flag("all", "--all", "Close all active sessions and on-chain channels"),
+    flag("orphaned", "--orphaned", "Close only orphaned on-chain channels"),
+    flag("finalize", "--finalize", "Withdraw channels whose close grace period has ended"),
+    flag(
+      "cooperative",
+      "--cooperative",
+      "Close now through the session's server instead of waiting out the grace period",
+    ),
+    flag("dry_run", "--dry-run", "Show what would be closed without executing"),
+    flag("yes", "--yes", "Close without the confirmation prompt; required for agent runs"),
+  ],
 };
 
 type CloseResultRecord = {
@@ -251,96 +144,6 @@ type CloseSummaryOutput = {
   failed: number;
   results: CloseResultRecord[];
 };
-
-export async function listSessions(
-  options: {
-    all?: boolean | undefined;
-    network?: string | undefined;
-    orphaned?: boolean | undefined;
-  } = {},
-) {
-  return sessionList(await resolveNetwork(options.network), options);
-}
-
-async function sessionList(
-  network: Network,
-  options: { all?: boolean | undefined; orphaned?: boolean | undefined },
-) {
-  const records =
-    options.all || options.orphaned
-      ? await discoverAndPersistOrphanedChannels(network)
-      : await readChannelRecords();
-  const sessions = records
-    .filter((record) => record.chain_id === network.chainId)
-    .map(sessionItem)
-    .filter((record) => record.status !== "finalized")
-    .filter((record) => (options.orphaned && !options.all ? record.status === "orphaned" : true));
-
-  return {
-    ...networkFields(network.chainId),
-    sessions,
-    total: sessions.length,
-  };
-}
-
-/**
- * Stored sessions paid by one of `payers`, on `chainId` when it is set, whose deposit still holds
- * unspent funds: every session not finalized, as `sessions list` reports it.
- */
-export async function fundedSessions(options: {
-  payers: readonly string[];
-  chainId?: number | undefined;
-}) {
-  const payers = new Set(options.payers.map((payer) => payer.toLowerCase()));
-  return (await readChannelRecords())
-    .filter(
-      (record) =>
-        payers.has(record.payer) &&
-        (options.chainId === undefined || record.chain_id === options.chainId) &&
-        sessionStatus(record) !== "finalized" &&
-        unspentDeposit(record) > 0n,
-    )
-    .map(sessionItem);
-}
-
-export async function syncSessions(options: {
-  network?: string | undefined;
-  origin?: string | undefined;
-}) {
-  const network = await resolveNetwork(options.network);
-  const chain = network.chainId;
-  const records = (await readChannelRecords()).filter((record) => record.chain_id === chain);
-  const selected = options.origin
-    ? records.filter((record) => record.origin === normalizeOrigin(options.origin ?? ""))
-    : records;
-
-  for (const record of selected) {
-    const onChain = await getOnChainChannel({
-      channelId: record.channel_id as Hex,
-      escrowContract: (record.escrow_contract || escrowContract(chain)) as Address,
-      network,
-    });
-    if (!onChain || onChain.finalized) {
-      await deleteChannelRecord(record.channel_id);
-      continue;
-    }
-
-    if (onChain.closeRequestedAt > 0n) {
-      const gracePeriod = await readGracePeriod({
-        escrowContract: (record.escrow_contract || escrowContract(chain)) as Address,
-        network,
-      });
-      await updateChannelCloseState({
-        channelId: record.channel_id,
-        closeRequestedAt: Number(onChain.closeRequestedAt),
-        graceReadyAt: Number(onChain.closeRequestedAt + BigInt(gracePeriod)),
-        state: sessionStateFromCloseTiming(Number(onChain.closeRequestedAt), gracePeriod),
-      });
-    }
-  }
-
-  return sessionList(network, {});
-}
 
 export async function dryRunCloseSessions({ network }: Wallet, options: CloseOptions) {
   validateCloseOptions(options);
@@ -1044,344 +847,6 @@ function closeTarget(record: ChannelRecord) {
     origin: record.origin,
     state: capitalizedState(sessionStatus(record)),
   };
-}
-
-/**
- * The highest voucher the server acknowledged, else the signed cumulative. A higher stored
- * cumulative is not proof of spend: a payment saves it before creating the voucher, so counting
- * it could hide a deposit that is still refundable.
- */
-function sessionSpent(record: ChannelRecord) {
-  return record.accepted_cumulative > 0n ? record.accepted_cumulative : record.cumulative_amount;
-}
-
-function unspentDeposit(record: ChannelRecord) {
-  const spent = sessionSpent(record);
-  return record.deposit > spent ? record.deposit - spent : 0n;
-}
-
-function sessionItem(record: ChannelRecord) {
-  const spent = sessionSpent(record);
-  const remaining = unspentDeposit(record);
-  const status = sessionStatus(record);
-  return {
-    channel_id: record.channel_id,
-    network: record.network,
-    origin: record.origin,
-    symbol: tokenSymbol(record.token, record.chain_id) ?? null,
-    deposit: formatTokenUnits(record.deposit, tokenDecimals()),
-    spent: formatTokenUnits(spent, tokenDecimals()),
-    remaining: formatTokenUnits(remaining, tokenDecimals()),
-    status,
-    ...(status === "closing" || status === "finalizable"
-      ? {
-          remaining_secs:
-            record.grace_ready_at > nowSeconds() ? record.grace_ready_at - nowSeconds() : 0,
-        }
-      : {}),
-    created_at: formatUnixTimestamp(record.created_at),
-    last_used_at: formatUnixTimestamp(record.last_used_at),
-  };
-}
-
-async function readChannelRecords(): Promise<ChannelRecord[]> {
-  await ensureChannelsTable();
-  const query = `SELECT version, origin, request_url, chain_id,
-                    escrow_contract, token, payee, payer, authorized_signer,
-                    salt, channel_id, session_protocol, descriptor_json, deposit, cumulative_amount, accepted_cumulative,
-                    challenge_echo, state, close_requested_at, grace_ready_at, created_at, last_used_at,
-                    server_spent
-             FROM channels
-             WHERE origin <> 'http://127.0.0.1'
-             ORDER BY last_used_at DESC`;
-
-  let rows: unknown;
-  try {
-    rows = await querySql(query);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("unable to open database file") || message.includes("no such table"))
-      return [];
-    throw error;
-  }
-  return getArray(rows).flatMap((row) => {
-    const item = getRecord(row);
-    const channelId = stringValue(item.channel_id).toLowerCase();
-    const chain = typeof item.chain_id === "number" ? item.chain_id : Number(item.chain_id);
-    const token = stringValue(item.token).toLowerCase();
-    if (!isChannelId(channelId) || !Number.isFinite(chain) || !token) return [];
-    return [
-      {
-        channel_id: channelId,
-        network: networkName(chain),
-        origin: stringValue(item.origin),
-        request_url: stringValue(item.request_url),
-        chain_id: chain,
-        escrow_contract: stringValue(item.escrow_contract).toLowerCase(),
-        payer: stringValue(item.payer).toLowerCase(),
-        authorized_signer: stringValue(item.authorized_signer).toLowerCase(),
-        token,
-        deposit: parseStoredBigInt(item.deposit),
-        cumulative_amount: parseStoredBigInt(item.cumulative_amount),
-        accepted_cumulative: parseStoredBigInt(item.accepted_cumulative),
-        challenge_echo: stringValue(item.challenge_echo),
-        session_protocol: stringValue(item.session_protocol) || "v1",
-        descriptor_json: stringValue(item.descriptor_json) || undefined,
-        state: channelState(stringValue(item.state)),
-        close_requested_at: safeNumber(item.close_requested_at),
-        grace_ready_at: safeNumber(item.grace_ready_at),
-        created_at: safeNumber(item.created_at),
-        last_used_at: safeNumber(item.last_used_at),
-      },
-    ];
-  });
-}
-
-async function discoverAndPersistOrphanedChannels(network: Network) {
-  const records = await readChannelRecords();
-  const state = await loadWalletState();
-  const activeAccount = state.accounts[state.activeAccount ?? 0];
-  const wallet = activeAccount?.address;
-  if (!wallet) return records;
-
-  const localIds = new Set(
-    records
-      .filter((record) => record.chain_id === network.chainId)
-      .map((record) => record.channel_id),
-  );
-  const discovered = await findAllChannelsForPayer({ network, payer: wallet as Address });
-
-  for (const channel of discovered) {
-    if (localIds.has(channel.channelId.toLowerCase())) continue;
-    const gracePeriod = await readGracePeriod({
-      escrowContract: channel.escrowContract,
-      network,
-    });
-    await saveDiscoveredChannel({
-      channel,
-      chainId: network.chainId,
-      gracePeriod,
-      payer: wallet,
-      state: sessionStateFromCloseTiming(Number(channel.closeRequestedAt), gracePeriod),
-    });
-  }
-
-  return readChannelRecords();
-}
-
-async function findAllChannelsForPayer(options: { network: Network; payer: Address }) {
-  const chain = options.network.chainId;
-  const publicClient = createTempoPublicClient(chain);
-  const latest = (await publicClient.getBlockNumber()).valueOf() - logHeadMargin;
-  const earliest = latest > logScanDepth ? latest - logScanDepth : 0n;
-  const escrow = escrowContract(chain);
-  const results: OnChainDiscoveredChannel[] = [];
-  const event = parseAbiItem(
-    "event ChannelOpened(bytes32 indexed channelId, address indexed payer, address indexed payee, address token, address authorizedSigner, bytes32 salt, uint256 deposit)",
-  );
-
-  let end = latest;
-  while (end >= earliest) {
-    const start = end > earliest + logQueryBlockRange ? end - logQueryBlockRange : earliest;
-    const logs = await publicClient.getLogs({
-      address: escrow,
-      event,
-      args: { payer: getAddress(options.payer) },
-      fromBlock: start,
-      toBlock: end,
-    });
-
-    for (const log of logs) {
-      const channelId = log.args.channelId?.toLowerCase();
-      if (!channelId || results.some((result) => result.channelId === channelId)) continue;
-      const onChain = await getOnChainChannel({
-        channelId: channelId as Hex,
-        escrowContract: escrow,
-        network: options.network,
-      });
-      if (!onChain || onChain.finalized) continue;
-      results.push({
-        channelId,
-        escrowContract: escrow,
-        token: onChain.token,
-        deposit: onChain.deposit,
-        settled: onChain.settled,
-        closeRequestedAt: onChain.closeRequestedAt,
-      });
-    }
-
-    if (start === earliest) break;
-    end = start - 1n;
-  }
-
-  return results;
-}
-
-/** The channel's escrow state on `network`, or null when the escrow has no such channel. */
-async function getOnChainChannel(options: {
-  channelId: Hex;
-  escrowContract: Address;
-  network: Network;
-}) {
-  if (isPrecompileEscrow(options.escrowContract)) {
-    const state = (await createTempoPublicClient(options.network.chainId).readContract({
-      address: TempoChannel.address,
-      abi: TempoAbis.tip20ChannelReserve,
-      functionName: "getChannelState",
-      args: [options.channelId],
-    })) as unknown;
-    const record = getRecord(state);
-    const tuple = Array.isArray(state) ? state : [];
-    const deposit = parseOnChainBigInt(record.deposit ?? tuple[1]);
-    const settled = parseOnChainBigInt(record.settled ?? tuple[0]);
-    const closeRequestedAt = parseOnChainBigInt(record.closeRequestedAt ?? tuple[2]);
-    // The precompile clears a closed channel's state, so only its ChannelClosed event tells a
-    // closed channel from one that never existed.
-    if (deposit === 0n && !(await precompileChannelClosed(options.channelId, options.network)))
-      return null;
-    return {
-      finalized: deposit === 0n,
-      token: tokenAddress(options.network.chainId),
-      deposit,
-      settled,
-      closeRequestedAt,
-    };
-  }
-
-  const value = (await createTempoPublicClient(options.network.chainId).readContract({
-    address: options.escrowContract,
-    abi: escrowAbi,
-    functionName: "getChannel",
-    args: [options.channelId],
-  })) as unknown;
-  const record = getRecord(value);
-  const tuple = Array.isArray(value) ? value : [];
-  const finalized = Boolean(record.finalized ?? tuple[0]);
-  const closeRequestedAt = parseOnChainBigInt(record.closeRequestedAt ?? tuple[1]);
-  const token = stringValue(record.token ?? tuple[4]).toLowerCase() as Address;
-  const deposit = parseOnChainBigInt(record.deposit ?? tuple[6]);
-  const settled = parseOnChainBigInt(record.settled ?? tuple[7]);
-  if (!finalized && deposit === 0n) return null;
-  return { finalized, token, deposit, settled, closeRequestedAt };
-}
-
-const channelClosedEvent = parseAbiItem(
-  "event ChannelClosed(bytes32 indexed channelId, address indexed payer, address indexed payee, uint96 settledToPayee, uint96 refundedToPayer)",
-);
-
-/** Whether the precompile emitted ChannelClosed for the channel within the log scan depth. */
-async function precompileChannelClosed(channelId: Hex, network: Network) {
-  const publicClient = createTempoPublicClient(network.chainId);
-  // Include the head block: a cooperative close checks for a close mined moments ago.
-  const latest = await publicClient.getBlockNumber();
-  const earliest = latest > logScanDepth ? latest - logScanDepth : 0n;
-  let end = latest;
-  while (end >= earliest) {
-    const start = end > earliest + logQueryBlockRange ? end - logQueryBlockRange : earliest;
-    const logs = await publicClient.getLogs({
-      address: TempoChannel.address,
-      event: channelClosedEvent,
-      args: { channelId },
-      fromBlock: start,
-      toBlock: end,
-    });
-    if (logs.length > 0) return true;
-    if (start === earliest) break;
-    end = start - 1n;
-  }
-  return false;
-}
-
-function isPrecompileEscrow(address: string) {
-  return address.toLowerCase() === TempoChannel.address.toLowerCase();
-}
-
-async function readGracePeriod(options: { escrowContract: Address; network: Network }) {
-  try {
-    const value = (await createTempoPublicClient(options.network.chainId).readContract({
-      address: options.escrowContract,
-      abi: escrowAbi,
-      functionName: "CLOSE_GRACE_PERIOD",
-      args: [],
-    })) as unknown;
-    const grace = parseOnChainBigInt(value);
-    if (grace > 0n && grace <= BigInt(Number.MAX_SAFE_INTEGER)) return Number(grace);
-  } catch {
-    // Match the current wallet: grace-period lookup failure falls back to the protocol default.
-  }
-  return defaultGracePeriodSeconds;
-}
-
-async function saveDiscoveredChannel(options: {
-  channel: OnChainDiscoveredChannel;
-  chainId: number;
-  gracePeriod: number;
-  payer: string;
-  state: ChannelState;
-}) {
-  const now = nowSeconds();
-  const graceReadyAt =
-    options.channel.closeRequestedAt === 0n
-      ? 0
-      : Number(options.channel.closeRequestedAt) + options.gracePeriod;
-  await ensureChannelsTable();
-  // A session stored since the scan began, or one the listing hides, keeps its stored record.
-  await runSql(`INSERT OR IGNORE INTO channels (
-    channel_id, version, origin, request_url, chain_id, escrow_contract, token, payee, payer,
-    authorized_signer, salt, deposit, cumulative_amount, accepted_cumulative, server_spent,
-    challenge_echo, state, close_requested_at, grace_ready_at, created_at, last_used_at,
-    session_protocol, descriptor_json
-  ) VALUES (
-    ${sqlString(options.channel.channelId)}, 1, '', '', ${options.chainId},
-    ${sqlString(options.channel.escrowContract)}, ${sqlString(options.channel.token)},
-    '0x0000000000000000000000000000000000000000', ${sqlString(options.payer.toLowerCase())},
-    '0x0000000000000000000000000000000000000000', '0x00',
-    ${sqlString(options.channel.deposit.toString())}, ${sqlString(options.channel.settled.toString())},
-    ${sqlString(options.channel.settled.toString())}, '0', '{}', ${sqlString(options.state)},
-    ${Number(options.channel.closeRequestedAt)}, ${graceReadyAt}, ${now}, ${now}, 'v1', NULL
-  )`);
-}
-
-async function deleteChannelRecord(channelId: string) {
-  await runSql(`DELETE FROM channels WHERE channel_id = ${sqlString(channelId)}`);
-}
-
-async function updateChannelCloseState(options: {
-  channelId: string;
-  state: ChannelState;
-  closeRequestedAt: number;
-  graceReadyAt: number;
-}) {
-  await runSql(`UPDATE channels SET
-    state = ${sqlString(options.state)},
-    close_requested_at = ${options.closeRequestedAt},
-    grace_ready_at = ${options.graceReadyAt}
-    WHERE channel_id = ${sqlString(options.channelId)}`);
-}
-
-function sessionStateFromCloseTiming(closeRequestedAt: number, gracePeriod: number): ChannelState {
-  if (closeRequestedAt === 0) return "orphaned";
-  return closeRequestedAt + gracePeriod <= nowSeconds() ? "finalizable" : "closing";
-}
-
-function sessionStatus(record: ChannelRecord) {
-  if (record.state === "closing") {
-    return record.grace_ready_at > 0 && record.grace_ready_at <= nowSeconds()
-      ? "finalizable"
-      : "closing";
-  }
-  return record.state;
-}
-
-function channelState(value: string): ChannelState {
-  if (
-    value === "closing" ||
-    value === "finalizable" ||
-    value === "finalized" ||
-    value === "orphaned"
-  )
-    return value;
-  return "active";
 }
 
 function capitalizedState(value: ChannelState) {

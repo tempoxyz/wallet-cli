@@ -47,7 +47,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
   }),
 }));
 
-import { transferTokens } from "../src/commands/transfer.js";
+import { transferTokens } from "../src/commands/transfer/tokens.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { parseNetwork } from "../src/shared/network.js";
 import { cliBundle } from "./cli-bundle.js";

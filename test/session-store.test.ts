@@ -3,7 +3,7 @@ import { once } from "node:events";
 
 import { describe, expect, it } from "vitest";
 
-import { listSessions } from "../src/commands/sessions.js";
+import { listSessions } from "../src/commands/sessions/list.js";
 import {
   deleteSessionRecord,
   ensureChannelsTable,

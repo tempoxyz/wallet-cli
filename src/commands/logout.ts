@@ -42,7 +42,7 @@ import {
   type OnChainKeyReader,
   type RevokeProvider,
 } from "../wallet/revocation.js";
-import { fundedSessions } from "./sessions.js";
+import { fundedSessions } from "./sessions/list.js";
 
 export default {
   command: Cli.create("logout", {
