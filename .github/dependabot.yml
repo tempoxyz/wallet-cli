@@ -36,7 +36,8 @@ updates:
       time: "10:30"
       timezone: Etc/UTC
     cooldown:
-      default-days: 7
+      # Buffer the scanner's seven-day minimum: Dependabot reads date-only tag metadata.
+      default-days: 8
     open-pull-requests-limit: 2
     labels: []
     commit-message:
