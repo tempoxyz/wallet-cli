@@ -19,6 +19,7 @@ const topLevel = [
   "address",
   "keys",
   "revoke",
+  "send",
   "transfer",
   "swap",
   "tx",

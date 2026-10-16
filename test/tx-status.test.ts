@@ -263,16 +263,22 @@ describe("tempo wallet tx status", () => {
 });
 
 describe("keyed agent sends with an expired access key", () => {
+  // `send` makes the request `transfer` recorded, so a key either one used replays under both.
+  const transferRequest = {
+    command: "transfer",
+    amount: "1000000",
+    token: moderatoToken,
+    to: recipient,
+    fee_token: null,
+  };
   const sends = {
+    send: {
+      argv: ["send", "1", "pathUSD", recipient, "--yes", "--idempotency-key", "k1"],
+      request: transferRequest,
+    },
     transfer: {
       argv: ["transfer", "1", "pathUSD", recipient, "--yes", "--idempotency-key", "k1"],
-      request: {
-        command: "transfer",
-        amount: "1000000",
-        token: moderatoToken,
-        to: recipient,
-        fee_token: null,
-      },
+      request: transferRequest,
     },
     swap: {
       argv: ["swap", "1", "pathUSD", "USDC.e", "--yes", "--idempotency-key", "k1"],
@@ -293,14 +299,13 @@ describe("keyed agent sends with an expired access key", () => {
     cta: { commands: [{ command: refresh }] },
   };
 
-  it.each([
-    { command: "transfer", recorded: true, dryRun: false },
-    { command: "swap", recorded: true, dryRun: false },
-    { command: "transfer", recorded: false, dryRun: false },
-    { command: "swap", recorded: false, dryRun: false },
-    { command: "transfer", recorded: false, dryRun: true },
-    { command: "swap", recorded: false, dryRun: true },
-  ] as const)(
+  it.each(
+    (["send", "transfer", "swap"] as const).flatMap((command) => [
+      { command, recorded: true, dryRun: false },
+      { command, recorded: false, dryRun: false },
+      { command, recorded: false, dryRun: true },
+    ]),
+  )(
     "$command replays a recorded send but refuses to sign (recorded: $recorded, dry run: $dryRun)",
     async ({ command, recorded, dryRun }) => {
       const home = await useTempHome();

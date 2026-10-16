@@ -215,6 +215,7 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 | `logout`          | false          | true              | true             | true            |
 | `refresh`         | false          | true              | false            | true            |
 | `revoke`          | false          | true              | true             | true            |
+| `send`            | false          | true              | false            | true            |
 | `services`        | true           | false             | true             | true            |
 | `services_list`   | true           | false             | true             | true            |
 | `services_search` | true           | false             | true             | true            |

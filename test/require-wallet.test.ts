@@ -276,6 +276,7 @@ const machChallenge = `Payment realm="example", method="tempo", intent="charge",
 
 // Payments sign with the local access key, so agent runs need a usable one.
 const keyCommands = [
+  { command: "send", argv: ["send", "1", usdcToken, recipient, "--dry-run"] },
   { command: "transfer", argv: ["transfer", "1", usdcToken, recipient, "--dry-run"] },
   {
     command: "transfer --mach",
@@ -470,11 +471,11 @@ describe("wallet CLI login and access key checks", () => {
 
   // Interactive runs fall back to approving in the wallet app; agent runs above fail fast.
   it.each([
-    {
-      command: "transfer",
-      argv: ["transfer", "1", usdcToken, recipient, "--dry-run"],
+    ...["send", "transfer"].map((command) => ({
+      command,
+      argv: [command, "1", usdcToken, recipient, "--dry-run"],
       ran: { code: 0 },
-    },
+    })),
     // The quote's first RPC call means the swap ran past the check.
     {
       command: "swap",
@@ -523,12 +524,17 @@ describe("wallet CLI login and access key checks", () => {
         interactive: false,
       },
     ].flatMap((row) => [
-      { ...row, command: "swap", argv: ["swap", "1", "pathUSD", "USDC.e"] },
-      { ...row, command: "transfer", argv: ["transfer", "1", "pathUSD", recipient] },
+      { ...row, command: "swap", argv: ["swap", "1", "pathUSD", "USDC.e"], noun: "swap" },
+      ...["send", "transfer"].map((command) => ({
+        ...row,
+        command,
+        argv: [command, "1", "pathUSD", recipient],
+        noun: "transfer",
+      })),
     ]),
   )(
     "$command --network $network $name over another login returns a login cta (interactive: $interactive)",
-    async ({ command: name, argv, network, state, interactive }) => {
+    async ({ argv, network, state, interactive, noun }) => {
       const home = await useTempHome();
       await writeWalletState(state);
       requests.length = 0;
@@ -544,13 +550,13 @@ describe("wallet CLI login and access key checks", () => {
       expect(result.code).toBe(2);
       if (interactive) {
         expect(result.stdout).toContain("E_USAGE");
-        expect(result.stdout).toContain(`then rerun the ${name}.`);
+        expect(result.stdout).toContain(`then rerun the ${noun}.`);
         expect(result.stdout).toContain(`Suggested command:\n  ${command}`);
         expect(result.stderr).not.toContain("[y/N]");
       } else
         expect(JSON.parse(result.stdout)).toEqual({
           code: "E_USAGE",
-          message: expect.stringContaining(`log in with '${command}', then rerun the ${name}.`),
+          message: expect.stringContaining(`log in with '${command}', then rerun the ${noun}.`),
           retryable: false,
           cta: { description: "Suggested command:", commands: [{ command }] },
         });
@@ -560,18 +566,20 @@ describe("wallet CLI login and access key checks", () => {
 
   // A key there would not let a transfer on another network through, so an agent run gets the
   // login it needs rather than a refresh for that key.
-  it.each([
-    { network: "testnet", state: walletState({ accessKeys: [key] }) },
-    { network: "mainnet", state: walletState({ chainId: 42431, accessKeys: [testnetKey] }) },
-  ])(
-    "agent transfer --network $network without a key there over another login returns a login cta",
-    async ({ network, state }) => {
+  it.each(
+    [
+      { network: "testnet", state: walletState({ accessKeys: [key] }) },
+      { network: "mainnet", state: walletState({ chainId: 42431, accessKeys: [testnetKey] }) },
+    ].flatMap((row) => ["send", "transfer"].map((command) => ({ ...row, command }))),
+  )(
+    "agent $command --network $network without a key there over another login returns a login cta",
+    async ({ command: name, network, state }) => {
       const home = await useTempHome();
       await writeWalletState(state);
       requests.length = 0;
 
       const result = await wallet(
-        ["transfer", "1", "pathUSD", recipient, "--network", network, "--yes"],
+        [name, "1", "pathUSD", recipient, "--network", network, "--yes"],
         { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
       );
 
