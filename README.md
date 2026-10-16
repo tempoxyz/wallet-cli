@@ -224,18 +224,69 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 
 `tempo wallet` includes:
 
-- `login`, `login status`, `logout`, `refresh`, `whoami`, `keys`
-- `fund`, `fund status`
-- `transfer`
-- `swap`
-- `tx status`
-- `services`
-- `sessions` (same as `sessions list`), `sessions close`, `sessions sync`
-- `doctor` (`debug` is a deprecated alias)
-- `completions <bash|zsh|fish|nushell|powershell|elvish>`
-- `help [command]` (same as `[command] --help`)
+<!-- generated:commands start -->
 
-`tempo wallet --mcp` serves each command as an MCP tool (`keys update` as `keys_update`), with a `network` option in place of `--network`. Every tool declares MCP annotations so a client can tell reads from spends. `whoami`, `keys_list`, `tx_status`, `services`, `doctor`, `debug`, and `completions` set `readOnlyHint`. `transfer`, `swap`, `sessions_close`, `sessions_sync`, `keys_update`, `revoke`, `logout`, `login`, `login_status`, and `refresh`, which move funds, change or revoke a key, close a session, delete stored sessions, or replace or delete the stored wallet or its network, set `destructiveHint`. `fund` and `sessions_list` (which stores the channels `all` or `orphaned` discovers on-chain) change state without either. `idempotentHint` marks the tools that are safe to repeat, and `openWorldHint` every tool except `completions`, which makes no network requests. The hints are advisory: over MCP, `swap` and `revoke` still refuse to submit without `yes: true`.
+- `login`: Sign up or log in to your Tempo wallet. Options: `--no-browser`, `--wait`, `--no-wait`.
+- `login status`: Wait for a pending login's approval and finish it. Options: `--interval`, `--max-attempts`.
+- `refresh`: Refresh your access key without logging out. Options: `--no-browser`.
+- `logout`: Log out of every network, or of one with --network. Options: `--revoke`, `--yes`, `--no-browser`.
+- `whoami`: Show who you are: wallet, balances, keys. Options: `--mach`, `--credits`.
+- `keys list`: List keys and their spending limits.
+- `keys update [accessKey]`: Update an access key spending limit. Options: `--limit`, `--token`, `--no-browser`.
+- `revoke <accessKey>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
+- `transfer [amount] [token] [to]`: Transfer tokens to an address. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--credits`, `--max-spend`, `--amount-cents`, `--to`, `--data`, `--value`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
+- `swap <amount> <tokenIn> <tokenOut>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
+- `tx status <txHash>`: Show a transaction's status on chain.
+- `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--credits`, `--amount`, `--wait`, `--no-wait`, `--timeout`, `--referral-code`, `--claim`.
+- `fund status`: Wait for a pending funding's balance increase. Options: `--interval`, `--max-attempts`.
+- `sessions`: Manage payment sessions. Options: `--orphaned`, `--all`.
+- `sessions list`: List payment sessions. Options: `--orphaned`, `--all`.
+- `sessions close [url]`: Request a session close, then withdraw after the grace period with --finalize. Options: `--all`, `--orphaned`, `--finalize`, `--cooperative`, `--dry-run`, `--yes`.
+- `sessions sync`: Sync local sessions with on-chain state. Options: `--origin`.
+- `services [serviceId]`: Browse the MPP service directory. Options: `--search`, `--refresh`.
+- `mcp add`: Register as MCP server. Options: `--agent`, `--command` (`-c`), `--no-global`.
+- `skills add`: Sync skill files to agents. Options: `--depth`, `--no-global`.
+- `skills list`: List skills.
+- `doctor`: Diagnose login, access key, RPC, sqlite3, and environment setup.
+- `debug`: Deprecated: use 'doctor'.
+- `completions [bash|zsh|fish|nushell|powershell|elvish]`: Generate shell completions script.
+
+Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--json-output` (`-j`), `--toon-output` (`-t`), `--filter-output`, `--format`, `--full-output`, `--help`, `--llms`, `--llms-full`, `--mcp`, `--schema`, `--token-count`, `--token-limit`, `--token-offset`, and `--version`.
+
+<!-- generated:commands end -->
+
+`sessions` without a subcommand is the same as `sessions list`, and `help [command]` is the same as `[command] --help`.
+
+`tempo wallet --mcp` serves each command as an MCP tool (`keys update` as `keys_update`), with a `network` option in place of `--network`. Every tool declares MCP annotations so a client can tell reads from spends:
+
+<!-- generated:mcp-tools start -->
+
+| Tool             | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
+| ---------------- | -------------- | ----------------- | ---------------- | --------------- |
+| `completions`    | true           | false             | true             | false           |
+| `debug`          | true           | false             | true             | true            |
+| `doctor`         | true           | false             | true             | true            |
+| `fund`           | false          | false             | false            | true            |
+| `fund_status`    | false          | false             | true             | true            |
+| `keys_list`      | true           | false             | true             | true            |
+| `keys_update`    | false          | true              | false            | true            |
+| `login`          | false          | true              | false            | true            |
+| `login_status`   | false          | true              | true             | true            |
+| `logout`         | false          | true              | true             | true            |
+| `refresh`        | false          | true              | false            | true            |
+| `revoke`         | false          | true              | true             | true            |
+| `services`       | true           | false             | true             | true            |
+| `sessions_close` | false          | true              | false            | true            |
+| `sessions_list`  | false          | false             | true             | true            |
+| `sessions_sync`  | false          | true              | true             | true            |
+| `swap`           | false          | true              | false            | true            |
+| `transfer`       | false          | true              | false            | true            |
+| `tx_status`      | true           | false             | true             | true            |
+| `whoami`         | true           | false             | true             | true            |
+
+<!-- generated:mcp-tools end -->
+
+`destructiveHint` marks the tools that move funds, change or revoke a key, close a session, delete stored sessions, or replace or delete the stored wallet or its network. A tool that sets neither `readOnlyHint` nor `destructiveHint` changes state, as `sessions_list` does when it stores the channels `all` or `orphaned` discovers on-chain. `idempotentHint` marks the tools that are safe to repeat, and `openWorldHint` the tools that reach the chain RPC, the wallet app, or another server. The hints are advisory: over MCP, `swap` and `revoke` still refuse to submit without `yes: true`.
 
 `tempo wallet doctor` reports the setup on the resolved network: the CLI, Node, incur, and accounts SDK versions; the stored wallet's address, chain, and type (`passkey`, `private_key`, or `device_code`, from the key type the store records, else `null`); the access key's status, expiry, and spending limits; the RPC URL and whether it answers `eth_chainId` (asked once without retries, with its chain, whether that matches the network, and the latency); the wallet app URL; whether sqlite3 is on `PATH` and its version; whether the session store exists and is readable; and which environment overrides are set. Each finding is a `checks` entry with status `ok`, `warn`, or `fail`; when a command fixes the most important problem, `instruction` and `_next` name it, such as `tempo wallet login` or `tempo wallet refresh` with the resolved `--network`. An unhealthy setup still exits 0, and only an unknown `--network` fails. The checks run concurrently, and the RPC request and sqlite3 each stop after 3 seconds, so one stalled check does not hold up the report. Secrets are never shown: `TEMPO_PRIVATE_KEY` is reported only as set, and the user info, path, query, and fragment of `TEMPO_RPC_URL` and `TEMPO_AUTH_URL` appear as `<redacted>`. `tempo wallet debug` prints a deprecation notice on stderr and returns the same report.
 
@@ -355,6 +406,8 @@ Brief description of the change.
 Supported bump levels are `major`, `minor`, `patch`, and `none`.
 
 Run `pnpm check` before submitting changes.
+
+The command list and MCP tool tables in `README.md` and `SKILL.md`, between `<!-- generated:<name> start -->` and `<!-- generated:<name> end -->` markers, are generated from the command modules in `src/commands/` and their schemas and annotations. Change those, then run `pnpm docs:generate`; CI runs `pnpm docs:check` and fails on a stale block. Feature PRs leave the rest of `README.md` and `SKILL.md` to a separate docs PR.
 
 ## Request failures and payment recovery
 

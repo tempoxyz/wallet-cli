@@ -27,7 +27,11 @@ export async function serveMcp(
   });
 }
 
-function createMcpCommands(mounted: Map<string, unknown>, commands: readonly WalletCommand[]) {
+/** The command tree `serveMcp` serves: each tool annotated, and bare `sessions` left out. */
+export function createMcpCommands(
+  mounted: Map<string, unknown>,
+  commands: readonly WalletCommand[],
+) {
   // Each tool's annotations by tool name, from the `annotations` of its command.
   const annotations = Object.fromEntries(
     commands.flatMap((command) => Object.entries(command.annotations ?? {})),

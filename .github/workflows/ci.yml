@@ -62,6 +62,9 @@ jobs:
       - name: Check code
         run: pnpm check:code
 
+      - name: Check generated docs
+        run: pnpm docs:check
+
   types:
     name: Types
     runs-on: ubuntu-latest

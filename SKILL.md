@@ -193,8 +193,35 @@ tempo wallet transfer <AMOUNT> <TOKEN> <RECIPIENT> --idempotency-key <KEY> --yes
 
 When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool's annotations say what it does:
 
-- `readOnlyHint: true` (`whoami`, `keys_list`, `tx_status`, `services`, `doctor`) only reads.
-- `destructiveHint: true` (`transfer`, `swap`, `sessions_close`, `sessions_sync`, `keys_update`, `revoke`, `logout`, `login`, `login_status`, `refresh`) moves funds, changes or revokes a key, closes a session, deletes stored sessions, or replaces or deletes the stored wallet or its network. Get the user's approval before every call, after a `dry-run: true` call where the tool offers one.
+<!-- generated:mcp-tools start -->
+
+| Tool             | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
+| ---------------- | -------------- | ----------------- | ---------------- | --------------- |
+| `completions`    | true           | false             | true             | false           |
+| `debug`          | true           | false             | true             | true            |
+| `doctor`         | true           | false             | true             | true            |
+| `fund`           | false          | false             | false            | true            |
+| `fund_status`    | false          | false             | true             | true            |
+| `keys_list`      | true           | false             | true             | true            |
+| `keys_update`    | false          | true              | false            | true            |
+| `login`          | false          | true              | false            | true            |
+| `login_status`   | false          | true              | true             | true            |
+| `logout`         | false          | true              | true             | true            |
+| `refresh`        | false          | true              | false            | true            |
+| `revoke`         | false          | true              | true             | true            |
+| `services`       | true           | false             | true             | true            |
+| `sessions_close` | false          | true              | false            | true            |
+| `sessions_list`  | false          | false             | true             | true            |
+| `sessions_sync`  | false          | true              | true             | true            |
+| `swap`           | false          | true              | false            | true            |
+| `transfer`       | false          | true              | false            | true            |
+| `tx_status`      | true           | false             | true             | true            |
+| `whoami`         | true           | false             | true             | true            |
+
+<!-- generated:mcp-tools end -->
+
+- `readOnlyHint: true` only reads.
+- `destructiveHint: true` moves funds, changes or revokes a key, closes a session, deletes stored sessions, or replaces or deletes the stored wallet or its network. Get the user's approval before every call, after a `dry-run: true` call where the tool offers one.
 - `transfer`, `swap`, `revoke`, and `sessions_close` refuse to submit without `yes: true`; pass it only after the user approves the reviewed dry run.
 
 ## Common Issues
