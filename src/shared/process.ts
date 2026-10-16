@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { env, platform } from "node:process";
 import { createInterface } from "node:readline/promises";
+import { pathToFileURL } from "node:url";
 
 /** Opens `url` in the default browser, unless `TEMPO_NO_BROWSER` is set (headless hosts, agents). */
 export function openExternal(url: string) {
@@ -48,15 +49,18 @@ export function canPrompt(agent: boolean) {
 /** The sqlite3 binary the session store runs, looked up on PATH. */
 export const sqlite3 = "sqlite3";
 
-/** Runs `command` and resolves with its stdout; `signal` kills it and rejects. */
+/**
+ * Runs `command`, writing `input` to its stdin, and resolves with its stdout; `signal` kills it and
+ * rejects.
+ */
 export function runProcess(
   command: string,
   args: readonly string[],
-  options: { signal?: AbortSignal | undefined } = {},
+  options: { input?: string | undefined; signal?: AbortSignal | undefined } = {},
 ) {
   return new Promise<string>((resolve, reject) => {
     const child = spawn(command, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       ...(options.signal ? { signal: options.signal } : {}),
     });
     let stdout = "";
@@ -65,6 +69,9 @@ export function runProcess(
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
+    // A command that exits without reading its stdin fails the write; its exit code reports it.
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(options.input);
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve(stdout);
@@ -81,18 +88,44 @@ export async function runSql(sql: string) {
   await runSqlite([], sql);
 }
 
+/**
+ * Runs `sql` against channels.db, stopping at its first failing statement, so a
+ * `BEGIN; ...; COMMIT;` script applies whole or not at all. `runSql` cannot: the shell runs the
+ * rest of a SQL argument after a statement in it fails, even with `-bail`.
+ */
+export async function runSqlScript(sql: string) {
+  await runProcess(
+    sqlite3,
+    ["-bail", "-cmd", `.timeout ${sqliteBusyTimeoutMs}`, channelsDbPath()],
+    { input: sql },
+  );
+}
+
 /** Runs a query against channels.db and returns its rows as parsed `sqlite3 -json` output. */
 export async function querySql(sql: string): Promise<unknown> {
   return JSON.parse((await runSqlite(["-json"], sql)) || "[]");
 }
 
-function runSqlite(options: readonly string[], sql: string) {
+/** Like `querySql`, against the existing database at `path`; see `existingDbUri`. */
+export async function queryExistingDbSql(path: string, sql: string): Promise<unknown> {
+  return JSON.parse((await runSqlite(["-json"], sql, existingDbUri(path))) || "[]");
+}
+
+/**
+ * A URI that opens the database at `path` as any SQLite client does, applying its WAL, but fails
+ * instead of creating it when it is missing. Usable in `ATTACH`.
+ */
+export function existingDbUri(path: string) {
+  return `${pathToFileURL(path).href}?mode=rw`;
+}
+
+function runSqlite(options: readonly string[], sql: string, database = channelsDbPath()) {
   // `.timeout` sets the busy timeout without printing a row, unlike `PRAGMA busy_timeout`.
   return runProcess(sqlite3, [
     ...options,
     "-cmd",
     `.timeout ${sqliteBusyTimeoutMs}`,
-    channelsDbPath(),
+    database,
     sql,
   ]);
 }
@@ -103,4 +136,14 @@ export function channelsDbPath() {
 
 export function sqlString(value: string) {
   return `'${value.replaceAll("'", "''")}'`;
+}
+
+/** The larger of two SQL expressions holding non-negative decimal integers stored as text. */
+export function maxDecimalSql(left: string, right: string) {
+  return `CASE
+      WHEN LENGTH(${left}) > LENGTH(${right}) THEN ${left}
+      WHEN LENGTH(${left}) < LENGTH(${right}) THEN ${right}
+      WHEN ${left} >= ${right} THEN ${left}
+      ELSE ${right}
+    END`;
 }
