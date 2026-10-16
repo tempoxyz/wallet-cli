@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { withFileLock, withSessionLock } from "../src/payment/session-lock.js";
 import { walletError } from "../src/shared/errors.js";
-import { querySql, runSql } from "../src/shared/process.js";
+import { querySql, runSql, runSqlScript } from "../src/shared/process.js";
 import { nowSeconds } from "../src/shared/utils.js";
 import { createIdempotencyRecord, pruneIdempotencyRecords } from "../src/wallet/idempotency.js";
 import { useTempHome } from "./helpers.js";
@@ -255,14 +255,32 @@ describe("withSessionLock", () => {
   });
 });
 
-describe("session store queries", () => {
-  it("parse their output despite a hostile sqliterc", async () => {
-    const home = await useTempHome();
-    await withHostileSqliterc(home);
+describe("session store runs despite a hostile sqliterc", () => {
+  it.each([
+    {
+      name: "a query still parses its output",
+      run: async () => {
+        await runSql("CREATE TABLE t (a INTEGER, b TEXT); INSERT INTO t VALUES (1, 'x');");
+        return querySql("SELECT a, b FROM t");
+      },
+      expected: [{ a: 1, b: "x" }],
+    },
+    {
+      name: "a script still stops at its first failing statement",
+      run: async () => {
+        await runSql("CREATE TABLE t (id INTEGER PRIMARY KEY); CREATE TABLE m (x)");
+        await runSql("INSERT INTO t VALUES (1)");
+        await expect(
+          runSqlScript("BEGIN;\nINSERT INTO t VALUES (1);\nINSERT INTO m VALUES (1);\nCOMMIT;\n"),
+        ).rejects.toThrow("UNIQUE constraint failed");
+        return querySql("SELECT COUNT(*) AS n FROM m");
+      },
+      expected: [{ n: 0 }],
+    },
+  ])("$name", async ({ run, expected }) => {
+    await withHostileSqliterc(await useTempHome());
 
-    await runSql("CREATE TABLE t (a INTEGER, b TEXT); INSERT INTO t VALUES (1, 'x');");
-
-    await expect(querySql("SELECT a, b FROM t")).resolves.toEqual([{ a: 1, b: "x" }]);
+    await expect(run()).resolves.toEqual(expected);
   });
 });
 
