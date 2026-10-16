@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseRequestArgs } from "../src/request/args.js";
 import { executeRequest } from "../src/request/run.js";
 import { requireSessionDescriptor } from "../src/payment/session-descriptor.js";
+import { commandMap } from "../src/cli/command.js";
 import { ctaErrors } from "../src/cli/incur-compat.js";
 import {
   errorCodes,
@@ -159,6 +160,12 @@ describe("typed error sites", () => {
       message: "v2 session management requires a stored channel descriptor",
       run: async () => requireSessionDescriptor({}),
     },
+    {
+      site: "command map of a value incur did not create",
+      code: "E_RUNTIME",
+      message: "Unable to access wallet commands",
+      run: async () => commandMap({} as never),
+    },
   ] as const)("$site throws $code", async ({ code, message, run }) => {
     await expect(run()).rejects.toMatchObject({
       code,
@@ -167,15 +174,18 @@ describe("typed error sites", () => {
     });
   });
 
+  // Bare `Error` throws allowed under src/, keyed `<file>: <line>`, each with a one-line reason:
+  // a programmer-error assertion no user can reach, or an upstream API that needs a plain `Error`.
+  const allowedBareErrors: Record<string, string> = {};
+
   it("throws typed errors instead of bare Error", async () => {
     const found: string[] = [];
-    for (const dir of ["src/commands", "src/payment", "src/request", "src/shared"])
-      for (const file of await readdir(join(root, dir), { recursive: true })) {
-        if (!file.endsWith(".ts")) continue;
-        const source = await readFile(join(root, dir, file), "utf8");
-        for (const line of source.split("\n"))
-          if (/\bthrow\s+(new\s+)?Error\(/.test(line)) found.push(`${dir}/${file}: ${line.trim()}`);
-      }
-    expect(found).toEqual([]);
+    for (const file of await readdir(join(root, "src"), { recursive: true })) {
+      if (!file.endsWith(".ts")) continue;
+      const source = await readFile(join(root, "src", file), "utf8");
+      for (const line of source.split("\n"))
+        if (/\bthrow\s+(new\s+)?Error\(/.test(line)) found.push(`src/${file}: ${line.trim()}`);
+    }
+    expect(found.sort()).toEqual(Object.keys(allowedBareErrors).sort());
   });
 });
