@@ -17,7 +17,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 
 import { swapTokens } from "../src/commands/swap.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
-import { CtaError } from "../src/shared/errors.js";
+import { CtaError } from "../src/cli/incur-compat.js";
 import { machToken } from "../src/shared/mach.js";
 import { parseNetwork } from "../src/shared/network.js";
 import {

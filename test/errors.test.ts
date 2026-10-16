@@ -7,9 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 import { parseRequestArgs } from "../src/request/args.js";
 import { executeRequest } from "../src/request/run.js";
 import { requireSessionDescriptor } from "../src/payment/session-descriptor.js";
+import { ctaErrors } from "../src/cli/incur-compat.js";
 import {
-  accessKeyLimitError,
-  ctaErrors,
   errorCodes,
   httpError,
   networkError,
@@ -20,6 +19,7 @@ import {
   type WalletErrorCode,
 } from "../src/shared/errors.js";
 import { walletProblem, WalletRequiredError } from "../src/shared/require-wallet.js";
+import { accessKeyLimitError } from "../src/wallet/access-key.js";
 
 const root = resolve(import.meta.dirname, "..");
 const key = "0x4cdadb819a7fc083b72ada08288a96424f34c8a0";
@@ -27,22 +27,22 @@ const token = "0x20c0000000000000000000000000000000000000";
 
 describe("errorCodes", () => {
   const expected: [WalletErrorCode, number, boolean][] = [
-    ["E_USAGE", 2, false],
-    ["E_NOT_FOUND", 2, false],
-    ["E_NETWORK", 3, false],
-    ["E_HTTP", 3, false],
-    ["E_RPC", 3, false],
-    ["E_POLL_TIMEOUT", 3, true],
-    ["E_PAYMENT", 4, false],
-    ["E_PAYMENT_OUTCOME_UNKNOWN", 4, false],
-    ["E_NOT_AUTHENTICATED", 4, false],
-    ["E_LOGIN_DENIED", 4, false],
-    ["E_LOGIN_EXPIRED", 4, false],
     ["E_AUTH_REFRESH_REQUIRED", 4, false],
+    ["E_HTTP", 3, false],
+    ["E_INSUFFICIENT_FUNDS", 4, false],
     ["E_KEY_EXPIRED", 4, false],
     ["E_LIMIT_EXCEEDED", 4, false],
-    ["E_INSUFFICIENT_FUNDS", 4, false],
+    ["E_LOGIN_DENIED", 4, false],
+    ["E_LOGIN_EXPIRED", 4, false],
+    ["E_NETWORK", 3, false],
+    ["E_NOT_AUTHENTICATED", 4, false],
+    ["E_NOT_FOUND", 2, false],
+    ["E_PAYMENT", 4, false],
+    ["E_PAYMENT_OUTCOME_UNKNOWN", 4, false],
+    ["E_POLL_TIMEOUT", 3, true],
+    ["E_RPC", 3, false],
     ["E_RUNTIME", 1, false],
+    ["E_USAGE", 2, false],
   ];
 
   it("lists every code", () => {

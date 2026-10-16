@@ -1,3 +1,7 @@
+import { CtaError } from "../cli/incur-compat.js";
+import { commandError } from "../shared/errors.js";
+import type { Network } from "../shared/network.js";
+import { continuationCommand } from "../shared/next.js";
 import type { WalletState } from "./store.js";
 
 export type LocalAccessKeyStatus = "expired" | "pending" | "ready" | "unusable";
@@ -47,6 +51,32 @@ export function accessKeyMatches(
   return (
     key.chainId === options.chainId &&
     key.access.toLowerCase() === options.walletAddress.toLowerCase()
+  );
+}
+
+/**
+ * E_LIMIT_EXCEEDED for an access key whose spending limit cannot cover `amount` (token units) of
+ * `token`, with the `tempo wallet keys update` that sets the limit to that amount as its `cta`.
+ * `label` names the token in the message.
+ */
+export function accessKeyLimitError(options: {
+  key: string;
+  token: string;
+  label: string;
+  amount: string;
+  network: Network;
+}) {
+  const { key, token, label, amount, network } = options;
+  const command = continuationCommand(
+    ["wallet", "keys", "update", key.toLowerCase(), "--token", token, "--limit", amount],
+    network,
+  );
+  return new CtaError(
+    commandError(
+      "E_LIMIT_EXCEEDED",
+      `The access key cannot spend ${amount} ${label}. Ask the wallet owner to run '${command}', then retry.`,
+      command,
+    ),
   );
 }
 

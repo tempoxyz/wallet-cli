@@ -2,13 +2,13 @@ import { formatUnits, isAddress, toHex, zeroAddress } from "viem";
 import type { z } from "incur";
 import { Actions } from "viem/tempo";
 
+import type { CtaError } from "../../cli/incur-compat.js";
 import type { transferSuccessOutput } from "../../schemas/transfer.js";
 import {
   commandError,
   networkError,
   paymentOutcomeUnknownError,
   usageError,
-  type CtaError,
 } from "../../shared/errors.js";
 import {
   createTempoPublicClient,

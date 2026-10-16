@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { Cli, z } from "incur";
 
+import { ctaErrors } from "./cli/incur-compat.js";
 import { normalizeIncurArgv, redacted, rerunArgs } from "./request/argv.js";
 import type { RequestOptions } from "./request/options.js";
 import { executeRequest } from "./request/run.js";
 import { defaultMaxSpend, MaxSpendExceededError } from "./request/spend.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";
-import { ctaErrors } from "./shared/errors.js";
 import { continuationCommand } from "./shared/next.js";
 import { WalletRequiredError } from "./shared/require-wallet.js";
 

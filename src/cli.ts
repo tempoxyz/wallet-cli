@@ -7,12 +7,11 @@ import { commandMap } from "./cli/command.js";
 import { commands } from "./cli/commands.js";
 import { walletCompletions } from "./cli/completions.js";
 import { describeCli } from "./cli/describe.js";
-import { bindCommandOptions } from "./cli/incur-compat.js";
+import { bindCommandOptions, ctaErrors } from "./cli/incur-compat.js";
 import { serveMcp } from "./cli/mcp.js";
 import { closeCommandFailed } from "./commands/sessions/close.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";
-import { ctaErrors } from "./shared/errors.js";
 
 const cli = Cli.create("tempo wallet", {
   version,

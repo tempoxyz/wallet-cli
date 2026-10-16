@@ -4,15 +4,14 @@ import { Actions, Addresses } from "viem/tempo";
 
 import { destructive, type WalletCommand } from "../cli/command.js";
 import { flag, option, positional } from "../cli/describe.js";
+import type { CtaError } from "../cli/incur-compat.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { swapArgs, swapOptions, swapOutput, type swapSuccessOutput } from "../schemas/swap.js";
 import {
-  accessKeyLimitError,
   commandError,
   paymentOutcomeUnknownError,
   usageError,
   walletError,
-  type CtaError,
 } from "../shared/errors.js";
 import { machToken } from "../shared/mach.js";
 import {
@@ -27,6 +26,7 @@ import { withWallet, type Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { createProvider, requireSender } from "../provider.js";
+import { accessKeyLimitError } from "../wallet/access-key.js";
 import {
   deferredKeyRefusal,
   defersKeyCheck,

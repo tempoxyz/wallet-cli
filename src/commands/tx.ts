@@ -3,9 +3,10 @@ import { formatUnits, TransactionNotFoundError, TransactionReceiptNotFoundError 
 
 import { readOnly, type WalletCommand } from "../cli/command.js";
 import { option, positional } from "../cli/describe.js";
+import { CtaError } from "../cli/incur-compat.js";
 import { cliGlobals, globalAlias, globalOptions } from "../schemas/shared.js";
 import { txStatusArgs, txStatusOutput } from "../schemas/tx.js";
-import { commandError, CtaError, networkError, usageError } from "../shared/errors.js";
+import { commandError, networkError, usageError } from "../shared/errors.js";
 import {
   createTempoPublicClient,
   networkFields,
