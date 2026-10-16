@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { rmSync } from "node:fs";
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,7 +16,8 @@ const lockTimeoutMs = 30_000;
 
 /**
  * Runs `fn` holding the session lock for `url`'s origin, as `withFileLock` does. Without sqlite3 on
- * PATH it fails with `E_USAGE` instead of falling back: session payments need sqlite3 anyway.
+ * PATH it fails instead of falling back, since session payments need sqlite3 anyway. It fails with
+ * `E_PAYMENT`, as the session store did, so `--payment-intent auto` still offers a charge.
  */
 export async function withSessionLock<T>(url: string, fn: () => Promise<T>): Promise<T> {
   const release = await kernelLock(lockPath(url), "session lock");
@@ -104,9 +106,9 @@ function tryLock(path: string, waitMs: number) {
 
 /**
  * The lock `withFileLock` takes without sqlite3: `path`, created exclusively with the holder's pid
- * and deleted by the holder on release. It is never taken over, since waiters that each find its
- * holder dead and delete it can delete each other's: one whose holder has exited fails with a
- * retryable `E_RUNTIME` naming it, for the user to remove.
+ * and deleted by the holder on release, or when a signal ends it. It is never taken over, since
+ * waiters that each find its holder dead and delete it can delete each other's: one whose holder
+ * has exited, as after SIGKILL, fails with `E_RUNTIME` naming it, for the user to remove.
  */
 async function pidFileLock(path: string, label: string): Promise<Release> {
   const deadline = Date.now() + lockTimeoutMs;
@@ -123,13 +125,36 @@ async function pidFileLock(path: string, label: string): Promise<Release> {
       } finally {
         await handle.close();
       }
-      return () => unlink(path).catch(() => undefined);
+      const unwatch = removeOnSignal(path);
+      return async () => {
+        unwatch();
+        await unlink(path).catch(() => undefined);
+      };
     }
     const pid = await exitedHolder(path);
     if (pid !== undefined) throw staleLockError(label, path, pid);
     if (Date.now() > deadline) throw timeoutError(label, path);
     await sleep(100);
   }
+}
+
+const endingSignals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+
+/**
+ * Until the returned function is called, deletes this process's pid file at `path` when a signal
+ * that ends the process by default arrives, then raises the signal again so it still does.
+ */
+function removeOnSignal(path: string) {
+  const unwatch = () => {
+    for (const signal of endingSignals) process.removeListener(signal, onSignal);
+  };
+  const onSignal = (signal: NodeJS.Signals) => {
+    unwatch();
+    rmSync(path, { force: true });
+    process.kill(process.pid, signal);
+  };
+  for (const signal of endingSignals) process.on(signal, onSignal);
+  return unwatch;
 }
 
 /** The pid in the lock file at `path`, if that process has exited. */
@@ -157,14 +182,14 @@ function staleLockError(label: string, path: string, pid: number) {
   return walletError({
     code: "E_RUNTIME",
     message: `The ${label} ${path} was left by process ${pid}, which has exited. Once no tempo process is running, remove it with 'rm ${shellQuote(path)}' and retry.`,
-    retryable: true,
+    retryable: false,
   });
 }
 
 function sqlite3MissingError() {
   return new CtaError(
     commandError(
-      "E_USAGE",
+      "E_PAYMENT",
       "sqlite3 was not found on PATH. Payment sessions need it: install sqlite3, then retry.",
       "tempo wallet doctor",
     ),

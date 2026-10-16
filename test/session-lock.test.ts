@@ -139,22 +139,33 @@ describe("withFileLock with sqlite3", () => {
 });
 
 describe("withFileLock without sqlite3", () => {
-  it("refuses a pid file whose holder has exited, leaving it for the user to remove", async () => {
-    const { path } = await lockFiles();
+  it.each(["SIGINT", "SIGTERM", "SIGHUP"] as const)(
+    "removes the pid file when %s ends its holder mid-critical-section",
+    async (signal) => {
+      const { path, log } = await lockFiles();
+      withoutSqlite3();
+      await killHolding(await startHolder(path, log, 60_000), signal);
+
+      await expect(withFileLock(path, "test lock", async () => "next")).resolves.toBe("next");
+    },
+  );
+
+  it("refuses the pid file of a holder SIGKILL ended, leaving it for the user to remove", async () => {
+    const { path, log } = await lockFiles();
     withoutSqlite3();
+    const holder = await startHolder(path, log, 60_000);
+    await killHolding(holder, "SIGKILL");
     const pidFile = `${path}.pid`;
-    await mkdir(dirname(pidFile), { recursive: true });
-    await writeFile(pidFile, "99999999\n");
     const fn = vi.fn(async () => "ran");
 
     await expect(withFileLock(path, "test lock", fn)).rejects.toMatchObject({
       code: "E_RUNTIME",
       exitCode: 1,
-      retryable: true,
-      message: `The test lock ${pidFile} was left by process 99999999, which has exited. Once no tempo process is running, remove it with 'rm ${pidFile}' and retry.`,
+      retryable: false,
+      message: `The test lock ${pidFile} was left by process ${holder.pid}, which has exited. Once no tempo process is running, remove it with 'rm ${pidFile}' and retry.`,
     });
     expect(fn).not.toHaveBeenCalled();
-    await expect(readFile(pidFile, "utf8")).resolves.toBe("99999999\n");
+    await expect(readFile(pidFile, "utf8")).resolves.toBe(`${holder.pid}\n`);
   });
 
   it("serializes idempotency claims and prunes", async () => {
@@ -179,14 +190,14 @@ describe("withFileLock without sqlite3", () => {
 });
 
 describe("withSessionLock", () => {
-  it("fails with E_USAGE and a doctor cta without sqlite3, without running fn", async () => {
+  it("fails with E_PAYMENT and a doctor cta without sqlite3, without running fn", async () => {
     await useTempHome();
     withoutSqlite3();
     const fn = vi.fn(async () => "ran");
 
     await expect(withSessionLock("https://lock.example.com/", fn)).rejects.toMatchObject({
-      code: "E_USAGE",
-      exitCode: 2,
+      code: "E_PAYMENT",
+      exitCode: 4,
       retryable: false,
       message:
         "sqlite3 was not found on PATH. Payment sessions need it: install sqlite3, then retry.",
@@ -239,11 +250,11 @@ async function occupancy(log: string) {
 
 type Holder = Awaited<ReturnType<typeof startHolder>>;
 
-/** Lets `holder` take the lock, then kills it with SIGKILL while it holds it. */
-async function killHolding(holder: Holder) {
+/** Lets `holder` take the lock, then ends it with `signal` while it holds it. */
+async function killHolding(holder: Holder, signal: NodeJS.Signals = "SIGKILL") {
   holder.start();
   await holder.printed("held");
-  holder.kill();
+  holder.kill(signal);
   await holder.exited;
 }
 
@@ -270,9 +281,10 @@ async function startHolder(path: string, log: string, holdMs: number) {
     });
   await printed("ready");
   return {
+    pid: child.pid,
     exited,
     printed,
     start: () => child.stdin.end(),
-    kill: () => child.kill("SIGKILL"),
+    kill: (signal: NodeJS.Signals) => child.kill(signal),
   };
 }
