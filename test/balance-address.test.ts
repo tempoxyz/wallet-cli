@@ -145,6 +145,20 @@ describe("tempo wallet balance", () => {
       requests: [`assets 4217 ${wallet}`, `balanceOf ${usdcToken} ${wallet}`],
     },
     {
+      name: "the wallet app's balance of the default token when the chain cannot be read",
+      state: walletState(),
+      argv: [],
+      onChain: {},
+      assets: {
+        4217: [
+          { address: usdcToken, balance: "7000000", decimals: 6, symbol: "USDC.e", verified: true },
+        ],
+      },
+      failRpc: true,
+      expected: { ...mainnet, balances: [listed(usdcToken, "USDC.e", "7")] },
+      requests: [`assets 4217 ${wallet}`, "POST / eth_call"],
+    },
+    {
       name: "--token by symbol, read on chain only",
       state: walletState(),
       argv: ["--token", "USDC"],
@@ -182,10 +196,10 @@ describe("tempo wallet balance", () => {
       expected: { ...mainnet, balances: [listed(ousdToken, "OUSD", "0")] },
       requests: [`balanceOf ${ousdToken} ${wallet}`],
     },
-  ])("shows $name", async ({ state, argv, onChain, assets, expected, requests }) => {
+  ])("shows $name", async ({ state, argv, onChain, assets, failRpc, expected, requests }) => {
     const home = await useTempHome();
     await writeWalletState(state);
-    const host = await walletHost({ onChain, assets });
+    const host = await walletHost({ onChain, assets, failRpc });
     try {
       const result = await run(["balance", ...argv, "--format", "json"], home, host.url);
 
@@ -199,12 +213,48 @@ describe("tempo wallet balance", () => {
     }
   });
 
-  it("returns a retryable E_NETWORK when the chain cannot be read", async () => {
+  it.each([
+    {
+      name: "the default token cannot be read and the wallet app reports none",
+      argv: [],
+      onChain: {},
+      assets: {},
+      failRpc: true,
+    },
+    {
+      name: "the default token cannot be read and the wallet app reports only others",
+      argv: [],
+      onChain: {},
+      assets: {
+        4217: [{ address: ousdToken, balance: "1", decimals: 6, symbol: "OUSD", verified: true }],
+      },
+      failRpc: true,
+    },
+    {
+      name: "--token cannot be read, though the wallet app would report it",
+      argv: ["--token", "USDC.e"],
+      onChain: {},
+      assets: {
+        4217: [
+          { address: usdcToken, balance: "7000000", decimals: 6, symbol: "USDC.e", verified: true },
+        ],
+      },
+      failRpc: true,
+    },
+    // The loopback RPC answers only `balanceOf`, so the token's metadata read fails.
+    {
+      name: "an unlisted --token's decimals cannot be read",
+      argv: ["--token", unlistedToken],
+      onChain: { [unlistedToken]: 1n },
+      assets: {},
+      failRpc: false,
+    },
+  ])("returns a retryable E_NETWORK when $name", async ({ argv, onChain, assets, failRpc }) => {
     const home = await useTempHome();
     await writeWalletState(walletState());
-    const host = await walletHost({ onChain: {}, assets: {}, failRpc: true });
+    const host = await walletHost({ onChain, assets, failRpc });
     try {
-      const result = await run(["balance", "--format", "json"], home, host.url);
+      const result = await run(["balance", ...argv, "--format", "json"], home, host.url);
 
       expect(result.code).toBe(3);
       expect(JSON.parse(result.stdout)).toEqual({
@@ -290,23 +340,6 @@ describe("tempo wallet balance", () => {
       expect(mocks.getMetadata.mock.calls.map(([, parameters]) => parameters)).toEqual([
         { token: unlistedToken },
       ]);
-    } finally {
-      await host.close();
-    }
-  });
-
-  it("fails on an unlisted --token whose decimals cannot be read", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-    const host = await walletHost({ onChain: { [unlistedToken]: 1n }, assets: {} });
-    vi.stubEnv("TEMPO_RPC_URL", host.url);
-    try {
-      await expect(
-        balanceHandler(await readyWallet("mainnet", false), { token: unlistedToken }),
-      ).rejects.toMatchObject({
-        code: "E_NETWORK",
-        message: `Unable to read token metadata for ${unlistedToken}. Check the token address and RPC connectivity (TEMPO_RPC_URL).`,
-      });
     } finally {
       await host.close();
     }
@@ -453,7 +486,7 @@ describe("balance and address", () => {
 async function walletHost(options: {
   onChain: Record<string, bigint>;
   assets: Record<number, unknown[]>;
-  failRpc?: boolean;
+  failRpc?: boolean | undefined;
 }) {
   const requests: string[] = [];
   const server = createServer((request, response) => {

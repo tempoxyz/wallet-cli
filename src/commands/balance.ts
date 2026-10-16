@@ -49,8 +49,10 @@ export default {
 /**
  * The logged-in wallet's token balances on the resolved network. With `token`, only that token's,
  * read on chain. Otherwise each token the wallet app reports, plus the network's default token
- * read on chain, which is listed even at zero. Session deposits are held in escrow, not by the
- * wallet, so the locked and pending-refund amounts are `whoami`'s to report.
+ * read on chain, which is listed even at zero. The on-chain read fails the command only when its
+ * token would be missing from the output: the wallet app's balance of a token it reports is
+ * shown over the chain's. Session deposits are held in escrow, not by the wallet, so the locked
+ * and pending-refund amounts are `whoami`'s to report.
  */
 export async function balanceHandler(
   { account, network }: Wallet,
@@ -62,26 +64,28 @@ export async function balanceHandler(
     onChainBalance(chain, token, account.address),
     options.token ? [] : fetchWalletAssets({ chain, walletAddress: account.address }),
   ]);
-  return {
-    address: account.address.toLowerCase(),
-    ...networkFields(chain),
-    balances: assetBalances(assets, held),
-  };
+  const balances = assetBalances(assets, held);
+  if (!balances.some((balance) => balance.token === token.toLowerCase()))
+    throw networkError(balanceQueryError.message, { retryable: true });
+  return { address: account.address.toLowerCase(), ...networkFields(chain), balances };
 }
 
-/** The wallet's balance of `token`, read on chain in the token's decimals. */
+/**
+ * The wallet's balance of `token`, read on chain in the token's decimals; `undefined` when the
+ * balance or, for an unlisted token, its metadata cannot be read.
+ */
 async function onChainBalance(
   chain: number,
   token: Address,
   walletAddress: string,
-): Promise<WalletAsset> {
+): Promise<WalletAsset | undefined> {
   const [balance, metadata] = await Promise.all([
     tokenBalance({ chain, token, walletAddress }),
     tokenMetadata(token, chain, (address) =>
       readTokenMetadata(address, chain, { timeout: statusQueryTimeout, retryCount: 0 }),
-    ),
+    ).catch(() => undefined),
   ]);
-  if (!balance) throw networkError(balanceQueryError.message, { retryable: true });
+  if (!balance || !metadata) return undefined;
   return {
     address: token,
     balance: balance.raw,
