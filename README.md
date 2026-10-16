@@ -231,6 +231,8 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 - `refresh`: Refresh your access key without logging out. Options: `--no-browser`.
 - `logout`: Log out of every network, or of one with --network. Options: `--revoke`, `--yes`, `--no-browser`.
 - `whoami`: Show who you are: wallet, balances, keys. Options: `--mach`, `--credits`.
+- `balance`: Show the wallet's token balances. Options: `--token`.
+- `address`: Show the wallet address. Options: `--qr`.
 - `keys list`: List keys and their spending limits.
 - `keys update [accessKey]`: Update an access key spending limit. Options: `--limit`, `--token`, `--no-browser`.
 - `revoke <accessKey>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
@@ -263,6 +265,8 @@ Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--js
 
 | Tool             | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
 | ---------------- | -------------- | ----------------- | ---------------- | --------------- |
+| `address`        | true           | false             | true             | false           |
+| `balance`        | true           | false             | true             | true            |
 | `completions`    | true           | false             | true             | false           |
 | `debug`          | true           | false             | true             | true            |
 | `doctor`         | true           | false             | true             | true            |

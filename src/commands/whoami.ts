@@ -1,12 +1,11 @@
 import { Cli } from "incur";
-import { formatUnits, isAddress } from "viem";
+import { formatUnits } from "viem";
 
 import { readOnly, type WalletCommand } from "../cli/command.js";
 import { flag } from "../cli/describe.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { whoamiOptions, whoamiOutput } from "../schemas/whoami.js";
 import {
-  appUrl,
   networkFields,
   resolveNetwork,
   storedChainId,
@@ -15,7 +14,7 @@ import {
 } from "../shared/network.js";
 import { usageError } from "../shared/errors.js";
 import { querySql } from "../shared/process.js";
-import { knownToken, tickerSymbol, tokenSymbol } from "../shared/tokens.js";
+import { knownToken } from "../shared/tokens.js";
 import {
   cleanStoredScalar,
   formatTokenUnits,
@@ -24,6 +23,7 @@ import {
   parseStoredBigInt,
 } from "../shared/utils.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
+import { assetBalances, fetchWalletAssets, type WalletAsset } from "../wallet/balances.js";
 import {
   accessKeyMatches,
   isPaymentCapableStatus,
@@ -36,7 +36,6 @@ import {
   keyTokens,
   readChainKey,
   rpcChainCheck,
-  statusQueryTimeout,
   tokenBalance,
   tokenDetails,
   tokenKey,
@@ -181,14 +180,6 @@ function whoamiReady(
   return Boolean(walletAddress && balance && status && isPaymentCapableStatus(status));
 }
 
-type WalletAsset = {
-  address: string;
-  balance: string;
-  decimals: number;
-  symbol: string | null;
-  verified: boolean;
-};
-
 function walletBalances(options: {
   accessKey: WalletState["accessKeys"][number] | undefined;
   assets: WalletAsset[];
@@ -197,83 +188,21 @@ function walletBalances(options: {
   fallbackVerified: boolean;
   symbol: string | null;
 }) {
-  const balances = options.assets.map((asset) => {
+  const fallback = options.fallback
+    ? {
+        address: options.fallback.token,
+        balance: options.fallback.raw,
+        decimals: 6,
+        symbol: options.symbol,
+        verified: options.fallbackVerified,
+      }
+    : undefined;
+  return assetBalances(options.assets, fallback).map((balance) => {
     const limit = options.accessKey?.limits?.find(
-      (candidate) => candidate.token.toLowerCase() === asset.address.toLowerCase(),
+      (candidate) => candidate.token.toLowerCase() === balance.token,
     );
-    return {
-      token: asset.address.toLowerCase(),
-      symbol: asset.symbol,
-      decimals: asset.decimals,
-      balance: formatUnits(BigInt(asset.balance), asset.decimals),
-      verified: asset.verified,
-      access_key_limit: formatAccessKeyLimit(limit?.limit, asset.decimals),
-    };
+    return { ...balance, access_key_limit: formatAccessKeyLimit(limit?.limit, balance.decimals) };
   });
-
-  if (
-    options.fallback &&
-    !balances.some(
-      (balance) => balance.token.toLowerCase() === options.fallback?.token.toLowerCase(),
-    )
-  ) {
-    const limit = options.accessKey?.limits?.find(
-      (candidate) => candidate.token.toLowerCase() === options.fallback?.token.toLowerCase(),
-    );
-    balances.push({
-      token: options.fallback.token.toLowerCase(),
-      symbol: options.symbol,
-      decimals: 6,
-      balance: options.fallback.formatted,
-      verified: options.fallbackVerified,
-      access_key_limit: formatAccessKeyLimit(limit?.limit, 6),
-    });
-  }
-
-  return balances;
-}
-
-async function fetchWalletAssets(options: {
-  chain: number;
-  walletAddress: string | null;
-}): Promise<WalletAsset[]> {
-  if (!options.walletAddress) return [];
-  const url = new URL("/api/assets", appUrl);
-  url.searchParams.set("address", options.walletAddress);
-  url.searchParams.set("chainId", String(options.chain));
-  url.searchParams.set("fresh", "true");
-
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(statusQueryTimeout) });
-    if (!response.ok) return [];
-    return getArray(await response.json()).flatMap((value) => {
-      const asset = getRecord(value);
-      if (
-        typeof asset.address !== "string" ||
-        !isAddress(asset.address) ||
-        typeof asset.balance !== "string" ||
-        !/^\d+$/.test(asset.balance) ||
-        BigInt(asset.balance) === 0n ||
-        typeof asset.decimals !== "number" ||
-        !Number.isInteger(asset.decimals) ||
-        asset.decimals < 0 ||
-        asset.decimals > 77 ||
-        typeof asset.symbol !== "string"
-      )
-        return [];
-      return [
-        {
-          address: asset.address,
-          balance: asset.balance,
-          decimals: asset.decimals,
-          symbol: tokenSymbol(asset.address, options.chain) ?? tickerSymbol(asset.symbol),
-          verified: asset.verified === true,
-        },
-      ];
-    });
-  } catch {
-    return [];
-  }
 }
 
 function formatAccessKeyLimit(value: string | undefined, decimals: number) {

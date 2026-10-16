@@ -27,6 +27,9 @@ importers:
       mppx:
         specifier: 0.12.0
         version: 0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
+      qr:
+        specifier: 0.7.2
+        version: 0.7.2
       undici:
         specifier: 8.10.2
         version: 8.10.2
@@ -1755,6 +1758,10 @@ packages:
   pump@3.0.4:
     resolution: {integrity: sha512-VS7sjc6KR7e1ukRFhQSY5LM2uBWAUPiOPa/A3mkKmiMwSmRFUITt0xuj+/lesgnCv+dPIEYlkzrcyXgquIHMcA==}
 
+  qr@0.7.2:
+    resolution: {integrity: sha512-yovYRuacJBJkG9fWSwcB2bKZhr58c04DpOXguDU+rAAoJZdi6/J3DtlomkKqdd1MutIptIK+kigWmT7LKz8y7A==}
+    engines: {node: '>= 20.19.0'}
+
   rc@1.2.8:
     resolution: {integrity: sha512-y3bGgqKj3QBdxLbLkomlohkvsA8gdAiUQlSBJnBhfn+BPxg4bc62d8TcBW15wavDfgexCgccckhcZvywyQYPOw==}
     hasBin: true
@@ -3371,6 +3378,8 @@ snapshots:
     dependencies:
       end-of-stream: 1.4.5
       once: 1.4.0
+
+  qr@0.7.2: {}
 
   rc@1.2.8:
     dependencies:

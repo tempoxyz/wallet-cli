@@ -21,6 +21,8 @@ const mockFetchModule = resolve(root, "test", "fixtures", "mock-services-fetch.m
 
 // [tool, readOnlyHint, destructiveHint, idempotentHint, openWorldHint]
 const toolHints = [
+  ["address", true, false, true, false],
+  ["balance", true, false, true, true],
   ["completions", true, false, true, false],
   ["debug", true, false, true, true],
   ["doctor", true, false, true, true],
@@ -217,6 +219,54 @@ describe("MCP tools", () => {
       await host.close();
     }
   });
+
+  it.each([
+    {
+      name: "address",
+      // An agent gets no QR code: the address is already the result.
+      arguments: { qr: true },
+      output: { address: testWallet.toLowerCase(), chain_id: 4217, network: "tempo" },
+      requests: [],
+    },
+    {
+      name: "balance",
+      arguments: {},
+      output: {
+        address: testWallet.toLowerCase(),
+        chain_id: 4217,
+        network: "tempo",
+        balances: [
+          {
+            token: usdc.toLowerCase(),
+            symbol: "USDC.e",
+            decimals: 6,
+            balance: "1000000",
+            verified: true,
+          },
+        ],
+      },
+      requests: [`GET /api/assets?address=${testWallet}&chainId=4217&fresh=true`, "eth_call"],
+    },
+  ])(
+    "serves $name with the command's output",
+    async ({ name, arguments: args, output, requests }) => {
+      await writeWalletState(walletState({ accessKeys: [] }));
+      const host = await recordingHost();
+      vi.stubEnv("TEMPO_AUTH_URL", host.url);
+      vi.stubEnv("TEMPO_RPC_URL", host.url);
+      try {
+        const response = await mcpCall({ name, arguments: { ...args, network: "mainnet" } });
+
+        expect(response.error).toBeUndefined();
+        expect(response.result.isError).not.toBe(true);
+        expect(response.result.structuredContent).toEqual(output);
+        expect(firstToolText(response)).not.toContain("\u001b");
+        expect(host.requests.toSorted()).toEqual(requests.toSorted());
+      } finally {
+        await host.close();
+      }
+    },
+  );
 
   it("accepts the network global as a tool option on every command", async () => {
     const response = await mcpRequest<{

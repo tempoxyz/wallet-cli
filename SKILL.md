@@ -197,6 +197,8 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 
 | Tool             | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
 | ---------------- | -------------- | ----------------- | ---------------- | --------------- |
+| `address`        | true           | false             | true             | false           |
+| `balance`        | true           | false             | true             | true            |
 | `completions`    | true           | false             | true             | false           |
 | `debug`          | true           | false             | true             | true            |
 | `doctor`         | true           | false             | true             | true            |
