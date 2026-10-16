@@ -94,9 +94,10 @@ export async function runSql(sql: string) {
  * rest of a SQL argument after a statement in it fails, even with `-bail`.
  */
 export async function runSqlScript(sql: string) {
+  // `-init` skips the user's sqliterc, which could turn `-bail` off.
   await runProcess(
     sqlite3,
-    ["-bail", "-cmd", `.timeout ${sqliteBusyTimeoutMs}`, channelsDbPath()],
+    ["-init", devNull, "-bail", "-cmd", `.timeout ${sqliteBusyTimeoutMs}`, channelsDbPath()],
     { input: sql },
   );
 }
