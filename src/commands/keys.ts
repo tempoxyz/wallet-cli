@@ -20,7 +20,7 @@ import { continuationCommand, nextStep } from "../shared/next.js";
 import { requireWalletChain, withWallet, type Wallet } from "../shared/require-wallet.js";
 import { canPrompt, confirm as confirmPrompt } from "../shared/process.js";
 import { resolveTokenAddress, tokenMetadata } from "../shared/tokens.js";
-import { createProvider, settleWalletStore } from "../provider.js";
+import { createProvider, createRevokeProvider, settleWalletStore } from "../provider.js";
 import {
   loadWalletState,
   saveWalletState,
@@ -455,27 +455,19 @@ export async function revokeHandler(
       throw usageError("Access key not revoked.");
   }
 
-  const provider = await (dependencies.createProvider ?? createProvider)({
+  const provider = await (dependencies.createProvider ?? createRevokeProvider)({
     network,
     noBrowser: options.browser === false,
   });
   const revoked = await revokeThroughWallet({ provider, readKey, stored, target });
-  // The SDK drops the key from the store once the wallet app returns, even when the chain does
-  // not show it revoked; let that write land. Only the key changes, in the store as it is now, so
-  // a login another process made since the command read it, as while the prompt waited, survives.
-  await settleWalletStore();
-  if (!revoked) {
-    if (stored)
-      await updateWalletState((current) =>
-        current.accessKeys.some(isRevoked)
-          ? current
-          : { ...current, accessKeys: [...current.accessKeys, stored] },
-      );
+  if (!revoked)
     throw networkError(
       `The wallet app returned, but access key ${output.access_key} is not revoked on ${network.name}, so nothing was removed locally. Rerun the command to retry.`,
     );
-  }
 
+  // The provider never writes the store, so only the key changes, in the store as it is now: a
+  // login another process made since the command read it, as while the prompt or the wallet app
+  // waited, survives.
   if (stored)
     await updateWalletState((current) => ({
       ...current,

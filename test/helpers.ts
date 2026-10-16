@@ -6,7 +6,7 @@ import { afterEach, expect, vi } from "vitest";
 
 import { loadWallet } from "../src/shared/require-wallet.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
-import { loadWalletState, saveWalletState, type WalletState } from "../src/wallet/store.js";
+import type { WalletState } from "../src/wallet/store.js";
 
 const originalHome = process.env.HOME;
 
@@ -207,25 +207,47 @@ export async function readyWallet(network?: string, requireKey = true) {
 }
 
 /**
- * A wallet-app provider that only takes requests, so nothing can be signed locally. With
- * `dropsRevokedKey`, a `wallet_revokeAccessKey` removes the key from the wallet store, as the SDK
- * does once the wallet app returns, whether or not the chain shows it revoked.
+ * Has the wallet app approve the request it registers, running `whileWaiting` once before it
+ * answers, as another process can while the user approves.
  */
-export function walletApp({ dropsRevokedKey = false } = {}) {
-  const request = vi.fn();
-  request.mockImplementation(
-    async ({ method, params }: { method: string; params?: [{ accessKeyAddress: string }] }) => {
-      if (method === "wallet_connect") return { accounts: [] };
-      if (method === "wallet_revokeAccessKey" && dropsRevokedKey) {
-        const state = await loadWalletState();
-        const revoked = params?.[0].accessKeyAddress.toLowerCase();
-        await saveWalletState({
-          ...state,
-          accessKeys: state.accessKeys.filter((key) => key.address.toLowerCase() !== revoked),
+export function approvingDeviceCode(whileWaiting: () => Promise<unknown>) {
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const registered: { message: { payload: { id: number }[] } }[] = [];
+  let waited = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init: { body: string }) => {
+      if (url.endsWith("/register")) {
+        registered.push(JSON.parse(init.body));
+        return Response.json({
+          device_code: "device",
+          user_code: "ABCDEFGH",
+          verification_uri: "https://wallet.tempo.xyz/device",
+          verification_uri_complete: "https://wallet.tempo.xyz/device?user_code=ABCDEFGH",
+          interval: 0.01,
         });
       }
-      return undefined;
-    },
+      if (!waited) {
+        waited = true;
+        await whileWaiting();
+      }
+      const [request] = registered.at(-1)!.message.payload;
+      return Response.json({
+        type: "rpc-responses",
+        payload: [{ id: request!.id, jsonrpc: "2.0", result: null }],
+      });
+    }),
+  );
+}
+
+/**
+ * A wallet-app provider that only takes requests, so nothing can be signed locally. Like the
+ * provider revocations use, it never writes the wallet store.
+ */
+export function walletApp() {
+  const request = vi.fn();
+  request.mockImplementation(async ({ method }: { method: string }) =>
+    method === "wallet_connect" ? { accounts: [] } : undefined,
   );
   return { request, createProvider: vi.fn(async () => ({ request })) };
 }
