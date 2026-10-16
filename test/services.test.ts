@@ -225,6 +225,15 @@ describe("tempo wallet services", () => {
   });
 
   it.each([
+    ["services", "edgar-search", "--help"],
+    ["help", "services", "edgar-search"],
+  ])("%j shows the help of services show", async (...args) => {
+    const result = await wallet(args, home);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("Usage: tempo wallet services show <serviceId> [options]");
+  });
+
+  it.each([
     ["services", "show", "wether"],
     ["services", "wether"],
   ])("%j suggests close ids for an unknown one", async (...args) => {

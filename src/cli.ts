@@ -46,7 +46,7 @@ async function main() {
   }
 
   const mounted = commandMap(cli);
-  const args = expandHelp(normalizeServicesArgs(bindCommandOptions(rawArgs, mounted)));
+  const args = normalizeServicesArgs(expandHelp(bindCommandOptions(rawArgs, mounted)));
 
   if (handleBuiltinSchema(args)) process.exit(0);
 
