@@ -33,6 +33,7 @@ import {
   loadPendingFund,
   loadPendingLogin,
   loadWalletState,
+  saveWalletState,
   updateWalletState,
   type WalletState,
 } from "../wallet/store.js";
@@ -152,8 +153,7 @@ export async function logoutHandler(
     )
       revocable.push(key);
 
-  const next = loggedOutState(state, network);
-  const disconnected = next.accounts.length === 0;
+  const disconnected = loggedOutState(state, network).accounts.length === 0;
   const { sessions, unchecked } = await readFundedSessions({
     payers: [...state.accounts.map((account) => account.address), ...keys.map((key) => key.access)],
     // A logout that removes the wallet leaves its sessions on every network without a login.
@@ -241,11 +241,29 @@ export async function logoutHandler(
     await settleWalletStore();
   }
 
+  // Another process can change the store while the prompt or the wallet app waits. A login or
+  // refresh that changes what this logout covers stops it before it writes, so that login is kept
+  // and a rerun logs out of the store as it is; a change only to keys on other networks is kept.
+  const current = await loadWalletState();
+  if (scopeChanged(current, state, network, revoked)) {
+    const command = logoutCommand(flags);
+    return context.error(
+      commandError(
+        "E_USAGE",
+        `The wallet changed while logging out of ${where}, so it was not logged out${revoked.length > 0 ? ` (revoked on-chain: ${revoked.map((key) => key.address.toLowerCase()).join(", ")})` : ""}. Run '${command}' again.`,
+        command,
+        { retryable: true },
+      ),
+    );
+  }
+  const loggedOut = loggedOutState(current, network);
+  await saveWalletState(loggedOut);
+  const loggedOutDisconnected = loggedOut.accounts.length === 0;
   const message = [
     `logged out of ${where}`,
-    disconnected
+    loggedOutDisconnected
       ? "wallet disconnected"
-      : `still logged in on ${chainNetwork(storedChainId(next)).name}`,
+      : `still logged in on ${chainNetwork(storedChainId(loggedOut)).name}`,
     ...(revoked.length > 0
       ? [`${count(revoked.length, "access key")} revoked on-chain and removed`]
       : []),
@@ -260,19 +278,12 @@ export async function logoutHandler(
           ]),
     ...(unchecked ? [unchecked] : []),
   ].join("; ");
-  // A login another process made since the command read the store, as while the prompt waited,
-  // survives: the logout removes the keys it covered from the store as it is now, and moves or
-  // removes the wallet only while the store still has the wallet and network it read.
-  await updateWalletState((current) => ({
-    ...(sameLogin(current, state) ? next : current),
-    accessKeys: current.accessKeys.filter((candidate) => !keys.some(sameKey(candidate))),
-  }));
   // The logged-in wallet's pending funding must not hand its checkout to whoever logs in next.
   await clearLoggedOutPendingFund(network);
 
   return {
     was_logged_in: true,
-    disconnected,
+    disconnected: loggedOutDisconnected,
     ...output,
     keys: keys.map((key) => ({
       address: key.address.toLowerCase(),
@@ -442,14 +453,29 @@ function keyTarget(key: WalletState["accessKeys"][number]) {
   };
 }
 
-/** Whether two stores have the same wallets, active wallet, and network. */
-function sameLogin(a: WalletState, b: WalletState) {
-  const login = (state: WalletState) => ({
-    accounts: state.accounts.map((account) => account.address.toLowerCase()),
-    activeAccount: state.activeAccount ?? 0,
-    chainId: storedChainId(state),
+/**
+ * Whether `current` differs from `state`, the store the logout read, in what logging out of
+ * `network` (every network without one) covers: the wallets, the active wallet, the stored network,
+ * or the keys on the networks logged out. The keys it `revoked` do not count, since the SDK drops
+ * them from the store.
+ */
+function scopeChanged(
+  current: WalletState,
+  state: WalletState,
+  network: Network | undefined,
+  revoked: WalletState["accessKeys"],
+) {
+  const scope = (store: WalletState) => ({
+    accounts: store.accounts.map((account) => account.address.toLowerCase()),
+    activeAccount: store.activeAccount ?? 0,
+    chainId: storedChainId(store),
+    accessKeys: store.accessKeys
+      .filter((key) => network === undefined || key.chainId === network.chainId)
+      .filter((key) => !revoked.some(sameKey(key)))
+      .map((key) => `${key.chainId}:${key.access.toLowerCase()}:${key.address.toLowerCase()}`)
+      .sort(),
   });
-  return isDeepStrictEqual(login(a), login(b));
+  return !isDeepStrictEqual(scope(current), scope(state));
 }
 
 function sameKey(key: WalletState["accessKeys"][number]) {
