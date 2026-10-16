@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
-import { homedir } from "node:os";
+import { devNull, homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { commandError, CtaError, walletError } from "../shared/errors.js";
@@ -74,7 +74,11 @@ function tryLock(path: string, waitMs: number) {
   return new Promise<Release | "busy" | "no sqlite3">((resolve, reject) => {
     // Detached into its own session, the child gets none of the terminal's signals, such as the
     // hangup that ends sqlite3, so it outlives `fn` unless it is killed by pid.
-    const child = spawn(sqlite3, ["-bail", path], { detached: true, windowsHide: true });
+    // `-init` skips the user's sqliterc, which could turn bail off or print anything.
+    const child = spawn(sqlite3, ["-init", devNull, "-bail", path], {
+      detached: true,
+      windowsHide: true,
+    });
     const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
     let stdout = "";
     let stderr = "";
@@ -99,8 +103,9 @@ function tryLock(path: string, waitMs: number) {
     });
     // A child that has exited fails the write; its exit settles the promise instead.
     child.stdin.on("error", () => undefined);
-    // `.print` runs only if the transaction began, as `-bail` exits at the first error.
-    child.stdin.write(`.timeout ${waitMs}\nBEGIN EXCLUSIVE;\n.print locked\n`);
+    // `locked` comes only from the SELECT after a BEGIN that took the lock: with bail on, the
+    // child exits at the first error, and an error also skips the rest of its line.
+    child.stdin.write(`.bail on\n.timeout ${waitMs}\nBEGIN EXCLUSIVE; SELECT 'locked';\n`);
   });
 }
 

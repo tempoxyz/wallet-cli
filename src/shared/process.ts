@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { homedir } from "node:os";
+import { devNull, homedir } from "node:os";
 import { join } from "node:path";
 import { env, platform } from "node:process";
 import { createInterface } from "node:readline/promises";
@@ -88,8 +88,11 @@ export async function querySql(sql: string): Promise<unknown> {
 
 function runSqlite(options: readonly string[], sql: string) {
   // `.timeout` sets the busy timeout without printing a row, unlike `PRAGMA busy_timeout`.
+  // `-init` skips the user's sqliterc, whose dot-commands could change the output parsed here.
   return runProcess(sqlite3, [
     ...options,
+    "-init",
+    devNull,
     "-cmd",
     `.timeout ${sqliteBusyTimeoutMs}`,
     channelsDbPath(),
