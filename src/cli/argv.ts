@@ -214,9 +214,6 @@ export function retireFlags(args: readonly string[], commands: readonly WalletCo
 
   const before = args.slice(0, index);
   const after = args.slice(index + 1);
-  const [subcommand] = commandTokens(after);
-  if (subcommand !== undefined && commandMap(command.command).has(subcommand))
-    return { args: [...args] };
   const options = after.includes("--") ? after.slice(0, after.indexOf("--")) : after;
   const retired = command.retiredFlags.filter(
     ({ unless = [], when }) =>
@@ -253,6 +250,10 @@ export function retireFlags(args: readonly string[], commands: readonly WalletCo
     if (arg !== `--no-${flag.flag.slice(2)}` && literal !== "false")
       found.push({ flag, value: literal });
   }
+  // Read after stripping, so a retired flag's value, as in `fund --claim status`, is no subcommand.
+  const [subcommand] = commandTokens(rest);
+  if (subcommand !== undefined && commandMap(command.command).has(subcommand))
+    return { args: [...args] };
   const [first] = found;
   if (!first) return { args: stripped ? [...before, name!, ...rest] : [...args] };
 

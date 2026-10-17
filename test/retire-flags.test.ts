@@ -227,6 +227,19 @@ describe("retireFlags", () => {
     });
   });
 
+  // A retired flag's value is no subcommand, though it is named like one.
+  it("refuses fund --claim with a code named status", () => {
+    expect(retireFlags(["fund", "--claim", "status"], commands)).toEqual({
+      args: ["fund"],
+      error: {
+        ...usage,
+        message:
+          "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
+        ...cta("tempo wallet fund --referral-code status"),
+      },
+    });
+  });
+
   it("leaves transfer --mach and --credits to transfer", () => {
     for (const flag of ["--mach", "--credits"])
       expect(retireFlags(["transfer", flag], commands)).toEqual({ args: ["transfer", flag] });

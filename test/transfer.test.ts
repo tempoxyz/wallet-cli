@@ -1292,6 +1292,12 @@ describe("tempo wallet send and transfer", () => {
       argv: ["transfer", ...tokens, "--value", "0", "--mpp-client-id", "x"],
       message: retired.value,
     },
+    // A code named like the `status` subcommand is still the retired flag's value.
+    {
+      argv: ["fund", "--claim", "status"],
+      message: retired.claim,
+      command: cta("fund", ...json, "--referral-code", "status"),
+    },
     // A retired flag keeps the token after it as its value, so `--mcp` starts no MCP server.
     { argv: ["fund", "--claim", "--mcp"], message: retired.claim },
     { argv: ["send", ...tokens.slice(0, 2), "--to", "--mcp"], message: retired.to },
