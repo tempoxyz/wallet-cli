@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, fstatSync, openSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -8,7 +7,7 @@ import { dirname, join } from "node:path";
 import { CtaError } from "../cli/incur-compat.js";
 import { commandError, walletError } from "../shared/errors.js";
 import { shellQuote } from "../shared/next.js";
-import { sqlite3 } from "../shared/process.js";
+import { spawnError, sqlite3, startProcess } from "../shared/process.js";
 import { sleep } from "../shared/utils.js";
 
 type Release = () => Promise<void>;
@@ -67,9 +66,6 @@ async function kernelLock(path: string, label: string) {
   }
 }
 
-/** Spawn failures from a process, open file, or memory limit, which a later run can get past. */
-const transientSpawnErrors = new Set(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"]);
-
 /**
  * Starts a `sqlite3` child that takes the lock at `path`, its busy handler retrying for up to
  * `waitMs` while another holds it. Resolves with the function that releases the lock, `"busy"` if
@@ -81,10 +77,19 @@ function tryLock(path: string, waitMs: number) {
     // Detached into its own session, the child gets none of the terminal's signals, such as the
     // hangup that ends sqlite3, so it outlives `fn` unless it is killed by pid.
     // `-init` skips the user's sqliterc, which could turn bail off or print anything.
-    const child = spawn(sqlite3, ["-init", devNull, "-bail", path], {
-      detached: true,
-      windowsHide: true,
-    });
+    const child = startProcess(
+      sqlite3,
+      ["-init", devNull, "-bail", path],
+      { detached: true, windowsHide: true },
+      (error) => {
+        if (error.code === "ENOENT") resolve("no sqlite3");
+        else
+          reject(
+            spawnError(error, `Failed to run sqlite3 for the lock at ${path}: ${error.message}`),
+          );
+      },
+    );
+    if (!child) return;
     const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
     let stdout = "";
     let stderr = "";
@@ -99,17 +104,6 @@ function tryLock(path: string, waitMs: number) {
       });
     });
     child.stderr.on("data", (chunk: string) => (stderr += chunk));
-    child.on("error", (error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") resolve("no sqlite3");
-      else
-        reject(
-          walletError({
-            code: "E_RUNTIME",
-            message: `Failed to run sqlite3 for the lock at ${path}: ${error.message}`,
-            retryable: transientSpawnErrors.has(error.code ?? ""),
-          }),
-        );
-    });
     child.on("close", (code) => {
       if (/database is locked/.test(stderr)) resolve("busy");
       else

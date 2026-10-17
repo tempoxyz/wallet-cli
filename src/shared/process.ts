@@ -1,4 +1,8 @@
-import { spawn } from "node:child_process";
+import {
+  type ChildProcessWithoutNullStreams,
+  spawn,
+  type SpawnOptionsWithoutStdio,
+} from "node:child_process";
 import { devNull, homedir } from "node:os";
 import { join } from "node:path";
 import { env, platform } from "node:process";
@@ -51,10 +55,45 @@ export function canPrompt(agent: boolean) {
 /** The sqlite3 binary the session store runs, looked up on PATH. */
 export const sqlite3 = "sqlite3";
 
+/** Spawn failures from a process, open file, or memory limit, which a later run can get past. */
+const transientSpawnErrors = new Set(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"]);
+
+/** `E_RUNTIME` for a process that could not start, retryable when that is transient. */
+export function spawnError(error: NodeJS.ErrnoException, message = error.message) {
+  return walletError({
+    code: "E_RUNTIME",
+    message,
+    retryable: transientSpawnErrors.has(error.code ?? ""),
+  });
+}
+
+/**
+ * Spawns `command` with piped stdio, passing its errors to `failed`, including a failure to start
+ * however Node reports it: thrown, as for ENOMEM, or emitted on the next tick, as for ENOENT. The
+ * child is returned only once its stdio is set up, which Node skips on EMFILE and ENFILE.
+ */
+export function startProcess(
+  command: string,
+  args: readonly string[],
+  options: SpawnOptionsWithoutStdio,
+  failed: (error: NodeJS.ErrnoException) => void,
+): ChildProcessWithoutNullStreams | undefined {
+  let child: ChildProcessWithoutNullStreams;
+  try {
+    child = spawn(command, args, options);
+  } catch (error) {
+    failed(error as NodeJS.ErrnoException);
+    return undefined;
+  }
+  child.on("error", failed);
+  return child.stdin && child.stdout && child.stderr ? child : undefined;
+}
+
 /**
  * Runs `command`, writing `input` to its stdin, and resolves with its stdout; `signal` kills it and
- * rejects. A nonzero exit rejects with `E_RUNTIME`, retryable when sqlite3 gave up waiting for a
- * database another process holds.
+ * rejects. A command that cannot start rejects with `E_RUNTIME` (see `spawnError`), except a
+ * missing one, which keeps Node's `ENOENT` error. A nonzero exit rejects with `E_RUNTIME`,
+ * retryable when sqlite3 gave up waiting for a database another process holds.
  */
 export function runProcess(
   command: string,
@@ -62,10 +101,17 @@ export function runProcess(
   options: { input?: string | undefined; signal?: AbortSignal | undefined } = {},
 ) {
   return new Promise<string>((resolve, reject) => {
-    const child = spawn(command, args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      ...(options.signal ? { signal: options.signal } : {}),
-    });
+    const child = startProcess(
+      command,
+      args,
+      options.signal ? { signal: options.signal } : {},
+      // `doctor` and `logout` check for Node's ENOENT, and an aborted run keeps its AbortError.
+      (error) =>
+        reject(
+          error.code !== "ENOENT" && error.syscall?.startsWith("spawn") ? spawnError(error) : error,
+        ),
+    );
+    if (!child) return;
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -75,7 +121,6 @@ export function runProcess(
     // A command that exits without reading its stdin fails the write; its exit code reports it.
     child.stdin.on("error", () => undefined);
     child.stdin.end(options.input);
-    child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve(stdout);
       else
