@@ -52,10 +52,10 @@ export default {
           credits: options.credits,
           mach: options.mach,
           crypto: options.crypto,
-          referralCode: options["referral-code"] ?? options.claim,
+          referralCode: options["referral-code"],
         }),
         address: options.address,
-        code: options["referral-code"] ?? options.claim,
+        code: options["referral-code"],
         noBrowser: options.browser === false,
         noWait: options.wait === false,
         amount: options.amount,
@@ -125,6 +125,30 @@ export default {
       },
     ],
   },
+  retiredFlags: [
+    {
+      flag: "--claim",
+      takesValue: true,
+      mcp: true,
+      // `--referral-code` won over `--claim`, so with both the run is the same without `--claim`.
+      replacement: ({ args, value }) => ({
+        message:
+          "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
+        argv:
+          value === undefined
+            ? undefined
+            : [
+                "fund",
+                ...args,
+                ...(args.some(
+                  (arg) => arg === "--referral-code" || arg.startsWith("--referral-code="),
+                )
+                  ? []
+                  : ["--referral-code", value]),
+              ],
+      }),
+    },
+  ],
 } satisfies WalletCommand;
 
 export type FundAction = "fund" | "mach" | "crypto" | "credits" | "claim";
@@ -547,7 +571,7 @@ export function fundAction(options: {
 }): FundAction {
   if (options.credits) throw creditsFundingError();
   if (options.mach && (options.crypto || options.referralCode))
-    throw usageError("--mach cannot be combined with --crypto or --claim");
+    throw usageError("--mach cannot be combined with --crypto or --referral-code");
   if (options.mach) return "mach";
   if (options.crypto) return "crypto";
   if (options.referralCode) return "claim";

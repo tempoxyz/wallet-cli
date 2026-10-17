@@ -45,6 +45,12 @@ describe("retireFlags", () => {
 
   it.each([
     {
+      name: "a value that reads as a flag, with no cta",
+      args: ["demo", "a", "--old", "--mcp"],
+      stripped: ["demo", "a"],
+      error: { message: "--old was removed; pass --new" },
+    },
+    {
       name: "a flag and its value",
       args: ["demo", "a", "--old", "x", "--yes"],
       stripped: ["demo", "a", "--yes"],
@@ -169,6 +175,68 @@ describe("retireFlags", () => {
   ])("runs send %j as a token send", (...flag) => {
     expect(retireFlags(["send", "1", "USDC.e", "0xabc", ...flag, "--yes"], commands)).toEqual({
       args: ["send", "1", "USDC.e", "0xabc", "--yes"],
+    });
+  });
+
+  it.each([
+    // `--credits` keeps its recipient, calldata, and amount.
+    ["transfer", "--credits", "--to=0xabc", "--data=0x12", "--amount-cents=100"],
+    ["transfer", "--amount-cents=100", "--to=0xabc", "--credits=true"],
+    // MACH refuses these itself, naming its own replacements.
+    ["transfer", "--mach", "--to=0xabc", "--data=0x12"],
+    // A group's retired flags are its own command's, not its subcommands'.
+    ["fund", "status", "--claim", "CODE"],
+  ])("leaves %j to the command", (...args) => {
+    expect(retireFlags(args, commands)).toEqual({ args });
+  });
+
+  // An explicit false selects no mode, so the run is a token transfer.
+  it.each([["--credits=false"], ["--mach", "false"]])(
+    "refuses a token transfer's --to with %j",
+    (...mode) => {
+      expect(retireFlags(["transfer", "1", "USDC.e", "--to", "0xabc", ...mode], commands)).toEqual({
+        args: ["transfer", "1", "USDC.e", ...mode],
+        error: {
+          ...usage,
+          message:
+            "--to sets the MPP Credits recipient of 'tempo wallet transfer --credits'; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
+          ...cta(`tempo wallet send 1 USDC.e 0xabc ${mode.join(" ")}`),
+        },
+      });
+    },
+  );
+
+  // `--amount-cents` is the MACH cap only with `--mach`, and a token amount otherwise.
+  it.each([
+    {
+      args: ["transfer", "--mach", "--amount-cents=2"],
+      message:
+        "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
+      command: "tempo wallet transfer --mach --max-spend 0.02",
+    },
+    {
+      args: ["transfer", "1", "USDC.e", "0xabc", "--amount-cents=2", "--mach=false"],
+      message:
+        "--amount-cents sets the MPP Credits amount of 'tempo wallet transfer --credits'; pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
+      command: undefined,
+    },
+  ])("refuses $args with the replacement for its mode", ({ args, message, command }) => {
+    expect(retireFlags(args, commands)).toEqual({
+      args: args.filter((arg) => arg !== "--amount-cents=2"),
+      error: { ...usage, message, ...(command ? cta(command) : {}) },
+    });
+  });
+
+  // A retired flag's value is no subcommand, though it is named like one.
+  it("refuses fund --claim with a code named status", () => {
+    expect(retireFlags(["fund", "--claim", "status"], commands)).toEqual({
+      args: ["fund"],
+      error: {
+        ...usage,
+        message:
+          "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
+        ...cta("tempo wallet fund --referral-code status"),
+      },
     });
   });
 

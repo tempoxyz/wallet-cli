@@ -32,7 +32,6 @@ export async function transferCredits(options: {
     "max-spend"?: string | undefined;
     to?: string | undefined;
     data?: string | undefined;
-    value?: string | undefined;
     "mpp-challenge"?: string | undefined;
     "mpp-challenge-file"?: string | undefined;
     "mpp-client-id"?: string | undefined;
@@ -46,9 +45,9 @@ export async function transferCredits(options: {
   const flags = options.options;
   if (
     (flags["mpp-challenge"] !== undefined || flags["mpp-challenge-file"] !== undefined) &&
-    (flags.to !== undefined || flags.data !== undefined || flags.value !== undefined)
+    (flags.to !== undefined || flags.data !== undefined)
   )
-    throw usageError("--to, --data, and --value cannot be combined with an MPP challenge");
+    throw usageError("--to and --data cannot be combined with an MPP challenge");
   const maxSpend = resolveMaxSpend();
   const cents = options.options["amount-cents"];
   if (cents !== undefined && (!Number.isSafeInteger(cents) || cents <= 0))
@@ -161,7 +160,6 @@ function buildDirectCreditsTransfer(options: {
   "amount-cents"?: number | undefined;
   to?: string | undefined;
   data?: string | undefined;
-  value?: string | undefined;
 }) {
   const amountCents = options["amount-cents"];
   const to = options.to;
@@ -173,7 +171,6 @@ function buildDirectCreditsTransfer(options: {
   const transactionData = buildCreditsTransactionData({
     to,
     data: options.data ?? "0x",
-    value: options.value ?? "0",
   });
 
   return {
@@ -256,7 +253,6 @@ function buildMppCreditsTransfer(options: {
   const transactionData = buildCreditsTransactionData({
     to: token,
     data,
-    value: "0",
   });
   return {
     amountCents,
@@ -271,15 +267,11 @@ function buildMppCreditsTransfer(options: {
   };
 }
 
-function buildCreditsTransactionData(options: { to: string; data: string; value: string }) {
+function buildCreditsTransactionData(options: { to: string; data: string }) {
   if (!isAddress(options.to) || options.to.toLowerCase() === zeroAddress)
     throw usageError("Invalid credits destination: expected a non-zero address");
   if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(options.data))
     throw usageError("Invalid credits calldata: expected hex-encoded bytes");
-  if (!/^(?:0*|0x0*)$/.test(options.value.trim()))
-    throw usageError(
-      "Invalid configuration: Coinflow credits redeem does not support non-zero ETH value",
-    );
 
   if (options.data === "0x") {
     return {
