@@ -4,6 +4,7 @@ import { operandIndexes, type RetiredFlag } from "../cli/argv.js";
 import { destructive, type WalletCommand } from "../cli/command.js";
 import { flag, option, positional } from "../cli/describe.js";
 import { sendArgs, sendOptions, sendOutput } from "../schemas/send.js";
+import { transferOptions } from "../schemas/transfer.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import type { CommandContext } from "../shared/errors.js";
 import { canPrompt } from "../shared/process.js";
@@ -77,6 +78,28 @@ function transferMode(flag: "--mach" | "--credits", purpose: string): RetiredFla
 const paymentModes = ["--credits", "--mach"] as const;
 
 /**
+ * The options `transfer` takes and `send` does not, such as `--max-spend`. A mode left in a token
+ * run is an explicit false, which `send` also reads as no mode.
+ */
+const transferOnly = Object.keys(transferOptions.shape)
+  .filter((name) => !Object.hasOwn(sendOptions.shape, name))
+  .map((name) => `--${name}`)
+  .filter((flag) => !(paymentModes as readonly string[]).includes(flag));
+
+/**
+ * `send` with `args`, or `undefined` when they hold an option only `transfer` takes, so a `cta`
+ * is never a `send` that fails on an unknown flag.
+ */
+export function sendArgv(args: readonly string[]) {
+  const transferOption = args.some((arg) =>
+    transferOnly.some(
+      (flag) => arg === flag || arg.startsWith(`${flag}=`) || arg === `--no-${flag.slice(2)}`,
+    ),
+  );
+  return transferOption ? undefined : ["send", ...args];
+}
+
+/**
  * The MPP Credits options of `transfer`, which a token transfer never took. With the amount and
  * token given, the `cta` of `--to` passes the recipient after them.
  */
@@ -97,7 +120,7 @@ export const creditsOnlyFlags: RetiredFlag[] = [
         argv:
           token === undefined || value === undefined
             ? undefined
-            : ["send", ...args.slice(0, token), value, ...args.slice(token)],
+            : sendArgv([...args.slice(0, token), value, ...args.slice(token)]),
       };
     },
   },
@@ -123,18 +146,15 @@ export const creditsOnlyFlags: RetiredFlag[] = [
 
 /**
  * `--value`, the ETH value of an MPP Credits redemption, which had to be zero. A zero value changed
- * nothing, so its `cta` is the same run without it, under the name `command` gives.
+ * nothing, so its `cta` is the same run without it, as `command` builds it from the arguments.
  */
-export function valueFlag(command: (args: string[]) => string): RetiredFlag {
+export function valueFlag(command: (args: string[]) => string[] | undefined): RetiredFlag {
   return {
     flag: "--value",
     takesValue: true,
     replacement: ({ args, value }) => ({
       message: "--value was removed: transfers carry no ETH value.",
-      argv:
-        value !== undefined && /^(?:0*|0x0*)$/.test(value.trim())
-          ? [command(args), ...args]
-          : undefined,
+      argv: value !== undefined && /^(?:0*|0x0*)$/.test(value.trim()) ? command(args) : undefined,
     }),
   };
 }
@@ -167,6 +187,6 @@ export default {
     transferMode("--mach", "pay an MPP challenge with MACH"),
     transferMode("--credits", "spend legacy MPP Credits"),
     ...creditsOnlyFlags,
-    valueFlag(() => "send"),
+    valueFlag(sendArgv),
   ],
 } satisfies WalletCommand;

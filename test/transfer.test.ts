@@ -1283,6 +1283,15 @@ describe("tempo wallet send and transfer", () => {
       message: retired.machCents,
       command: cta("transfer", "--mach", "--max-spend=0.05", ...json),
     },
+    // `send` takes no option only `transfer` takes, so a cta that would carry one is left out.
+    {
+      argv: ["transfer", "1", usdcToken, "--to", recipient, "--max-spend", "5"],
+      message: retired.to,
+    },
+    {
+      argv: ["transfer", ...tokens, "--value", "0", "--mpp-client-id", "x"],
+      message: retired.value,
+    },
     // Each replacement covers only its own flag, so several retired flags get no cta.
     {
       argv: ["transfer", "1", usdcToken, "--value", "0", "--to", recipient],

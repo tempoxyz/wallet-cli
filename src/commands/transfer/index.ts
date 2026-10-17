@@ -7,7 +7,7 @@ import { cliGlobals, globalAlias } from "../../schemas/shared.js";
 import { transferArgs, transferOptions, transferOutput } from "../../schemas/transfer.js";
 import { usageError } from "../../shared/errors.js";
 import { withWallet } from "../../shared/require-wallet.js";
-import { creditsOnlyFlags, sendCommand, valueFlag } from "../send.js";
+import { creditsOnlyFlags, sendArgv, sendCommand, valueFlag } from "../send.js";
 import { idempotencyKeyArg } from "../tx.js";
 import { transferCredits } from "./credits.js";
 import { machAmountCentsError, machAmountCentsFlag, transferMach } from "./mach.js";
@@ -130,7 +130,7 @@ export default {
     ...creditsOnlyFlags,
     machAmountCentsFlag,
     {
-      ...valueFlag((args) => (paysWithMode(args) ? "transfer" : "send")),
+      ...valueFlag((args) => (paysWithMode(args) ? ["transfer", ...args] : sendArgv(args))),
       mcp: true,
     },
   ],
