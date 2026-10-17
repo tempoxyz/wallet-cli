@@ -1,19 +1,19 @@
 import { Cli } from "incur";
 
-import type { WalletCommand } from "../../cli/command.js";
+import { destructive, type WalletCommand } from "../../cli/command.js";
 import { flag, option, positional } from "../../cli/describe.js";
 import { cliGlobals, globalAlias } from "../../schemas/shared.js";
 import { transferArgs, transferOptions, transferOutput } from "../../schemas/transfer.js";
 import { usageError } from "../../shared/errors.js";
 import { withWallet } from "../../shared/require-wallet.js";
-import { sendAnnotations, sendCommand } from "../send.js";
+import { sendCommand } from "../send.js";
 import { idempotencyKeyArg } from "../tx.js";
 import { transferCredits } from "./credits.js";
 import { transferMach } from "./mach.js";
 
-// Token transfers moved to `send`; MACH and MPP Credits payments stay here.
+// `transfer` pays MPP challenges; its token form is `send` under a deprecated name.
 const transferDescription =
-  "Deprecated: use 'send' for token transfers. Pays an MPP challenge with --mach or --credits";
+  "Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'.";
 
 export default {
   command: Cli.create("transfer", {
@@ -58,7 +58,8 @@ export default {
       return sendCommand.run(context);
     },
   }),
-  annotations: { transfer: sendAnnotations },
+  // MACH and MPP Credits payments, like a token send, move funds over the network.
+  annotations: { transfer: { ...destructive, idempotentHint: false, openWorldHint: true } },
   describe: {
     name: "transfer",
     about: transferDescription,

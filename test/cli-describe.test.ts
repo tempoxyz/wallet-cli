@@ -392,14 +392,14 @@ describe("generated CLI metadata", () => {
     expect(hasNextStep(schema.output)).toBe(true);
   });
 
-  it("documents send and its deprecated transfer alias", async () => {
+  it("documents send and the token form of transfer it replaces", async () => {
     type Command = { name: string; about: string; args?: { long?: string | undefined }[] };
     const manifest = JSON.parse(await walletCli(["--describe"])) as { subcommands: Command[] };
     const send = manifest.subcommands.find((command) => command.name === "send");
     const transfer = manifest.subcommands.find((command) => command.name === "transfer");
     expect(send?.about).toBe("Send tokens to an address");
     expect(transfer?.about).toBe(
-      "Deprecated: use 'send' for token transfers. Pays an MPP challenge with --mach or --credits",
+      "Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'.",
     );
     // `send` takes the token transfer options and none of the payment modes of `transfer`.
     expect(send?.args?.flatMap((arg) => arg.long ?? [])).toEqual([

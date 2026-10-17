@@ -124,8 +124,8 @@ describe("MCP tools", () => {
     );
   });
 
-  // `transfer` is the deprecated name of `send` for token transfers, kept for existing clients.
-  it("exposes send and the deprecated transfer tool with the same token arguments", async () => {
+  // `transfer` still sends tokens under its deprecated token form, for existing clients.
+  it("exposes send and the transfer tool with the same token arguments", async () => {
     const response = await mcpRequest<{
       tools: {
         name: string;
@@ -140,7 +140,7 @@ describe("MCP tools", () => {
     const transfer = tool("transfer")!.inputSchema;
     expect(tool("send")?.description).toBe("Send tokens to an address");
     expect(tool("transfer")?.description).toBe(
-      "Deprecated: use 'send' for token transfers. Pays an MPP challenge with --mach or --credits",
+      "Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'.",
     );
     expect(send.required).toEqual(["amount", "token", "to"]);
     expect(transfer.required).toBeUndefined();

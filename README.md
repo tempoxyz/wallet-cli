@@ -238,7 +238,7 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `transf
 - `keys revoke <accessKey>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
 - `revoke <accessKey>`: Deprecated: use 'keys revoke'. Options: `--dry-run`, `--yes`, `--no-browser`.
 - `send <amount> <token> <to>`: Send tokens to an address. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--address`.
-- `transfer [amount] [token] [to]`: Deprecated: use 'send' for token transfers. Pays an MPP challenge with --mach or --credits. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--credits`, `--max-spend`, `--amount-cents`, `--to`, `--data`, `--value`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
+- `transfer [amount] [token] [to]`: Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--credits`, `--max-spend`, `--amount-cents`, `--to`, `--data`, `--value`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
 - `swap <amount> <tokenIn> <tokenOut>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
 - `tx status <txHash>`: Show a transaction's status on chain.
 - `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--credits`, `--amount`, `--wait`, `--no-wait`, `--timeout`, `--referral-code`, `--claim`.
