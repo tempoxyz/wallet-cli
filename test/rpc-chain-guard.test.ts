@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { logoutHandler } from "../src/commands/logout.js";
-import { revokeHandler } from "../src/commands/revoke.js";
+import { revokeHandler } from "../src/commands/keys.js";
 import { closeSessions, dryRunCloseSessions } from "../src/commands/sessions/close.js";
 import { readChannelRecords } from "../src/commands/sessions/records.js";
 import { syncSessions } from "../src/commands/sessions/sync.js";
