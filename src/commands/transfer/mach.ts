@@ -5,6 +5,7 @@ import { Errors } from "incur";
 import { Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 
+import type { RetiredFlag } from "../../cli/argv.js";
 import { CtaError } from "../../cli/incur-compat.js";
 import { commandError, paymentOutcomeUnknownError, usageError } from "../../shared/errors.js";
 import { networkFields } from "../../shared/network.js";
@@ -135,16 +136,41 @@ export async function transferMach(options: {
   return { ...output, wallet: identity.address.toLowerCase(), tx_hash: payload.hash };
 }
 
+const amountCentsMessage =
+  "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.";
+
 /**
- * `--amount-cents` capped MACH spending in USD cents before `--max-spend`. The `cta` passes the
- * same cap in USD, keeping the other options.
+ * `--amount-cents` capped MACH spending in USD cents before `--max-spend`. The CLI refuses it
+ * before parsing, so any value is refused; the `cta` passes a whole number of cents in USD.
+ */
+export const machAmountCentsFlag: RetiredFlag = {
+  flag: "--amount-cents",
+  takesValue: true,
+  when: ["--mach"],
+  replacement: ({ args, value }) => ({
+    message: amountCentsMessage,
+    argv:
+      value === undefined || !/^\d+$/.test(value)
+        ? undefined
+        : [
+            "transfer",
+            ...args,
+            ...(args.some((arg) => arg === "--max-spend" || arg.startsWith("--max-spend="))
+              ? []
+              : ["--max-spend", formatUnits(BigInt(value) * 10_000n, 6)]),
+          ],
+  }),
+};
+
+/**
+ * `--amount-cents` with `mach` over MCP, which parses options before the command runs. The `cta`
+ * passes the same cap in USD, keeping the other options.
  */
 export function machAmountCentsError(
   flags: Parameters<typeof transferMach>[0]["options"],
   cents: number,
 ) {
-  const message =
-    "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.";
+  const message = amountCentsMessage;
   if (!Number.isSafeInteger(cents) || cents < 0) return usageError(message);
   const argv = [
     "tempo",

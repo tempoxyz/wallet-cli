@@ -177,7 +177,7 @@ describe("retireFlags", () => {
     ["transfer", "--credits", "--to=0xabc", "--data=0x12", "--amount-cents=100"],
     ["transfer", "--amount-cents=100", "--to=0xabc", "--credits=true"],
     // MACH refuses these itself, naming its own replacements.
-    ["transfer", "--mach", "--to=0xabc", "--data=0x12", "--amount-cents=2"],
+    ["transfer", "--mach", "--to=0xabc", "--data=0x12"],
     // A group's retired flags are its own command's, not its subcommands'.
     ["fund", "status", "--claim", "CODE"],
   ])("leaves %j to the command", (...args) => {
@@ -199,6 +199,27 @@ describe("retireFlags", () => {
       });
     },
   );
+
+  // `--amount-cents` is the MACH cap only with `--mach`, and a token amount otherwise.
+  it.each([
+    {
+      args: ["transfer", "--mach", "--amount-cents=2"],
+      message:
+        "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
+      command: "tempo wallet transfer --mach --max-spend 0.02",
+    },
+    {
+      args: ["transfer", "1", "USDC.e", "0xabc", "--amount-cents=2", "--mach=false"],
+      message:
+        "--amount-cents sets the MPP Credits amount of 'tempo wallet transfer --credits'; pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
+      command: undefined,
+    },
+  ])("refuses $args with the replacement for its mode", ({ args, message, command }) => {
+    expect(retireFlags(args, commands)).toEqual({
+      args: args.filter((arg) => arg !== "--amount-cents=2"),
+      error: { ...usage, message, ...(command ? cta(command) : {}) },
+    });
+  });
 
   it("leaves transfer --mach and --credits to transfer", () => {
     for (const flag of ["--mach", "--credits"])

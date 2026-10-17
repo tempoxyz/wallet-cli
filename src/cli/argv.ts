@@ -178,6 +178,8 @@ export type RetiredFlag = {
   takesValue?: boolean | undefined;
   /** Flags under which the command still takes it, as `--credits` keeps the credits `--to`. */
   unless?: readonly `--${string}`[] | undefined;
+  /** Flags under which alone it is retired, as `--amount-cents` is with `--mach`. */
+  when?: readonly `--${string}`[] | undefined;
   /**
    * Whether the command's MCP tool took it as an argument. The tool keeps that argument for a
    * release and refuses it with the same message, so a client passing it is not silently ignored.
@@ -199,7 +201,8 @@ export type RetiredFlag = {
  * `args`. A group's flags are its own command's, not its subcommands'. `error` is the usage error
  * for the first one set, which the CLI returns from middleware before the command parses its
  * options or runs, so nothing is sent. Its `cta` is the replacement command, keeping the tokens
- * before the command name. Stops at `--`.
+ * before the command name; with several set, each replaces only itself, so there is none. Stops
+ * at `--`.
  */
 export function retireFlags(args: readonly string[], commands: readonly WalletCommand[]) {
   const index = firstCommandIndex(args);
@@ -216,11 +219,13 @@ export function retireFlags(args: readonly string[], commands: readonly WalletCo
     return { args: [...args] };
   const options = after.includes("--") ? after.slice(0, after.indexOf("--")) : after;
   const retired = command.retiredFlags.filter(
-    ({ unless = [] }) => !unless.some((flag) => flagSet(options, flag)),
+    ({ unless = [], when }) =>
+      !unless.some((flag) => flagSet(options, flag)) &&
+      (when === undefined || when.some((flag) => flagSet(options, flag))),
   );
   const rest: string[] = [];
   let stripped = false;
-  let found: { flag: RetiredFlag; value: string | undefined } | undefined;
+  const found: { flag: RetiredFlag; value: string | undefined }[] = [];
   for (let i = 0; i < after.length; i++) {
     const arg = after[i]!;
     if (arg === "--") {
@@ -241,20 +246,23 @@ export function retireFlags(args: readonly string[], commands: readonly WalletCo
     const bound = arg.startsWith(`${flag.flag}=`) ? arg.slice(flag.flag.length + 1) : undefined;
     if (flag.takesValue) {
       const value = bound ?? after[++i];
-      found ??= { flag, value };
+      found.push({ flag, value });
       continue;
     }
     const literal = bound === undefined && isBooleanLiteral(after[i + 1]) ? after[++i] : bound;
     if (arg !== `--no-${flag.flag.slice(2)}` && literal !== "false")
-      found ??= { flag, value: literal };
+      found.push({ flag, value: literal });
   }
-  if (!found) return { args: stripped ? [...before, name!, ...rest] : [...args] };
+  const [first] = found;
+  if (!first) return { args: stripped ? [...before, name!, ...rest] : [...args] };
 
-  const { message, argv } = found.flag.replacement({
+  const replacement = first.flag.replacement({
     given: [...after],
     args: rest,
-    value: found.value,
+    value: first.value,
   });
+  const { message } = replacement;
+  const argv = found.length === 1 ? replacement.argv : undefined;
   const { exitCode, retryable } = errorCodes.E_USAGE;
   return {
     args: [...before, name!, ...rest],

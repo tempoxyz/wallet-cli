@@ -183,6 +183,31 @@ describe("MCP tools", () => {
       message:
         "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
     },
+    // A value-taking argument is refused whatever its value, false included.
+    {
+      name: "transfer",
+      arguments: { credits: true, "amount-cents": 1, to: testWallet, value: false },
+      message: "--value was removed: transfers carry no ETH value.",
+    },
+    {
+      name: "fund",
+      arguments: { claim: false, browser: false },
+      message:
+        "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
+    },
+    // A token transfer takes none of the credits options it used to ignore.
+    {
+      name: "transfer",
+      arguments: { amount: "1", token: "USDC.e", to: testWallet, data: "0x12", yes: true },
+      message:
+        "--data sets the MPP Credits calldata of 'tempo wallet transfer --credits'; a token transfer sends no calldata.",
+    },
+    {
+      name: "transfer",
+      arguments: { amount: "1", token: "USDC.e", to: testWallet, "amount-cents": 100, yes: true },
+      message:
+        "--amount-cents sets the MPP Credits amount of 'tempo wallet transfer --credits'; pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
+    },
   ])("refuses $name $arguments and sends nothing", async ({ name, arguments: args, message }) => {
     await writeWalletState(walletState());
     const host = await recordingHost();

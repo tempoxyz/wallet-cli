@@ -164,10 +164,10 @@ function refuseRetired<command extends RunnableCommand>(
     ...entry,
     options: (entry.options ?? z.object({})).extend(shape),
     run(context: { options: Record<string, unknown>; error: (error: object) => never }) {
-      // An explicit false selects nothing, as on the CLI.
+      // As on the CLI, an explicit false selects nothing only for a boolean flag.
       const flag = retired.find((flag) => {
         const value = context.options[key(flag)];
-        return value !== undefined && value !== false;
+        return value !== undefined && (flag.takesValue || value !== false);
       });
       if (!flag) return entry.run(context);
       const { exitCode, retryable } = errorCodes.E_USAGE;

@@ -1264,7 +1264,33 @@ describe("tempo wallet send and transfer", () => {
     {
       argv: ["transfer", "--mach", "--amount-cents", "2", "--mpp-challenge", machChallenge],
       message: retired.machCents,
-      command: cta("transfer", "--mach", "--max-spend", "0.02", "--mpp-challenge", machChallenge),
+      command: cta(
+        "transfer",
+        "--mach",
+        `--mpp-challenge=${machChallenge}`,
+        ...json,
+        "--max-spend",
+        "0.02",
+      ),
+    },
+    // Any value is refused, though only whole cents have a USD equivalent.
+    {
+      argv: ["transfer", "--mach", "--amount-cents", "abc", "--mpp-challenge", machChallenge],
+      message: retired.machCents,
+    },
+    {
+      argv: ["transfer", "--mach", "--amount-cents", "2", "--max-spend", "0.05"],
+      message: retired.machCents,
+      command: cta("transfer", "--mach", "--max-spend=0.05", ...json),
+    },
+    // Each replacement covers only its own flag, so several retired flags get no cta.
+    {
+      argv: ["transfer", "1", usdcToken, "--value", "0", "--to", recipient],
+      message: retired.value,
+    },
+    {
+      argv: ["send", "1", usdcToken, "--to", recipient, "--data", "0x12", "--yes"],
+      message: retired.to,
     },
     {
       argv: ["fund", "--claim", "CODE", "--no-browser"],

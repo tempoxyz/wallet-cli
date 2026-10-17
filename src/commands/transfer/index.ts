@@ -10,7 +10,7 @@ import { withWallet } from "../../shared/require-wallet.js";
 import { creditsOnlyFlags, sendCommand, valueFlag } from "../send.js";
 import { idempotencyKeyArg } from "../tx.js";
 import { transferCredits } from "./credits.js";
-import { machAmountCentsError, transferMach } from "./mach.js";
+import { machAmountCentsError, machAmountCentsFlag, transferMach } from "./mach.js";
 
 // `transfer` pays MPP challenges; its token form is `send` under a deprecated name.
 const transferDescription =
@@ -33,7 +33,8 @@ export default {
       if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
       if ((options.credits || options.mach) && options["idempotency-key"] !== undefined)
         throw usageError("--idempotency-key applies only to token transfers");
-      // MCP still passes the former MACH cap in cents; it is refused, not dropped for another cap.
+      // MCP still passes the former MACH cap in cents, which the CLI refuses before parsing; it
+      // is refused, not dropped for another cap.
       if (options.mach && options["amount-cents"] !== undefined)
         throw machAmountCentsError(flags, options["amount-cents"]);
       if (options.credits) {
@@ -52,6 +53,12 @@ export default {
         return withWallet((_, wallet) =>
           transferMach({ options: { ...flags, network: wallet.network.name } }),
         )(context);
+      // MCP passes the credits options the CLI refuses before parsing; a token transfer takes none.
+      const credit = creditsOnlyFlags.find(
+        ({ flag }) => options[flag.slice(2) as "to" | "data" | "amount-cents"] !== undefined,
+      );
+      if (credit)
+        throw usageError(credit.replacement({ given: [], args: [], value: undefined }).message);
       // A token transfer is `send` under its former name, for a release or two. Only a person at
       // a terminal sees the notice; agent runs (MCP, `--format`, or stdout not a terminal) get
       // exactly what `send` returns.
@@ -118,10 +125,10 @@ export default {
       }),
     ],
   },
-  // `--credits` keeps its options; MACH refuses `--to` and `--data` itself, and refuses
-  // `--amount-cents` so a cap passed over MCP is not dropped.
+  // `--credits` keeps its options, and MACH refuses `--to` and `--data` itself.
   retiredFlags: [
     ...creditsOnlyFlags,
+    machAmountCentsFlag,
     {
       ...valueFlag((args) => (paysWithMode(args) ? "transfer" : "send")),
       mcp: true,
