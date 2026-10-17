@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -18,6 +18,7 @@ import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/
 import { channelsDbPath } from "../src/shared/process.js";
 import { saveConfigValue } from "../src/wallet/config.js";
 import { cliBundle } from "./cli-bundle.js";
+import { failedSpawn } from "./fixtures/failed-spawn.js";
 import { testPrivateKey, useTempHome } from "./helpers.js";
 
 const exec = promisify(execFile);
@@ -26,6 +27,11 @@ const { credentialOptions, onChain } = vi.hoisted(() => ({
   credentialOptions: [] as unknown[],
   onChain: { deposit: 0n },
 }));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 // Signing is replaced so a test can see whether, and with what deposit, a credential was made.
 vi.mock("mppx/client", async (importOriginal) => {
@@ -559,6 +565,10 @@ const sqliteFailures = {
       ),
     ),
   "when sqlite3 cannot read the session store": async () => corrupt(channelsDbPath()),
+  // The session lock's sqlite3 is the first process a session payment starts.
+  "when sqlite3 cannot start for the session lock for now": async () => {
+    vi.mocked(spawn).mockImplementationOnce(() => failedSpawn("EAGAIN") as never);
+  },
 };
 
 it.each<{
@@ -627,6 +637,18 @@ it.each<{
       message: expect.stringContaining("file is not a database"),
     },
   },
+  ...(["auto", "session"] as const).map((intent) => ({
+    failure: "when sqlite3 cannot start for the session lock for now" as const,
+    intent,
+    failed: {
+      code: "E_RUNTIME",
+      exitCode: 1,
+      retryable: true,
+      message: expect.stringMatching(
+        /^Failed to run sqlite3 for the lock at .+: spawn sqlite3 EAGAIN$/,
+      ),
+    },
+  })),
 ])(
   "fails a session offer under --payment-intent $intent $failure before paying",
   async ({ failure, intent, failed }) => {

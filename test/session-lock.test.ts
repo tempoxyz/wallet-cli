@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { EventEmitter, once } from "node:events";
+import { once } from "node:events";
 import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -12,6 +12,7 @@ import { walletError } from "../src/shared/errors.js";
 import { querySql, runSql, runSqlScript } from "../src/shared/process.js";
 import { nowSeconds } from "../src/shared/utils.js";
 import { createIdempotencyRecord, pruneIdempotencyRecords } from "../src/wallet/idempotency.js";
+import { failedSpawn } from "./fixtures/failed-spawn.js";
 import { useTempHome } from "./helpers.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -20,21 +21,6 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 const holderScript = join(import.meta.dirname, "fixtures", "lock-holder.ts");
-
-/** A child process that fails to start with `code`, reported after `spawn` returns, as Node does. */
-function failedSpawn(code: string) {
-  const stream = () =>
-    Object.assign(new EventEmitter(), { setEncoding() {}, write() {}, end() {} });
-  const child = Object.assign(new EventEmitter(), {
-    stdin: stream(),
-    stdout: stream(),
-    stderr: stream(),
-  });
-  setImmediate(() =>
-    child.emit("error", Object.assign(new Error(`spawn sqlite3 ${code}`), { code })),
-  );
-  return child;
-}
 
 /** Takes sqlite3 off PATH for the rest of the test. */
 async function withoutSqlite3() {
