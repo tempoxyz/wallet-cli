@@ -262,7 +262,9 @@ export function retireFlags(args: readonly string[], commands: readonly WalletCo
     value: first.value,
   });
   const { message } = replacement;
-  const argv = found.length === 1 ? replacement.argv : undefined;
+  // A value that reads as a flag, as in `--claim --mcp`, was most likely not meant as one.
+  const flagValue = first.flag.takesValue && first.value?.startsWith("-");
+  const argv = found.length === 1 && !flagValue ? replacement.argv : undefined;
   const { exitCode, retryable } = errorCodes.E_USAGE;
   return {
     args: [...before, name!, ...rest],

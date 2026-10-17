@@ -45,6 +45,12 @@ describe("retireFlags", () => {
 
   it.each([
     {
+      name: "a value that reads as a flag, with no cta",
+      args: ["demo", "a", "--old", "--mcp"],
+      stripped: ["demo", "a"],
+      error: { message: "--old was removed; pass --new" },
+    },
+    {
       name: "a flag and its value",
       args: ["demo", "a", "--old", "x", "--yes"],
       stripped: ["demo", "a", "--yes"],
