@@ -1149,6 +1149,33 @@ describe("logout --revoke", () => {
     });
   });
 
+  it("refuses an RPC override that serves one of the networks before revoking anything", async () => {
+    await setup(bothNetworks);
+    // The override answers as mainnet, so testnet's keys cannot be read through it.
+    vi.stubEnv("TEMPO_RPC_URL", "http://127.0.0.1:8545");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { body: string }) =>
+        Response.json({ jsonrpc: "2.0", id: JSON.parse(init.body).id, result: "0x1079" }),
+      ),
+    );
+    const app = walletApp();
+
+    const error = await logoutHandler({ revoke: true, yes: true }, runContext(true), {
+      createProvider: app.createProvider,
+      readKey: keychain(),
+    }).catch((value: unknown) => value);
+
+    expect(error).toMatchObject({
+      code: "E_USAGE",
+      message: expect.stringContaining(
+        "TEMPO_RPC_URL is on tempo (chain 4217), not tempo-moderato (chain 42431), so nothing was read, changed, or revoked.",
+      ),
+    });
+    expect(app.createProvider).not.toHaveBeenCalled();
+    expect(await loadWalletState()).toMatchObject({ accessKeys: bothNetworks.accessKeys });
+  });
+
   it("revokes keys on two networks with a logout of each", async () => {
     await setup(bothNetworks);
 
