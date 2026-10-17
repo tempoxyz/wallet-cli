@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { Challenge } from "mppx";
@@ -18,6 +18,7 @@ import {
   type PersistedSessionRecord,
 } from "../src/payment/session-store.js";
 import { requestDryRunOutput } from "../src/schemas/request.js";
+import { channelsDbPath } from "../src/shared/process.js";
 import { readTokenMetadata } from "../src/shared/tokens.js";
 import type { WalletState } from "../src/wallet/store.js";
 import { cliBundle } from "./cli-bundle.js";
@@ -574,6 +575,29 @@ it.each<{
   );
   // Stale stored sessions are left for the payment to delete.
   expect(await readSessionRecordsByOrigin(service.url)).toHaveLength(row.stored?.length ?? 0);
+});
+
+it("quotes a session as unknown when sqlite3 cannot read the session store", async () => {
+  await useTempHome();
+  await writeWalletState(walletState());
+  const rpc = await rpcFixture({ balance: "ok", channels: "ok", closed: [] });
+  const service = await paymentService(offer("session"));
+  vi.stubEnv("TEMPO_MAX_SPEND", "");
+  vi.stubEnv("TEMPO_PRIVATE_KEY", "");
+  vi.stubEnv("TEMPO_RPC_URL", rpc.url);
+  vi.stubEnv("TEMPO_WALLET_NETWORK", "mainnet");
+  await writeFile(channelsDbPath(), "not a database");
+  let stdout = "";
+  const write = (chunk: string | Uint8Array) => {
+    stdout += chunk.toString();
+    return true;
+  };
+
+  await runRequest(["--dry-run", "--max-spend", "1", service.url], { stdout: { write } });
+
+  expect(JSON.parse(stdout)).toEqual({ ...quoted, ...session, ...capped, within_budget: null });
+  expect(service.authorized()).toBe(0);
+  expect(await readFile(channelsDbPath(), "utf8")).toBe("not a database");
 });
 
 it.each([

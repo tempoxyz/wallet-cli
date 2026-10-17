@@ -1,0 +1,5 @@
+---
+wallet-cli: patch
+---
+
+`sqlite3` failures now report `E_RUNTIME` (exit 1) with the same message, instead of `UNKNOWN`. This covers `sqlite3` failing to start or failing to take a lock, used by session payments, `config`, login, and `--idempotency-key` sends. It also covers a session store query that fails or cannot start `sqlite3`, used by `sessions` and session payments. A missing `sqlite3` is reported as before. A `sqlite3` that cannot start for a transient reason (`EAGAIN`, `EMFILE`, `ENFILE`, `ENOMEM`) is retryable, as is a session store another process held past the busy timeout. `EMFILE` and `ENFILE` no longer crash the CLI with an uncaught error. Under `tempo request --payment-intent session`, or `auto` when no one-time charge fits, a session store failure reports `E_RUNTIME` (exit 1) instead of `E_PAYMENT` (exit 4). `--payment-intent auto` still offers a fitting one-time charge for a failure that is not retryable. It now reports a retryable one as is, so the session can be retried instead of paying a non-refundable charge. `--dry-run` still reports a session as `null` when the store cannot be read.
