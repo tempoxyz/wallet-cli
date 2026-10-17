@@ -8,7 +8,7 @@
 - A command with subcommands or modes may instead be a folder, `src/commands/<command>/`. Its `index.ts` default-exports the command as above, and each subcommand or mode is a module, like `sessions/close.ts` or `transfer/mach.ts`, with its handler and, for a subcommand, the incur definition, annotations, and `--describe` entry that `index.ts` mounts. Helpers they share get their own module, like `sessions/records.ts`; there is no barrel.
 - `src/cli/commands.ts` imports each command and lists it once. `--describe` follows that list, and shell completions offer the mounted commands in its order, then incur's builtin `mcp` and `skills`. A new command adds one import and one list entry.
 - `src/cli/` holds the plumbing: argv preprocessing, the MCP server, the `--describe` builders, incur's builtin `mcp` and `skills`, and the completion scripts.
-- Workarounds for upstream bugs live in `src/cli/incur-compat.ts` (incur, including `patches/`) and `src/provider/accounts-compat.ts` (accounts SDK), each with the upstream fix that makes it removable.
+- Workarounds for upstream bugs live in `src/cli/incur-compat.ts` (incur, including `patches/`), each with the upstream fix that makes it removable.
 - `tempo request` is `src/request-cli.ts`, and its implementation is in `src/request/`, one module per concern.
 - `src/shared/errors.ts` holds the error code registry, one code per line in sorted order, and the generic constructors every command uses; a constructor for one domain's error lives with that domain, like `accessKeyLimitError` in `src/wallet/access-key.ts`.
 

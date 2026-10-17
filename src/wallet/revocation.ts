@@ -3,7 +3,6 @@ import { z } from "incur";
 import type { Address } from "viem";
 import { Actions } from "viem/tempo";
 
-import { requireRevokeChain } from "../provider/accounts-compat.js";
 import { networkError } from "../shared/errors.js";
 import { createTempoPublicClient, requireRpcChain } from "../shared/network.js";
 import { localAccessKeyStatus } from "./access-key.js";
@@ -47,7 +46,10 @@ export async function revokeThroughWallet(options: {
   return (await readKey(target)).status === "revoked";
 }
 
-/** The wallet app signs the revocation, so the root account needs no local signer. */
+/**
+ * The wallet app signs the revocation, so the root account needs no local signer. The request
+ * names the key's chain, so the wallet app revokes there whichever chain the provider is on.
+ */
 async function revokeAccessKeyThroughWallet(options: {
   provider: RevokeProvider;
   walletAddress: Address;
@@ -55,7 +57,6 @@ async function revokeAccessKeyThroughWallet(options: {
   chainId: number;
   keyAuthorization: unknown;
 }) {
-  await requireRevokeChain(options);
   await options.provider.request({
     method: "wallet_revokeAccessKey",
     params: [
@@ -63,6 +64,7 @@ async function revokeAccessKeyThroughWallet(options: {
       z.encode(Rpc.wallet_revokeAccessKey.parameters, {
         address: options.walletAddress,
         accessKeyAddress: options.accessKeyAddress,
+        chainId: BigInt(options.chainId),
         ...(options.keyAuthorization
           ? { keyAuthorization: options.keyAuthorization as never }
           : {}),
