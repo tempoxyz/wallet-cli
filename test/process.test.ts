@@ -11,7 +11,8 @@ vi.mock("node:child_process", () => ({
   spawn: mocks.spawn,
 }));
 
-import { canPrompt, openExternal } from "../src/shared/process.js";
+import { canPrompt, openExternal, runProcess } from "../src/shared/process.js";
+import { failedSpawn } from "./fixtures/failed-spawn.js";
 
 afterEach(() => {
   mocks.spawn.mockReset();
@@ -65,5 +66,35 @@ describe("openExternal", () => {
     openExternal("https://wallet.tempo.xyz/cli-auth");
 
     expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+});
+
+// Node emits EAGAIN, EACCES, and ENOENT, emits EMFILE and ENFILE without setting up stdio, and
+// throws ENOMEM and EPERM; see `failedSpawn`.
+describe("runProcess when the command cannot start", () => {
+  it.each([
+    { code: "EAGAIN", retryable: true, message: "spawn sqlite3 EAGAIN" },
+    { code: "EMFILE", retryable: true, message: "spawn sqlite3 EMFILE" },
+    { code: "ENFILE", retryable: true, message: "spawn sqlite3 ENFILE" },
+    { code: "ENOMEM", retryable: true, message: "spawn ENOMEM" },
+    { code: "EACCES", retryable: false, message: "spawn sqlite3 EACCES" },
+    { code: "EPERM", retryable: false, message: "spawn EPERM" },
+  ])("rejects with E_RUNTIME on $code, retryable $retryable", async ({ code, ...error }) => {
+    mocks.spawn.mockImplementation(() => failedSpawn(code));
+
+    await expect(runProcess("sqlite3", [])).rejects.toMatchObject({
+      code: "E_RUNTIME",
+      exitCode: 1,
+      ...error,
+    });
+  });
+
+  it("keeps Node's ENOENT error for a missing command", async () => {
+    mocks.spawn.mockImplementation(() => failedSpawn("ENOENT"));
+
+    await expect(runProcess("sqlite3", [])).rejects.toMatchObject({
+      code: "ENOENT",
+      message: "spawn sqlite3 ENOENT",
+    });
   });
 });

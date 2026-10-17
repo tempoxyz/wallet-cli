@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, fstatSync, openSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -8,7 +7,7 @@ import { dirname, join } from "node:path";
 import { CtaError } from "../cli/incur-compat.js";
 import { commandError, walletError } from "../shared/errors.js";
 import { shellQuote } from "../shared/next.js";
-import { sqlite3 } from "../shared/process.js";
+import { spawnError, sqlite3, startProcess } from "../shared/process.js";
 import { sleep } from "../shared/utils.js";
 
 type Release = () => Promise<void>;
@@ -29,7 +28,8 @@ export async function withSessionLock<T>(url: string, fn: () => Promise<T>): Pro
 /**
  * Runs `fn` while holding the exclusive lock on the file at `path`, which is created on first use
  * and never removed. It waits while another process or call holds it, and fails with
- * `E_POLL_TIMEOUT` naming `label` after 30 seconds. Errors from `fn` propagate unchanged.
+ * `E_POLL_TIMEOUT` naming `label` after 30 seconds, or with `E_RUNTIME` when sqlite3 cannot take it.
+ * Errors from `fn` propagate unchanged.
  *
  * A `sqlite3` child holds the lock as an open `BEGIN EXCLUSIVE` transaction on `path`, an OS file
  * lock the kernel releases when the child exits. The child exits when its stdin closes: on release,
@@ -69,17 +69,27 @@ async function kernelLock(path: string, label: string) {
 /**
  * Starts a `sqlite3` child that takes the lock at `path`, its busy handler retrying for up to
  * `waitMs` while another holds it. Resolves with the function that releases the lock, `"busy"` if
- * it is still held, or `"no sqlite3"` if sqlite3 is not on PATH.
+ * it is still held, or `"no sqlite3"` if sqlite3 is not on PATH. Rejects with `E_RUNTIME` when
+ * sqlite3 cannot start, retryable when that is transient, or fails to take the lock.
  */
 function tryLock(path: string, waitMs: number) {
   return new Promise<Release | "busy" | "no sqlite3">((resolve, reject) => {
     // Detached into its own session, the child gets none of the terminal's signals, such as the
     // hangup that ends sqlite3, so it outlives `fn` unless it is killed by pid.
     // `-init` skips the user's sqliterc, which could turn bail off or print anything.
-    const child = spawn(sqlite3, ["-init", devNull, "-bail", path], {
-      detached: true,
-      windowsHide: true,
-    });
+    const child = startProcess(
+      sqlite3,
+      ["-init", devNull, "-bail", path],
+      { detached: true, windowsHide: true },
+      (error) => {
+        if (error.code === "ENOENT") resolve("no sqlite3");
+        else
+          reject(
+            spawnError(error, `Failed to run sqlite3 for the lock at ${path}: ${error.message}`),
+          );
+      },
+    );
+    if (!child) return;
     const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
     let stdout = "";
     let stderr = "";
@@ -94,13 +104,15 @@ function tryLock(path: string, waitMs: number) {
       });
     });
     child.stderr.on("data", (chunk: string) => (stderr += chunk));
-    child.on("error", (error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") resolve("no sqlite3");
-      else reject(new Error(`Failed to run sqlite3 for the lock at ${path}: ${error.message}`));
-    });
     child.on("close", (code) => {
       if (/database is locked/.test(stderr)) resolve("busy");
-      else reject(new Error(`sqlite3 failed to lock ${path}: ${stderr.trim() || `exit ${code}`}`));
+      else
+        reject(
+          walletError({
+            code: "E_RUNTIME",
+            message: `sqlite3 failed to lock ${path}: ${stderr.trim() || `exit ${code}`}`,
+          }),
+        );
     });
     // A child that has exited fails the write; its exit settles the promise instead.
     child.stdin.on("error", () => undefined);

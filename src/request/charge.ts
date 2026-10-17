@@ -64,11 +64,7 @@ export async function payAndRetryRequest(
       // A session refused by the cap still names a one-time charge within it.
       if (options.paymentIntent === "auto" && error instanceof MaxSpendExceededError)
         error.charge = chargeWithinCap(header, sessionChallenge, options);
-      // Only payment failures fall back to a charge offer; other typed errors keep their code.
-      if (
-        options.paymentIntent === "auto" &&
-        !(error instanceof Errors.IncurError && error.code !== "E_PAYMENT")
-      )
+      if (options.paymentIntent === "auto" && fallsBackToCharge(error))
         throw chargeFallbackError(header, sessionChallenge, options, error) ?? error;
       throw error;
     }
@@ -220,6 +216,17 @@ function credentialPayload(credential: string) {
   } catch {
     return {};
   }
+}
+
+/**
+ * Whether a failed session payment under `--payment-intent auto` offers a one-time charge instead:
+ * an untyped failure, or a payment or `E_RUNTIME` one, such as sqlite3 failing on the session lock
+ * or store, which a charge does not use. A retryable failure is rethrown for the caller to retry
+ * the session, which is refundable where a charge is not, and other typed errors keep their code.
+ */
+function fallsBackToCharge(error: unknown) {
+  if (!(error instanceof Errors.IncurError)) return true;
+  return !error.retryable && (error.code === "E_PAYMENT" || error.code === "E_RUNTIME");
 }
 
 export function chargeFallbackError(

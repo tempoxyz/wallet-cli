@@ -12,7 +12,13 @@ import { walletError } from "../src/shared/errors.js";
 import { querySql, runSql, runSqlScript } from "../src/shared/process.js";
 import { nowSeconds } from "../src/shared/utils.js";
 import { createIdempotencyRecord, pruneIdempotencyRecords } from "../src/wallet/idempotency.js";
+import { failedSpawn } from "./fixtures/failed-spawn.js";
 import { useTempHome } from "./helpers.js";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 const holderScript = join(import.meta.dirname, "fixtures", "lock-holder.ts");
 
@@ -153,6 +159,34 @@ describe("withFileLock with sqlite3", () => {
     expect(fn).not.toHaveBeenCalled();
     await expect(readFile(path, "utf8")).resolves.toBe("12345\n");
   });
+});
+
+// Node emits EAGAIN and EACCES, emits EMFILE and ENFILE without setting up stdio, and throws
+// ENOMEM and EPERM; see `failedSpawn`.
+describe("withFileLock when sqlite3 cannot start", () => {
+  it.each([
+    { code: "EAGAIN", retryable: true, reason: "spawn sqlite3 EAGAIN" },
+    { code: "EMFILE", retryable: true, reason: "spawn sqlite3 EMFILE" },
+    { code: "ENFILE", retryable: true, reason: "spawn sqlite3 ENFILE" },
+    { code: "ENOMEM", retryable: true, reason: "spawn ENOMEM" },
+    { code: "EACCES", retryable: false, reason: "spawn sqlite3 EACCES" },
+    { code: "EPERM", retryable: false, reason: "spawn EPERM" },
+  ])(
+    "fails with E_RUNTIME on $code, retryable $retryable, without running fn",
+    async ({ code, retryable, reason }) => {
+      const path = join(await useTempHome(), "test.lock");
+      vi.mocked(spawn).mockImplementationOnce(() => failedSpawn(code) as never);
+      const fn = vi.fn(async () => "ran");
+
+      await expect(withFileLock(path, "test lock", fn)).rejects.toMatchObject({
+        code: "E_RUNTIME",
+        exitCode: 1,
+        retryable,
+        message: `Failed to run sqlite3 for the lock at ${path}: ${reason}`,
+      });
+      expect(fn).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("withFileLock without sqlite3", () => {

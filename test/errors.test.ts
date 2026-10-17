@@ -1,12 +1,13 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { Errors } from "incur";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseRequestArgs } from "../src/request/args.js";
 import { executeRequest } from "../src/request/run.js";
 import { requireSessionDescriptor } from "../src/payment/session-descriptor.js";
+import { withFileLock } from "../src/payment/session-lock.js";
 import { commandMap } from "../src/cli/command.js";
 import { ctaErrors } from "../src/cli/incur-compat.js";
 import {
@@ -19,8 +20,10 @@ import {
   walletError,
   type WalletErrorCode,
 } from "../src/shared/errors.js";
+import { channelsDbPath, runSql } from "../src/shared/process.js";
 import { walletProblem, WalletRequiredError } from "../src/shared/require-wallet.js";
 import { accessKeyLimitError } from "../src/wallet/access-key.js";
+import { useTempHome } from "./helpers.js";
 
 const root = resolve(import.meta.dirname, "..");
 const key = "0x4cdadb819a7fc083b72ada08288a96424f34c8a0";
@@ -146,8 +149,33 @@ describe("CtaError", () => {
   );
 });
 
+/**
+ * Starts a temporary HOME whose PATH has only a `sqlite3` that runs `script`, or one that cannot
+ * start without it.
+ */
+async function fakeSqlite3(script?: string) {
+  const home = await useTempHome();
+  const bin = join(home, "bin");
+  await mkdir(bin);
+  await writeFile(join(bin, "sqlite3"), script ? `#!/bin/sh\n${script}\n` : "", {
+    mode: script ? 0o755 : 0o644,
+  });
+  vi.stubEnv("PATH", bin);
+  return home;
+}
+
 describe("typed error sites", () => {
-  it.each([
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each<{
+    site: string;
+    code: WalletErrorCode;
+    message: unknown;
+    retryable?: boolean;
+    run: () => Promise<unknown>;
+  }>([
     {
       site: "request --json with invalid JSON",
       code: "E_USAGE",
@@ -166,27 +194,82 @@ describe("typed error sites", () => {
       message: "Unable to access wallet commands",
       run: async () => commandMap({} as never),
     },
-  ] as const)("$site throws $code", async ({ code, message, run }) => {
+    {
+      site: "a file lock sqlite3 cannot take",
+      code: "E_RUNTIME",
+      message: expect.stringMatching(/^sqlite3 failed to lock .+: .*file is not a database/),
+      run: async () => {
+        const lock = join(await useTempHome(), "test.lock");
+        await writeFile(lock, "not a database");
+        return withFileLock(lock, "test lock", async () => undefined);
+      },
+    },
+    {
+      site: "a file lock whose sqlite3 cannot start",
+      code: "E_RUNTIME",
+      message: expect.stringMatching(
+        /^Failed to run sqlite3 for the lock at .+: spawn sqlite3 EACCES$/,
+      ),
+      run: async () => {
+        const home = await fakeSqlite3();
+        return withFileLock(join(home, "test.lock"), "test lock", async () => undefined);
+      },
+    },
+    {
+      site: "a session store sqlite3 cannot read",
+      code: "E_RUNTIME",
+      message: expect.stringMatching(/file is not a database/),
+      run: async () => {
+        await useTempHome();
+        await writeFile(channelsDbPath(), "not a database");
+        return runSql("SELECT name FROM sqlite_master");
+      },
+    },
+    {
+      site: "a session store another process holds past the busy timeout",
+      code: "E_RUNTIME",
+      message: "Error: in prepare, database is locked (5)\n",
+      retryable: true,
+      run: async () => {
+        await fakeSqlite3("echo 'Error: in prepare, database is locked (5)' >&2; exit 5");
+        return runSql("SELECT name FROM sqlite_master");
+      },
+    },
+  ])("$site throws $code", async ({ code, message, retryable, run }) => {
     await expect(run()).rejects.toMatchObject({
       code,
       exitCode: errorCodes[code].exitCode,
+      retryable: retryable ?? errorCodes[code].retryable,
       message,
     });
   });
 
-  // Bare `Error` throws allowed under src/, as `src/<file>: <trimmed line text>` and a one-line
-  // reason: a programmer-error assertion no user can reach, or an upstream API that needs a plain
-  // `Error`. Keyed by text so edits that shift lines keep matching; list a repeated line once per
-  // occurrence.
+  // Bare `Error` throws and rejections allowed under src/, as `src/<file>: <trimmed line text>` and
+  // a one-line reason: a programmer-error assertion no user can reach, or an upstream API that needs
+  // a plain `Error`. Keyed by text so edits that shift lines keep matching; list a repeated line
+  // once per occurrence.
   const allowedBareErrors: [site: string, reason: string][] = [];
+  const bareError = /\b(throw\s+|reject\(\s*)(new\s+)?Error\(/;
 
-  it("throws typed errors instead of bare Error", async () => {
+  it.each([
+    ["throw new Error(message);", true],
+    ["throw Error(message);", true],
+    ["else reject(new Error(message));", true],
+    ["return Promise.reject(new Error(message));", true],
+    ["throw walletError({ code, message });", false],
+    ["reject(walletError({ code, message }));", false],
+    ["controller.abort(new Error(message));", false],
+  ])("treats %s as a bare Error: %s", (line, bare) => {
+    expect(bareError.test(line)).toBe(bare);
+  });
+
+  it("throws and rejects typed errors instead of bare Error", async () => {
     const found: string[] = [];
     for (const file of await readdir(join(root, "src"), { recursive: true })) {
       if (!file.endsWith(".ts")) continue;
       const source = await readFile(join(root, "src", file), "utf8");
       for (const line of source.split("\n"))
-        if (/\bthrow\s+(new\s+)?Error\(/.test(line)) found.push(`src/${file}: ${line.trim()}`);
+        if (bareError.test(line)) found.push(`src/${file}: ${line.trim()}`);
     }
     expect(found.sort()).toEqual(allowedBareErrors.map(([site]) => site).sort());
   });

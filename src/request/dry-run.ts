@@ -56,8 +56,9 @@ export async function paymentQuote(
       ? planSessionPayment(sessionDetails(challenge, requestUrl, options), payer, options, {
           dryRun: true,
         }).catch((error: unknown) => {
-          // An offer the payment would refuse still fails; a failed read is unknown.
-          if (error instanceof Errors.IncurError) throw error;
+          // An offer the payment would refuse still fails; a failed read, including an `E_RUNTIME`
+          // session store sqlite3 cannot read, is unknown.
+          if (error instanceof Errors.IncurError && error.code !== "E_RUNTIME") throw error;
           return undefined;
         })
       : undefined,
