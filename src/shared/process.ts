@@ -5,6 +5,8 @@ import { env, platform } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 
+import { walletError } from "./errors.js";
+
 /** Opens `url` in the default browser, unless `TEMPO_NO_BROWSER` is set (headless hosts, agents). */
 export function openExternal(url: string) {
   if (env.TEMPO_NO_BROWSER) return;
@@ -51,7 +53,8 @@ export const sqlite3 = "sqlite3";
 
 /**
  * Runs `command`, writing `input` to its stdin, and resolves with its stdout; `signal` kills it and
- * rejects.
+ * rejects. A nonzero exit rejects with `E_RUNTIME`, retryable when sqlite3 gave up waiting for a
+ * database another process holds.
  */
 export function runProcess(
   command: string,
@@ -75,7 +78,14 @@ export function runProcess(
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve(stdout);
-      else reject(new Error(stderr || `${command} exited with ${code}`));
+      else
+        reject(
+          walletError({
+            code: "E_RUNTIME",
+            message: stderr || `${command} exited with ${code}`,
+            retryable: /database is locked/.test(stderr),
+          }),
+        );
     });
   });
 }

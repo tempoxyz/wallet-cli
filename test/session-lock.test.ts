@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -14,7 +14,27 @@ import { nowSeconds } from "../src/shared/utils.js";
 import { createIdempotencyRecord, pruneIdempotencyRecords } from "../src/wallet/idempotency.js";
 import { useTempHome } from "./helpers.js";
 
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
+
 const holderScript = join(import.meta.dirname, "fixtures", "lock-holder.ts");
+
+/** A child process that fails to start with `code`, reported after `spawn` returns, as Node does. */
+function failedSpawn(code: string) {
+  const stream = () =>
+    Object.assign(new EventEmitter(), { setEncoding() {}, write() {}, end() {} });
+  const child = Object.assign(new EventEmitter(), {
+    stdin: stream(),
+    stdout: stream(),
+    stderr: stream(),
+  });
+  setImmediate(() =>
+    child.emit("error", Object.assign(new Error(`spawn sqlite3 ${code}`), { code })),
+  );
+  return child;
+}
 
 /** Takes sqlite3 off PATH for the rest of the test. */
 async function withoutSqlite3() {
@@ -152,6 +172,29 @@ describe("withFileLock with sqlite3", () => {
     );
     expect(fn).not.toHaveBeenCalled();
     await expect(readFile(path, "utf8")).resolves.toBe("12345\n");
+  });
+});
+
+describe("withFileLock when sqlite3 cannot start", () => {
+  it.each([
+    ["EAGAIN", true],
+    ["EMFILE", true],
+    ["ENFILE", true],
+    ["ENOMEM", true],
+    ["EACCES", false],
+    ["EPERM", false],
+  ])("fails with E_RUNTIME on %s, retryable %s, without running fn", async (code, retryable) => {
+    const path = join(await useTempHome(), "test.lock");
+    vi.mocked(spawn).mockImplementationOnce(() => failedSpawn(code) as never);
+    const fn = vi.fn(async () => "ran");
+
+    await expect(withFileLock(path, "test lock", fn)).rejects.toMatchObject({
+      code: "E_RUNTIME",
+      exitCode: 1,
+      retryable,
+      message: `Failed to run sqlite3 for the lock at ${path}: spawn sqlite3 ${code}`,
+    });
+    expect(fn).not.toHaveBeenCalled();
   });
 });
 

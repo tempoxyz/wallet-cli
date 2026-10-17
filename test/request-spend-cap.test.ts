@@ -1,5 +1,9 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { Challenge, Credential } from "mppx";
@@ -11,6 +15,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { runRequest } from "../src/request/run.js";
 import { MaxSpendExceededError } from "../src/request/spend.js";
 import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
+import { channelsDbPath } from "../src/shared/process.js";
 import { saveConfigValue } from "../src/wallet/config.js";
 import { cliBundle } from "./cli-bundle.js";
 import { testPrivateKey, useTempHome } from "./helpers.js";
@@ -532,39 +537,109 @@ it("suggests raising the cap or a one-time charge for a reused session past it",
 
 const noSqlite3 =
   "sqlite3 was not found on PATH. Payment sessions need it: install sqlite3, then retry.";
+const chargeOffer =
+  "A one-time charge of 0.5 is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --max-spend 0.5 --payment-intent charge.";
 
-it.each([
+/** Makes `path` a file sqlite3 cannot open as a database. */
+async function corrupt(path: string) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, "not a database");
+}
+
+const sqliteFailures = {
+  "without sqlite3": async () => vi.stubEnv("PATH", "/nonexistent-tempo-test-bin"),
+  "when sqlite3 cannot take the session lock": (origin: string) =>
+    corrupt(
+      join(
+        homedir(),
+        ".tempo",
+        "wallet",
+        "session-locks",
+        `${createHash("sha256").update(origin).digest("hex")}.lock`,
+      ),
+    ),
+  "when sqlite3 cannot read the session store": async () => corrupt(channelsDbPath()),
+};
+
+it.each<{
+  failure: keyof typeof sqliteFailures;
+  intent: "auto" | "session";
+  failed: Record<string, unknown>;
+}>([
   {
+    failure: "without sqlite3",
     intent: "auto",
-    args: [],
     failed: {
-      message: `Session payment failed: ${noSqlite3}\nA one-time charge of 0.5 is available but was not submitted because charge capacity is non-refundable. Review the amount, then retry with --max-spend 0.5 --payment-intent charge.`,
+      code: "E_PAYMENT",
+      exitCode: 4,
+      message: `Session payment failed: ${noSqlite3}\n${chargeOffer}`,
     },
   },
   {
+    failure: "without sqlite3",
     intent: "session",
-    args: ["--payment-intent", "session"],
     failed: {
+      code: "E_PAYMENT",
+      exitCode: 4,
       message: noSqlite3,
       payload: { cta: { commands: [{ command: "tempo wallet doctor" }] } },
     },
   },
+  {
+    failure: "when sqlite3 cannot take the session lock",
+    intent: "auto",
+    failed: {
+      code: "E_PAYMENT",
+      exitCode: 4,
+      message: expect.stringMatching(
+        /^Session payment failed: sqlite3 failed to lock .+file is not a database[^\n]*\nA one-time charge of 0\.5 is available/,
+      ),
+    },
+  },
+  {
+    failure: "when sqlite3 cannot take the session lock",
+    intent: "session",
+    failed: {
+      code: "E_RUNTIME",
+      exitCode: 1,
+      retryable: false,
+      message: expect.stringMatching(/^sqlite3 failed to lock .+file is not a database/),
+    },
+  },
+  {
+    failure: "when sqlite3 cannot read the session store",
+    intent: "auto",
+    failed: {
+      code: "E_PAYMENT",
+      exitCode: 4,
+      message: expect.stringMatching(
+        /^Session payment failed: .*file is not a database[\s\S]*\nA one-time charge of 0\.5 is available/,
+      ),
+    },
+  },
+  {
+    failure: "when sqlite3 cannot read the session store",
+    intent: "session",
+    failed: {
+      code: "E_RUNTIME",
+      exitCode: 1,
+      retryable: false,
+      message: expect.stringContaining("file is not a database"),
+    },
+  },
 ])(
-  "without sqlite3, fails a session offer under --payment-intent $intent before paying",
-  async ({ args, failed }) => {
+  "fails a session offer under --payment-intent $intent $failure before paying",
+  async ({ failure, intent, failed }) => {
     await useTempHome();
     const { origin, seen } = await service({
       intent: "session",
       amount: "1000000",
       charge: "500000",
     });
-    vi.stubEnv("PATH", "/nonexistent-tempo-test-bin");
+    await sqliteFailures[failure](origin);
+    const args = intent === "auto" ? [] : ["--payment-intent", intent];
 
-    await expect(run(args, `${origin}/paid`)).rejects.toMatchObject({
-      code: "E_PAYMENT",
-      exitCode: 4,
-      ...failed,
-    });
+    await expect(run(args, `${origin}/paid`)).rejects.toMatchObject(failed);
     expect(seen).toEqual([false]);
     expect(credentialOptions).toEqual([]);
   },

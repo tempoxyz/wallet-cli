@@ -64,10 +64,15 @@ export async function payAndRetryRequest(
       // A session refused by the cap still names a one-time charge within it.
       if (options.paymentIntent === "auto" && error instanceof MaxSpendExceededError)
         error.charge = chargeWithinCap(header, sessionChallenge, options);
-      // Only payment failures fall back to a charge offer; other typed errors keep their code.
+      // Payment failures, and `E_RUNTIME` ones such as sqlite3 failing on the session lock or store,
+      // which a charge does not use, fall back to a charge offer; other typed errors keep their code.
       if (
         options.paymentIntent === "auto" &&
-        !(error instanceof Errors.IncurError && error.code !== "E_PAYMENT")
+        !(
+          error instanceof Errors.IncurError &&
+          error.code !== "E_PAYMENT" &&
+          error.code !== "E_RUNTIME"
+        )
       )
         throw chargeFallbackError(header, sessionChallenge, options, error) ?? error;
       throw error;

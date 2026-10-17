@@ -29,7 +29,8 @@ export async function withSessionLock<T>(url: string, fn: () => Promise<T>): Pro
 /**
  * Runs `fn` while holding the exclusive lock on the file at `path`, which is created on first use
  * and never removed. It waits while another process or call holds it, and fails with
- * `E_POLL_TIMEOUT` naming `label` after 30 seconds. Errors from `fn` propagate unchanged.
+ * `E_POLL_TIMEOUT` naming `label` after 30 seconds, or with `E_RUNTIME` when sqlite3 cannot take it.
+ * Errors from `fn` propagate unchanged.
  *
  * A `sqlite3` child holds the lock as an open `BEGIN EXCLUSIVE` transaction on `path`, an OS file
  * lock the kernel releases when the child exits. The child exits when its stdin closes: on release,
@@ -66,10 +67,14 @@ async function kernelLock(path: string, label: string) {
   }
 }
 
+/** Spawn failures from a process, open file, or memory limit, which a later run can get past. */
+const transientSpawnErrors = new Set(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"]);
+
 /**
  * Starts a `sqlite3` child that takes the lock at `path`, its busy handler retrying for up to
  * `waitMs` while another holds it. Resolves with the function that releases the lock, `"busy"` if
- * it is still held, or `"no sqlite3"` if sqlite3 is not on PATH.
+ * it is still held, or `"no sqlite3"` if sqlite3 is not on PATH. Rejects with `E_RUNTIME` when
+ * sqlite3 cannot start, retryable when that is transient, or fails to take the lock.
  */
 function tryLock(path: string, waitMs: number) {
   return new Promise<Release | "busy" | "no sqlite3">((resolve, reject) => {
@@ -96,11 +101,24 @@ function tryLock(path: string, waitMs: number) {
     child.stderr.on("data", (chunk: string) => (stderr += chunk));
     child.on("error", (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") resolve("no sqlite3");
-      else reject(new Error(`Failed to run sqlite3 for the lock at ${path}: ${error.message}`));
+      else
+        reject(
+          walletError({
+            code: "E_RUNTIME",
+            message: `Failed to run sqlite3 for the lock at ${path}: ${error.message}`,
+            retryable: transientSpawnErrors.has(error.code ?? ""),
+          }),
+        );
     });
     child.on("close", (code) => {
       if (/database is locked/.test(stderr)) resolve("busy");
-      else reject(new Error(`sqlite3 failed to lock ${path}: ${stderr.trim() || `exit ${code}`}`));
+      else
+        reject(
+          walletError({
+            code: "E_RUNTIME",
+            message: `sqlite3 failed to lock ${path}: ${stderr.trim() || `exit ${code}`}`,
+          }),
+        );
     });
     // A child that has exited fails the write; its exit settles the promise instead.
     child.stdin.on("error", () => undefined);
