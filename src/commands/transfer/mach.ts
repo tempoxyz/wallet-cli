@@ -141,7 +141,8 @@ const amountCentsMessage =
 
 /**
  * `--amount-cents` capped MACH spending in USD cents before `--max-spend`. The CLI refuses it
- * before parsing, so any value is refused; the `cta` passes a whole number of cents in USD.
+ * before parsing, so any value is refused; the `cta` passes a whole number of cents in USD. With
+ * `--max-spend` too, the caps conflict, so there is no `cta` to pick one.
  */
 export const machAmountCentsFlag: RetiredFlag = {
   flag: "--amount-cents",
@@ -150,35 +151,32 @@ export const machAmountCentsFlag: RetiredFlag = {
   replacement: ({ args, value }) => ({
     message: amountCentsMessage,
     argv:
-      value === undefined || !/^\d+$/.test(value)
+      value === undefined ||
+      !/^\d+$/.test(value) ||
+      args.some((arg) => arg === "--max-spend" || arg.startsWith("--max-spend="))
         ? undefined
-        : [
-            "transfer",
-            ...args,
-            ...(args.some((arg) => arg === "--max-spend" || arg.startsWith("--max-spend="))
-              ? []
-              : ["--max-spend", formatUnits(BigInt(value) * 10_000n, 6)]),
-          ],
+        : ["transfer", ...args, "--max-spend", formatUnits(BigInt(value) * 10_000n, 6)],
   }),
 };
 
 /**
  * `--amount-cents` with `mach` over MCP, which parses options before the command runs. The `cta`
- * passes the same cap in USD, keeping the other options.
+ * passes the same cap in USD, keeping the other options; with `max-spend` too, there is none.
  */
 export function machAmountCentsError(
   flags: Parameters<typeof transferMach>[0]["options"],
   cents: number,
 ) {
   const message = amountCentsMessage;
-  if (!Number.isSafeInteger(cents) || cents < 0) return usageError(message);
+  if (!Number.isSafeInteger(cents) || cents < 0 || flags["max-spend"] !== undefined)
+    return usageError(message);
   const argv = [
     "tempo",
     "wallet",
     "transfer",
     "--mach",
     "--max-spend",
-    flags["max-spend"] ?? formatUnits(BigInt(cents) * 10_000n, 6),
+    formatUnits(BigInt(cents) * 10_000n, 6),
     ...(flags["mpp-challenge"] !== undefined ? ["--mpp-challenge", flags["mpp-challenge"]] : []),
     ...(flags["mpp-challenge-file"] !== undefined
       ? ["--mpp-challenge-file", flags["mpp-challenge-file"]]

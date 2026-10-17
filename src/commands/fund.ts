@@ -130,10 +130,22 @@ export default {
       flag: "--claim",
       takesValue: true,
       mcp: true,
+      // `--referral-code` won over `--claim`, so with both the run is the same without `--claim`.
       replacement: ({ args, value }) => ({
         message:
           "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
-        argv: value === undefined ? undefined : ["fund", ...args, "--referral-code", value],
+        argv:
+          value === undefined
+            ? undefined
+            : [
+                "fund",
+                ...args,
+                ...(args.some(
+                  (arg) => arg === "--referral-code" || arg.startsWith("--referral-code="),
+                )
+                  ? []
+                  : ["--referral-code", value]),
+              ],
       }),
     },
   ],

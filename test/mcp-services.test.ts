@@ -183,6 +183,14 @@ describe("MCP tools", () => {
       message:
         "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
     },
+    {
+      name: "transfer",
+      arguments: { mach: true, "amount-cents": 1, "max-spend": "100", "mpp-challenge": "x" },
+      message:
+        "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
+      // The caps conflict, so no command picks one.
+      cta: false,
+    },
     // A value-taking argument is refused whatever its value, false included.
     {
       name: "transfer",
@@ -208,7 +216,7 @@ describe("MCP tools", () => {
       message:
         "--amount-cents sets the MPP Credits amount of 'tempo wallet transfer --credits'; pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
     },
-  ])("refuses $name $arguments and sends nothing", async ({ name, arguments: args, message }) => {
+  ])("refuses $name $arguments and sends nothing", async ({ name, arguments: args, ...row }) => {
     await writeWalletState(walletState());
     const host = await recordingHost();
     vi.stubEnv("TEMPO_AUTH_URL", host.url);
@@ -217,7 +225,8 @@ describe("MCP tools", () => {
       const response = await mcpCall({ name, arguments: { ...args, network: "mainnet" } });
 
       expect(response.result.isError).toBe(true);
-      expect(firstToolText(response)).toContain(message);
+      expect(firstToolText(response)).toContain(row.message);
+      if ("cta" in row) expect(response.result._meta).toBeUndefined();
       expect(host.requests).toEqual([]);
     } finally {
       await host.close();

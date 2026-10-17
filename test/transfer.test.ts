@@ -1279,9 +1279,9 @@ describe("tempo wallet send and transfer", () => {
       message: retired.machCents,
     },
     {
-      argv: ["transfer", "--mach", "--amount-cents", "2", "--max-spend", "0.05"],
+      // Two caps conflict, so there is no cta to pick one.
+      argv: ["transfer", "--mach", "--amount-cents", "1", "--max-spend", "100"],
       message: retired.machCents,
-      command: cta("transfer", "--mach", "--max-spend=0.05", ...json),
     },
     // `send` takes no option only `transfer` takes, so a cta that would carry one is left out.
     {
@@ -1314,6 +1314,12 @@ describe("tempo wallet send and transfer", () => {
       argv: ["fund", "--claim", "CODE", "--no-browser"],
       message: retired.claim,
       command: cta("fund", "--no-browser", ...json, "--referral-code", "CODE"),
+    },
+    // `--referral-code` won over `--claim`, so the run is the same without `--claim`.
+    {
+      argv: ["fund", "--claim", "OLD", "--referral-code", "NEW"],
+      message: retired.claim,
+      command: cta("fund", "--referral-code=NEW", ...json),
     },
   ])("$argv fails with its replacement and sends nothing", async ({ argv, message, command }) => {
     const home = await useTempHome();
