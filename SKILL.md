@@ -205,6 +205,7 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 | `fund`            | false          | false             | false            | true            |
 | `fund_status`     | false          | false             | true             | true            |
 | `keys_list`       | true           | false             | true             | true            |
+| `keys_revoke`     | false          | true              | true             | true            |
 | `keys_update`     | false          | true              | false            | true            |
 | `login`           | false          | true              | false            | true            |
 | `login_status`    | false          | true              | true             | true            |

@@ -29,6 +29,11 @@ afterEach(() => {
 });
 
 const key = walletState().accessKeys[0]!;
+// `revoke` is the deprecated name of `keys revoke`, and runs the same command.
+const revokeNames = [
+  { command: "keys revoke", name: ["keys", "revoke"] },
+  { command: "revoke", name: ["revoke"] },
+];
 const testnetKey = { ...key, address: testAccessKey2, privateKey: testPrivateKey2, chainId: 42431 };
 const expiredKey = { ...key, expiry: 1 };
 
@@ -287,18 +292,20 @@ const walletAppCommands = [
     argv: ["keys", "update", testAccessKey, "--limit", "1", "--no-browser"],
     ran: { code: 1, request: "POST /api/auth/device/register" },
   },
-  {
-    command: "revoke --dry-run",
-    argv: ["revoke", testAccessKey, "--dry-run"],
-    ran: { code: 0, stdout: { status: "dry_run", access_key: testAccessKey.toLowerCase() } },
-  },
-  // The store holds only the wallet address, so a revocation the CLI signed itself would fail
-  // before asking the wallet app.
-  {
-    command: "revoke --yes",
-    argv: ["revoke", testAccessKey, "--yes", "--no-browser"],
-    ran: { code: 1, request: "POST /api/auth/device/register" },
-  },
+  ...revokeNames.flatMap(({ command, name }) => [
+    {
+      command: `${command} --dry-run`,
+      argv: [...name, testAccessKey, "--dry-run"],
+      ran: { code: 0, stdout: { status: "dry_run", access_key: testAccessKey.toLowerCase() } },
+    },
+    // The store holds only the wallet address, so a revocation the CLI signed itself would fail
+    // before asking the wallet app.
+    {
+      command: `${command} --yes`,
+      argv: [...name, testAccessKey, "--yes", "--no-browser"],
+      ran: { code: 1, request: "POST /api/auth/device/register" },
+    },
+  ]),
   {
     command: "sessions close",
     argv: ["sessions", "close", "https://service.example"],
@@ -588,41 +595,49 @@ describe("wallet CLI login and access key checks", () => {
     },
   );
 
-  it("revoke run by an agent without --yes returns E_USAGE with a --yes cta", async () => {
-    const home = await useTempHome();
-    await writeWalletState(walletState());
-    requests.length = 0;
+  it.each(revokeNames)(
+    "$command run by an agent without --yes returns E_USAGE with a keys revoke --yes cta",
+    async ({ name }) => {
+      const home = await useTempHome();
+      await writeWalletState(walletState());
+      requests.length = 0;
 
-    const result = await wallet(["revoke", testAccessKey], {
-      HOME: home,
-      TEMPO_AUTH_URL: origin,
-      TEMPO_RPC_URL: origin,
-    });
+      const result = await wallet([...name, testAccessKey], {
+        HOME: home,
+        TEMPO_AUTH_URL: origin,
+        TEMPO_RPC_URL: origin,
+      });
 
-    const command = `tempo wallet revoke ${testAccessKey.toLowerCase()} --yes --network mainnet`;
-    expect(result.code).toBe(2);
-    expect(JSON.parse(result.stdout)).toEqual({
-      code: "E_USAGE",
-      message: `Revocation cannot be undone, so it needs confirmation. Review the key with --dry-run, then run '${command}'.`,
-      retryable: false,
-      cta: { description: "Suggested command:", commands: [{ command }] },
-    });
-    expect(requests).toEqual([]);
-  });
+      const command = `tempo wallet keys revoke ${testAccessKey.toLowerCase()} --yes --network mainnet`;
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.stdout)).toEqual({
+        code: "E_USAGE",
+        message: `Revocation cannot be undone, so it needs confirmation. Review the key with --dry-run, then run '${command}'.`,
+        retryable: false,
+        cta: { description: "Suggested command:", commands: [{ command }] },
+      });
+      expect(result.stderr).toBe("");
+      expect(requests).toEqual([]);
+    },
+  );
 
-  it.each([
-    { answer: "y", code: 1, asked: true },
-    { answer: "n", code: 2, asked: false },
-    { answer: "", code: 2, asked: false },
-  ])(
-    "interactive revoke answered '$answer' asks the wallet app: $asked",
-    async ({ answer, code, asked }) => {
+  it.each(
+    revokeNames.flatMap((revoke) =>
+      [
+        { answer: "y", code: 1, asked: true },
+        { answer: "n", code: 2, asked: false },
+        { answer: "", code: 2, asked: false },
+      ].map((row) => ({ ...row, ...revoke })),
+    ),
+  )(
+    "interactive $command answered '$answer' asks the wallet app: $asked",
+    async ({ name, answer, code, asked }) => {
       const home = await useTempHome();
       await writeWalletState(walletState());
       requests.length = 0;
 
       const result = await wallet(
-        ["revoke", testAccessKey, "--no-browser"],
+        [...name, testAccessKey, "--no-browser"],
         { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
         { interactive: true, input: answer ? `${answer}\n` : "" },
       );
@@ -636,28 +651,88 @@ describe("wallet CLI login and access key checks", () => {
   );
 
   // Piped input is not a person answering, even when output goes to a terminal.
-  it("revoke with piped stdin ignores the input and returns E_USAGE with a --yes cta", async () => {
-    const home = await useTempHome();
-    await writeWalletState(walletState());
-    requests.length = 0;
+  it.each(revokeNames)(
+    "$command with piped stdin ignores the input and returns E_USAGE with a --yes cta",
+    async ({ name }) => {
+      const home = await useTempHome();
+      await writeWalletState(walletState());
+      requests.length = 0;
 
-    const result = await wallet(
-      ["revoke", testAccessKey, "--no-browser"],
-      { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
-      { interactive: true, pipedStdin: true, input: "y\n" },
-    );
+      const result = await wallet(
+        [...name, testAccessKey, "--no-browser"],
+        { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
+        { interactive: true, pipedStdin: true, input: "y\n" },
+      );
 
-    const command = `tempo wallet revoke ${testAccessKey.toLowerCase()} --yes --no-browser --network mainnet`;
-    expect(result.code).toBe(2);
-    expect(result.stderr).not.toContain("[y/N]");
-    expect(result.stdout).toContain(`then run '${command}'.`);
-    expect(requests).toEqual([]);
-  });
+      const command = `tempo wallet keys revoke ${testAccessKey.toLowerCase()} --yes --no-browser --network mainnet`;
+      expect(result.code).toBe(2);
+      expect(result.stderr).not.toContain("[y/N]");
+      expect(result.stdout).toContain(`then run '${command}'.`);
+      expect(requests).toEqual([]);
+    },
+  );
+
+  // A person at a terminal is told that `revoke` is now `keys revoke`; agent runs get no notice.
+  it.each(
+    revokeNames.flatMap((revoke) =>
+      [true, false].map((interactive) => ({
+        ...revoke,
+        interactive,
+        notice: interactive && revoke.command === "revoke",
+      })),
+    ),
+  )(
+    "$command --dry-run with interactive $interactive notes the deprecation: $notice",
+    async ({ name, interactive, notice }) => {
+      const home = await useTempHome();
+      await writeWalletState(walletState());
+
+      const result = await wallet(
+        [...name, testAccessKey, "--dry-run"],
+        { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
+        { interactive },
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe(
+        notice
+          ? "Warning: 'tempo wallet revoke' is deprecated; use 'tempo wallet keys revoke'.\n"
+          : "",
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "revoke returns what keys revoke does with interactive %s",
+    async (interactive) => {
+      const home = await useTempHome();
+      await writeWalletState(walletState());
+
+      const [alias, command] = await Promise.all(
+        [["revoke"], ["keys", "revoke"]].map((name) =>
+          wallet(
+            [...name, testAccessKey, "--dry-run"],
+            { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
+            { interactive },
+          ),
+        ),
+      );
+
+      expect(alias!.code).toBe(0);
+      expect(alias!.stdout).toBe(command!.stdout);
+      expect(alias!.stdout).toContain(
+        `tempo wallet keys revoke ${testAccessKey.toLowerCase()} --yes --network mainnet`,
+      );
+    },
+  );
 
   it.each([
     { command: "refresh", argv: ["refresh", "--no-browser"] },
     { command: "keys update", argv: ["keys", "update", "--limit", "1", "--no-browser"] },
-    { command: "revoke", argv: ["revoke", testAccessKey, "--yes", "--no-browser"] },
+    ...revokeNames.map(({ command, name }) => ({
+      command,
+      argv: [...name, testAccessKey, "--yes", "--no-browser"],
+    })),
   ])("$command accepts --no-browser and asks the wallet app", async ({ argv }) => {
     const home = await useTempHome();
     await writeWalletState(walletState());

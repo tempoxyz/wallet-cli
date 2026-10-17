@@ -4,11 +4,10 @@ import { z } from "incur";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Account } from "viem/tempo";
 
-import { updateAccessKeyHandler } from "../src/commands/keys.js";
+import { revokeHandler, updateAccessKeyHandler } from "../src/commands/keys.js";
 import { refreshHandler } from "../src/commands/refresh.js";
-import { revokeHandler } from "../src/commands/revoke.js";
 import { createProvider } from "../src/provider.js";
-import { revokeOutput } from "../src/schemas/revoke.js";
+import { revokeOutput } from "../src/schemas/keys.js";
 import { loadWalletState } from "../src/wallet/store.js";
 import {
   expectUsageError,
@@ -48,7 +47,7 @@ const key = walletState().accessKeys[0]!;
 const mainnet = { name: "mainnet", chainId: 4217 } as const;
 const testnet = { name: "testnet", chainId: 42431 } as const;
 
-describe("revoke", () => {
+describe("keys revoke", () => {
   it.each([
     {
       name: "keeps the key when the chain does not show it revoked",
@@ -347,7 +346,7 @@ describe("revoke", () => {
 
   const cta = (...flags: string[]) =>
     [
-      "tempo wallet revoke",
+      "tempo wallet keys revoke",
       testAccessKey.toLowerCase(),
       "--yes",
       ...flags,
@@ -437,6 +436,7 @@ describe("revoke", () => {
     const argv = [
       "tempo",
       "wallet",
+      "keys",
       "revoke",
       testAccessKey.toLowerCase(),
       "--yes",
@@ -603,7 +603,7 @@ const walletAppCommands = [
     request: "wallet_updateAccessKey",
   },
   {
-    command: "revoke",
+    command: "keys revoke",
     run: async (
       browser: boolean | undefined,
       createProvider: ReturnType<typeof walletApp>["createProvider"],
