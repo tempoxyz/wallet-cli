@@ -222,7 +222,7 @@ describe("typed error sites", () => {
       run: async () => {
         await useTempHome();
         await writeFile(channelsDbPath(), "not a database");
-        return runSql("SELECT 1");
+        return runSql("SELECT name FROM sqlite_master");
       },
     },
     {
@@ -232,7 +232,7 @@ describe("typed error sites", () => {
       retryable: true,
       run: async () => {
         await fakeSqlite3("echo 'Error: in prepare, database is locked (5)' >&2; exit 5");
-        return runSql("SELECT 1");
+        return runSql("SELECT name FROM sqlite_master");
       },
     },
   ])("$site throws $code", async ({ code, message, retryable, run }) => {
