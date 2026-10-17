@@ -49,7 +49,11 @@ async function main() {
   }
 
   const mounted = commandMap(cli);
-  const args = normalizeServicesArgs(expandHelp(bindCommandOptions(rawArgs, mounted)));
+  // A retired flag is stripped with its value first, so a value such as `--mcp` stays its value.
+  const { args, error } = retireFlags(
+    normalizeServicesArgs(expandHelp(bindCommandOptions(rawArgs, mounted))),
+    commands,
+  );
 
   if (handleBuiltinSchema(args)) process.exit(0);
 
@@ -64,11 +68,10 @@ async function main() {
     return;
   }
 
-  const { args: served, error } = retireFlags(args, commands);
   // Middleware runs before the command parses its options, so a retired flag runs nothing.
   if (error) cli.use((context) => context.error(error));
 
-  await cli.serve(served);
+  await cli.serve(args);
   // Preserve the summary on stdout; only a one-shot CLI invocation changes exit status.
   if (closeCommandFailed) process.exitCode = 1;
 }

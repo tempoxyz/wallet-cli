@@ -1,15 +1,16 @@
 import { Cli } from "incur";
 
+import { flagSet } from "../../cli/argv.js";
 import { destructive, type WalletCommand } from "../../cli/command.js";
 import { flag, option, positional } from "../../cli/describe.js";
 import { cliGlobals, globalAlias } from "../../schemas/shared.js";
 import { transferArgs, transferOptions, transferOutput } from "../../schemas/transfer.js";
 import { usageError } from "../../shared/errors.js";
 import { withWallet } from "../../shared/require-wallet.js";
-import { sendCommand } from "../send.js";
+import { creditsOnlyFlags, sendArgv, sendCommand, valueFlag } from "../send.js";
 import { idempotencyKeyArg } from "../tx.js";
 import { transferCredits } from "./credits.js";
-import { transferMach } from "./mach.js";
+import { machAmountCentsError, machAmountCentsFlag, transferMach } from "./mach.js";
 
 // `transfer` pays MPP challenges; its token form is `send` under a deprecated name.
 const transferDescription =
@@ -32,6 +33,10 @@ export default {
       if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
       if ((options.credits || options.mach) && options["idempotency-key"] !== undefined)
         throw usageError("--idempotency-key applies only to token transfers");
+      // MCP still passes the former MACH cap in cents, which the CLI refuses before parsing; it
+      // is refused, not dropped for another cap.
+      if (options.mach && options["amount-cents"] !== undefined)
+        throw machAmountCentsError(flags, options["amount-cents"]);
       if (options.credits) {
         // MCP puts the shared `to` field in args; a CLI positional recipient needs amount and token.
         if (args.amount !== undefined || args.token !== undefined)
@@ -48,6 +53,12 @@ export default {
         return withWallet((_, wallet) =>
           transferMach({ options: { ...flags, network: wallet.network.name } }),
         )(context);
+      // MCP passes the credits options the CLI refuses before parsing; a token transfer takes none.
+      const credit = creditsOnlyFlags.find(
+        ({ flag }) => options[flag.slice(2) as "to" | "data" | "amount-cents"] !== undefined,
+      );
+      if (credit)
+        throw usageError(credit.replacement({ given: [], args: [], value: undefined }).message);
       // A token transfer is `send` under its former name, for a release or two. Only a person at
       // a terminal sees the notice; agent runs (MCP, `--format`, or stdout not a terminal) get
       // exactly what `send` returns.
@@ -85,17 +96,14 @@ export default {
       option(
         "amount_cents",
         "--amount-cents",
-        "Credits amount or MPP challenge spending cap in USD cents",
+        "Credits amount or MPP challenge spending cap in USD cents; --credits only",
         { valueName: "AMOUNT_CENTS" },
       ),
-      option("credits_to", "--to", "Credits recipient; unsupported with MACH", {
+      option("credits_to", "--to", "Credits recipient; --credits only", {
         valueName: "CREDITS_TO",
       }),
-      option("data", "--data", "Credits calldata; unsupported with MACH", {
+      option("data", "--data", "Credits calldata; --credits only", {
         valueName: "DATA",
-      }),
-      option("value", "--value", "Credits ETH value (must be zero); unsupported with MACH", {
-        valueName: "VALUE",
       }),
       option("mpp_challenge", "--mpp-challenge", "MPP WWW-Authenticate challenge", {
         valueName: "MPP_CHALLENGE",
@@ -117,4 +125,18 @@ export default {
       }),
     ],
   },
+  // `--credits` keeps its options, and MACH refuses `--to` and `--data` itself.
+  retiredFlags: [
+    ...creditsOnlyFlags,
+    machAmountCentsFlag,
+    {
+      ...valueFlag((args) => (paysWithMode(args) ? ["transfer", ...args] : sendArgv(args))),
+      mcp: true,
+    },
+  ],
 } satisfies WalletCommand;
+
+/** Whether a `transfer` run pays with `--mach` or `--credits` rather than sending tokens. */
+function paysWithMode(args: readonly string[]) {
+  return flagSet(args, "--mach") || flagSet(args, "--credits");
+}

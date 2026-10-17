@@ -19,10 +19,9 @@ export const transferOptions = z.object({
   "amount-cents": z.coerce
     .number()
     .optional()
-    .describe("Credits amount or MPP challenge spending cap in USD cents"),
-  to: z.string().optional().describe("Credits recipient; unsupported with MACH"),
-  data: z.string().optional().describe("Credits calldata; unsupported with MACH"),
-  value: z.string().optional().describe("Credits ETH value (must be zero); unsupported with MACH"),
+    .describe("Credits amount or MPP challenge spending cap in USD cents; --credits only"),
+  to: z.string().optional().describe("Credits recipient; --credits only"),
+  data: z.string().optional().describe("Credits calldata; --credits only"),
   "mpp-challenge": z.string().optional().describe("MPP WWW-Authenticate challenge"),
   "mpp-challenge-file": z.string().optional().describe("File containing an MPP challenge"),
   "mpp-client-id": z.string().optional().describe("Optional client ID for MPP attribution memo"),

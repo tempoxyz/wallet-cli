@@ -19,7 +19,6 @@ export const fundOptions = z.object({
     .describe("Wait for a balance increase; otherwise return immediately"),
   timeout: z.coerce.number().optional().describe("Timeout in seconds with --wait (default: 600)"),
   "referral-code": z.string().optional().describe("Open referral-code redeem flow"),
-  claim: z.string().optional().describe("Alias for --referral-code"),
 });
 
 export const fundStatusOptions = z.object({

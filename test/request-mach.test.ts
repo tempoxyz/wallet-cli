@@ -690,7 +690,7 @@ describe("transferMach", () => {
     expect(readContract).not.toHaveBeenCalled();
     expect(signTransaction).not.toHaveBeenCalled();
   });
-  it.each([{ to: recipient, "amount-cents": 1 }, { data: "0x1234" }, { value: "0" }])(
+  it.each([{ to: recipient }, { data: "0x1234" }])(
     "rejects unsupported direct transfer flags",
     async (flags) => {
       await expect(transferMach({ options: { ...flags, "dry-run": true } })).rejects.toThrow(
@@ -703,12 +703,12 @@ describe("transferMach", () => {
       transferMach({ options: { "mpp-challenge": Challenge.serialize(offer()) } }),
     ).rejects.toThrow("requires --max-spend");
   });
-  it("treats legacy cents as a cap instead of rounding the payment", async () => {
+  it("caps the payment at --max-spend instead of rounding it", async () => {
     const options = { "dry-run": true, "mpp-challenge": Challenge.serialize(offer()) };
-    await expect(transferMach({ options: { ...options, "amount-cents": 1 } })).rejects.toThrow(
+    await expect(transferMach({ options: { ...options, "max-spend": "0.01" } })).rejects.toThrow(
       "max spend exceeded",
     );
-    expect(await transferMach({ options: { ...options, "amount-cents": 2 } })).toMatchObject({
+    expect(await transferMach({ options: { ...options, "max-spend": "0.02" } })).toMatchObject({
       amount_raw: "15000",
       max_spend: "0.02",
     });

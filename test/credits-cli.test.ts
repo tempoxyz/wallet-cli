@@ -28,7 +28,7 @@ async function cli(args: string[]) {
 }
 
 describe("credits CLI compatibility", () => {
-  it.each([[], ["--mach"], ["--crypto"], ["--claim", "CODE"]].map((flags) => ({ flags })))(
+  it.each([[], ["--mach"], ["--crypto"], ["--referral-code", "CODE"]].map((flags) => ({ flags })))(
     "rejects credit funding even with %j and without login",
     async ({ flags }) => {
       await useTempHome();

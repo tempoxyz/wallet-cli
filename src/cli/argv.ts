@@ -4,7 +4,7 @@ import { servicesOptions } from "../schemas/services.js";
 import { globalAlias } from "../schemas/shared.js";
 import { commandError, errorCodes } from "../shared/errors.js";
 import { shellQuote } from "../shared/next.js";
-import type { WalletCommand } from "./command.js";
+import { commandMap, type WalletCommand } from "./command.js";
 
 /** `help [command...]` is shorthand for `[command...] --help`. */
 export function expandHelp(args: string[]) {
@@ -176,6 +176,15 @@ export type RetiredFlag = {
    * stripped without an error.
    */
   takesValue?: boolean | undefined;
+  /** Flags under which the command still takes it, as `--credits` keeps the credits `--to`. */
+  unless?: readonly `--${string}`[] | undefined;
+  /** Flags under which alone it is retired, as `--amount-cents` is with `--mach`. */
+  when?: readonly `--${string}`[] | undefined;
+  /**
+   * Whether the command's MCP tool took it as an argument. The tool keeps that argument for a
+   * release and refuses it with the same message, so a client passing it is not silently ignored.
+   */
+  mcp?: boolean | undefined;
   /**
    * The error's message and, when it can be built from the run's argv, the command to run
    * instead, from its command name on. `given` are the tokens after the command name as given,
@@ -189,22 +198,31 @@ export type RetiredFlag = {
 
 /**
  * Strips the `retiredFlags` of the command `args` names, each with its value, before incur parses
- * `args`. `error` is the usage error for the first one set, which the CLI returns from middleware
- * before the command parses its options or runs, so nothing is sent. Its `cta` is the replacement
- * command, keeping the tokens before the command name. Stops at `--`.
+ * `args`. A group's flags are its own command's, not its subcommands'. `error` is the usage error
+ * for the first one set, which the CLI returns from middleware before the command parses its
+ * options or runs, so nothing is sent. Its `cta` is the replacement command, keeping the tokens
+ * before the command name; with several set, each replaces only itself, so there is none. Stops
+ * at `--`.
  */
 export function retireFlags(args: readonly string[], commands: readonly WalletCommand[]) {
   const index = firstCommandIndex(args);
   const name = index === undefined ? undefined : args[index];
-  const retired = commands.find(({ command }) => command?.name === name)?.retiredFlags;
+  const command = commands.find((entry) => entry.command?.name === name);
   // incur completes the words after `--` by their positions, so in completion they must not move.
-  if (index === undefined || !retired?.length || process.env.COMPLETE) return { args: [...args] };
+  if (index === undefined || !command?.command || !command.retiredFlags || process.env.COMPLETE)
+    return { args: [...args] };
 
   const before = args.slice(0, index);
   const after = args.slice(index + 1);
+  const options = after.includes("--") ? after.slice(0, after.indexOf("--")) : after;
+  const retired = command.retiredFlags.filter(
+    ({ unless = [], when }) =>
+      !unless.some((flag) => flagSet(options, flag)) &&
+      (when === undefined || when.some((flag) => flagSet(options, flag))),
+  );
   const rest: string[] = [];
   let stripped = false;
-  let found: { flag: RetiredFlag; value: string | undefined } | undefined;
+  const found: { flag: RetiredFlag; value: string | undefined }[] = [];
   for (let i = 0; i < after.length; i++) {
     const arg = after[i]!;
     if (arg === "--") {
@@ -225,20 +243,29 @@ export function retireFlags(args: readonly string[], commands: readonly WalletCo
     const bound = arg.startsWith(`${flag.flag}=`) ? arg.slice(flag.flag.length + 1) : undefined;
     if (flag.takesValue) {
       const value = bound ?? after[++i];
-      found ??= { flag, value };
+      found.push({ flag, value });
       continue;
     }
     const literal = bound === undefined && isBooleanLiteral(after[i + 1]) ? after[++i] : bound;
     if (arg !== `--no-${flag.flag.slice(2)}` && literal !== "false")
-      found ??= { flag, value: literal };
+      found.push({ flag, value: literal });
   }
-  if (!found) return { args: stripped ? [...before, name!, ...rest] : [...args] };
+  // Read after stripping, so a retired flag's value, as in `fund --claim status`, is no subcommand.
+  const [subcommand] = commandTokens(rest);
+  if (subcommand !== undefined && commandMap(command.command).has(subcommand))
+    return { args: [...args] };
+  const [first] = found;
+  if (!first) return { args: stripped ? [...before, name!, ...rest] : [...args] };
 
-  const { message, argv } = found.flag.replacement({
+  const replacement = first.flag.replacement({
     given: [...after],
     args: rest,
-    value: found.value,
+    value: first.value,
   });
+  const { message } = replacement;
+  // A value that reads as a flag, as in `--claim --mcp`, was most likely not meant as one.
+  const flagValue = first.flag.takesValue && first.value?.startsWith("-");
+  const argv = found.length === 1 && !flagValue ? replacement.argv : undefined;
   const { exitCode, retryable } = errorCodes.E_USAGE;
   return {
     args: [...before, name!, ...rest],
@@ -250,6 +277,15 @@ export function retireFlags(args: readonly string[], commands: readonly WalletCo
         )
       : { code: "E_USAGE", message, exitCode, retryable },
   };
+}
+
+/** Whether `args` sets boolean `flag`: alone, or as anything but an explicit false. */
+export function flagSet(args: readonly string[], flag: string) {
+  return args.some(
+    (arg, index) =>
+      (arg === flag && args[index + 1] !== "false") ||
+      (arg.startsWith(`${flag}=`) && arg !== `${flag}=false`),
+  );
 }
 
 /** The index of the first command token, skipping flags and the values `takesValue` flags take. */
@@ -283,18 +319,21 @@ function isBooleanLiteral(value: string | undefined) {
 
 /** The command and positional tokens, skipping flags and the values `takesValue` flags take. */
 export function commandTokens(args: readonly string[]) {
-  const tokens: string[] = [];
+  return operandIndexes(args).map((index) => args[index]!);
+}
+
+/** The indexes of the command and positional tokens of `args`; see `commandTokens`. */
+export function operandIndexes(args: readonly string[]) {
+  const indexes: number[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    if (!arg || arg === "--schema" || arg === "--help" || arg === "--llms" || arg === "--llms-full")
-      continue;
+    if (!arg) continue;
     if (takesValue(arg)) {
       index++;
       continue;
     }
-    if (arg.startsWith("--format=") || arg.startsWith("--token-limit=")) continue;
     if (arg.startsWith("-")) continue;
-    tokens.push(arg);
+    indexes.push(index);
   }
-  return tokens;
+  return indexes;
 }

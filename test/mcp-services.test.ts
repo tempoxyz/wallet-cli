@@ -164,6 +164,93 @@ describe("MCP tools", () => {
     });
   });
 
+  // A retired argument stays in its tool's schema for a release, refused with the CLI's message.
+  it.each([
+    {
+      name: "transfer",
+      arguments: { credits: true, "amount-cents": 1, to: testWallet, value: "0" },
+      message: "--value was removed: transfers carry no ETH value.",
+    },
+    {
+      name: "fund",
+      arguments: { claim: "CODE", browser: false },
+      message:
+        "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
+    },
+    {
+      name: "transfer",
+      arguments: { mach: true, "amount-cents": 2, "mpp-challenge": "x", "dry-run": true },
+      message:
+        "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
+    },
+    {
+      name: "transfer",
+      arguments: { mach: true, "amount-cents": 1, "max-spend": "100", "mpp-challenge": "x" },
+      message:
+        "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
+      // The caps conflict, so no command picks one.
+      cta: false,
+    },
+    // A value-taking argument is refused whatever its value, false included.
+    {
+      name: "transfer",
+      arguments: { credits: true, "amount-cents": 1, to: testWallet, value: false },
+      message: "--value was removed: transfers carry no ETH value.",
+    },
+    {
+      name: "fund",
+      arguments: { claim: false, browser: false },
+      message:
+        "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
+    },
+    // A token transfer takes none of the credits options it used to ignore.
+    {
+      name: "transfer",
+      arguments: { amount: "1", token: "USDC.e", to: testWallet, data: "0x12", yes: true },
+      message:
+        "--data sets the MPP Credits calldata of 'tempo wallet transfer --credits'; a token transfer sends no calldata.",
+    },
+    {
+      name: "transfer",
+      arguments: { amount: "1", token: "USDC.e", to: testWallet, "amount-cents": 100, yes: true },
+      message:
+        "--amount-cents sets the MPP Credits amount of 'tempo wallet transfer --credits'; pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
+    },
+  ])("refuses $name $arguments and sends nothing", async ({ name, arguments: args, ...row }) => {
+    await writeWalletState(walletState());
+    const host = await recordingHost();
+    vi.stubEnv("TEMPO_AUTH_URL", host.url);
+    vi.stubEnv("TEMPO_RPC_URL", host.url);
+    try {
+      const response = await mcpCall({ name, arguments: { ...args, network: "mainnet" } });
+
+      expect(response.result.isError).toBe(true);
+      expect(firstToolText(response)).toContain(row.message);
+      if ("cta" in row) expect(response.result._meta).toBeUndefined();
+      expect(host.requests).toEqual([]);
+    } finally {
+      await host.close();
+    }
+  });
+
+  it("marks retired arguments as removed in the tool schemas", async () => {
+    const response = await mcpRequest<{
+      tools: {
+        name: string;
+        inputSchema: { properties: Record<string, { description?: string }> };
+      }[];
+    }>("tools/list", {});
+
+    const property = (tool: string, name: string) =>
+      response.result.tools.find((item) => item.name === tool)?.inputSchema.properties[name];
+    expect(property("transfer", "value")?.description).toBe(
+      "Removed: --value was removed: transfers carry no ETH value.",
+    );
+    expect(property("fund", "claim")?.description).toMatch(/^Removed: --claim was removed;/);
+    expect(property("fund_status", "claim")).toBeUndefined();
+    expect(property("send", "value")).toBeUndefined();
+  });
+
   it("returns the login code and URL as the tool result, then finishes in a later call", async () => {
     const host = deviceCodeHost((poll) => (poll < 2 ? "pending" : "approve"));
     const server = await host.listen();
