@@ -50,6 +50,7 @@ vi.mock("../src/provider.js", async (importOriginal) => ({
 import { transferTokens } from "../src/commands/transfer/tokens.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { parseNetwork } from "../src/shared/network.js";
+import { shellQuote } from "../src/shared/next.js";
 import { cliBundle } from "./cli-bundle.js";
 import {
   containsSymbol,
@@ -68,7 +69,7 @@ import {
 } from "./helpers.js";
 
 const recipient = "0x1111111111111111111111111111111111111111";
-const usage = "usage: tempo wallet transfer <amount> <token> <to>";
+const usage = "usage: tempo wallet send <amount> <token> <to>";
 const amountError = "Invalid amount: expected a positive decimal with at most 6 decimals";
 const txHash = `0x${"ab".repeat(32)}`;
 const notReviewed = "Transfer not sent: review it with --dry-run, then pass --yes";
@@ -189,7 +190,7 @@ describe("transferTokens", () => {
         argv: [
           "tempo",
           "wallet",
-          "transfer",
+          "send",
           "1.5",
           usdcToken,
           recipient,
@@ -199,7 +200,7 @@ describe("transferTokens", () => {
           "--network",
           "mainnet",
         ],
-        command: `tempo wallet transfer 1.5 ${usdcToken} ${recipient} --fee-token ${usdcToken} --yes --network mainnet`,
+        command: `tempo wallet send 1.5 ${usdcToken} ${recipient} --fee-token ${usdcToken} --yes --network mainnet`,
       },
     });
     const account = testWallet.toLowerCase();
@@ -795,7 +796,7 @@ describe("transferTokens", () => {
       });
       // Continuations carry the resolved addresses rather than the typed symbol.
       expect((result as { _next: { argv: string[] } })._next.argv.slice(2, 8)).toEqual([
-        "transfer",
+        "send",
         "1.5",
         address,
         recipient,
@@ -951,7 +952,7 @@ const machChallenge = `Payment realm="example", method="tempo", intent="charge",
   }),
 ).toString("base64url")}"`;
 
-describe("tempo wallet transfer", () => {
+describe("tempo wallet send and transfer", () => {
   // The requests show how far a run got. Reading the account's default fee token is an
   // `eth_call`, which returns zero (no default, so the transferred token pays); everything else
   // fails.
@@ -989,13 +990,15 @@ describe("tempo wallet transfer", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  const send = ["transfer", "1", usdcToken, recipient];
+  const tokens = ["1", usdcToken, recipient];
   const prompt = "Send this transfer? [y/N] ";
+  const notice =
+    "Warning: 'tempo wallet transfer <amount> <token> <to>' is deprecated; use 'tempo wallet send <amount> <token> <to>'.\n";
   // A token transfer is sent through the wallet provider. Its transaction fill fails against this
   // fixture, so it falls back to the wallet app and registers a device, which fails too.
   const sent = /device-code \/register returned status 500/;
 
-  it.each<{
+  type Run = {
     name: string;
     argv: string[];
     terminal?: "stdout" | "stdin and stdout";
@@ -1004,18 +1007,22 @@ describe("tempo wallet transfer", () => {
     refused?: string;
     requests?: string[];
     reached?: string | RegExp;
-  }>([
+    /** Whether stderr notes that the token form of `transfer` is deprecated. */
+    deprecated?: boolean;
+  };
+
+  const tokenRuns: Run[] = [
     {
       name: "an agent run without --yes refuses before any request",
-      argv: send,
+      argv: tokens,
       refused: notReviewed,
       requests: [],
     },
-    { name: "an agent run with --yes sends", argv: [...send, "--yes"], reached: sent },
+    { name: "an agent run with --yes sends", argv: [...tokens, "--yes"], reached: sent },
     // Piped input is not a person answering, even when output goes to a terminal.
     {
       name: "a terminal run with piped stdin refuses without --yes, ignoring the input",
-      argv: send,
+      argv: tokens,
       terminal: "stdout",
       input: "yes\n",
       refused: notReviewed,
@@ -1023,13 +1030,13 @@ describe("tempo wallet transfer", () => {
     },
     {
       name: "a terminal run with piped stdin and --yes sends without a prompt",
-      argv: [...send, "--yes"],
+      argv: [...tokens, "--yes"],
       terminal: "stdout",
       reached: sent,
     },
     {
       name: "an interactive run declined at the prompt sends nothing",
-      argv: send,
+      argv: tokens,
       terminal: "stdin and stdout",
       input: "n\n",
       prompted: true,
@@ -1038,7 +1045,7 @@ describe("tempo wallet transfer", () => {
     },
     {
       name: "an interactive run whose input ends at the prompt sends nothing",
-      argv: send,
+      argv: tokens,
       terminal: "stdin and stdout",
       input: "",
       prompted: true,
@@ -1047,7 +1054,7 @@ describe("tempo wallet transfer", () => {
     },
     {
       name: "an interactive run confirmed at the prompt sends",
-      argv: send,
+      argv: tokens,
       terminal: "stdin and stdout",
       input: "yes\n",
       prompted: true,
@@ -1055,23 +1062,51 @@ describe("tempo wallet transfer", () => {
     },
     {
       name: "an interactive run with --yes sends without a prompt",
-      argv: [...send, "--yes"],
+      argv: [...tokens, "--yes"],
       terminal: "stdin and stdout",
       reached: sent,
     },
+  ];
+
+  const mach = ["transfer", "--mach", "--max-spend", "1", "--mpp-challenge", machChallenge];
+
+  it.each<Run>([
+    // `transfer` runs `send` for a token transfer, noting on a terminal that it is deprecated.
+    ...(["send", "transfer"] as const).flatMap((command) =>
+      tokenRuns.map((run) => ({
+        ...run,
+        name: `${command}: ${run.name}`,
+        argv: [command, ...run.argv],
+        deprecated: command === "transfer" && run.terminal !== undefined,
+      })),
+    ),
     {
-      name: "--credits without --yes redeems as before",
+      name: "transfer --credits without --yes redeems as before",
       argv: ["transfer", "--credits", "--amount-cents", "100", "--to", recipient],
       reached: "POST /api/coinflow/redeem/auth-msg",
     },
     {
-      name: "--mach without --yes settles as before",
-      argv: ["transfer", "--mach", "--max-spend", "1", "--mpp-challenge", machChallenge],
+      name: "transfer --mach without --yes settles as before",
+      argv: mach,
+      reached: "POST / eth_call",
+    },
+    {
+      name: "transfer --mach on a terminal settles without the token notice",
+      argv: mach,
+      terminal: "stdout",
       reached: "POST / eth_call",
     },
   ])(
     "$name",
-    async ({ argv, terminal, input = "", prompted = false, refused, ...expected }) => {
+    async ({
+      argv,
+      terminal,
+      input = "",
+      prompted = false,
+      refused,
+      deprecated = false,
+      ...expected
+    }) => {
       const home = await useTempHome();
       await writeWalletState(walletState());
       requests.length = 0;
@@ -1080,6 +1115,7 @@ describe("tempo wallet transfer", () => {
 
       expect(result.stderr).not.toContain("blocked outbound connection");
       expect(result.stderr.includes(prompt), JSON.stringify(result)).toBe(prompted);
+      expect(result.stderr.includes(notice), JSON.stringify(result)).toBe(deprecated);
       if (prompted)
         expect(result.stderr).toContain(
           `Send 1 USDC.e (${usdcToken})\n  to:        ${recipient}\n  network:   mainnet (chain 4217)\n  fee token: USDC.e (${usdcToken})\n`,
@@ -1097,6 +1133,76 @@ describe("tempo wallet transfer", () => {
     },
     30_000,
   );
+
+  it.each([undefined, "stdout"] as const)(
+    "transfer returns what send does for a token dry run (terminal: %s)",
+    async (terminal) => {
+      const home = await useTempHome();
+      await writeWalletState(walletState());
+
+      const [send, transfer] = await Promise.all(
+        ["send", "transfer"].map((command) =>
+          walletCli([command, ...tokens, "--dry-run"], { home, terminal, input: "" }),
+        ),
+      );
+
+      expect(send!.code).toBe(0);
+      expect(transfer!.stdout).toBe(send!.stdout);
+      expect(send!.stdout).toContain(
+        `tempo wallet send 1 ${usdcToken} ${recipient} --fee-token ${usdcToken} --yes --network mainnet`,
+      );
+      expect(send!.stderr).toBe("");
+      expect(transfer!.stderr).toBe(terminal ? notice : "");
+    },
+    30_000,
+  );
+
+  // `send` sends tokens only; MACH and MPP Credits payments keep their `transfer` form.
+  const machMessage =
+    "'send' sends tokens only; to pay an MPP challenge with MACH, use 'tempo wallet transfer --mach'.";
+  const creditsMessage =
+    "'send' sends tokens only; to spend legacy MPP Credits, use 'tempo wallet transfer --credits'.";
+
+  // The `cta` runs the arguments as given under `transfer`; an explicit false selects no mode, so
+  // the run is a token send, which without --yes sends nothing.
+  it.each([
+    {
+      argv: ["--mach", "--max-spend", "1", "--mpp-challenge", machChallenge],
+      message: machMessage,
+    },
+    { argv: ["--amount-cents", "100", "--to", recipient, "--credits"], message: creditsMessage },
+    { argv: [...tokens, "--mach=true", "--yes"], message: machMessage },
+    { argv: [...tokens, "--mach", "true", "--yes"], message: machMessage },
+    { argv: [...tokens, "--credits=true"], message: creditsMessage },
+    { argv: [...tokens, "--mach=false"], message: undefined },
+    { argv: [...tokens, "--mach", "false"], message: undefined },
+    { argv: [...tokens, "--credits=false"], message: undefined },
+    { argv: [...tokens, "--credits", "false"], message: undefined },
+    { argv: [...tokens, "--no-mach"], message: undefined },
+    { argv: [...tokens, "--no-credits"], message: undefined },
+  ])("send $argv sends nothing", async ({ argv, message }) => {
+    const home = await useTempHome();
+    await writeWalletState(walletState());
+    requests.length = 0;
+
+    const result = await walletCli(["send", ...argv], { home, terminal: undefined, input: "" });
+
+    const command = ["tempo", "wallet", "transfer", ...argv, "--format", "json"]
+      .map(shellQuote)
+      .join(" ");
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stdout)).toEqual(
+      message
+        ? {
+            code: "E_USAGE",
+            message,
+            retryable: false,
+            cta: { description: "Suggested command:", commands: [{ command }] },
+          }
+        : { code: "E_USAGE", message: notReviewed, retryable: false },
+    );
+    expect(requests).toEqual([]);
+  });
 
   /**
    * Runs the wallet CLI as an agent (`--format json`), or with output to a `terminal`, and with

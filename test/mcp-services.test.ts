@@ -39,6 +39,7 @@ const toolHints = [
   ["logout", false, true, true, true],
   ["refresh", false, true, false, true],
   ["revoke", false, true, true, true],
+  ["send", false, true, false, true],
   ["services", true, false, true, true],
   ["services_list", true, false, true, true],
   ["services_search", true, false, true, true],
@@ -121,6 +122,46 @@ describe("MCP tools", () => {
     expect(firstToolText(response)).toBe(
       `No wallet is logged in. Run '${command}' before retrying.\n\nSuggested command:\n  ${command}`,
     );
+  });
+
+  // `transfer` still sends tokens under its deprecated token form, for existing clients.
+  it("exposes send and the transfer tool with the same token arguments", async () => {
+    const response = await mcpRequest<{
+      tools: {
+        name: string;
+        description: string;
+        inputSchema: { properties: Record<string, unknown>; required?: string[] };
+      }[];
+    }>("tools/list", {});
+
+    expect(response.error).toBeUndefined();
+    const tool = (name: string) => response.result.tools.find((item) => item.name === name);
+    const send = tool("send")!.inputSchema;
+    const transfer = tool("transfer")!.inputSchema;
+    expect(tool("send")?.description).toBe("Send tokens to an address");
+    expect(tool("transfer")?.description).toBe(
+      "Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'.",
+    );
+    expect(send.required).toEqual(["amount", "token", "to"]);
+    expect(transfer.required).toBeUndefined();
+    for (const name of ["amount", "token", "fee-token", "dry-run", "yes", "idempotency-key"])
+      expect(transfer.properties[name], name).toEqual(send.properties[name]);
+  });
+
+  it("returns the same token dry run from transfer as from send", async () => {
+    await writeWalletState(walletState());
+    const args = { amount: "1", token: usdc, to: testWallet, "dry-run": true, network: "mainnet" };
+
+    const [send, transfer] = await Promise.all(
+      ["send", "transfer"].map((name) => mcpCall({ name, arguments: args })),
+    );
+
+    expect(send!.result.isError).not.toBe(true);
+    expect(transfer!.result).toEqual(send!.result);
+    expect(JSON.parse(firstToolText(send!))).toMatchObject({
+      status: "dry_run",
+      _next: { command: expect.stringMatching(/^tempo wallet send 1 /) },
+    });
   });
 
   it("returns the login code and URL as the tool result, then finishes in a later call", async () => {
@@ -240,6 +281,11 @@ describe("MCP tools", () => {
       arguments: { url: `0x${"a".repeat(64)}` },
       message: "Closing a session cannot be undone, so it needs confirmation.",
     },
+    ...["send", "transfer"].map((name) => ({
+      name,
+      arguments: { amount: "1", token: "USDC.e", to: testWallet },
+      message: "Transfer not sent: review it with --dry-run, then pass --yes",
+    })),
   ])("sends nothing for $name without yes", async ({ name, arguments: args, message }) => {
     await writeWalletState(walletState());
     const stored = await readWalletStoreJson();

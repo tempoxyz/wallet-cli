@@ -5,27 +5,25 @@ import { flag, option, positional } from "../../cli/describe.js";
 import { cliGlobals, globalAlias } from "../../schemas/shared.js";
 import { transferArgs, transferOptions, transferOutput } from "../../schemas/transfer.js";
 import { usageError } from "../../shared/errors.js";
-import { canPrompt } from "../../shared/process.js";
 import { withWallet } from "../../shared/require-wallet.js";
-import { deferredKeyRefusal, defersKeyCheck, idempotencyKeyArg } from "../tx.js";
+import { sendCommand } from "../send.js";
+import { idempotencyKeyArg } from "../tx.js";
 import { transferCredits } from "./credits.js";
 import { transferMach } from "./mach.js";
-import { transferNetworkRefusal, transferTokens } from "./tokens.js";
+
+// `transfer` pays MPP challenges; its token form is `send` under a deprecated name.
+const transferDescription =
+  "Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'.";
 
 export default {
   command: Cli.create("transfer", {
-    description: "Transfer tokens to an address",
+    description: transferDescription,
     globals: cliGlobals,
     args: transferArgs,
     options: transferOptions,
     alias: globalAlias,
     output: transferOutput,
     examples: [
-      {
-        args: { amount: "50", token: "0x20c0...b50", to: "0x70997...9C8" },
-        options: { "dry-run": true },
-      },
-      { args: { amount: "1.00", token: "USDC.e", to: "0x70997...9C8" }, options: { yes: true } },
       { options: { mach: true, "max-spend": "5", "mpp-challenge": "<WWW_AUTHENTICATE>" } },
     ],
     async run(context) {
@@ -45,35 +43,26 @@ export default {
       }
       // A TEMPO_PRIVATE_KEY payer stands in for the logged-in wallet.
       if (options.mach && process.env.TEMPO_PRIVATE_KEY) return transferMach({ options: flags });
-      // MACH pays with the stored access key; a token transfer without one, run interactively,
-      // is approved in the wallet app instead.
-      const deferKey = defersKeyCheck(options);
-      return withWallet(
-        async (_, wallet) => {
-          if (options.mach)
-            return transferMach({ options: { ...flags, network: wallet.network.name } });
-          const result = await transferTokens(wallet, {
-            args,
-            options,
-            interactive: canPrompt(context.agent),
-            keyRequired: deferKey ? deferredKeyRefusal(context.agent, wallet) : undefined,
-          });
-          // A refusal that needs a login on the selected network is returned, keeping its `cta`.
-          return "code" in result ? context.error(result) : result;
-        },
-        {
-          requireKey: options.mach ? "always" : deferKey ? "never" : "agent",
-          // That refusal also comes before the key check: a key there would not lift it.
-          refuse: (_, wallet) =>
-            options.mach || options["dry-run"] ? undefined : transferNetworkRefusal(wallet),
-        },
-      )(context);
+      // MACH pays with the stored access key, never the wallet app.
+      if (options.mach)
+        return withWallet((_, wallet) =>
+          transferMach({ options: { ...flags, network: wallet.network.name } }),
+        )(context);
+      // A token transfer is `send` under its former name, for a release or two. Only a person at
+      // a terminal sees the notice; agent runs (MCP, `--format`, or stdout not a terminal) get
+      // exactly what `send` returns.
+      if (!context.agent)
+        console.error(
+          "Warning: 'tempo wallet transfer <amount> <token> <to>' is deprecated; use 'tempo wallet send <amount> <token> <to>'.",
+        );
+      return sendCommand.run(context);
     },
   }),
+  // MACH and MPP Credits payments, like a token send, move funds over the network.
   annotations: { transfer: { ...destructive, idempotentHint: false, openWorldHint: true } },
   describe: {
     name: "transfer",
-    about: "Transfer tokens to an address",
+    about: transferDescription,
     args: [
       positional("amount", 'Amount in human units ("1.00", "50") — required for token transfers'),
       positional(

@@ -3,7 +3,7 @@ import type { z } from "incur";
 import { Actions } from "viem/tempo";
 
 import type { CtaError } from "../../cli/incur-compat.js";
-import type { transferSuccessOutput } from "../../schemas/transfer.js";
+import type { sendSuccessOutput } from "../../schemas/send.js";
 import {
   commandError,
   networkError,
@@ -103,7 +103,7 @@ export async function transferTokens(
   if (args.amount === undefined || args.token === undefined || args.to === undefined) {
     const missing = (["amount", "token", "to"] as const).filter((name) => args[name] === undefined);
     throw usageError(
-      `missing ${missing.map((name) => `<${name}>`).join(", ")}; usage: tempo wallet transfer <amount> <token> <to>`,
+      `missing ${missing.map((name) => `<${name}>`).join(", ")}; usage: tempo wallet send <amount> <token> <to>`,
     );
   }
   if (!isAddress(args.to))
@@ -179,7 +179,7 @@ export async function transferTokens(
         `Review the transfer, then run the next command to send ${args.amount} ${tokenLabel(token)} to ${to}.`,
         [
           "wallet",
-          "transfer",
+          "send",
           args.amount,
           token.address,
           to,
@@ -203,6 +203,8 @@ export async function transferTokens(
             key,
             wallet: from,
             request: {
+              // `send` and `transfer` make the same request, and keys recorded before `send`
+              // existed name `transfer`, so a retry under either name replays them.
               command: "transfer",
               amount: amount.toString(),
               token: token.address,
@@ -213,7 +215,7 @@ export async function transferTokens(
           },
   };
   // A replay sends nothing, so it needs no confirmation or access key.
-  const recorded = await recordedSend<z.infer<typeof transferSuccessOutput>>(tx);
+  const recorded = await recordedSend<z.infer<typeof sendSuccessOutput>>(tx);
   if (recorded) return recorded;
   if (options.keyRequired) throw options.keyRequired;
 

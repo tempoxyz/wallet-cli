@@ -2,6 +2,9 @@ import { z } from "incur";
 
 import { servicesOptions } from "../schemas/services.js";
 import { globalAlias } from "../schemas/shared.js";
+import { commandError, errorCodes } from "../shared/errors.js";
+import { shellQuote } from "../shared/next.js";
+import type { WalletCommand } from "./command.js";
 
 /** `help [command...]` is shorthand for `[command...] --help`. */
 export function expandHelp(args: string[]) {
@@ -158,6 +161,95 @@ function normalizeServicesOutputAliases(args: readonly string[]) {
     format,
     ...normalized.slice(normalizedCommandIndex + 1),
   ];
+}
+
+/**
+ * A flag a command does not take, though an earlier form of it did, such as `--mach` on `send`,
+ * which `transfer` takes. `retireFlags` strips it from argv so incur does not report an unknown
+ * flag, and the run fails with `E_USAGE` naming what replaces it.
+ */
+export type RetiredFlag = {
+  flag: `--${string}`;
+  /**
+   * Whether the flag takes a value, which is stripped with it. Otherwise it is a boolean: an
+   * explicit false (`--flag=false`, `--flag false`, or `--no-flag`) selects nothing, so it is
+   * stripped without an error.
+   */
+  takesValue?: boolean | undefined;
+  /**
+   * The error's message and, when it can be built from the run's argv, the command to run
+   * instead, from its command name on. `given` are the tokens after the command name as given,
+   * `args` the same without the flag, and `value` is the flag's value.
+   */
+  replacement: (retired: { given: string[]; args: string[]; value: string | undefined }) => {
+    message: string;
+    argv?: string[] | undefined;
+  };
+};
+
+/**
+ * Strips the `retiredFlags` of the command `args` names, each with its value, before incur parses
+ * `args`. `error` is the usage error for the first one set, which the CLI returns from middleware
+ * before the command parses its options or runs, so nothing is sent. Its `cta` is the replacement
+ * command, keeping the tokens before the command name. Stops at `--`.
+ */
+export function retireFlags(args: readonly string[], commands: readonly WalletCommand[]) {
+  const index = firstCommandIndex(args);
+  const name = index === undefined ? undefined : args[index];
+  const retired = commands.find(({ command }) => command?.name === name)?.retiredFlags;
+  // incur completes the words after `--` by their positions, so in completion they must not move.
+  if (index === undefined || !retired?.length || process.env.COMPLETE) return { args: [...args] };
+
+  const before = args.slice(0, index);
+  const after = args.slice(index + 1);
+  const rest: string[] = [];
+  let stripped = false;
+  let found: { flag: RetiredFlag; value: string | undefined } | undefined;
+  for (let i = 0; i < after.length; i++) {
+    const arg = after[i]!;
+    if (arg === "--") {
+      rest.push(...after.slice(i));
+      break;
+    }
+    const flag = retired.find(
+      (entry) =>
+        arg === entry.flag ||
+        arg.startsWith(`${entry.flag}=`) ||
+        (!entry.takesValue && arg === `--no-${entry.flag.slice(2)}`),
+    );
+    if (!flag) {
+      rest.push(arg);
+      continue;
+    }
+    stripped = true;
+    const bound = arg.startsWith(`${flag.flag}=`) ? arg.slice(flag.flag.length + 1) : undefined;
+    if (flag.takesValue) {
+      const value = bound ?? after[++i];
+      found ??= { flag, value };
+      continue;
+    }
+    const literal = bound === undefined && isBooleanLiteral(after[i + 1]) ? after[++i] : bound;
+    if (arg !== `--no-${flag.flag.slice(2)}` && literal !== "false")
+      found ??= { flag, value: literal };
+  }
+  if (!found) return { args: stripped ? [...before, name!, ...rest] : [...args] };
+
+  const { message, argv } = found.flag.replacement({
+    given: [...after],
+    args: rest,
+    value: found.value,
+  });
+  const { exitCode, retryable } = errorCodes.E_USAGE;
+  return {
+    args: [...before, name!, ...rest],
+    error: argv
+      ? commandError(
+          "E_USAGE",
+          message,
+          ["tempo", "wallet", ...before, ...argv].map(shellQuote).join(" "),
+        )
+      : { code: "E_USAGE", message, exitCode, retryable },
+  };
 }
 
 /** The index of the first command token, skipping flags and the values `takesValue` flags take. */

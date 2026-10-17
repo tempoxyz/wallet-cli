@@ -176,7 +176,7 @@ const continuations: {
     argv: ["wallet", "keys", "update", testAccessKey, "--token", moderatoToken, "--limit", "10"],
   },
   {
-    name: "transfer --dry-run reruns with --yes",
+    name: "send --dry-run reruns with --yes",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return transferTokens(
@@ -188,7 +188,7 @@ const continuations: {
     // Without --fee-token, the reviewed fee token (here the transferred one) is pinned.
     argv: [
       "wallet",
-      "transfer",
+      "send",
       "1.5",
       moderatoToken,
       recipient,
@@ -198,7 +198,7 @@ const continuations: {
     ],
   },
   {
-    name: "transfer --dry-run keeps fee token and address",
+    name: "send --dry-run keeps fee token and address",
     run: async ({ option, chain }) => {
       await writeWalletState(stateFor(chain));
       return transferTokens(
@@ -212,7 +212,7 @@ const continuations: {
     },
     argv: [
       "wallet",
-      "transfer",
+      "send",
       "1.5",
       moderatoToken,
       recipient,

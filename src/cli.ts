@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Cli } from "incur";
 
-import { expandHelp, normalizeServicesArgs } from "./cli/argv.js";
+import { expandHelp, normalizeServicesArgs, retireFlags } from "./cli/argv.js";
 import { handleBuiltinSchema } from "./cli/builtins.js";
 import { commandMap } from "./cli/command.js";
 import { commands } from "./cli/commands.js";
@@ -21,7 +21,7 @@ const cli = Cli.create("tempo wallet", {
     suggestions: [
       "log in to a Tempo wallet",
       "show the current Tempo wallet account",
-      "transfer tokens with the Tempo wallet CLI",
+      "send tokens with the Tempo wallet CLI",
     ],
   },
   globals: cliGlobals,
@@ -64,7 +64,11 @@ async function main() {
     return;
   }
 
-  await cli.serve(args);
+  const { args: served, error } = retireFlags(args, commands);
+  // Middleware runs before the command parses its options, so a retired flag runs nothing.
+  if (error) cli.use((context) => context.error(error));
+
+  await cli.serve(served);
   // Preserve the summary on stdout; only a one-shot CLI invocation changes exit status.
   if (closeCommandFailed) process.exitCode = 1;
 }

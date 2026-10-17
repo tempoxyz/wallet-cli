@@ -1,6 +1,7 @@
 import { Cli, type Mcp, type z } from "incur";
 
 import { walletError } from "../shared/errors.js";
+import type { RetiredFlag } from "./argv.js";
 import type { Describe } from "./describe.js";
 
 /** What each command module default-exports for `tempo wallet` to mount and describe. */
@@ -19,6 +20,8 @@ export type WalletCommand = {
   annotations?: Record<string, Mcp.ToolAnnotations> | undefined;
   /** The `--describe` entry. Optional: a command without one, like `completions`, is left out. */
   describe?: Describe | undefined;
+  /** Flags an earlier form of it took, each failing with what replaces it; see `retireFlags`. */
+  retiredFlags?: readonly RetiredFlag[] | undefined;
 };
 
 export const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true };

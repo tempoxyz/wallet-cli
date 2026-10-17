@@ -74,7 +74,7 @@ describe("generated CLI metadata", () => {
     );
   });
 
-  it.each(["swap", "transfer"])(
+  it.each(["swap", "send", "transfer"])(
     "documents --dry-run review and --yes submission for %s",
     async (name) => {
       const help = await walletCli([name, "--help"]);
@@ -210,6 +210,7 @@ describe("generated CLI metadata", () => {
 
   it.each([
     { command: ["swap"] },
+    { command: ["send"] },
     { command: ["transfer"] },
     { command: ["revoke"] },
     { command: ["keys", "update"] },
@@ -365,6 +366,7 @@ describe("generated CLI metadata", () => {
     expect(await walletCli(["tx", "status", "--help"])).toContain(
       "Usage: tempo wallet tx status <txHash> [options]",
     );
+    expect(await walletCli(["send", "--help"])).toContain("--idempotency-key <string>");
     expect(await walletCli(["transfer", "--help"])).toContain("--idempotency-key <string>");
 
     const manifest = JSON.parse(await walletCli(["--describe"])) as {
@@ -388,6 +390,39 @@ describe("generated CLI metadata", () => {
       "not_found",
     ]);
     expect(hasNextStep(schema.output)).toBe(true);
+  });
+
+  it("documents send and the token form of transfer it replaces", async () => {
+    type Command = { name: string; about: string; args?: { long?: string | undefined }[] };
+    const manifest = JSON.parse(await walletCli(["--describe"])) as { subcommands: Command[] };
+    const send = manifest.subcommands.find((command) => command.name === "send");
+    const transfer = manifest.subcommands.find((command) => command.name === "transfer");
+    expect(send?.about).toBe("Send tokens to an address");
+    expect(transfer?.about).toBe(
+      "Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'.",
+    );
+    // `send` takes the token transfer options and none of the payment modes of `transfer`.
+    expect(send?.args?.flatMap((arg) => arg.long ?? [])).toEqual([
+      "--fee-token",
+      "--dry-run",
+      "--yes",
+      "--idempotency-key",
+      "--address",
+    ]);
+
+    expect(await walletCli(["--help"])).toMatch(/send\s+Send tokens to an address/);
+    expect(await walletCli(["send", "--help"])).toContain(
+      "Usage: tempo wallet send <amount> <token> <to> [options]",
+    );
+    // A token transfer returns what `send` does.
+    type Schema = { output: { anyOf: unknown[] } };
+    const [sendSchema, transferSchema] = await Promise.all(
+      ["send", "transfer"].map(
+        async (name) =>
+          JSON.parse(await walletCli([name, "--schema", "--format", "json"])) as Schema,
+      ),
+    );
+    expect(transferSchema!.output.anyOf.slice(0, 3)).toEqual(sendSchema!.output.anyOf);
   });
 
   it("documents doctor and its deprecated debug alias", async () => {
@@ -471,6 +506,7 @@ describe("generated CLI metadata", () => {
     { command: ["revoke"], flags: ["--dry-run", "--yes", "--no-browser"] },
     { command: ["logout"], flags: ["--revoke", "--yes", "--no-browser"] },
     { command: ["sessions", "close"], flags: ["--dry-run", "--yes"] },
+    { command: ["send"], flags: ["--idempotency-key"] },
     { command: ["transfer"], flags: ["--idempotency-key"] },
     { command: ["swap"], flags: ["--idempotency-key"] },
   ])("describes $flags for $command", async ({ command, flags }) => {
