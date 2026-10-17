@@ -4,6 +4,7 @@ import { deprecatedCommand } from "../commands/services/deprecated.js";
 import { staleListFetchedAt } from "../commands/services/directory.js";
 import { servicesListMcpOutput, servicesMcpOutput } from "../schemas/services.js";
 import { version } from "../shared/constants.js";
+import { configSnapshot } from "../wallet/config.js";
 import {
   commandMap,
   isCommandGroup,
@@ -20,7 +21,7 @@ export async function serveMcp(
 ) {
   await Mcp.serve(cli.name, version, createMcpCommands(commandMap(cli), commands), {
     env: cli.env,
-    middlewares: [ctaErrors],
+    middlewares: [ctaErrors, configSnapshot],
     tools: { discovery: "direct" },
     vars: cli.vars,
     version,

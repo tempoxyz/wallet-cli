@@ -12,6 +12,7 @@ import { serveMcp } from "./cli/mcp.js";
 import { closeCommandFailed } from "./commands/sessions/close.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";
+import { configSnapshot } from "./wallet/config.js";
 
 const cli = Cli.create("tempo wallet", {
   version,
@@ -31,6 +32,8 @@ const cli = Cli.create("tempo wallet", {
 
 // Returns a thrown CtaError through `c.error`, so it keeps its cta; `serveMcp` registers it too.
 cli.use(ctaErrors);
+// Each command reads the config file once; see `withConfigSnapshot`.
+cli.use(configSnapshot);
 
 for (const { command } of commands) if (command) cli.command(command);
 

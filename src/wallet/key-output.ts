@@ -1,7 +1,12 @@
 import { erc20Abi, formatUnits, type Address } from "viem";
 import { Actions } from "viem/tempo";
 
-import { createTempoPublicClient, networkFields, tokenAddress } from "../shared/network.js";
+import {
+  createTempoPublicClient,
+  networkFields,
+  rpcUrlOverride,
+  tokenAddress,
+} from "../shared/network.js";
 import { knownToken, readTokenMetadata, tokenMetadata } from "../shared/tokens.js";
 import { cleanStoredScalar, formatTokenUnits, formatUnixTimestamp } from "../shared/utils.js";
 import { localAccessKeyStatus } from "./access-key.js";
@@ -97,14 +102,14 @@ function accessKeyLimitsOutput(
 type ChainKey = { published: boolean | null; remaining: Map<string, bigint | null> };
 
 /**
- * Whether reads for a chain reach it. `TEMPO_RPC_URL` serves every network, so with it set each
- * distinct chain asks the endpoint's `eth_chainId` once, bounded and without retries, and a failed
- * call counts as another chain. The per-chain default URLs need no check.
+ * Whether reads for a chain reach it. `TEMPO_RPC_URL` or a saved `rpc-url` serves every network,
+ * so with one set each distinct chain asks the endpoint's `eth_chainId` once, bounded and without
+ * retries, and a failed call counts as another chain. The per-chain default URLs need no check.
  */
 export function rpcChainCheck() {
   const checks = new Map<number, Promise<boolean>>();
   return (chain: number) => {
-    if (!process.env.TEMPO_RPC_URL) return Promise.resolve(true);
+    if (!rpcUrlOverride(chain)) return Promise.resolve(true);
     let check = checks.get(chain);
     if (!check) {
       const client = createTempoPublicClient(chain, { timeout: statusQueryTimeout, retryCount: 0 });
@@ -209,11 +214,13 @@ export function keyTokens(key: WalletState["accessKeys"][number], read = true) {
 
 /**
  * Display symbols and decimals by `tokenKey`: viem's listing, else read on chain when an entry
- * allows it. A token not read or unreadable has neither. Each distinct chain and token is looked
- * up once, and the lookups run in parallel.
+ * allows it, kept only once `servesChain` confirms the RPC is on that chain. A token not read,
+ * unreadable, or read on another chain has neither. Each distinct chain and token is looked up
+ * once, and the lookups run in parallel.
  */
 export async function tokenDetails(
   tokens: readonly { chain: number; token: string; read: boolean }[],
+  servesChain: (chain: number) => Promise<boolean> = rpcChainCheck(),
 ): Promise<TokenDetails> {
   const unique = new Map<string, (typeof tokens)[number]>();
   for (const entry of tokens) {
@@ -222,18 +229,18 @@ export async function tokenDetails(
   }
   const details = await Promise.all(
     [...unique].map(async ([id, { chain, token, read }]) => {
-      if (!read && !knownToken(token, chain)) return [id, unknownToken] as const;
+      const listed = knownToken(token, chain) !== undefined;
+      if (!read && !listed) return [id, unknownToken] as const;
       const readOnChain = (address: Address) =>
         readTokenMetadata(address, chain, { timeout: statusQueryTimeout, retryCount: 0 });
-      const detail: TokenDetail = await tokenMetadata(
-        token.toLowerCase() as Address,
-        chain,
-        readOnChain,
-      ).then(
-        ({ symbol, decimals }) => ({ symbol, decimals }),
-        () => unknownToken,
-      );
-      return [id, detail] as const;
+      const [served, detail] = await Promise.all([
+        listed || servesChain(chain),
+        tokenMetadata(token.toLowerCase() as Address, chain, readOnChain).then(
+          ({ symbol, decimals }): TokenDetail => ({ symbol, decimals }),
+          () => unknownToken,
+        ),
+      ]);
+      return [id, served ? detail : unknownToken] as const;
     }),
   );
   return new Map(details);
@@ -247,29 +254,35 @@ export const balanceQueryError = {
   message: "Unable to query token balance. Check RPC connectivity and TEMPO_RPC_URL.",
 };
 
+/**
+ * The wallet's balance of `token` on `chain`; `null` without a wallet, when the read fails, or when
+ * `servesChain` finds the RPC on another chain, so a balance is never another chain's.
+ */
 export async function tokenBalance(options: {
   chain: number;
   token: string;
   walletAddress: string | null;
+  servesChain: (chain: number) => Promise<boolean>;
 }): Promise<TokenBalance | null> {
-  if (!options.walletAddress) return null;
-  try {
+  const { walletAddress } = options;
+  if (!walletAddress) return null;
+  const read = async () => {
     const client = createTempoPublicClient(options.chain, {
       timeout: statusQueryTimeout,
       retryCount: 0,
     });
-    const raw = await client.readContract({
+    return await client.readContract({
       address: options.token as Address,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [options.walletAddress as Address],
+      args: [walletAddress as Address],
     });
-    return {
-      formatted: formatUnits(raw, 6),
-      raw,
-      token: options.token,
-    };
-  } catch {
-    return null;
-  }
+  };
+  // The read and the chain check run together, as for key state; only a confirmed chain counts.
+  const [served, raw] = await Promise.all([
+    options.servesChain(options.chain),
+    read().catch(() => undefined),
+  ]);
+  if (!served || raw === undefined) return null;
+  return { formatted: formatUnits(raw, 6), raw, token: options.token };
 }

@@ -30,14 +30,18 @@ it.each(["rpc", "assets", "asset body"] as const)(
       rpcCalls++;
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const rpc = JSON.parse(Buffer.concat(chunks).toString()) as { id: number };
+      const rpc = JSON.parse(Buffer.concat(chunks).toString()) as { id: number; method: string };
       if (stalled === "rpc") return;
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(
         JSON.stringify({
           jsonrpc: "2.0",
           id: rpc.id,
-          result: `0x${5_000_000n.toString(16).padStart(64, "0")}`,
+          // The override is on mainnet, so its balance counts.
+          result:
+            rpc.method === "eth_chainId"
+              ? `0x${(4217).toString(16)}`
+              : `0x${5_000_000n.toString(16).padStart(64, "0")}`,
         }),
       );
     });

@@ -200,6 +200,9 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 | `address`         | true           | false             | true             | false           |
 | `balance`         | true           | false             | true             | true            |
 | `completions`     | true           | false             | true             | false           |
+| `config_get`      | true           | false             | true             | false           |
+| `config_set`      | false          | true              | true             | false           |
+| `config_unset`    | false          | true              | true             | false           |
 | `debug`           | true           | false             | true             | true            |
 | `doctor`          | true           | false             | true             | true            |
 | `fund`            | false          | false             | false            | true            |

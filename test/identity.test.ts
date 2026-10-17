@@ -20,7 +20,11 @@ vi.mock("viem", async (importOriginal) => {
   const actual = await importOriginal<typeof import("viem")>();
   return {
     ...actual,
-    createPublicClient: vi.fn(() => ({ readContract: mocks.readContract })),
+    // The RPC serves whichever chain the client asks for, so reads pass the TEMPO_RPC_URL check.
+    createPublicClient: vi.fn((options: { chain: { id: number } }) => ({
+      readContract: mocks.readContract,
+      getChainId: async () => options.chain.id,
+    })),
   };
 });
 

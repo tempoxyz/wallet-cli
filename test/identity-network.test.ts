@@ -36,6 +36,7 @@ import { listSessions } from "../src/commands/sessions/list.js";
 import { swapTokens } from "../src/commands/swap.js";
 import { transferCredits } from "../src/commands/transfer/credits.js";
 import { transferTokens } from "../src/commands/transfer/tokens.js";
+import { saveConfigValue } from "../src/wallet/config.js";
 import { loadWalletState, saveWalletState, type WalletState } from "../src/wallet/store.js";
 import { moderatoToken } from "../src/shared/constants.js";
 import {
@@ -295,15 +296,40 @@ const precedence = [
     flag: "tempo",
     expected: mainnet,
   },
+  {
+    source: "the saved network over the logged-in chain",
+    storedChain: 42431,
+    env: undefined,
+    flag: undefined,
+    saved: "mainnet",
+    expected: mainnet,
+  },
+  {
+    source: "TEMPO_WALLET_NETWORK over the saved network",
+    storedChain: 4217,
+    env: "testnet",
+    flag: undefined,
+    saved: "mainnet",
+    expected: testnet,
+  },
+  {
+    source: "--network over the saved network",
+    storedChain: 4217,
+    env: undefined,
+    flag: "testnet",
+    saved: "mainnet",
+    expected: testnet,
+  },
 ];
 
 it.each(
   precedence.flatMap((scenario) => networkCommands.map((command) => ({ ...scenario, ...command }))),
 )(
   "$command selects $expected.network from $source",
-  async ({ storedChain, env, flag, expected, run }) => {
+  async ({ storedChain, env, flag, saved, expected, run }) => {
     await useTempHome();
     vi.stubEnv("TEMPO_WALLET_NETWORK", env);
+    if (saved) await saveConfigValue("network", saved);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("[]", { status: 200 })),
@@ -320,6 +346,33 @@ it.each(loggedOutCommands)("$command defaults to mainnet when logged out", async
   await useTempHome();
 
   expect(await run()).toMatchObject(mainnet);
+});
+
+it.each(loggedOutCommands)("$command uses the saved network when logged out", async ({ run }) => {
+  await useTempHome();
+  await saveConfigValue("network", "testnet");
+
+  expect(await run()).toMatchObject(testnet);
+});
+
+// A saved network is a choice the user made, so it outranks the chain a later `login --network`
+// switches the wallet to, as TEMPO_WALLET_NETWORK does; the login's continuation names its own
+// network, so following it still reaches the new key.
+it("whoami stays on the saved network after login --network elsewhere", async () => {
+  await useTempHome();
+  await saveConfigValue("network", "mainnet");
+  const host = deviceCodeHost(() => "approve");
+  vi.stubGlobal("fetch", vi.fn(host.fetch));
+
+  const login = await loginHandler({ network: "testnet", browser: false, wait: true });
+
+  expect(login).toMatchObject({
+    chainId: 42431,
+    _next: { argv: ["tempo", "wallet", "whoami", "--network", "testnet"] },
+  });
+  expect((await loadWalletState()).chainId).toBe(42431);
+  expect(await whoamiHandler({})).toMatchObject({ ready: false, key: null, ...mainnet });
+  expect(await whoamiHandler({ network: "testnet" })).toMatchObject({ ready: true, ...testnet });
 });
 
 const keyManagementCommands = [

@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 
 import { encodeQR } from "qr";
-import { decodeFunctionData, erc20Abi } from "viem";
+import { decodeFunctionData, erc20Abi, toHex } from "viem";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -32,6 +32,7 @@ vi.mock("viem/tempo", async (importOriginal) => {
 import { balanceHandler } from "../src/commands/balance.js";
 import { balanceOutput } from "../src/schemas/balance.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
+import { parseNetwork } from "../src/shared/network.js";
 import { cliBundle } from "./cli-bundle.js";
 import {
   containsSymbol,
@@ -199,7 +200,7 @@ describe("tempo wallet balance", () => {
   ])("shows $name", async ({ state, argv, onChain, assets, failRpc, expected, requests }) => {
     const home = await useTempHome();
     await writeWalletState(state);
-    const host = await walletHost({ onChain, assets, failRpc });
+    const host = await walletHost({ onChain, assets, failRpc, chainId: expected.chain_id });
     try {
       const result = await run(["balance", ...argv, "--format", "json"], home, host.url);
 
@@ -272,7 +273,11 @@ describe("tempo wallet balance", () => {
     async ({ input, network, address, symbol }) => {
       await useTempHome();
       await writeWalletState(walletState());
-      const host = await walletHost({ onChain: { [address]: 3_000_000n }, assets: {} });
+      const host = await walletHost({
+        onChain: { [address]: 3_000_000n },
+        assets: {},
+        chainId: parseNetwork(network).chainId,
+      });
       vi.stubEnv("TEMPO_RPC_URL", host.url);
       try {
         const output = await balanceHandler(await readyWallet(network, false), { token: input });
@@ -479,14 +484,17 @@ describe("balance and address", () => {
 });
 
 /**
- * Stands in for the chain RPC and the wallet app. `balanceOf` answers from `onChain` by token,
- * `/api/assets` from `assets` by chain ID, and `failRpc` fails every RPC call. Records each
- * balance read and asset lookup with the wallet it names, and any other request, which fails.
+ * Stands in for the chain RPC and the wallet app. `eth_chainId` answers `chainId` (mainnet by
+ * default), since balances read through a TEMPO_RPC_URL count only on its chain; `balanceOf`
+ * answers from `onChain` by token, `/api/assets` from `assets` by chain ID, and `failRpc` fails
+ * every other RPC call. Records each balance read and asset lookup with the wallet it names, and
+ * any other request but `eth_chainId`, which fails.
  */
 async function walletHost(options: {
   onChain: Record<string, bigint>;
   assets: Record<number, unknown[]>;
   failRpc?: boolean | undefined;
+  chainId?: number | undefined;
 }) {
   const requests: string[] = [];
   const server = createServer((request, response) => {
@@ -506,6 +514,12 @@ async function walletHost(options: {
         method: string;
         params?: [{ to?: string; data?: `0x${string}` }];
       };
+      if (method === "eth_chainId") {
+        response.end(
+          JSON.stringify({ jsonrpc: "2.0", id, result: toHex(options.chainId ?? 4217) }),
+        );
+        return;
+      }
       const call = params?.[0];
       const balanceOf =
         method === "eth_call" && call?.to && call.data?.startsWith("0x70a08231")

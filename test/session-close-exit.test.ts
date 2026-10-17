@@ -62,6 +62,12 @@ describe("session close process exit status", () => {
             method: string;
             params: [{ data: Hex }];
           };
+          // The RPC is on mainnet, so the session reads pass the TEMPO_RPC_URL check.
+          if (rpc.method === "eth_chainId") {
+            response.setHeader("content-type", "application/json");
+            response.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: "0x1079" }));
+            return;
+          }
           if (rpc.method !== "eth_call") throw Error(`Unexpected RPC: ${rpc.method}`);
           rpcCalls += 1;
           const call = decodeFunctionData({ abi: escrowAbi, data: rpc.params[0].data });
@@ -224,9 +230,15 @@ describe("session close confirmation", () => {
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
-    const rpc = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { id: number };
-    rpcCalls += 1;
+    const rpc = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      id: number;
+      method: string;
+    };
     response.setHeader("content-type", "application/json");
+    // The RPC is on mainnet, so the session reads pass the TEMPO_RPC_URL check.
+    if (rpc.method === "eth_chainId")
+      return response.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: "0x1079" }));
+    rpcCalls += 1;
     response.end(
       JSON.stringify({
         jsonrpc: "2.0",

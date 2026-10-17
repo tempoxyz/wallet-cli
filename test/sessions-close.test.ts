@@ -17,7 +17,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("viem", async (importOriginal) => ({
   ...(await importOriginal<typeof import("viem")>()),
+  // The RPC is on the chain each client asks for, so session reads pass the TEMPO_RPC_URL check.
   createPublicClient: vi.fn(({ chain }: { chain: { id: number } }) => ({
+    getChainId: async () => chain.id,
     getBlockNumber: () => mocks.getBlockNumber(),
     getLogs: (call: object) => mocks.getLogs({ ...call, chainId: chain.id }),
     readContract: (call: object) => mocks.readContract({ ...call, chainId: chain.id }),

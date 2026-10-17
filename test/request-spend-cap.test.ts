@@ -11,6 +11,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { runRequest } from "../src/request/run.js";
 import { MaxSpendExceededError } from "../src/request/spend.js";
 import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
+import { saveConfigValue } from "../src/wallet/config.js";
 import { cliBundle } from "./cli-bundle.js";
 import { testPrivateKey, useTempHome } from "./helpers.js";
 
@@ -80,6 +81,8 @@ beforeEach(() => {
   vi.stubEnv("TEMPO_PRIVATE_KEY", testPrivateKey);
   vi.stubEnv("TEMPO_WALLET_NETWORK", "mainnet");
   vi.stubEnv("TEMPO_MAX_SPEND", "");
+  // The stubbed public client reads the chain, so no RPC override needs a chain check.
+  vi.stubEnv("TEMPO_RPC_URL", undefined);
 });
 
 afterEach(async () => {
@@ -136,12 +139,16 @@ async function service(options: {
     if (req.url === "/rpc") {
       let body = "";
       for await (const chunk of req) body += chunk;
-      const { id } = JSON.parse(body) as { id: number };
-      const result = encodeFunctionResult({
-        abi: TempoAbis.tip20ChannelReserve,
-        functionName: "getChannelState",
-        result: { settled: 0n, deposit: onChain.deposit, closeRequestedAt: 0 },
-      });
+      const { id, method } = JSON.parse(body) as { id: number; method: string };
+      // The RPC is on mainnet, so a session read passes the TEMPO_RPC_URL check.
+      const result =
+        method === "eth_chainId"
+          ? "0x1079"
+          : encodeFunctionResult({
+              abi: TempoAbis.tip20ChannelReserve,
+              functionName: "getChannelState",
+              result: { settled: 0n, deposit: onChain.deposit, closeRequestedAt: 0 },
+            });
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
       return;
@@ -222,6 +229,36 @@ it.each([
     refused: refused("2", "1.5"),
   },
   {
+    name: "charge under the saved max-spend above the default",
+    intent: "charge",
+    amount: "25000000",
+    saved: "25",
+    paid: {},
+  },
+  {
+    name: "charge over the saved max-spend below the default",
+    intent: "charge",
+    amount: "2000000",
+    saved: "1.5",
+    refused: refused("2", "1.5"),
+  },
+  {
+    name: "charge over TEMPO_MAX_SPEND, which overrides the saved max-spend",
+    intent: "charge",
+    amount: "2000000",
+    env: "1",
+    saved: "25",
+    refused: refused("2", "1"),
+  },
+  {
+    name: "charge over --max-spend, which overrides the saved max-spend",
+    intent: "charge",
+    amount: "2000000",
+    args: ["--max-spend", "1"],
+    saved: "25",
+    refused: refused("2", "1"),
+  },
+  {
     name: "subscription over the default cap, which leaves recurring offers to the wallet",
     intent: "subscription",
     amount: "25000000",
@@ -285,11 +322,20 @@ it.each([
     env: "30",
     paid: { depositRaw: "30000000" },
   },
+  {
+    name: "session suggested deposit over the saved max-spend",
+    intent: "session",
+    amount: "1000",
+    suggestedDeposit: "50000000",
+    saved: "30",
+    paid: { depositRaw: "30000000" },
+  },
 ])(
   "caps a $name",
-  async ({ intent, amount, suggestedDeposit, args = [], env = "", paid, refused }) => {
+  async ({ intent, amount, suggestedDeposit, args = [], env = "", saved, paid, refused }) => {
     await useTempHome();
     vi.stubEnv("TEMPO_MAX_SPEND", env);
+    if (saved) await saveConfigValue("max-spend", saved);
     const { origin, seen } = await service({ intent, amount, suggestedDeposit });
     const request = run(args, `${origin}/paid`);
 

@@ -24,6 +24,9 @@ const toolHints = [
   ["address", true, false, true, false],
   ["balance", true, false, true, true],
   ["completions", true, false, true, false],
+  ["config_get", true, false, true, false],
+  ["config_set", false, true, true, false],
+  ["config_unset", false, true, true, false],
   ["debug", true, false, true, true],
   ["doctor", true, false, true, true],
   ["fund", false, false, false, true],
@@ -250,7 +253,9 @@ describe("MCP tools", () => {
       expect(response.result.isError).toBe(true);
       expect(firstToolText(response)).toContain(message);
       // Only reads reach the chain; nothing is signed, sent, or handed to the wallet app.
-      expect(host.requests.filter((request) => request !== "eth_call")).toEqual([]);
+      expect(
+        host.requests.filter((request) => request !== "eth_call" && request !== "eth_chainId"),
+      ).toEqual([]);
       expect(await readWalletStoreJson()).toEqual(stored);
     } finally {
       await host.close();
@@ -282,7 +287,12 @@ describe("MCP tools", () => {
           },
         ],
       },
-      requests: [`GET /api/assets?address=${testWallet}&chainId=4217&fresh=true`, "eth_call"],
+      // The balance counts once the RPC reports mainnet.
+      requests: [
+        `GET /api/assets?address=${testWallet}&chainId=4217&fresh=true`,
+        "eth_call",
+        "eth_chainId",
+      ],
     },
   ])(
     "serves $name with the command's output",
@@ -437,7 +447,7 @@ describe("MCP tools", () => {
 });
 
 /**
- * Stands in for the chain RPC and the wallet app. It answers `decimals()` with 6 and any other
+ * Stands in for the chain RPC, on mainnet, and the wallet app. It answers `decimals()` with 6 and any other
  * `eth_call` with a balance or quote large enough for any test amount, and records every RPC
  * method and other request.
  */
@@ -466,7 +476,9 @@ async function recordingHost() {
         JSON.stringify(
           method === "eth_call"
             ? { jsonrpc: "2.0", id, result: word(decimals ? 6n : 10n ** 12n) }
-            : { jsonrpc: "2.0", id, error: { code: -32601, message: `Unexpected ${method}` } },
+            : method === "eth_chainId"
+              ? { jsonrpc: "2.0", id, result: "0x1079" }
+              : { jsonrpc: "2.0", id, error: { code: -32601, message: `Unexpected ${method}` } },
         ),
       );
     });

@@ -12,7 +12,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("viem", async (importOriginal) => ({
   ...(await importOriginal<typeof import("viem")>()),
   // A zero block height leaves orphaned-channel discovery with nothing to scan.
-  createPublicClient: vi.fn(() => ({
+  createPublicClient: vi.fn(({ chain }: { chain: { id: number } }) => ({
+    // On the chain each client asks for, so session reads pass the TEMPO_RPC_URL check.
+    getChainId: async () => chain.id,
     getBlockNumber: async () => 0n,
     readContract: mocks.readContract,
   })),

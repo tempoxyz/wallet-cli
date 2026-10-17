@@ -171,7 +171,10 @@ export async function currentKeysOutput(options: {
   const balances = new Map<string, TokenBalance | null>();
   const servesChain = rpcChainCheck();
   const [details, chainKeys] = await Promise.all([
-    tokenDetails(options.accessKeys.flatMap((key) => keyTokens(key, active(key)))),
+    tokenDetails(
+      options.accessKeys.flatMap((key) => keyTokens(key, active(key))),
+      servesChain,
+    ),
     Promise.all(
       options.accessKeys.map((key) => (active(key) ? readChainKey(key, servesChain) : undefined)),
     ),
@@ -186,7 +189,7 @@ export async function currentKeysOutput(options: {
     const balanceKey = `${key.chainId}:${token}`.toLowerCase();
     const balance = balances.has(balanceKey)
       ? (balances.get(balanceKey) ?? null)
-      : await tokenBalance({ chain: key.chainId, token, walletAddress: key.access });
+      : await tokenBalance({ chain: key.chainId, token, walletAddress: key.access, servesChain });
     balances.set(balanceKey, balance);
     keys.push(currentKeyOutput(key, balance, details, chainKeys[index]));
   }

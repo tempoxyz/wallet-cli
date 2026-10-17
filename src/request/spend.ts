@@ -3,22 +3,56 @@ import { parseUnits } from "viem";
 
 import { errorCodes, paymentError, usageError } from "../shared/errors.js";
 import type { Network } from "../shared/network.js";
+import { configValue, type Config, type ConfigSource } from "../wallet/config.js";
 import { requestNetwork } from "./identity.js";
 import type { RequestOptions } from "./options.js";
 
 /**
- * Spending cap, in payment token units, when neither `--max-spend` nor `TEMPO_MAX_SPEND` is set.
- * It bounds each charge, each session deposit, and a session's cumulative vouchers.
+ * Spending cap, in payment token units, when none of `--max-spend`, `TEMPO_MAX_SPEND`, and the
+ * config file's `max-spend` is set. It bounds each charge, each session deposit, and a session's
+ * cumulative vouchers.
  */
 export const defaultMaxSpend = "10";
 
+const amountPattern = /^\d+(?:\.\d{1,6})?$/;
+
+/** The explicit spending cap, or `undefined` when only `defaultMaxSpend` applies. */
 export function resolveMaxSpend(value?: string) {
-  const maxSpend = value ?? (process.env.TEMPO_MAX_SPEND?.trim() || undefined);
-  if (maxSpend !== undefined && !/^\d+(?:\.\d{1,6})?$/.test(maxSpend))
-    throw usageError(
-      "--max-spend (or TEMPO_MAX_SPEND) must be a non-negative amount with at most 6 decimal places",
-    );
-  return maxSpend;
+  const { value: maxSpend, source } = maxSpendSetting(value);
+  return source === "default" ? undefined : maxSpend;
+}
+
+/**
+ * The spending cap and where it came from: `--max-spend`, then `TEMPO_MAX_SPEND`, then the saved
+ * `max-spend` in `config` (by default, the config file), then `defaultMaxSpend`.
+ */
+export function maxSpendSetting(
+  flag?: string,
+  config?: Config,
+): { value: string; source: ConfigSource } {
+  const env = process.env.TEMPO_MAX_SPEND?.trim() || undefined;
+  const explicit = flag ?? env;
+  if (explicit !== undefined) {
+    if (!amountPattern.test(explicit))
+      throw usageError(
+        "--max-spend (or TEMPO_MAX_SPEND) must be a non-negative amount with at most 6 decimal places",
+      );
+    return { value: explicit, source: flag !== undefined ? "flag" : "env" };
+  }
+  const saved = configValue("max-spend", parseMaxSpend, config);
+  return saved === undefined
+    ? { value: defaultMaxSpend, source: "default" }
+    : { value: saved, source: "config" };
+}
+
+/**
+ * Checks a `max-spend` setting: an amount `--max-spend` takes, but positive, since a saved cap of
+ * zero would refuse every payment.
+ */
+export function parseMaxSpend(value: string) {
+  if (!amountPattern.test(value) || parseUnits(value, 6) === 0n)
+    throw usageError("max-spend must be a positive amount with at most 6 decimal places");
+  return value;
 }
 
 export function enforceMaxSpend(
@@ -34,7 +68,7 @@ export function enforceMaxSpend(
   assertWithinMaxSpend(BigInt(amount), options);
 }
 
-/** `--max-spend`, then `TEMPO_MAX_SPEND`, then `defaultMaxSpend`, in payment token units. */
+/** The spending cap in payment token units: the explicit cap, else `defaultMaxSpend`. */
 export function spendCap(options: RequestOptions) {
   return options.maxSpend ?? defaultMaxSpend;
 }

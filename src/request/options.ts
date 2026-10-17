@@ -18,7 +18,7 @@ export type RequestOptions = {
   maxRedirs?: number | undefined;
   maxTime?: number | undefined;
   method?: string | undefined;
-  /** `--max-spend`, then `TEMPO_MAX_SPEND`; payments apply `defaultMaxSpend` when unset. */
+  /** The explicit cap from `resolveMaxSpend`; payments apply `defaultMaxSpend` when unset. */
   maxSpend?: string | undefined;
   mach?: boolean | undefined;
   network?: string | undefined;

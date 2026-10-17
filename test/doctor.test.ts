@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { debugHandler } from "../src/commands/debug.js";
 import { doctorHandler, redactUrl } from "../src/commands/doctor.js";
 import { channelsDbPath } from "../src/shared/process.js";
+import { configPath } from "../src/wallet/config.js";
 import type { WalletState } from "../src/wallet/store.js";
 import { cliBundle } from "./cli-bundle.js";
 import {
@@ -95,6 +96,11 @@ async function sqliteBin(sqlite: "present" | "hung" | "missing") {
     await chmod(join(bin, "sqlite3"), 0o755);
   }
   return bin;
+}
+
+async function writeConfigFile(body: string) {
+  await mkdir(dirname(configPath()), { recursive: true });
+  await writeFile(configPath(), body);
 }
 
 // Healthy checks get a budget a loaded CI runner can meet; only the hung cases pass a short one.
@@ -540,6 +546,61 @@ describe("environment", () => {
           ? "Overrides set: TEMPO_AUTH_URL."
           : "TEMPO_AUTH_URL is not an http(s) URL, so login and other wallet app requests fail. Set it to the wallet app URL, or unset it.",
     });
+  });
+
+  it("follows a saved network and rpc-url, naming the setting when the RPC is on another chain", async () => {
+    await writeWalletState(walletState());
+    // Written directly: the config lock would run the stub sqlite3 on PATH.
+    await writeConfigFile(
+      '{"network":"testnet","rpc-url":{"testnet":"https://rpc.example.com/v2/key"}}',
+    );
+
+    const report = await doctor();
+
+    expect(report).toMatchObject({ chain_id: 42431, network: "tempo-moderato" });
+    expect(report.rpc).toMatchObject({ url: "https://rpc.example.com/<redacted>", chain_id: 4217 });
+    expect(check(report, "rpc")).toEqual({
+      name: "rpc",
+      status: "fail",
+      message:
+        "RPC https://rpc.example.com/<redacted> is on chain 4217, not testnet (42431). Check the rpc-url saved for testnet.",
+    });
+    expect(check(report, "env")).toMatchObject({ status: "ok" });
+  });
+
+  it.each([
+    {
+      problem: "is not valid JSON",
+      body: "{",
+      message: `is not valid JSON. Fix it, or delete it to clear every setting.`,
+      rpc: {
+        url: "<redacted>",
+        message: () =>
+          `RPC <redacted> was not checked, since the config file is not valid. Fix ${configPath()}.`,
+      },
+    },
+    {
+      problem: "holds an invalid network",
+      body: '{"network":"typo"}',
+      message:
+        "has an invalid network (Unsupported network: typo). Run 'tempo wallet config unset network', or fix the file.",
+      rpc: { url: "https://rpc.moderato.tempo.xyz", message: () => expect.any(String) },
+    },
+  ])("reports a config file that $problem instead of failing", async ({ body, message, rpc }) => {
+    await writeWalletState(walletState({ chainId: 42431, accessKeys: [testnetKey] }));
+    await writeConfigFile(body);
+
+    const report = await doctor();
+
+    // The network falls back past the config file to the logged-in chain.
+    expect(report).toMatchObject({ chain_id: 42431, network: "tempo-moderato" });
+    expect(check(report, "env")).toEqual({
+      name: "env",
+      status: "fail",
+      message: `Config file ${configPath()} ${message}`,
+    });
+    expect(report.rpc.url).toBe(rpc.url);
+    expect(check(report, "rpc")?.message).toEqual(rpc.message());
   });
 
   it("rejects an unsupported --network as a usage error", async () => {

@@ -39,7 +39,7 @@ export const requestDryRunOutput = z.union([
       .string()
       .nullable()
       .describe(
-        "Spending cap the payment applies: --max-spend, TEMPO_MAX_SPEND, or the default; null for a subscription",
+        "Spending cap the payment applies: --max-spend, TEMPO_MAX_SPEND, the saved max-spend setting, or the default; null for a subscription",
       ),
     within_budget: z
       .boolean()
