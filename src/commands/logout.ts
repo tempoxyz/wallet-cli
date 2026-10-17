@@ -12,6 +12,7 @@ import {
   networkFields,
   networkName,
   parseNetwork,
+  requireRpcChain,
   storedChainId,
   type Network,
 } from "../shared/network.js";
@@ -152,6 +153,10 @@ export async function logoutHandler(
       (await readKey(keyTarget(key))).status === "published"
     )
       revocable.push(key);
+  // Each key is revoked and then read on its own network, so an RPC override that serves another
+  // chain stops the logout before anything is revoked rather than partway through.
+  for (const chainId of new Set(revocable.map((key) => key.chainId)))
+    await requireRpcChain(chainId);
 
   const disconnected = loggedOutState(state, network).accounts.length === 0;
   const { sessions, unchecked } = await readFundedSessions({
