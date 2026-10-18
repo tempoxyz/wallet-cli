@@ -1,0 +1,50 @@
+import { InvalidChallengeError, PaymentExpiredError } from './Errors.js';
+/**
+ * Asserts that `expires` is present, well-formed, and not in the past.
+ *
+ * Throws `InvalidChallengeError` when missing or malformed,
+ * and `PaymentExpiredError` when the timestamp is in the past.
+ */
+export function assert(expires, challengeId) {
+    if (!expires)
+        throw new InvalidChallengeError({
+            ...(challengeId && { id: challengeId }),
+            reason: 'missing required expires field',
+        });
+    if (Number.isNaN(new Date(expires).getTime()))
+        throw new InvalidChallengeError({
+            ...(challengeId && { id: challengeId }),
+            reason: 'malformed expires timestamp',
+        });
+    if (new Date(expires) < new Date())
+        throw new PaymentExpiredError({ expires });
+}
+/** Returns an ISO 8601 datetime string `n` days from now. */
+export function days(n) {
+    return new Date(Date.now() + n * 24 * 60 * 60 * 1000).toISOString();
+}
+/** Returns an ISO 8601 datetime string `n` hours from now. */
+export function hours(n) {
+    return new Date(Date.now() + n * 60 * 60 * 1000).toISOString();
+}
+/** Returns an ISO 8601 datetime string `n` minutes from now. */
+export function minutes(n) {
+    return new Date(Date.now() + n * 60 * 1000).toISOString();
+}
+/** Returns an ISO 8601 datetime string `n` months (30 days) from now. */
+export function months(n) {
+    return new Date(Date.now() + n * 30 * 24 * 60 * 60 * 1000).toISOString();
+}
+/** Returns an ISO 8601 datetime string `n` seconds from now. */
+export function seconds(n) {
+    return new Date(Date.now() + n * 1000).toISOString();
+}
+/** Returns an ISO 8601 datetime string `n` weeks from now. */
+export function weeks(n) {
+    return new Date(Date.now() + n * 7 * 24 * 60 * 60 * 1000).toISOString();
+}
+/** Returns an ISO 8601 datetime string `n` years (365 days) from now. */
+export function years(n) {
+    return new Date(Date.now() + n * 365 * 24 * 60 * 60 * 1000).toISOString();
+}
+//# sourceMappingURL=Expires.js.map

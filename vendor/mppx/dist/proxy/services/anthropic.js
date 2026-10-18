@@ -1,0 +1,38 @@
+import * as Service from '../Service.js';
+/**
+ * Creates an Anthropic service definition.
+ *
+ * Injects `x-api-key` header for upstream authentication.
+ * Per-endpoint `apiKey` overrides are supported via `options`.
+ *
+ * @example
+ * ```ts
+ * anthropic({
+ *   apiKey: 'sk-ant-...',
+ *   routes: {
+ *     'POST /v1/messages': mppx.charge({ amount: '0.03' }),
+ *     'POST /v1/complete': mppx.charge({ amount: '0.02' }),
+ *   },
+ * })
+ * ```
+ */
+export function anthropic(config) {
+    return Service.from('anthropic', {
+        baseUrl: config.baseUrl ?? 'https://api.anthropic.com',
+        categories: ['ai'],
+        description: 'Claude language models for messages and completions.',
+        docs: {
+            apiReference: 'https://docs.anthropic.com/en/api/getting-started',
+            homepage: 'https://docs.anthropic.com/en/docs/intro-to-claude',
+        },
+        onUpstreamError: config.onUpstreamError,
+        rewriteRequest(request, ctx) {
+            const apiKey = ctx.apiKey ?? config.apiKey;
+            request.headers.set('x-api-key', apiKey);
+            return request;
+        },
+        routes: config.routes,
+        title: 'Anthropic',
+    });
+}
+//# sourceMappingURL=anthropic.js.map
