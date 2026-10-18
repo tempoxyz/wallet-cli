@@ -5,6 +5,7 @@ import { machineTokenDeployments } from "mppx/tempo";
 import { formatUnits, parseUnits, type Address } from "viem";
 
 import { paymentReceipt, receiptTxHash, transactionHash } from "../payment/receipt.js";
+import { signedSwap } from "../payment/tempo-funding.js";
 import { withSessionLock } from "../payment/session-lock.js";
 import { paymentError } from "../shared/errors.js";
 import { readTokenMetadata, tokenLabel, tokenMetadata } from "../shared/tokens.js";
@@ -96,7 +97,10 @@ export async function payAndRetryRequest(
     });
 
     // Policy and funding run before signing; the credential carries the context they prepared.
-    const prepared = await prepareCharge(selectedChallenge, options, { payer: identity.address });
+    const prepared = await prepareCharge(selectedChallenge, options, {
+      address: identity.address,
+      key: "key" in identity ? identity.key : undefined,
+    });
     const credential = await payment
       .createCredential(challengeResponse, prepared.credentialContext as never)
       .catch(async (error: unknown) => {
@@ -199,6 +203,7 @@ function recordChargeReceipt(
       network,
       payer,
       txHash: payload.type === "hash" ? transactionHash(payload.hash) : receiptTxHash(response),
+      funding: swapFunding(payload),
       subscription:
         challenge.intent === "subscription"
           ? {
@@ -209,6 +214,14 @@ function recordChargeReceipt(
           : undefined,
     }),
   );
+}
+
+/** The Tempo DEX swap a credential's transaction makes before it pays, as the receipt reports it. */
+function swapFunding(payload: Record<string, unknown>) {
+  const swap = signedSwap(payload);
+  return swap
+    ? { route: "tempo-dex", input: { token: swap.token, maxAmount: swap.maxAmount } }
+    : undefined;
 }
 
 function credentialPayload(credential: string) {

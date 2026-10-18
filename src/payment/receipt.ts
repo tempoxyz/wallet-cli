@@ -30,8 +30,10 @@ export function paymentReceipt(payment: {
   session?: { channelId: string; deposit: bigint; cumulative: bigint; reused: boolean } | undefined;
   /** A subscription's billing period (e.g. `1 week`) and when its authorization expires. */
   subscription?: { period: string; expires: string } | undefined;
+  /** How the payment acquired `token`: a swap's route, its input token, and the most it spent. */
+  funding?: { route: string; input: { token: string; maxAmount: bigint } } | undefined;
 }) {
-  const { network, session, subscription } = payment;
+  const { network, session, subscription, funding } = payment;
   const listed = knownToken(payment.token, network.chainId);
   const token = escapeInvisible(payment.token.toLowerCase());
   const channelId = session ? escapeInvisible(session.channelId) : null;
@@ -54,6 +56,18 @@ export function paymentReceipt(payment: {
         }
       : null,
     payer: payment.payer.toLowerCase(),
+    ...(funding
+      ? {
+          funding: {
+            route: escapeInvisible(funding.route),
+            input: {
+              token: escapeInvisible(funding.input.token.toLowerCase()),
+              symbol: knownToken(funding.input.token, network.chainId)?.symbol ?? null,
+              max_amount: tokenUnits(funding.input.maxAmount),
+            },
+          },
+        }
+      : {}),
     ...networkFields(network.chainId),
     ...(session && !session.reused && channelId
       ? nextStep(
@@ -83,7 +97,10 @@ export function receiptSummary(receipt: PaymentReceipt) {
     return `${paid} · opened a session with ${receipt.deposit_locked} ${label} locked\nWhen done, request its close, then rerun after the grace period to withdraw the unspent deposit: ${receipt._next.command}\n`;
   if (receipt.session === "reuse")
     return `${paid} · session ${receipt.channel_id} (${receipt.cumulative} of ${receipt.deposit_locked} ${label} deposit in signed vouchers)\n`;
-  return `${paid}${receipt.tx_hash ? ` · tx ${receipt.tx_hash}` : ""}\n`;
+  const swapped = receipt.funding
+    ? ` · bought with up to ${receipt.funding.input.max_amount} ${receipt.funding.input.symbol ?? receipt.funding.input.token} on the Tempo DEX`
+    : "";
+  return `${paid}${swapped}${receipt.tx_hash ? ` · tx ${receipt.tx_hash}` : ""}\n`;
 }
 
 /**

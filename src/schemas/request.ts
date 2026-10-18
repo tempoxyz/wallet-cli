@@ -52,6 +52,15 @@ export const requestDryRunOutput = z.union([
       address: z.string().nullable(),
       source: z.enum(["flag", "env", "wallet"]),
     }),
+    funding: z
+      .object({
+        route: z.string().describe("The funder that would acquire the token, such as tempo-dex"),
+        inputs: z.array(z.string()).describe("Tokens it may spend, most preferred first"),
+      })
+      .optional()
+      .describe(
+        "Set when the payer's balance is below the amount and a funder would acquire the rest; nothing is swapped in a dry run",
+      ),
     // Set when the wallet cannot pay: the login or refresh command that fixes it.
     ...nextOutputShape,
   }),

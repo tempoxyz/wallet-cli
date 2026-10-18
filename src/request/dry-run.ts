@@ -9,7 +9,9 @@ import { nextStep } from "../shared/next.js";
 import { walletFix } from "../shared/require-wallet.js";
 import { knownToken, readTokenMetadata, tokenMetadata } from "../shared/tokens.js";
 import { getRecord, stringValue } from "../shared/utils.js";
+import { tempoFundingInputs } from "../shared/chains.js";
 import { challengeAmount, normalizedChallengeChainId, sessionDetails } from "./challenge.js";
+import { chargeFunder } from "./funding.js";
 import {
   privateKeyIdentity,
   privateKeySigner,
@@ -47,7 +49,7 @@ export async function paymentQuote(
   const fix =
     wallet && "code" in wallet ? walletFix(wallet.code, requestNetwork(options)) : undefined;
   const payer = privateKeyIdentity(options) ?? (wallet && !("code" in wallet) ? wallet : undefined);
-  const [metadata, balance, plan] = await Promise.all([
+  const [metadata, balance, plan, funder] = await Promise.all([
     tokenMetadata(token.toLowerCase() as Address, chainId, (address) =>
       readTokenMetadata(address, chainId, dryRunRpc),
     ).catch(() => undefined),
@@ -62,6 +64,7 @@ export async function paymentQuote(
           return undefined;
         })
       : undefined,
+    challenge.intent === "charge" ? chargeFunder(challenge, options) : undefined,
   ]);
   // MACH is listed, so its decimals need no read.
   const debitedToken =
@@ -96,6 +99,14 @@ export async function paymentQuote(
     signer: signer
       ? { address: signer.account.address.toLowerCase(), source: signer.source }
       : { address: null, source: "wallet" },
+    ...(funder && balance !== null && balance < amount
+      ? {
+          funding: {
+            route: funder,
+            inputs: tempoFundingInputs(chainId).map((input) => input.toLowerCase()),
+          },
+        }
+      : {}),
     ...(fix
       ? nextStep(
           `${fix.reason} Run the next command, then rerun this request without --dry-run to pay.`,

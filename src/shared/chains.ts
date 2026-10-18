@@ -1,6 +1,6 @@
 import { z } from "incur";
 import { getAddress, isAddress, type Address } from "viem";
-import { tokens } from "viem/tokens";
+import { ousd, pathusd, tokens, usdce } from "viem/tokens";
 
 import { usageError } from "./errors.js";
 
@@ -19,9 +19,15 @@ const address = z
   .transform((value) => getAddress(value));
 
 const devChainsSchema = z.object({
-  /** Extra USD TIP-20s per Tempo chain ID. */
+  /** Per Tempo chain ID: extra USD TIP-20s, and the tokens funding swaps from, in order. */
   tempo: z
-    .record(z.string().regex(/^[1-9]\d*$/), z.object({ usdTokens: z.array(address).default([]) }))
+    .record(
+      z.string().regex(/^[1-9]\d*$/),
+      z.object({
+        usdTokens: z.array(address).default([]),
+        fundingInputs: z.array(address).optional(),
+      }),
+    )
     .default({}),
 });
 
@@ -62,6 +68,28 @@ export function tempoUsdTokens(chainId: number): Address[] {
     const at = (token.addresses as Partial<Record<number, Address>>)[chainId];
     return token.currency === "USD" && at ? [getAddress(at)] : [];
   });
+  const canonical = chainId === moderato ? [moderatoOusd] : [];
   const dev = devChains().tempo[String(chainId)]?.usdTokens ?? [];
-  return [...new Set([...listed, ...dev])];
+  return [...new Set([...listed, ...canonical, ...dev])];
+}
+
+const mainnet = 4217;
+const moderato = 42431;
+/** OUSD has the same address on Tempo mainnet and Moderato; viem lists only mainnet's. */
+const moderatoOusd = getAddress(ousd.addresses[mainnet]);
+
+/**
+ * The tokens a Tempo DEX swap may spend to buy a payment's token on `chainId`, most preferred
+ * first: OUSD, then USDC.e, then pathUSD (D4), or the `TEMPO_DEV_CHAINS` inputs. Empty on a chain
+ * without them.
+ */
+export function tempoFundingInputs(chainId: number): Address[] {
+  const dev = devChains().tempo[String(chainId)]?.fundingInputs;
+  if (dev) return dev;
+  if (chainId !== mainnet && chainId !== moderato) return [];
+  return [
+    getAddress(ousd.addresses[mainnet]),
+    getAddress(usdce(chainId).address),
+    getAddress(pathusd(chainId).address),
+  ];
 }

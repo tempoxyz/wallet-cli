@@ -21,6 +21,10 @@ export type RequestOptions = {
   /** The explicit cap from `resolveMaxSpend`; payments apply `defaultMaxSpend` when unset. */
   maxSpend?: string | undefined;
   mach?: boolean | undefined;
+  /** `--funding`; resolved with `fundingSetting`. */
+  funding?: string | undefined;
+  /** `--max-slippage-bps` for Tempo DEX funding; `defaultMaxSlippageBps` when unset. */
+  maxSlippageBps?: number | undefined;
   network?: string | undefined;
   noProxy?: boolean | undefined;
   output?: string | undefined;

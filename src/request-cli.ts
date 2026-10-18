@@ -5,6 +5,7 @@ import { ctaErrors } from "./cli/incur-compat.js";
 import { normalizeIncurArgv, redacted, rerunArgs } from "./request/argv.js";
 import type { RequestOptions } from "./request/options.js";
 import { executeRequest } from "./request/run.js";
+import { defaultFunding, defaultMaxSlippageBps, fundingModes } from "./request/funding-mode.js";
 import { defaultMaxSpend, MaxSpendExceededError } from "./request/spend.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";
@@ -13,6 +14,9 @@ import { WalletRequiredError } from "./shared/require-wallet.js";
 import { configSnapshot } from "./wallet/config.js";
 
 const maxSpendHelp = `Hard cap for cumulative payment spend in payment token units, or in MACH (1 MACH = 1 USD) for a MACH payment (or TEMPO_MAX_SPEND, then the saved max-spend setting; default ${defaultMaxSpend})`;
+
+const fundingHelp = `Acquire a payment token the wallet does not hold: tempo swaps on the Tempo DEX, auto may also fund other chains, off pays only from held tokens (or TEMPO_FUNDING, then the saved funding setting; default ${defaultFunding})`;
+const maxSlippageHelp = `Maximum funding slippage in basis points (default ${defaultMaxSlippageBps})`;
 
 const args = z.object({
   url: z.string().describe("URL to request"),
@@ -29,6 +33,8 @@ const options = z.object({
     .default("auto")
     .describe("Payment intent: auto, session, or charge"),
   mach: z.boolean().optional().describe("Require MACH settlement; alias for --payment-token MACH"),
+  funding: z.enum(fundingModes).optional().describe(fundingHelp),
+  "max-slippage-bps": z.coerce.number().optional().describe(maxSlippageHelp),
   "payment-token": z
     .string()
     .optional()
@@ -262,6 +268,8 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
     method: options.request,
     maxSpend: options["max-spend"],
     mach: options.mach,
+    funding: options.funding,
+    maxSlippageBps: options["max-slippage-bps"],
     paymentIntent: options["payment-intent"],
     paymentToken: options["payment-token"],
     noProxy: options.noProxy,
@@ -315,6 +323,18 @@ function describeRequestCli() {
         name: "mach",
         long: "--mach",
         help: "Require MACH settlement; alias for --payment-token MACH",
+      },
+      {
+        name: "funding",
+        long: "--funding",
+        value_name: "MODE",
+        help: fundingHelp,
+      },
+      {
+        name: "max_slippage_bps",
+        long: "--max-slippage-bps",
+        value_name: "BPS",
+        help: maxSlippageHelp,
       },
       {
         name: "payment_token",

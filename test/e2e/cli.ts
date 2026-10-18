@@ -30,7 +30,9 @@ export function cliEnv(net: Localnet, wallet: LocalWallet, env: Record<string, s
 
 /** The `TEMPO_DEV_CHAINS` table that makes the CLI trust the local chains' tokens. */
 export function devChains(net: Localnet) {
-  return { tempo: { [net.tempoChainId]: { usdTokens: [net.ousd, net.usdc] } } };
+  return {
+    tempo: { [net.tempoChainId]: { usdTokens: [net.ousd, net.usdc], fundingInputs: [net.ousd] } },
+  };
 }
 
 /** Starts `tempo request` or `tempo wallet` from the prebuilt bundle. */
