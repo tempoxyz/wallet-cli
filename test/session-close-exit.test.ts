@@ -198,7 +198,7 @@ describe("session close process exit status", () => {
               }),
             );
           if (scenario === "pending") {
-            expect(summary.results[0].remaining_secs).toBeGreaterThan(0);
+            expect(summary.results[0].remaining_seconds).toBeGreaterThan(0);
             expect(summary._next.argv).toEqual([
               "tempo",
               "wallet",

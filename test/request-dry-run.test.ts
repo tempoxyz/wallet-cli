@@ -80,10 +80,10 @@ const quote = {
   intent: "charge",
   recurring: false,
   amount: "0.006",
-  amount_raw: "6000",
+  raw_amount: "6000",
   session: null,
   deposit: null,
-  deposit_raw: null,
+  raw_deposit: null,
   token: "0x20c0000000000000000000000000000000000000",
   symbol: "pathUSD",
   decimals: 6,
@@ -92,6 +92,7 @@ const quote = {
   machine_token_enabled: false,
   payment_token: null,
   chain_id: 4217,
+  network: "tempo",
   max_spend: "10",
   within_budget: true,
   signer: { address: null, source: "wallet" },
@@ -325,14 +326,14 @@ function sessionRecord(
 // The logged-in wallet holds 5 USDC.e (7 MACH), and its key has a stored 100 USDC.e limit.
 const quoted = {
   ...quote,
-  token: usdc,
+  token: usdc.toLowerCase(),
   symbol: "USDC.e",
   balance: "5",
   access_key_limit: "100",
 };
 const session = { intent: "session" };
-const opened = { ...session, session: "open", deposit: "0.006", deposit_raw: "6000" };
-const reused = { ...session, session: "reuse", deposit: "0", deposit_raw: "0" };
+const opened = { ...session, session: "open", deposit: "0.006", raw_deposit: "6000" };
+const reused = { ...session, session: "reuse", deposit: "0", raw_deposit: "0" };
 const capped = { max_spend: "1" };
 
 it.each<{
@@ -370,7 +371,7 @@ it.each<{
       intent: "subscription",
       recurring: true,
       amount: "25",
-      amount_raw: "25000000",
+      raw_amount: "25000000",
       max_spend: null,
       within_budget: null,
     },
@@ -383,18 +384,18 @@ it.each<{
   {
     name: "a new session at the suggested deposit",
     challenge: offer("session", { suggestedDeposit: "2000000" }),
-    expected: { ...opened, deposit: "2", deposit_raw: "2000000" },
+    expected: { ...opened, deposit: "2", raw_deposit: "2000000" },
   },
   {
     name: "a new session deposit lowered to the default cap",
     challenge: offer("session", { suggestedDeposit: "25000000" }),
-    expected: { ...opened, deposit: "10", deposit_raw: "10000000" },
+    expected: { ...opened, deposit: "10", raw_deposit: "10000000" },
   },
   {
     name: "a new session deposit lowered to an explicit cap",
     challenge: offer("session", { suggestedDeposit: "2000000" }),
     args: ["--max-spend", "1"],
-    expected: { ...opened, ...capped, deposit: "1", deposit_raw: "1000000" },
+    expected: { ...opened, ...capped, deposit: "1", raw_deposit: "1000000" },
   },
   {
     name: "a reused session under the default cap",
@@ -413,26 +414,26 @@ it.each<{
     name: "a reused session whose voucher needs a top-up",
     challenge: offer("session"),
     stored: [{ cumulative_amount: 999_000n }],
-    expected: { ...reused, deposit: "0.005", deposit_raw: "5000" },
+    expected: { ...reused, deposit: "0.005", raw_deposit: "5000" },
   },
   {
     name: "a top-up measured against the on-chain deposit",
     challenge: offer("session"),
     stored: [{ cumulative_amount: 999_000n, deposit: 500_000n }],
-    expected: { ...reused, deposit: "0.005", deposit_raw: "5000" },
+    expected: { ...reused, deposit: "0.005", raw_deposit: "5000" },
   },
   {
     name: "a reused session whose cumulative spend exceeds an explicit cap",
     challenge: offer("session"),
     stored: [{ cumulative_amount: 999_000n }],
     args: ["--max-spend", "1"],
-    expected: { ...reused, ...capped, deposit: "0.005", deposit_raw: "5000", within_budget: false },
+    expected: { ...reused, ...capped, deposit: "0.005", raw_deposit: "5000", within_budget: false },
   },
   {
     name: "a reused session whose cumulative spend exceeds the default cap",
     challenge: offer("session"),
     stored: [{ cumulative_amount: 9_999_000n }],
-    expected: { ...reused, deposit: "9.005", deposit_raw: "9005000", within_budget: false },
+    expected: { ...reused, deposit: "9.005", raw_deposit: "9005000", within_budget: false },
   },
   {
     name: "a new session when the stored one is closing on chain",
@@ -464,7 +465,10 @@ it.each<{
     privateKey: true,
     expected: {
       access_key_limit: null,
-      signer: { address: privateKeyToAccount(testPrivateKey).address, source: "env" },
+      signer: {
+        address: privateKeyToAccount(testPrivateKey).address.toLowerCase(),
+        source: "env",
+      },
     },
   },
   {

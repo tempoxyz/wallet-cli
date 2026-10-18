@@ -1,5 +1,5 @@
 import type { z } from "incur";
-import { encodeFunctionData, toHex, type Address, type Hex } from "viem";
+import { encodeFunctionData, formatUnits, toHex, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { Abis as TempoAbis } from "viem/tempo";
 import { Challenge, Credential } from "mppx";
@@ -34,7 +34,6 @@ import { canPrompt, confirm as confirmPrompt } from "../../shared/process.js";
 import { tokenSymbol } from "../../shared/tokens.js";
 import {
   decodeBase64UrlJson,
-  formatTokenUnits,
   formatUnixTimestamp,
   getRecord,
   isChannelId,
@@ -56,7 +55,6 @@ import {
   sessionStatus,
   updateChannelCloseState,
   type ChannelRecord,
-  type ChannelState,
 } from "./records.js";
 
 /** Whether a `sessions close` left a channel unclosed; a one-shot CLI run then exits 1. */
@@ -107,7 +105,7 @@ type CloseResultRecord = {
   channel_id: string;
   status: "closed" | "pending" | "requested" | "not_found" | "error";
   origin?: string | undefined;
-  remaining_secs?: number | undefined;
+  remaining_seconds?: number | undefined;
   error?: string | undefined;
 };
 
@@ -133,10 +131,11 @@ export async function dryRunCloseSessions({ network }: Wallet, options: CloseOpt
   // The close this reviews would read the channels, so refuse an RPC on another chain now.
   if (targets.some(hasChannel)) await requireRpcChain(network.chainId);
   return {
+    status: "dry_run" as const,
     targets: targets.map((record) => {
       if (!record.virtual) return closeTarget(record);
       if (record.channel_id) return { channel_id: record.channel_id };
-      return { channel_id: "", origin: record.origin, state: "not found" };
+      return { channel_id: "", origin: record.origin, status: "not_found" as const };
     }),
     ...(targets.some(hasChannel)
       ? nextStep(
@@ -236,7 +235,7 @@ function withPendingCloseNextStep(
 ) {
   const pending = summary.results.filter((result) => result.status === "pending");
   if (pending.length === 0) return summary;
-  const waitSecs = Math.max(...pending.map((result) => result.remaining_secs ?? 0));
+  const waitSecs = Math.max(...pending.map((result) => result.remaining_seconds ?? 0));
   const readyAt = formatUnixTimestamp(nowSeconds() + waitSecs);
   const single = pending.length === 1 ? pending[0] : undefined;
   const status = single
@@ -315,7 +314,7 @@ function closePrompt(records: readonly ChannelRecord[], options: CloseOptions, n
     // A channel ID without a local record is read on-chain only when it is closed.
     record.virtual
       ? "unknown (no local record)"
-      : `${formatTokenUnits(record.deposit, tokenDecimals())} ${tokenSymbol(record.token, record.chain_id) ?? record.token}`;
+      : `${formatUnits(record.deposit, tokenDecimals())} ${tokenSymbol(record.token, record.chain_id) ?? record.token}`;
   return [
     `${verb} ${records.length === 1 ? "1 session" : `${records.length} sessions`}${options.cooperative ? " through its server" : ""}:`,
     ...records.flatMap((record) => [
@@ -520,7 +519,7 @@ async function closeOneSession(
       graceReadyAt: now + gracePeriod,
       state: "closing",
     });
-    return closeResult(record, "pending", { remaining_secs: gracePeriod });
+    return closeResult(record, "pending", { remaining_seconds: gracePeriod });
   }
 
   const readyAt = closeRequestedAt + gracePeriod;
@@ -531,7 +530,7 @@ async function closeOneSession(
       graceReadyAt: readyAt,
       state: "closing",
     });
-    return closeResult(record, "pending", { remaining_secs: readyAt - now });
+    return closeResult(record, "pending", { remaining_seconds: readyAt - now });
   }
 
   await sendSessionManagementTransaction({
@@ -784,13 +783,15 @@ function closeSummary(): CloseSummaryOutput {
 function closeResult(
   record: ChannelRecord,
   status: CloseResultRecord["status"],
-  extra: { remaining_secs?: number | undefined; error?: string | undefined } = {},
+  extra: { remaining_seconds?: number | undefined; error?: string | undefined } = {},
 ): CloseResultRecord {
   return {
     channel_id: record.channel_id,
     status,
     ...(record.origin ? { origin: record.origin } : {}),
-    ...(extra.remaining_secs !== undefined ? { remaining_secs: extra.remaining_secs } : {}),
+    ...(extra.remaining_seconds !== undefined
+      ? { remaining_seconds: extra.remaining_seconds }
+      : {}),
     ...(extra.error ? { error: extra.error } : {}),
   };
 }
@@ -828,13 +829,5 @@ function virtualMissingChannelRecord(options: { origin: string; chain: number })
 }
 
 function closeTarget(record: ChannelRecord) {
-  return {
-    channel_id: record.channel_id,
-    origin: record.origin,
-    state: capitalizedState(sessionStatus(record)),
-  };
-}
-
-function capitalizedState(value: ChannelState) {
-  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+  return { channel_id: record.channel_id, origin: record.origin, status: sessionStatus(record) };
 }

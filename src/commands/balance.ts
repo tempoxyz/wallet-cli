@@ -59,7 +59,7 @@ export async function balanceHandler(
   const balances = assetBalances(assets, held);
   if (!balances.some((balance) => balance.token === token.toLowerCase()))
     throw networkError(balanceQueryError.message, { retryable: true });
-  return { address: account.address.toLowerCase(), ...networkFields(chain), balances };
+  return { wallet: account.address.toLowerCase(), ...networkFields(chain), balances };
 }
 
 /**

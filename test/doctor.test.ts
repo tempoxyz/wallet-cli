@@ -288,7 +288,7 @@ describe("key", () => {
         unlimited: false,
         symbol: "USDC.e",
         token: usdc.toLowerCase(),
-        limit: "100.000000",
+        limit: "100",
         raw_limit: "100000000",
         period_seconds: null,
         remaining: null,

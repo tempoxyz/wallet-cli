@@ -62,6 +62,7 @@ describe("sessions utilities", () => {
     vi.stubEnv("TEMPO_RPC_URL", undefined);
 
     expect(await dryRunCloseSessions(await readyWallet(), { target: validChannelId })).toEqual({
+      status: "dry_run",
       targets: [{ channel_id: validChannelId }],
       instruction:
         "Review the sessions, then run the next command to close them. This cannot be undone.",

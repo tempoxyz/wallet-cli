@@ -88,7 +88,7 @@ describe("MCP tools", () => {
       wallet: testWallet.toLowerCase(),
       amount_cents: 1,
       to: testWallet.toLowerCase(),
-      dry_run: true,
+      status: "dry_run",
     });
   });
 
@@ -271,8 +271,8 @@ describe("MCP tools", () => {
 
       const status = await mcpCall({ name: "login_status", arguments: { network: "testnet" } });
       expect(status.result.structuredContent).toMatchObject({
-        accounts: [testWallet],
-        chainId: 42431,
+        accounts: [testWallet.toLowerCase()],
+        chain_id: 42431,
       });
       expect(host.polls).toHaveLength(2);
     } finally {
@@ -407,7 +407,7 @@ describe("MCP tools", () => {
       name: "balance",
       arguments: {},
       output: {
-        address: testWallet.toLowerCase(),
+        wallet: testWallet.toLowerCase(),
         chain_id: 4217,
         network: "tempo",
         balances: [

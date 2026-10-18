@@ -4,7 +4,7 @@ import { Cli } from "incur";
 import { destructive, type WalletCommand } from "../cli/command.js";
 import { refreshOptions, refreshOutput } from "../schemas/refresh.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
-import { resolveNetwork, type Network } from "../shared/network.js";
+import { networkFields, resolveNetwork, type Network } from "../shared/network.js";
 import { connect, createProvider } from "../provider.js";
 
 export default {
@@ -42,7 +42,7 @@ export async function refreshHandler(
   );
 
   return {
-    accounts: result.accounts.map((account) => account.address),
-    chainId: network.chainId,
+    accounts: result.accounts.map((account) => account.address.toLowerCase()),
+    ...networkFields(network.chainId),
   };
 }

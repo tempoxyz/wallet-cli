@@ -87,7 +87,7 @@ describe("legacy credit spending", () => {
     });
     expect(result).toMatchObject({
       amount_cents: 100,
-      dry_run: true,
+      status: "dry_run",
       to: recipient,
       transaction_data: { transaction: { to: recipient, data: "0xabcdef" } },
     });
@@ -177,7 +177,7 @@ describe("legacy credit spending", () => {
           "dry-run": true,
         },
       }),
-    ).resolves.toMatchObject({ amount_cents: 100, to: recipient, dry_run: true });
+    ).resolves.toMatchObject({ amount_cents: 100, to: recipient, status: "dry_run" });
     expect(mocks.request).not.toHaveBeenCalled();
   });
 
@@ -281,7 +281,7 @@ describe("legacy credit spending", () => {
         .mockResolvedValueOnce(Response.json({ hash }));
       await expect(
         transferCredits({ options: { "mpp-challenge": Challenge.serialize(offer) } }),
-      ).resolves.toMatchObject({ tx_hash: hash });
+      ).resolves.toMatchObject({ status: "success", tx_hash: hash });
       expect(fetch).toHaveBeenCalledTimes(2);
       expect(mocks.request).toHaveBeenCalledOnce();
     },
@@ -405,7 +405,7 @@ describe("legacy credit spending", () => {
     await expect(
       transferCredits({ options: { ...options, "dry-run": true } }),
     ).resolves.toMatchObject({
-      dry_run: true,
+      status: "dry_run",
     });
     expect(fetch).not.toHaveBeenCalled();
     if (cents === undefined) {

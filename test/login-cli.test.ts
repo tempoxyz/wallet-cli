@@ -34,7 +34,7 @@ describe("tempo wallet login", () => {
     );
     expect(result.stderr.includes("Waiting for approval")).toBe(waits);
     expect(result.polls).toBe(waits ? 2 : 0);
-    expect(result.stdout).toContain(waits ? testWallet : "ABCD-EFG1");
+    expect(result.stdout).toContain(waits ? testWallet.toLowerCase() : "ABCD-EFG1");
     expect(Boolean(await loadPendingLogin())).toBe(!waits);
     expect((await loadWalletState()).accounts).toEqual(waits ? [{ address: testWallet }] : []);
   });
@@ -53,7 +53,11 @@ describe("tempo wallet login", () => {
       _next: { command: "tempo wallet login status --interval 1 --network testnet" },
     });
     expect(status.code, status.stderr).toBe(0);
-    expect(JSON.parse(status.stdout)).toMatchObject({ accounts: [testWallet], chainId: 42431 });
+    expect(JSON.parse(status.stdout)).toMatchObject({
+      accounts: [testWallet.toLowerCase()],
+      chain_id: 42431,
+      network: "tempo-moderato",
+    });
     expect((await loadWalletState()).accounts).toEqual([{ address: testWallet }]);
   });
 

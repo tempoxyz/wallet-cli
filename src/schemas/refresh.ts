@@ -1,6 +1,6 @@
 import { z } from "incur";
 
-import { browserOption, globalOptionShape } from "./shared.js";
+import { browserOption, globalOptionShape, networkOutputShape } from "./shared.js";
 
 export const refreshOptions = z.object({
   ...globalOptionShape,
@@ -9,5 +9,5 @@ export const refreshOptions = z.object({
 
 export const refreshOutput = z.object({
   accounts: z.array(z.string()),
-  chainId: z.number(),
+  ...networkOutputShape,
 });

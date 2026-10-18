@@ -315,7 +315,7 @@ const walletAppCommands = [
   {
     command: "sessions close --dry-run",
     argv: ["sessions", "close", "https://service.example", "--dry-run"],
-    ran: { code: 0, stdout: { targets: [{ state: "not found" }] } },
+    ran: { code: 0, stdout: { status: "dry_run", targets: [{ status: "not_found" }] } },
   },
   {
     command: "sessions close --finalize",
@@ -440,7 +440,7 @@ describe("wallet CLI login and access key checks", () => {
     const result = await wallet(argv, { HOME: home, ...env });
 
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ dry_run: true });
+    expect(JSON.parse(result.stdout)).toMatchObject({ status: "dry_run" });
   });
 
   const keyProblems = [

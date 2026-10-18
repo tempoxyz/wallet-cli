@@ -14,13 +14,7 @@ import {
 import { usageError } from "../shared/errors.js";
 import { querySql } from "../shared/process.js";
 import { knownToken } from "../shared/tokens.js";
-import {
-  cleanStoredScalar,
-  formatTokenUnits,
-  getArray,
-  getRecord,
-  parseStoredBigInt,
-} from "../shared/utils.js";
+import { cleanStoredScalar, getArray, getRecord, parseStoredBigInt } from "../shared/utils.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
 import { assetBalances, fetchWalletAssets, type WalletAsset } from "../wallet/balances.js";
 import {
@@ -262,9 +256,9 @@ function balanceOutput(
 ) {
   const total = balance ? balance.raw + sessions.locked + sessions.pendingRefund : null;
   return {
-    total: total === null ? null : formatTokenUnits(total, 6),
-    locked: formatTokenUnits(sessions.locked, 6),
-    pending_refund: formatTokenUnits(sessions.pendingRefund, 6),
+    total: total === null ? null : formatUnits(total, 6),
+    locked: formatUnits(sessions.locked, 6),
+    pending_refund: formatUnits(sessions.pendingRefund, 6),
     available: balance?.formatted ?? null,
     active_sessions: sessions.active,
     symbol,

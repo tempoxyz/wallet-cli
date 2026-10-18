@@ -33,7 +33,7 @@ const spendingLimitOutput = z.object({
 export const accessKeyOutput = z.object({
   address: z.string(),
   ...networkOutputShape,
-  wallet_address: z.string(),
+  wallet: z.string(),
   symbol: z.string().nullable(),
   token: z.string(),
   balance: z.string().nullable(),
@@ -61,7 +61,7 @@ export const accessKeyOutput = z.object({
     }),
   ),
   status: z
-    .string()
+    .enum(["ready", "pending", "expired", "unusable"])
     .nullable()
     .describe(
       "ready or pending: the key can pay. pending: signed but not yet published on chain; its first payment publishes it. expired or unusable: it cannot pay",

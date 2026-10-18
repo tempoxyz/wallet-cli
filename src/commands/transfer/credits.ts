@@ -80,12 +80,7 @@ export async function transferCredits(options: {
   if (maxSpend !== undefined && BigInt(amountCents) * 10_000n > parseUnits(maxSpend, 6))
     throw usageError(`MPP Credits payment exceeds TEMPO_MAX_SPEND (${maxSpend})`);
 
-  if (options.options["dry-run"]) {
-    return {
-      ...output,
-      dry_run: true,
-    };
-  }
+  if (options.options["dry-run"]) return { status: "dry_run" as const, ...output };
 
   if (challenge && cents === undefined && maxSpend === undefined)
     throw usageError("MPP Credits challenge payments require --amount-cents or TEMPO_MAX_SPEND");
@@ -127,10 +122,7 @@ export async function transferCredits(options: {
       "MPP Credits redemption did not return a transaction hash. Check your wallet activity before retrying.",
     );
 
-  return {
-    ...output,
-    tx_hash: txHash,
-  };
+  return { status: "success" as const, ...output, tx_hash: txHash };
 }
 
 async function mppChallengeInput(options: {

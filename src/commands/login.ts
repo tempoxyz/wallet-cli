@@ -13,7 +13,13 @@ import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { connect, createLoginProvider } from "../provider.js";
 import { commandError } from "../shared/errors.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
-import { explicitNetwork, parseNetwork, resolveNetwork, type Network } from "../shared/network.js";
+import {
+  explicitNetwork,
+  networkFields,
+  parseNetwork,
+  resolveNetwork,
+  type Network,
+} from "../shared/network.js";
 import { openExternal } from "../shared/process.js";
 import { formatUnixTimestamp, getRecord, nowSeconds, sanitizeText } from "../shared/utils.js";
 import {
@@ -231,8 +237,8 @@ async function finishLogin(pending: PendingLogin, network: Network, options: Pol
       login,
     );
   return {
-    accounts: result.accounts.map((account) => account.address),
-    chainId: network.chainId,
+    accounts: result.accounts.map((account) => account.address.toLowerCase()),
+    ...networkFields(network.chainId),
     ...nextStep("Run the next command to confirm the wallet is ready.", ["wallet", "whoami"], {
       network,
     }),

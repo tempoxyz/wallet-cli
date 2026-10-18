@@ -61,7 +61,7 @@ export const fundOutput = z.object({
   url: z.string(),
   ...networkOutputShape,
   token: z.string(),
-  symbol: z.string().optional(),
+  symbol: z.string().nullable(),
   amount: z.string().nullable(),
   balance: z.string().nullable(),
   raw_balance: z.string().nullable(),

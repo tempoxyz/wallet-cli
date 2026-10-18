@@ -60,7 +60,7 @@ export const whoamiOutput = z.union([
         access_key_limit: z.string().nullable(),
       }),
     ),
-    key: accessKeyOutput.omit({ wallet_address: true }).nullable(),
+    key: accessKeyOutput.omit({ wallet: true }).nullable(),
   }),
   machOutput,
   creditsOutput,

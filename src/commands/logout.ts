@@ -261,7 +261,7 @@ export async function logoutHandler(
     ...output,
     keys: keys.map((key) => ({
       address: key.address.toLowerCase(),
-      wallet_address: key.access.toLowerCase(),
+      wallet: key.access.toLowerCase(),
       ...networkFields(key.chainId),
       revoked: revoked.some(sameKey(key)),
     })),

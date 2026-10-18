@@ -1,6 +1,12 @@
 import { z } from "incur";
 
-import { browserOption, describeMeta, globalOptionShape, nextOutputShape } from "./shared.js";
+import {
+  browserOption,
+  describeMeta,
+  globalOptionShape,
+  networkOutputShape,
+  nextOutputShape,
+} from "./shared.js";
 import { whoamiOutput } from "./whoami.js";
 
 export const loginOptions = z.object({
@@ -37,7 +43,7 @@ export const loginStatusOptions = z.object({
 
 export const loginStatusOutput = z.object({
   accounts: z.array(z.string()),
-  chainId: z.number(),
+  ...networkOutputShape,
   ...nextOutputShape,
 });
 

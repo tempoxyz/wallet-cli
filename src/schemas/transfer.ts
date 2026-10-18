@@ -37,7 +37,11 @@ export const transferOptions = z.object({
   address,
 });
 
+/** A MACH or MPP Credits payment: reviewed with `--dry-run`, else sent. */
+const paymentStatus = z.enum(["dry_run", "success"]);
+
 export const spendCreditsOutput = z.object({
+  status: paymentStatus,
   wallet: z.string(),
   amount_cents: z.number(),
   ...networkOutputShape,
@@ -49,20 +53,19 @@ export const spendCreditsOutput = z.object({
     z.object({ transaction: z.object({ to: z.string(), data: z.string() }) }),
   ]),
   tx_hash: z.string().optional(),
-  dry_run: z.boolean().optional(),
 });
 
 export const spendMachOutput = z.object({
+  status: paymentStatus,
   wallet: z.string().optional(),
   amount: z.string(),
-  amount_raw: z.string(),
+  raw_amount: z.string().describe("amount in MACH base units"),
   token: z.literal("MACH"),
   settlement_currency: z.string(),
   ...networkOutputShape,
   challenge_id: z.string(),
   max_spend: z.string().nullable(),
   tx_hash: z.string().optional(),
-  dry_run: z.boolean().optional(),
   ...nextOutputShape,
 });
 

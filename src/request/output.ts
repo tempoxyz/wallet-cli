@@ -134,7 +134,7 @@ export async function writeMetaFile(
         ...(signer
           ? {
               signer: {
-                address: signer.account.address,
+                address: signer.account.address.toLowerCase(),
                 source: signer.source,
                 ...(signer.source === "flag" ? { warning: privateKeyFlagWarning } : {}),
               },

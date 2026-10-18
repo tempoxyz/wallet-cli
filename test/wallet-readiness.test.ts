@@ -68,7 +68,7 @@ it("reports unknown RPC balances separately from funded and verified zero balanc
     };
     expect(await whoami()).toMatchObject({
       ready: true,
-      balance: { available: "5", total: "5.000000" },
+      balance: { available: "5", total: "5" },
       key: { balance: "5" },
     });
     mode = "failed";
@@ -81,7 +81,7 @@ it("reports unknown RPC balances separately from funded and verified zero balanc
     const zero = await whoami();
     expect(zero).toMatchObject({
       ready: true,
-      balance: { available: "0", total: "0.000000" },
+      balance: { available: "0", total: "0" },
       key: { balance: "0" },
     });
     expect(zero.balance).not.toHaveProperty("error");

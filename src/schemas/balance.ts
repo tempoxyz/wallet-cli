@@ -11,7 +11,7 @@ export const balanceOptions = z.object({
 });
 
 export const balanceOutput = z.object({
-  address: z.string().describe("The logged-in wallet"),
+  wallet: z.string().describe("The logged-in wallet"),
   ...networkOutputShape,
   balances: z.array(
     z.object({

@@ -8,7 +8,7 @@ import {
   tokenAddress,
 } from "../shared/network.js";
 import { knownToken, readTokenMetadata, tokenMetadata } from "../shared/tokens.js";
-import { cleanStoredScalar, formatTokenUnits, formatUnixTimestamp } from "../shared/utils.js";
+import { cleanStoredScalar, formatUnixTimestamp } from "../shared/utils.js";
 import { localAccessKeyStatus } from "./access-key.js";
 import type { WalletState } from "./store.js";
 
@@ -34,7 +34,7 @@ export function currentKeyOutput(
   return {
     address: key.address.toLowerCase(),
     ...networkFields(key.chainId),
-    wallet_address: key.access.toLowerCase(),
+    wallet: key.access.toLowerCase(),
     symbol: tokenDetail?.symbol ?? null,
     token: token.toLowerCase(),
     balance:
@@ -44,7 +44,7 @@ export function currentKeyOutput(
     spending_limit: {
       mode: spendingMode,
       unlimited: spendingMode === "unknown" ? null : spendingMode === "unrestricted",
-      limit: spendingMode === "none" ? "0.000000" : (first?.limit ?? null),
+      limit: spendingMode === "none" ? "0" : (first?.limit ?? null),
       raw_limit: spendingMode === "none" ? "0" : (first?.raw_limit ?? null),
       period_seconds: first?.period_seconds ?? null,
       remaining: first?.remaining ?? null,
@@ -168,7 +168,7 @@ function formatLimit(value: string, detail: TokenDetail | undefined) {
   const raw = cleanStoredScalar(value);
   if (!/^\d+$/.test(raw)) return raw;
   const decimals = detail?.decimals ?? null;
-  return decimals === null ? null : formatTokenUnits(BigInt(raw), decimals);
+  return decimals === null ? null : formatUnits(BigInt(raw), decimals);
 }
 
 function accessKeyScopesOutput(key: WalletState["accessKeys"][number]) {
