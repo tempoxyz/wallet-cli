@@ -1,7 +1,7 @@
 import { z } from "incur";
 
 import { sendArgs, sendOptions, sendOutput } from "./send.js";
-import { networkOutputShape, nextOutputShape } from "./shared.js";
+import { describeMeta, networkOutputShape, nextOutputShape } from "./shared.js";
 
 // A token transfer is `send` under its former name, so it takes the same arguments and options.
 export const transferArgs = sendArgs.partial();
@@ -15,15 +15,24 @@ export const transferOptions = z.object({
   "max-spend": z
     .string()
     .optional()
-    .describe("Maximum MACH spend in USD for the exact MPP challenge"),
+    .describe("Maximum MACH spend in USD for the exact MPP challenge")
+    .register(describeMeta, { valueName: "AMOUNT" }),
   "amount-cents": z.coerce
     .number()
     .optional()
     .describe("Credits amount or MPP challenge spending cap in USD cents; --credits only"),
-  to: z.string().optional().describe("Credits recipient; --credits only"),
+  // Named apart from the recipient argument, as `--describe` names each argument once.
+  to: z
+    .string()
+    .optional()
+    .describe("Credits recipient; --credits only")
+    .register(describeMeta, { name: "credits_to" }),
   data: z.string().optional().describe("Credits calldata; --credits only"),
   "mpp-challenge": z.string().optional().describe("MPP WWW-Authenticate challenge"),
-  "mpp-challenge-file": z.string().optional().describe("File containing an MPP challenge"),
+  "mpp-challenge-file": z
+    .string()
+    .optional()
+    .describe("File containing an MPP WWW-Authenticate challenge"),
   "mpp-client-id": z.string().optional().describe("Optional client ID for MPP attribution memo"),
   address,
 });

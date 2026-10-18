@@ -2,7 +2,6 @@ import type { z } from "incur";
 import type { Address, Hex } from "viem";
 
 import { destructive } from "../../cli/command.js";
-import { option } from "../../cli/describe.js";
 import { sessionsListOutput, sessionsSyncOptions } from "../../schemas/sessions.js";
 import { globalAlias, type cliGlobals } from "../../schemas/shared.js";
 import { escrowContract, resolveNetwork } from "../../shared/network.js";
@@ -34,16 +33,6 @@ export const syncCommand = {
 
 // Deletes stored sessions whose channel the chain shows finalized or does not hold.
 export const syncAnnotations = { ...destructive, idempotentHint: true, openWorldHint: true };
-
-export const syncDescribe = {
-  name: "sync",
-  about: "Sync local sessions with on-chain state",
-  args: [
-    option("origin", "--origin", "Re-sync a specific origin's close state from on-chain", {
-      valueName: "ORIGIN",
-    }),
-  ],
-};
 
 export async function syncSessions(options: {
   network?: string | undefined;

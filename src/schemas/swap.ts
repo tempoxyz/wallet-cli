@@ -1,6 +1,7 @@
 import { z } from "incur";
 
 import {
+  describeMeta,
   globalOptionShape,
   idempotencyKeyOption,
   networkOutputShape,
@@ -19,15 +20,21 @@ export const swapArgs = z.object({
 export const swapOptions = z.object({
   ...globalOptionShape,
   "exact-out": z.boolean().optional().describe("Treat amount as the exact output amount"),
-  "slippage-bps": z.coerce.number().default(50).describe("Maximum slippage in basis points"),
+  "slippage-bps": z.coerce
+    .number()
+    .default(50)
+    .describe("Maximum slippage in basis points")
+    .register(describeMeta, { valueName: "BPS" }),
   "min-amount-out": z
     .string()
     .optional()
-    .describe("Exact input: refuse to receive less than this reviewed tokenOut amount"),
+    .describe("Exact input: refuse to receive less than this reviewed tokenOut amount")
+    .register(describeMeta, { valueName: "AMOUNT" }),
   "max-amount-in": z
     .string()
     .optional()
-    .describe("Exact output: refuse to spend more than this reviewed tokenIn amount"),
+    .describe("Exact output: refuse to spend more than this reviewed tokenIn amount")
+    .register(describeMeta, { valueName: "AMOUNT" }),
   "fee-token": z
     .string()
     .optional()

@@ -1,47 +1,50 @@
+import { z } from "incur";
+
 import { commandTokens } from "./argv.js";
 import type { WalletCommand } from "./command.js";
-import { flag, option } from "./describe.js";
 
-/** incur's builtin `mcp`, which incur mounts; `--describe` lists it. */
+// incur defines its builtins in an internal module it does not export, so the ones wallet
+// documents are restated here in the same shape: what `--describe`, completions, and the README
+// list of them.
+
+const noGlobal = z.boolean().optional().describe("Install to project instead of globally");
+
+/** incur's builtin `mcp`, which incur mounts. */
 export const mcp: WalletCommand = {
-  describe: {
+  builtin: {
     name: "mcp",
-    about: "Register as MCP server",
+    description: "Register as MCP server",
     subcommands: [
       {
         name: "add",
-        about: "Register as MCP server",
-        args: [
-          option("agent", "--agent", "Target a specific agent", { valueName: "AGENT" }),
-          option("command", "--command", "Override the command agents will run", {
-            short: "-c",
-            valueName: "COMMAND",
-          }),
-          flag("no_global", "--no-global", "Install to project instead of globally"),
-        ],
+        description: "Register as MCP server",
+        options: z.object({
+          agent: z.string().optional().describe("Target a specific agent"),
+          command: z.string().optional().describe("Override the command agents will run"),
+          noGlobal,
+        }),
+        alias: { command: "c" },
       },
     ],
   },
 };
 
-/** incur's builtin `skills`, which incur mounts; `--describe` lists it. */
+/** incur's builtin `skills`, which incur mounts. */
 export const skills: WalletCommand = {
-  describe: {
+  builtin: {
     name: "skills",
-    about: "Sync skill files to agents",
     aliases: ["skill"],
+    description: "Sync skill files to agents",
     subcommands: [
       {
         name: "add",
-        about: "Sync skill files to agents",
-        args: [
-          option("depth", "--depth", "Grouping depth for skill files", {
-            valueName: "DEPTH",
-          }),
-          flag("no_global", "--no-global", "Install to project instead of globally"),
-        ],
+        description: "Sync skill files to agents",
+        options: z.object({
+          depth: z.number().optional().describe("Grouping depth for skill files"),
+          noGlobal,
+        }),
       },
-      { name: "list", about: "List skills", aliases: ["ls"] },
+      { name: "list", aliases: ["ls"], description: "List skills" },
     ],
   },
 };

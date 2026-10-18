@@ -1,7 +1,6 @@
 import type { z } from "incur";
 
 import { nonDestructive } from "../../cli/command.js";
-import { flag } from "../../cli/describe.js";
 import { sessionsListOptions, sessionsListOutput } from "../../schemas/sessions.js";
 import { globalAlias, type cliGlobals } from "../../schemas/shared.js";
 import { networkFields, resolveNetwork, type Network } from "../../shared/network.js";
@@ -35,15 +34,6 @@ export const listCommand = {
 
 // With `all` or `orphaned`, stores channels discovered on-chain that were not stored yet.
 export const listAnnotations = { ...nonDestructive, idempotentHint: true, openWorldHint: true };
-
-export const listDescribe = {
-  name: "list",
-  about: "List payment sessions",
-  args: [
-    flag("orphaned", "--orphaned", "Include on-chain orphaned discovery"),
-    flag("all", "--all", "Include local sessions and orphaned discovery"),
-  ],
-};
 
 export async function listSessions(
   options: {

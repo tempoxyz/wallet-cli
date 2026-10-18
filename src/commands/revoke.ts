@@ -2,7 +2,7 @@ import { Cli } from "incur";
 
 import type { WalletCommand } from "../cli/command.js";
 import { cliGlobals } from "../schemas/shared.js";
-import { revokeAnnotations, revokeCommand, revokeDescribe } from "./keys.js";
+import { revokeAnnotations, revokeCommand } from "./keys.js";
 
 // `keys revoke` under its former name, for a release or two.
 export default {
@@ -21,5 +21,4 @@ export default {
     },
   }),
   annotations: { revoke: revokeAnnotations },
-  describe: { ...revokeDescribe, about: "Deprecated: use 'keys revoke'" },
 } satisfies WalletCommand;

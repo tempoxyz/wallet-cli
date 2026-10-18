@@ -343,7 +343,8 @@ describe("generated CLI metadata", () => {
       "search",
       "show",
     ]);
-    expect(services?.args).toBeUndefined();
+    // Bare `services` lists services; the forms that took an id or `--search` are not described.
+    expect(services?.args?.map((arg) => arg.long)).toEqual(["--refresh"]);
 
     const keys = manifest.subcommands.find((command) => command.name === "keys");
     expect(keys?.subcommands?.map((command) => command.name)).toEqual(["list", "update", "revoke"]);
@@ -505,7 +506,9 @@ describe("generated CLI metadata", () => {
     { command: ["keys", "revoke"], flags: ["--dry-run", "--yes", "--no-browser"] },
     { command: ["revoke"], flags: ["--dry-run", "--yes", "--no-browser"] },
     { command: ["logout"], flags: ["--revoke", "--yes", "--no-browser"] },
+    { command: ["sessions"], flags: ["--orphaned", "--all"] },
     { command: ["sessions", "close"], flags: ["--dry-run", "--yes"] },
+    { command: ["services"], flags: ["--refresh"] },
     { command: ["send"], flags: ["--idempotency-key"] },
     { command: ["transfer"], flags: ["--idempotency-key"] },
     { command: ["swap"], flags: ["--idempotency-key"] },

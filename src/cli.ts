@@ -44,7 +44,7 @@ export default cli;
 async function main() {
   const rawArgs = process.argv.slice(2);
   if (rawArgs.includes("--describe")) {
-    process.stdout.write(`${JSON.stringify(describeCli(commands))}\n`);
+    process.stdout.write(`${JSON.stringify(describeCli(cli, commands))}\n`);
     process.exit(0);
   }
 

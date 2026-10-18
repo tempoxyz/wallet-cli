@@ -241,10 +241,10 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `send`,
 - `login status`: Wait for a pending login's approval and finish it. Options: `--interval`, `--max-attempts`.
 - `refresh`: Refresh your access key without logging out. Options: `--no-browser`.
 - `logout`: Log out of every network, or of one with --network. Options: `--revoke`, `--yes`, `--no-browser`.
-- `whoami`: Show who you are: wallet, balances, keys. Options: `--mach`, `--credits`.
+- `whoami`: Show who you are: wallet, balances, keys (key.spending_limit is deprecated; use key.spending_limits). Options: `--mach`, `--credits`.
 - `balance`: Show the wallet's token balances. Options: `--token`.
 - `address`: Show the wallet address. Options: `--qr`.
-- `keys list`: List keys and their spending limits.
+- `keys list`: List keys and their spending limits (spending_limit is deprecated; use spending_limits).
 - `keys update [accessKey]`: Update an access key spending limit. Options: `--limit`, `--token`, `--no-browser`.
 - `keys revoke <accessKey>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
 - `revoke <accessKey>`: Deprecated: use 'keys revoke'. Options: `--dry-run`, `--yes`, `--no-browser`.

@@ -2,7 +2,6 @@ import { Cli } from "incur";
 import { formatUnits } from "viem";
 
 import { readOnly, type WalletCommand } from "../cli/command.js";
-import { flag } from "../cli/describe.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { whoamiOptions, whoamiOutput } from "../schemas/whoami.js";
 import {
@@ -46,7 +45,8 @@ import { queryCreditBalance, warnCreditsDeprecated } from "./credits.js";
 
 export default {
   command: Cli.create("whoami", {
-    description: "Show who you are: wallet, balances, keys",
+    description:
+      "Show who you are: wallet, balances, keys (key.spending_limit is deprecated; use key.spending_limits)",
     globals: cliGlobals,
     options: whoamiOptions,
     alias: globalAlias,
@@ -56,15 +56,6 @@ export default {
     },
   }),
   annotations: { whoami: { ...readOnly, openWorldHint: true } },
-  describe: {
-    name: "whoami",
-    about:
-      "Show who you are: wallet, balances, keys (key.spending_limit is deprecated; use key.spending_limits)",
-    args: [
-      flag("mach", "--mach", "Show on-chain MACH balance"),
-      flag("credits", "--credits", "Show existing MPP Credits balance (deprecated)"),
-    ],
-  },
 } satisfies WalletCommand;
 
 /** Whoami output when the active wallet already has a usable access key on `network`. */

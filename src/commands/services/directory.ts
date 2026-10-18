@@ -5,7 +5,6 @@ import { dirname, join } from "node:path";
 
 import { formatUnits } from "viem";
 
-import { flag } from "../../cli/describe.js";
 import { version } from "../../shared/constants.js";
 import { httpError, networkError } from "../../shared/errors.js";
 import { getArray, getRecord, sanitizeText, stringValue } from "../../shared/utils.js";
@@ -25,13 +24,6 @@ type ServiceDetail = ServiceSummary & {
   docs?: unknown;
   endpoints?: unknown[] | undefined;
 };
-
-/** The `--describe` entry of `--refresh`, which bare `services` and each subcommand take. */
-export const refreshFlag = flag(
-  "refresh",
-  "--refresh",
-  "Fetch the service directory instead of using the cached copy",
-);
 
 // Ids select a service, so they are matched raw and must be plain slugs.
 const serviceIdPattern = /^[a-z0-9][a-z0-9._-]*$/i;

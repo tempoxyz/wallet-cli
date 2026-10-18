@@ -1,11 +1,10 @@
 import type { z } from "incur";
 
 import { readOnly } from "../../cli/command.js";
-import { positional } from "../../cli/describe.js";
 import { servicesListOutput, servicesOptions, servicesSearchArgs } from "../../schemas/services.js";
 import { globalAlias } from "../../schemas/shared.js";
 import { usageError } from "../../shared/errors.js";
-import { loadServices, markStale, refreshFlag, type ServiceSummary } from "./directory.js";
+import { loadServices, markStale, type ServiceSummary } from "./directory.js";
 
 // The definition is declared apart from the group's `.command()`, so its run context is typed here.
 type SearchContext = {
@@ -25,15 +24,6 @@ export const searchCommand = {
 };
 
 export const searchAnnotations = { ...readOnly, openWorldHint: true };
-
-export const searchDescribe = {
-  name: "search",
-  about: "Search services by name, id, description, tags, or category; every word must match",
-  args: [
-    positional("query", "Words to match in name, id, description, tags, or category"),
-    refreshFlag,
-  ],
-};
 
 /** The services matching every query word in some field, exact id or name matches first. */
 export async function searchServices(options: {

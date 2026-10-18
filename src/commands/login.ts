@@ -3,7 +3,6 @@ import { TimeoutError } from "accounts/deviceCode";
 import { Cli } from "incur";
 
 import { destructive, type WalletCommand } from "../cli/command.js";
-import { flag, option } from "../cli/describe.js";
 import {
   loginOptions,
   loginOutput,
@@ -63,29 +62,6 @@ export default {
     // login, and once approved, stores the approved account in place of the current one.
     login: { ...destructive, idempotentHint: false, openWorldHint: true },
     login_status: { ...destructive, idempotentHint: true, openWorldHint: true },
-  },
-  describe: {
-    name: "login",
-    about: "Sign up or log in to your Tempo wallet",
-    args: [
-      flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
-      flag("wait", "--wait", "Wait for approval (default in a terminal)"),
-      flag("no_wait", "--no-wait", "Return the code and URL for 'login status' immediately"),
-    ],
-    subcommands: [
-      {
-        name: "status",
-        about: "Wait for a pending login's approval and finish it",
-        args: [
-          option("interval", "--interval", "Seconds between checks", {
-            valueName: "SECONDS",
-          }),
-          option("max_attempts", "--max-attempts", "Checks before giving up", {
-            valueName: "COUNT",
-          }),
-        ],
-      },
-    ],
   },
 } satisfies WalletCommand;
 

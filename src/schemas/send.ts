@@ -16,7 +16,12 @@ export const sendArgs = z.object({
 
 export const sendOptions = z.object({
   ...globalOptionShape,
-  "fee-token": z.string().optional().describe("Pay fees in a different token (address or symbol)"),
+  "fee-token": z
+    .string()
+    .optional()
+    .describe(
+      "Pay fees in a different token, by address or symbol (default: the account's fee token, else the same token)",
+    ),
   "dry-run": z.boolean().optional().describe("Show plan, fee estimate, and balance; don't send"),
   yes: z
     .boolean()

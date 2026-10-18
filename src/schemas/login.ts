@@ -1,6 +1,6 @@
 import { z } from "incur";
 
-import { browserOption, globalOptionShape, nextOutputShape } from "./shared.js";
+import { browserOption, describeMeta, globalOptionShape, nextOutputShape } from "./shared.js";
 import { whoamiOutput } from "./whoami.js";
 
 export const loginOptions = z.object({
@@ -11,7 +11,10 @@ export const loginOptions = z.object({
     .optional()
     .describe(
       "Wait for approval (default in a terminal); --no-wait returns the code for 'login status'",
-    ),
+    )
+    .register(describeMeta, {
+      negated: "Return the code and URL for 'login status' immediately",
+    }),
 });
 
 export const loginStatusOptions = z.object({
@@ -21,13 +24,15 @@ export const loginStatusOptions = z.object({
     .int()
     .positive()
     .optional()
-    .describe("Seconds between checks (default: the wallet's interval)"),
+    .describe("Seconds between checks (default: the wallet's interval)")
+    .register(describeMeta, { valueName: "SECONDS" }),
   "max-attempts": z.coerce
     .number()
     .int()
     .positive()
     .optional()
-    .describe("Checks before giving up with E_POLL_TIMEOUT (default: until the code expires)"),
+    .describe("Checks before giving up with E_POLL_TIMEOUT (default: until the code expires)")
+    .register(describeMeta, { valueName: "COUNT" }),
 });
 
 export const loginStatusOutput = z.object({

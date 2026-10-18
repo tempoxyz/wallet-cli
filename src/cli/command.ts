@@ -2,12 +2,13 @@ import { Cli, type Mcp, type z } from "incur";
 
 import { walletError } from "../shared/errors.js";
 import type { RetiredFlag } from "./argv.js";
-import type { Describe } from "./describe.js";
 
 /** What each command module default-exports for `tempo wallet` to mount and describe. */
 export type WalletCommand = {
   /** The incur command, or a group of them; unset for incur's builtins, which incur mounts. */
   command?: Cli.Cli<any, any, any, any, any> | undefined;
+  /** For incur's builtins, which incur defines and mounts, what wallet documents of them. */
+  builtin?: Builtin | undefined;
   /**
    * MCP tool annotations by tool name (`keys update` is `keys_update`), so clients can tell reads
    * from spends. Refreshing the service directory cache is a read; storing discovered sessions is
@@ -18,10 +19,25 @@ export type WalletCommand = {
    * into confirmation hints in `--llms-full` and synced skills.
    */
   annotations?: Record<string, Mcp.ToolAnnotations> | undefined;
-  /** The `--describe` entry. Optional: a command without one, like `completions`, is left out. */
-  describe?: Describe | undefined;
+  /** Left out of `--describe`, as `completions` is. */
+  hidden?: boolean | undefined;
   /** Flags an earlier form of it took, each failing with what replaces it; see `retireFlags`. */
   retiredFlags?: readonly RetiredFlag[] | undefined;
+};
+
+/** The parts of an incur command definition that `--describe` and the README document. */
+export type CommandDefinition = {
+  description?: string | undefined;
+  args?: z.ZodObject | undefined;
+  options?: z.ZodObject | undefined;
+  alias?: Record<string, string | undefined> | undefined;
+};
+
+/** One of incur's builtin commands or their subcommands, which incur does not export. */
+export type Builtin = CommandDefinition & {
+  name: string;
+  aliases?: string[] | undefined;
+  subcommands?: Builtin[] | undefined;
 };
 
 export const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true };

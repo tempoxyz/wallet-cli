@@ -1,5 +1,22 @@
 import { z } from "incur";
 
+/**
+ * What `--describe` shows of an option beyond its schema, registered on the option with
+ * `.register(describeMeta, { ... })`. It is a registry rather than `.meta()`, which incur would
+ * copy into the JSON Schema of `--schema`, `--llms-full`, and MCP tools.
+ */
+export const describeMeta = z.registry<{
+  /** The entry's name, when its own would repeat a positional's, as `--to` does in `transfer`. */
+  name?: string | undefined;
+  /** The placeholder for the option's value; defaults to its name in upper case. */
+  valueName?: string | undefined;
+  /**
+   * Help for the `--no-<name>` form of a boolean, which `--describe` and the README then list
+   * after the flag. A boolean that defaults to true is listed in this form only.
+   */
+  negated?: string | undefined;
+}>();
+
 /** CLI-level options incur parses anywhere in argv; commands and middleware read `c.globals`. */
 export const cliGlobals = z.object({
   network: z
@@ -16,7 +33,10 @@ export const globalOptionShape = {
   verbose: z.boolean().optional().describe("Increase verbosity"),
   silent: z.boolean().optional().describe("Silent mode: suppress non-essential output"),
   "json-output": z.boolean().optional().describe("Quick switch for JSON output format"),
-  "toon-output": z.boolean().optional().describe("Quick switch for TOON output format"),
+  "toon-output": z
+    .boolean()
+    .optional()
+    .describe("Quick switch for TOON output format (compact, token-efficient)"),
 };
 
 export const globalAlias = {
@@ -32,7 +52,8 @@ export const globalOptions = z.object(globalOptionShape);
 export const browserOption = z
   .boolean()
   .default(true)
-  .describe("Open a browser; use --no-browser to disable");
+  .describe("Open a browser; use --no-browser to disable")
+  .register(describeMeta, { negated: "Do not attempt to open a browser" });
 
 /** Matches `networkFields`: the chain a command ran against and its network label. */
 export const networkOutputShape = {
@@ -68,7 +89,8 @@ export const idempotencyKeyOption = z
   .optional()
   .describe(
     "Send at most once per key for this wallet and network; a retry with the same key returns the recorded result instead of sending again",
-  );
+  )
+  .register(describeMeta, { valueName: "KEY" });
 
 /** Fields a send replayed from its idempotency key adds to the result it recorded. */
 export const replayOutputShape = {

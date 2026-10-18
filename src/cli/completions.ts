@@ -43,8 +43,8 @@ export function walletCompletions(
     const entries = mounted as Parameters<typeof Completions.complete>[0];
     return [
       ...Completions.complete(entries, undefined, [""], 0),
-      ...commands.flatMap(({ command, describe }) =>
-        command || !describe ? [] : [{ value: describe.name, description: describe.about }],
+      ...commands.flatMap(({ builtin, command }) =>
+        command || !builtin ? [] : [{ value: builtin.name, description: builtin.description }],
       ),
       { value: "help", description: "Show help for a command" },
       ...Completions.complete(entries, undefined, ["-"], 0, {

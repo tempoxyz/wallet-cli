@@ -1,6 +1,12 @@
 import { z } from "incur";
 
-import { browserOption, globalOptionShape, networkOutputShape, nextOutputShape } from "./shared.js";
+import {
+  browserOption,
+  describeMeta,
+  globalOptionShape,
+  networkOutputShape,
+  nextOutputShape,
+} from "./shared.js";
 
 const spendingLimitOutput = z.object({
   unlimited: z.boolean(),
@@ -83,7 +89,10 @@ export const updateAccessKeyArgs = z.object({
 
 export const updateAccessKeyOptions = z.object({
   ...globalOptionShape,
-  limit: z.string().describe("New remaining limit in human token units"),
+  limit: z
+    .string()
+    .describe("New remaining limit in human token units")
+    .register(describeMeta, { valueName: "AMOUNT" }),
   token: z
     .string()
     .optional()

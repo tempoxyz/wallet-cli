@@ -4,9 +4,9 @@ import type { WalletCommand } from "../../cli/command.js";
 import { servicesListOutput, servicesOptions } from "../../schemas/services.js";
 import { globalAlias } from "../../schemas/shared.js";
 import { deprecatedAnnotations } from "./deprecated.js";
-import { listAnnotations, listCommand, listDescribe, listServices } from "./list.js";
-import { searchAnnotations, searchCommand, searchDescribe } from "./search.js";
-import { showAnnotations, showCommand, showDescribe } from "./show.js";
+import { listAnnotations, listCommand, listServices } from "./list.js";
+import { searchAnnotations, searchCommand } from "./search.js";
+import { showAnnotations, showCommand } from "./show.js";
 
 // Bare `tempo wallet services` lists services. MCP serves the deprecated `services` tool in its
 // place for one release; see `deprecatedCommand`.
@@ -28,10 +28,5 @@ export default {
     services_list: listAnnotations,
     services_search: searchAnnotations,
     services_show: showAnnotations,
-  },
-  describe: {
-    name: "services",
-    about: "Browse the MPP service directory",
-    subcommands: [listDescribe, searchDescribe, showDescribe],
   },
 } satisfies WalletCommand;

@@ -8,8 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { docBlocks, renderBlocks, replaceBlocks, updateDocs } from "../scripts/docs.js";
 import { destructive, readOnly, type WalletCommand } from "../src/cli/command.js";
 import { builtinFlags } from "../src/cli/completions.js";
-import { flag, option } from "../src/cli/describe.js";
-import { globalAlias, globalOptionShape } from "../src/schemas/shared.js";
+import { describeMeta, globalAlias, globalOptionShape } from "../src/schemas/shared.js";
 
 const start = (name: string) => `<!-- generated:${name} start -->`;
 const end = (name: string) => `<!-- generated:${name} end -->`;
@@ -23,8 +22,9 @@ const fixture: WalletCommand[] = [
         ...globalOptionShape,
         browser: z.boolean().default(true),
         "dry-run": z.boolean().optional(),
+        // A boolean lists its negated form only when it registers help for that form.
         wait: z.boolean().optional().describe("Wait for the payment; --no-wait returns at once"),
-        follow: z.boolean().default(false),
+        follow: z.boolean().default(false).register(describeMeta, { negated: "Do not follow" }),
         maxSpend: z.string().optional(),
       }),
       alias: { ...globalAlias, "dry-run": "d" },
@@ -32,35 +32,30 @@ const fixture: WalletCommand[] = [
     }).command("status", {
       description: "Show a payment.",
       args: z.object({ format: z.enum(["short", "long"]).optional() }),
-      options: z.object({ ...globalOptionShape, quiet: z.boolean().optional() }),
+      options: z.object({
+        ...globalOptionShape,
+        quiet: z.boolean().optional().register(describeMeta, { negated: "Talk" }),
+      }),
       run: () => ({}),
     }),
     annotations: {
       pay: { ...destructive, idempotentHint: false, openWorldHint: true },
       pay_status: { ...readOnly, openWorldHint: false },
     },
-    // `--describe` names negated forms that the options' help text leaves out.
-    describe: {
-      name: "pay",
-      about: "Pay an address",
-      args: [flag("no_follow", "--no-follow", "Do not follow")],
-      subcommands: [
-        { name: "status", about: "Show a payment", args: [flag("no_quiet", "--no-quiet", "Talk")] },
-      ],
-    },
   },
   {
-    describe: {
+    builtin: {
       name: "mcp",
-      about: "Register as MCP server",
+      description: "Register as MCP server",
       subcommands: [
         {
           name: "add",
-          about: "Register as MCP server",
-          args: [
-            option("command", "--command", "Command", { short: "-c" }),
-            flag("no_global", "--no-global", "Project"),
-          ],
+          description: "Register as MCP server",
+          options: z.object({
+            command: z.string().optional(),
+            noGlobal: z.boolean().optional(),
+          }),
+          alias: { command: "c" },
         },
       ],
     },
@@ -71,7 +66,7 @@ describe("renderBlocks", () => {
   it("lists each command with its usage, description, and options, then the global options", () => {
     expect(renderBlocks(fixture).commands).toBe(
       [
-        "- `pay <to> [memo]`: Pay an address. Options: `--no-browser`, `--dry-run` (`-d`), `--wait`, `--no-wait`, `--follow`, `--no-follow`, `--max-spend`.",
+        "- `pay <to> [memo]`: Pay an address. Options: `--no-browser`, `--dry-run` (`-d`), `--wait`, `--follow`, `--no-follow`, `--max-spend`.",
         "- `pay status [short|long]`: Show a payment. Options: `--quiet`, `--no-quiet`.",
         "- `mcp add`: Register as MCP server. Options: `--command` (`-c`), `--no-global`.",
         "",
