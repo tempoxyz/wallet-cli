@@ -258,6 +258,9 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `send`,
 - `tx status <tx-hash>`: Show a transaction's status on chain.
 - `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--credits`, `--amount`, `--wait`, `--no-wait`, `--timeout`, `--referral-code`.
 - `fund status`: Wait for a pending funding's balance increase. Options: `--interval`, `--max-attempts`.
+- `funding`: Inspect and reconcile cross-chain funding for paid requests.
+- `funding list`: List cross-chain funding that has not been paid with.
+- `funding recover <id>`: Check a cross-chain funding operation with its route, without sending anything.
 - `sessions`: Manage payment sessions. Options: `--orphaned`, `--all`.
 - `sessions list`: List payment sessions. Options: `--orphaned`, `--all`.
 - `sessions close [target]`: Request a session close, then withdraw after the grace period with --finalize. Options: `--all`, `--orphaned`, `--finalize`, `--cooperative`, `--dry-run`, `--yes`.
@@ -302,6 +305,9 @@ On a terminal with no output format asked for, `tempo wallet` prints a human-rea
 | `doctor`          | true           | false             | true             | true            |
 | `fund`            | false          | false             | false            | true            |
 | `fund_status`     | false          | false             | true             | true            |
+| `funding`         | true           | false             | true             | false           |
+| `funding_list`    | true           | false             | true             | false           |
+| `funding_recover` | false          | false             | true             | true            |
 | `keys_list`       | true           | false             | true             | true            |
 | `keys_revoke`     | false          | true              | true             | true            |
 | `keys_update`     | false          | true              | false            | true            |

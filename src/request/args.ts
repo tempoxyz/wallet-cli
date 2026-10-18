@@ -60,6 +60,9 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
       case "--funding":
         options.funding = requireValue(argv, ++index, arg);
         break;
+      case "--max-funding-spend":
+        options.maxFundingSpend = requireValue(argv, ++index, arg);
+        break;
       case "--payment-network":
         options.paymentNetwork = requireValue(argv, ++index, arg);
         break;
@@ -226,6 +229,10 @@ export function validateRequestOptions(options: RequestOptions) {
   options.network = explicitNetwork(options.network)?.name;
   options.maxSpend = resolveMaxSpend(options.maxSpend);
   fundingSetting(options.funding);
+  if (options.maxFundingSpend !== undefined && !/^\d+(?:\.\d{1,6})?$/.test(options.maxFundingSpend))
+    throw usageError(
+      "--max-funding-spend must be a non-negative amount with at most 6 decimal places",
+    );
   parseMaxSlippageBps(options.maxSlippageBps);
   privateKeySigner(options);
   if (options.mach) {

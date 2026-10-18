@@ -1,5 +1,5 @@
 import { Errors } from "incur";
-import type { Funder } from "machine-fetch/interfaces";
+import type { PaymentPolicy } from "machine-fetch/interfaces";
 import { evm, Mppx } from "mppx/client";
 import { Assets } from "mppx/evm";
 import { formatUnits, parseUnits } from "viem";
@@ -11,6 +11,7 @@ import { destinationBalance } from "../shared/chains.js";
 import { paymentError, walletError } from "../shared/errors.js";
 import { sanitizeText } from "../shared/utils.js";
 import { ensureRemotePayer } from "../wallet/remote-payer.js";
+import { crossChainFunding, relayUrl } from "./cross-chain.js";
 import { cloneRequestInit, type FetchPlan } from "./fetch.js";
 import { parseMaxSlippageBps } from "./funding-mode.js";
 import {
@@ -50,14 +51,10 @@ export async function payEvmAndRetry(
   request: FetchPlan,
   options: RequestOptions,
   stderr: Pick<NodeJS.WriteStream, "write">,
-  funding: {
-    funders?: (payer: EvmPayer) => Funder<unknown>[];
-    attemptId?: string | undefined;
-  } = {},
 ) {
   const network = requestNetwork(options);
   const { destination, requirement } = offer;
-  const policy = {
+  let policy: PaymentPolicy = {
     maxPayment: [
       {
         network: destination.network,
@@ -76,19 +73,23 @@ export async function payEvmAndRetry(
     });
   writePrivateKeyNotice(stderr, options);
   const payer = await evmPayer(options);
-  const funders = funding.funders?.(payer) ?? [];
+  const funding = await crossChainFunding(offer, payer.address, request, options, stderr);
+  const funders = funding?.funders ?? [];
+  if (funding) policy = { ...policy, maxFundingSpend: funding.maxFundingSpend };
   let prepared;
   try {
+    // The attempt ID was saved before this; the payer travels with it, so funding refuses to
+    // deliver to any other account (MF-17, MF-18).
     prepared = await planAndFund(offer.challenge, {
       policy,
       funders,
       payer: payer.address,
-      attemptId: funding.attemptId,
+      attemptId: funding?.attemptId,
     });
   } catch (error) {
     throw report(error);
   }
-  if (funders.length === 0) await assertFunded(offer, payer);
+  if (!funding) await assertFunded(offer, payer, options);
   try {
     const payment = Mppx.create({
       methods: [
@@ -119,7 +120,14 @@ export async function payEvmAndRetry(
     const headers = new Headers(init.headers);
     headers.set(credentialHeader(offer), credential);
     init.headers = headers;
-    const response = await fetchPaidRequest({ init, url: request.url }, options, credential);
+    const response = await fetchPaidRequest(
+      { init, url: request.url },
+      options,
+      credential,
+    ).finally(
+      // The credential was sent, so the funding was used; a rerun funds anew.
+      () => funding?.settled(),
+    );
     paymentReceipts.set(
       response,
       paymentReceipt({
@@ -144,7 +152,7 @@ export async function payEvmAndRetry(
  * Refuses, before signing, an offer the payer's USDC on its chain cannot cover when nothing funds
  * it. An unreadable balance is left to the server's settlement, which moves nothing it lacks.
  */
-async function assertFunded(offer: EvmOffer, payer: EvmPayer) {
+async function assertFunded(offer: EvmOffer, payer: EvmPayer, options: RequestOptions) {
   const { destination, requirement } = offer;
   const balance = await destinationBalance(destination, payer.address).catch(() => undefined);
   if (balance === undefined || balance >= requirement.amount) return;
@@ -152,6 +160,6 @@ async function assertFunded(offer: EvmOffer, payer: EvmPayer) {
   const needed = formatUnits(requirement.amount, destination.usdc.decimals);
   throw walletError({
     code: "E_INSUFFICIENT_FUNDS",
-    message: `The ${payer.wallet ? "remote payer" : "payer"} ${payer.address} holds ${held} USDC on ${destination.name}, below the ${needed} USDC this payment needs. Send USDC on ${destination.name} to ${payer.address}, then retry.`,
+    message: `The ${payer.wallet ? "remote payer" : "payer"} ${payer.address} holds ${held} USDC on ${destination.name}, below the ${needed} USDC this payment needs. Send USDC on ${destination.name} to ${payer.address}, then retry${relayUrl(requestNetwork(options)) ? ", or rerun with --funding auto to bridge it from OUSD" : ""}.`,
   });
 }

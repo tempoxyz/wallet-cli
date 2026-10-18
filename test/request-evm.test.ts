@@ -278,7 +278,7 @@ describe("EVM offers", () => {
 
     await expect(run([], endpoint.url)).rejects.toMatchObject({
       code: "E_INSUFFICIENT_FUNDS",
-      message: `The remote payer ${payer} holds 0.04 USDC on base, below the 0.1 USDC this payment needs. Send USDC on base to ${payer}, then retry.`,
+      message: `The remote payer ${payer} holds 0.04 USDC on base, below the 0.1 USDC this payment needs. Send USDC on base to ${payer}, then retry, or rerun with --funding auto to bridge it from OUSD.`,
     });
     expect(endpoint.paid).toEqual([]);
   });

@@ -18,6 +18,8 @@ const maxSpendHelp = `Hard cap for cumulative payment spend in payment token uni
 const fundingHelp = `Acquire a payment token the wallet does not hold: tempo swaps on the Tempo DEX, auto may also fund other chains, off pays only from held tokens (or TEMPO_FUNDING, then the saved funding setting; default ${defaultFunding})`;
 const paymentNetworkHelp =
   "Pay on this network when the server offers several: tempo, or an EVM chain such as base (default: ranked by what the wallet holds)";
+const maxFundingSpendHelp =
+  "Cap on the OUSD one cross-chain funding may spend, Relay fee and gas included (default: max spend plus 5% and 0.10)";
 const maxSlippageHelp = `Maximum funding slippage in basis points (default ${defaultMaxSlippageBps})`;
 
 const args = z.object({
@@ -37,6 +39,7 @@ const options = z.object({
   mach: z.boolean().optional().describe("Require MACH settlement; alias for --payment-token MACH"),
   funding: z.enum(fundingModes).optional().describe(fundingHelp),
   "payment-network": z.string().optional().describe(paymentNetworkHelp),
+  "max-funding-spend": z.string().optional().describe(maxFundingSpendHelp),
   "max-slippage-bps": z.coerce.number().optional().describe(maxSlippageHelp),
   "payment-token": z
     .string()
@@ -273,6 +276,7 @@ function toRequestOptions(url: string, options: ParsedOptions): RequestOptions {
     mach: options.mach,
     funding: options.funding,
     paymentNetwork: options["payment-network"],
+    maxFundingSpend: options["max-funding-spend"],
     maxSlippageBps: options["max-slippage-bps"],
     paymentIntent: options["payment-intent"],
     paymentToken: options["payment-token"],
@@ -339,6 +343,12 @@ function describeRequestCli() {
         long: "--payment-network",
         value_name: "NETWORK",
         help: paymentNetworkHelp,
+      },
+      {
+        name: "max_funding_spend",
+        long: "--max-funding-spend",
+        value_name: "AMOUNT",
+        help: maxFundingSpendHelp,
       },
       {
         name: "max_slippage_bps",

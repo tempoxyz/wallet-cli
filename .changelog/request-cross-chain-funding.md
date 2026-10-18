@@ -1,0 +1,5 @@
+---
+tempo-request: minor
+---
+
+With `--funding auto` (or `TEMPO_EXPERIMENTAL_CROSS_CHAIN=1`), `tempo request` funds an EVM offer the remote payer cannot cover by bridging exactly the shortfall from OUSD on Tempo to USDC on the offer's chain through Relay, then pays. The Tempo side is a single OUSD transfer to Relay's deposit address, signed by the access key, so its OUSD limit bounds it; every quote is checked before anything is signed (one transfer of OUSD on Tempo to the deposit address, within the quoted input plus slippage, delivering exactly the shortfall to the remote payer), and `--max-funding-spend` caps the OUSD one funding may spend, Relay's fee and gas included (default: `--max-spend` plus 5% and 0.10). Progress goes to stderr. The attempt is saved before funds move, so rerunning a request a crash or timeout interrupted reconciles its funding instead of bridging again, and a new funding first reconciles earlier ones to the same chain. Funding whose outcome is unclear fails with `E_PAYMENT_OUTCOME_UNKNOWN` and the `tempo wallet funding recover` command. `TEMPO_RELAY_URL` sets the Relay API; testnet has no Relay route.

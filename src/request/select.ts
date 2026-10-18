@@ -1,6 +1,7 @@
 import { type Address, erc20Abi } from "viem";
 
 import { destinationBalance, tempoFundingInputs } from "../shared/chains.js";
+import { crossChainEnabled } from "./cross-chain.js";
 import { paymentError } from "../shared/errors.js";
 import { createTempoPublicClient } from "../shared/network.js";
 import { escapeInvisible } from "../shared/utils.js";
@@ -51,7 +52,7 @@ export async function selectPayment(
   if (rank !== undefined) return { kind: "tempo" };
   const funded = await fundedOffer(offers, options);
   if (funded) return { kind: "evm", offer: funded };
-  if (mode === "auto") return { kind: "evm", offer: offers[0]! };
+  if (crossChainEnabled(options)) return { kind: "evm", offer: offers[0]! };
   return { kind: "tempo" };
 }
 

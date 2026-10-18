@@ -224,6 +224,9 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 | `doctor`          | true           | false             | true             | true            |
 | `fund`            | false          | false             | false            | true            |
 | `fund_status`     | false          | false             | true             | true            |
+| `funding`         | true           | false             | true             | false           |
+| `funding_list`    | true           | false             | true             | false           |
+| `funding_recover` | false          | false             | true             | true            |
 | `keys_list`       | true           | false             | true             | true            |
 | `keys_revoke`     | false          | true              | true             | true            |
 | `keys_update`     | false          | true              | false            | true            |

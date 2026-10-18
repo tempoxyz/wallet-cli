@@ -74,6 +74,7 @@ const rows: Row[] = [
     error: new FundingRecoveryError("attempt-1"),
     expected: { code: "E_PAYMENT_OUTCOME_UNKNOWN", exitCode: 4, retryable: false },
     message: expect.stringContaining("Funding operation attempt-1 may have moved funds") as never,
+    cta: "tempo wallet funding recover attempt-1 --network mainnet",
   },
   {
     code: "STORE_FAILED",

@@ -117,7 +117,11 @@ describe("tempo wallet completions", () => {
         expected: ["list", "close", "sync"],
       },
       { words: ["tempo", "wallet", "tx", ""], previous: false, expected: ["status"] },
-      { words: ["tempo", "wallet", "-n", "testnet", "fu"], previous: false, expected: ["fund"] },
+      {
+        words: ["tempo", "wallet", "-n", "testnet", "fu"],
+        previous: false,
+        expected: ["fund", "funding"],
+      },
       { words: ["tempo", "node", ""], previous: false, expected: [] },
       { words: ["tempo", "wallet", "sw"], previous: true, expected: ["swap"] },
       { words: ["tempo", "request", ""], previous: true, expected: ["from-previous"] },

@@ -9,7 +9,7 @@ import type {
   PaymentRequirement,
 } from "machine-fetch/interfaces";
 import type { Challenge } from "mppx";
-import { parseUnits } from "viem";
+import { formatUnits, parseUnits } from "viem";
 
 import { CtaError } from "../cli/incur-compat.js";
 import { commandError, paymentError, walletError } from "../shared/errors.js";
@@ -17,6 +17,24 @@ import { tempoUsdTokens } from "../shared/chains.js";
 import type { Network } from "../shared/network.js";
 import { continuationCommand } from "../shared/next.js";
 import { escapeInvisible, sanitizeText } from "../shared/utils.js";
+import { RelayFundingLimitError } from "./upstream/relay-route.js";
+
+/** The first error of `type` among `error`'s causes, including an AggregateError's errors. */
+function findCause<type extends Error>(
+  error: unknown,
+  type: abstract new (...args: never[]) => type,
+): type | undefined {
+  const seen = new Set<unknown>();
+  const queue = [error];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!(current instanceof Error) || seen.has(current)) continue;
+    seen.add(current);
+    if (current instanceof type) return current;
+    queue.push(current.cause, ...(current instanceof AggregateError ? current.errors : []));
+  }
+  return undefined;
+}
 
 /**
  * Payment funding through machine-fetch: every charge credential is created only after
@@ -122,8 +140,16 @@ export function fundingError(error: unknown, context: FundingErrorContext): unkn
   switch (error.code) {
     case "LIMIT_EXCEEDED":
       return limitError(message, context);
+    case "NO_ROUTE": {
+      const limit = findCause(error, RelayFundingLimitError);
+      if (limit)
+        return walletError({
+          code: "E_LIMIT_EXCEEDED",
+          message: `Cross-chain funding needs up to ${formatUnits(limit.required, 6)} OUSD, Relay's fee and gas included, above --max-funding-spend. Review it, then rerun with --max-funding-spend ${formatUnits(limit.required, 6)}; nothing was sent.`,
+        });
+      return paymentError(message);
+    }
     case "INVALID_PAYMENT":
-    case "NO_ROUTE":
     case "FUNDING_FAILED":
       return paymentError(message);
     case "INSUFFICIENT_FUNDS": {
@@ -137,12 +163,20 @@ export function fundingError(error: unknown, context: FundingErrorContext): unkn
       );
     }
     case "RECOVERY_REQUIRED": {
-      const operation =
-        error instanceof FundingRecoveryError ? escapeInvisible(error.operationId) : "unknown";
-      return walletError({
-        code: "E_PAYMENT_OUTCOME_UNKNOWN",
-        message: `${message}. Funding operation ${operation} may have moved funds; do not retry the payment until it is reconciled.`,
-      });
+      if (!(error instanceof FundingRecoveryError))
+        return walletError({ code: "E_PAYMENT_OUTCOME_UNKNOWN", message });
+      const operation = escapeInvisible(error.operationId);
+      const command = continuationCommand(
+        ["wallet", "funding", "recover", error.operationId],
+        context.network,
+      );
+      return new CtaError(
+        commandError(
+          "E_PAYMENT_OUTCOME_UNKNOWN",
+          `${message}. Funding operation ${operation} may have moved funds; do not pay again until '${command}' reconciles it.`,
+          command,
+        ),
+      );
     }
     case "STORE_FAILED":
     case "INVALID_CONFIGURATION":
