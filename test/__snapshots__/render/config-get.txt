@@ -1,0 +1,16 @@
+Network
+  Value   mainnet
+  Source  login
+
+RPC URL
+  Mainnet
+    Value   https://rpc.tempo.xyz
+    Source  default
+
+  Testnet
+    Value   https://rpc.moderato.tempo.xyz
+    Source  config
+
+Max spend
+  Value   10
+  Source  default

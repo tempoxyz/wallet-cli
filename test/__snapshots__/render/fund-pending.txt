@@ -1,0 +1,12 @@
+Status    pending
+Wallet    0xabfb663c1f9cd7438f54846d6b827e315719ec0f
+Action    fund
+URL       https://wallet.tempo.xyz/fund?address=0xabfb
+Chain ID  4217
+Network   tempo
+Token     0x20c0…8b50
+Amount    -
+Balance   5.89 USDC.e
+
+Have the user open url and finish funding. Then run the next command to wait for the funds to arrive.
+Next: tempo wallet fund status --network mainnet

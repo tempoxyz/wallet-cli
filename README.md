@@ -280,6 +280,8 @@ Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--js
 
 <!-- generated:commands end -->
 
+On a terminal with no output format asked for, `tempo wallet` prints a human-readable view of a result: aligned blocks and tables, amounts with their token symbol, shortened token addresses, and `Next:` lines for `_next` and `cta`; errors print on stderr as `Error: <message>`. Piped output, `--format`, `--json`, `-j`, `-t`, `--full-output`, `--filter-output`, `--schema`, `--llms`, and MCP stay structured, so scripts and agents read those.
+
 `sessions` without a subcommand is the same as `sessions list`, `services` the same as `services list`, and `help [command]` the same as `[command] --help`.
 
 `services search` reads unquoted words as one query, so `services search image generation` matches services with both words. `services <id>` and `services --search <query>` are deprecated aliases of `services show <id>` and `services search <query>` with the same output; only a run whose stdout is a terminal, without `--format`, prints a notice on stderr.

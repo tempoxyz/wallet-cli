@@ -1,0 +1,18 @@
+Ready     no
+Wallet    -
+Chain ID  4217
+Network   tempo
+
+Balance
+  Total            -
+  Locked           0 USDC.e
+  Pending refund   0 USDC.e
+  Available        -
+  Active sessions  0
+
+  Error
+    Code     E_RPC
+    Message  Balance query failed
+
+Balances  none
+Key       -

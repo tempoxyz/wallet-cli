@@ -1,5 +1,6 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import { globalOptionShape } from "./shared.js";
 
 const refresh = z
@@ -42,7 +43,10 @@ const serviceEndpointOutput = z.object({
   description: z.string(),
   payment: z.object({
     intent: z.string(),
-    raw_amount: z.string().describe("Price in the token's base units, as the directory lists it"),
+    raw_amount: z
+      .string()
+      .register(displayMeta, { hidden: true })
+      .describe("Price in the token's base units, as the directory lists it"),
     decimals: z.number().nullable(),
     price: z
       .string()

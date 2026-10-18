@@ -1,5 +1,6 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import { sendArgs, sendOptions, sendOutput } from "./send.js";
 import { describeMeta, networkOutputShape, nextOutputShape } from "./shared.js";
 
@@ -60,8 +61,11 @@ export const spendCreditsOutput = z.object({
 export const spendMachOutput = z.object({
   status: paymentStatus,
   wallet: z.string().optional(),
-  amount: z.string(),
-  raw_amount: z.string().describe("amount in MACH base units"),
+  amount: z.string().register(displayMeta, { amount: "token" }),
+  raw_amount: z
+    .string()
+    .register(displayMeta, { hidden: true })
+    .describe("amount in MACH base units"),
   token: z.literal("MACH"),
   settlement_currency: z.string(),
   ...networkOutputShape,

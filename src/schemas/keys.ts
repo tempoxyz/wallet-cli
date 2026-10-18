@@ -1,5 +1,6 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import {
   browserOption,
   describeMeta,
@@ -8,21 +9,25 @@ import {
   nextOutputShape,
 } from "./shared.js";
 
+const amount = { amount: "symbol" };
+
 const spendingLimitOutput = z.object({
   unlimited: z.boolean(),
   symbol: z.string().nullable(),
-  token: z.string(),
-  limit: z.string().nullable(),
-  raw_limit: z.string(),
+  token: z.string().register(displayMeta, { address: true }),
+  limit: z.string().register(displayMeta, amount).nullable(),
+  raw_limit: z.string().register(displayMeta, { hidden: true }),
   period_seconds: z.number().nullable(),
   remaining: z
     .string()
+    .register(displayMeta, amount)
     .nullable()
     .describe(
       "Remaining limit read from the chain, in token units; null when the key is not published, the read failed or reached another chain, or the token's decimals are unknown",
     ),
   spent: z
     .string()
+    .register(displayMeta, amount)
     .nullable()
     .describe(
       "Always null: the chain exposes only the remaining limit, not the limit it counts down from, so spending cannot be derived",
@@ -35,8 +40,8 @@ export const accessKeyOutput = z.object({
   ...networkOutputShape,
   wallet: z.string(),
   symbol: z.string().nullable(),
-  token: z.string(),
-  balance: z.string().nullable(),
+  token: z.string().register(displayMeta, { address: true }),
+  balance: z.string().register(displayMeta, amount).nullable(),
   balance_error: z.object({ code: z.literal("E_RPC"), message: z.string() }).optional(),
   spending_limit: z
     .object({
@@ -48,6 +53,7 @@ export const accessKeyOutput = z.object({
       remaining: z.string().nullable(),
       spent: z.string().nullable(),
     })
+    .register(displayMeta, { hidden: true })
     .describe(
       "Deprecated, and will be removed in a future release: use spending_limits. The key's spending mode with the values of spending_limits[0]",
     ),
@@ -55,13 +61,14 @@ export const accessKeyOutput = z.object({
   call_permissions: z.enum(["unknown", "unrestricted", "none", "restricted"]),
   scopes: z.array(
     z.object({
-      address: z.string(),
+      address: z.string().register(displayMeta, { address: true }),
       selector: z.string().nullable(),
       recipients: z.array(z.string()),
     }),
   ),
   status: z
     .enum(["ready", "pending", "expired", "unusable"])
+    .register(displayMeta, { tone: { ready: "ok", expired: "error", unusable: "error" } })
     .nullable()
     .describe(
       "ready or pending: the key can pay. pending: signed but not yet published on chain; its first payment publishes it. expired or unusable: it cannot pay",

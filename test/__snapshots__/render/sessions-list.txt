@@ -1,0 +1,25 @@
+Chain ID  4217
+Network   tempo
+
+Sessions
+  Channel ID    0xaaaa…aaaa
+  Network       tempo
+  Origin        https://api.example.test
+  Deposit       0.01 USDC.e
+  Spent         0.002 USDC.e
+  Remaining     0.008 USDC.e
+  Status        active
+  Created at    2026-10-01T12:00:00Z
+  Last used at  2026-10-02T09:30:00Z
+
+  Channel ID    0xbbbb…bbbb
+  Network       tempo
+  Origin        https://other.example.test
+  Deposit       2.5 USDC.e
+  Spent         0.002 USDC.e
+  Remaining     2.498 USDC.e
+  Status        active
+  Created at    2026-10-01T12:00:00Z
+  Last used at  2026-10-02T09:30:00Z
+
+Total     2

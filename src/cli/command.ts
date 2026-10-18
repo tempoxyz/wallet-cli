@@ -74,6 +74,24 @@ export type RunnableCommand = {
   run: (context: unknown) => unknown | Promise<unknown>;
 };
 
+/**
+ * The output schema of the command at `path` (`keys list`, or `sessions` for a group's own command)
+ * in incur's command map, if it has one.
+ */
+export function outputSchema(commands: Map<string, unknown>, path: string) {
+  let entry: unknown;
+  let group: Map<string, unknown> | undefined = commands;
+  for (const name of path.split(" ")) {
+    entry = group?.get(name);
+    group = isCommandGroup(entry) ? entry.commands : undefined;
+  }
+  const command = isCommandGroup(entry) ? entry.root : entry;
+  const output = isRunnableCommand(command) ? command.output : undefined;
+  return typeof output === "object" && output !== null && "_zod" in output
+    ? (output as z.core.$ZodType)
+    : undefined;
+}
+
 export function isRunnableCommand(value: unknown): value is RunnableCommand {
   return (
     typeof value === "object" && value !== null && "run" in value && typeof value.run === "function"

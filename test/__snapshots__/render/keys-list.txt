@@ -1,0 +1,19 @@
+Keys
+  Address           0x4cdadb819a7fc083b72ada08288a96424f34c8a0
+  Chain ID          4217
+  Network           tempo
+  Wallet            0xabfb663c1f9cd7438f54846d6b827e315719ec0f
+  Token             0x20c0…8b50
+  Balance           5.89 USDC.e
+
+  Spending limits
+    Unlimited  Token        Limit       Period seconds  Remaining    Spent
+    no         0x20c0…8b50  100 USDC.e  -               92.5 USDC.e  -
+
+  Call permissions  unrestricted
+  Scopes            none
+  Status            ready
+  Published         yes
+  Expires at        2033-05-18T03:33:20Z
+
+Total  1

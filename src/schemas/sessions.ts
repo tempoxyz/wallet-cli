@@ -1,6 +1,9 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import { globalOptionShape, networkOutputShape, nextOutputShape } from "./shared.js";
+
+const amount = { amount: "symbol" };
 
 /** A session's state: `finalizable` once a requested close's grace period has ended. */
 export const sessionStatusSchema = z.enum([
@@ -12,13 +15,13 @@ export const sessionStatusSchema = z.enum([
 ]);
 
 export const sessionOutput = z.object({
-  channel_id: z.string(),
+  channel_id: z.string().register(displayMeta, { address: true }),
   network: z.string(),
   origin: z.string(),
   symbol: z.string().nullable(),
-  deposit: z.string(),
-  spent: z.string(),
-  remaining: z.string(),
+  deposit: z.string().register(displayMeta, amount),
+  spent: z.string().register(displayMeta, amount),
+  remaining: z.string().register(displayMeta, amount),
   status: sessionStatusSchema,
   remaining_seconds: z
     .number()

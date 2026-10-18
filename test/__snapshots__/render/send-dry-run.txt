@@ -1,0 +1,14 @@
+Status              dry_run
+Chain ID            4217
+Network             tempo
+Amount              1.5 USDC.e
+Token               0x20c0…8b50
+To                  0x70997970c51812dc3a010c7d01b50e0d17dc79c8
+From                0xabfb663c1f9cd7438f54846d6b827e315719ec0f
+Fee estimate        0.001 0x20c0…0000
+Balance             5.89 USDC.e
+Fee token balance   1.25 0x20c0…0000
+Sufficient balance  yes
+
+Review the transfer, then run the next command to send 1.5 USDC.e to 0x70997970c51812dc3a010c7d01b50e0d17dc79c8.
+Next: tempo wallet send 1.5 0x20c000000000000000000000b9537d11c60e8b50 0x70997970c51812dc3a010c7d01b50e0d17dc79c8 --yes --network mainnet

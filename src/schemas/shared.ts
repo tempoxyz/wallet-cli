@@ -1,5 +1,7 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
+
 /**
  * What `--describe` shows of an option beyond its schema, registered on the option with
  * `.register(describeMeta, { ... })`. It is a registry rather than `.meta()`, which incur would
@@ -63,17 +65,29 @@ export const networkOutputShape = {
 
 /** Continuation fields on results with a follow-up command; built by `nextStep`. */
 export const nextOutputShape = {
-  instruction: z.string().optional().describe("What to do next"),
+  instruction: z
+    .string()
+    .register(displayMeta, { note: true })
+    .optional()
+    .describe("What to do next"),
   _next: z
     .object({
-      argv: z.array(z.string()).describe("Next command as an argument vector; authoritative"),
-      command: z.string().describe("argv quoted for a POSIX shell"),
+      argv: z
+        .array(z.string())
+        .register(displayMeta, { hidden: true })
+        .describe("Next command as an argument vector; authoritative"),
+      command: z
+        .string()
+        .register(displayMeta, { next: true })
+        .describe("argv quoted for a POSIX shell"),
       until: z
         .string()
+        .register(displayMeta, { hidden: true })
         .optional()
         .describe("jq condition on the next command's JSON output; rerun it until true"),
       poll_interval_seconds: z
         .number()
+        .register(displayMeta, { hidden: true })
         .optional()
         .describe("Seconds to wait before running the next command, and between reruns"),
     })
@@ -81,7 +95,9 @@ export const nextOutputShape = {
 };
 
 /** A transaction's state on chain, as `tx status` reads it. */
-export const txStateSchema = z.enum(["success", "reverted", "pending", "not_found"]);
+export const txStateSchema = z
+  .enum(["success", "reverted", "pending", "not_found"])
+  .register(displayMeta, { tone: { success: "ok", reverted: "error" } });
 
 /** `--idempotency-key` on the commands that send a transaction. */
 export const idempotencyKeyOption = z

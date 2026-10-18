@@ -1,0 +1,2 @@
+Error: No wallet is logged in. Run 'tempo wallet login --network mainnet' before retrying, or set TEMPO_PRIVATE_KEY.
+Next: tempo wallet login --network mainnet

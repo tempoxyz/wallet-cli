@@ -1120,13 +1120,15 @@ describe("tempo wallet send and transfer", () => {
         expect(result.stderr).toContain(
           `Send 1 USDC.e (${usdcToken})\n  to:        ${recipient}\n  network:   mainnet (chain 4217)\n  fee token: USDC.e (${usdcToken})\n`,
         );
+      // An agent gets an error on stdout, and a person at a terminal on stderr.
+      const errors = terminal ? result.stderr : result.stdout;
       if (refused) {
         expect(result.code).toBe(2);
-        expect(result.stdout).toContain(refused);
-      } else expect(result.stdout).not.toContain("Transfer not sent");
+        expect(errors).toContain(refused);
+      } else expect(errors).not.toContain("Transfer not sent");
       if (expected.requests) expect(requests).toEqual(expected.requests);
       if (expected.reached instanceof RegExp) {
-        expect(result.stdout).toMatch(expected.reached);
+        expect(errors).toMatch(expected.reached);
         // The provider fills the transaction through TEMPO_RPC_URL, not viem's default chain RPC.
         expect(requests).toContain("POST / eth_fillTransaction");
       } else if (expected.reached) expect(requests).toContain(expected.reached);

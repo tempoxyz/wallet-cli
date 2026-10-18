@@ -1,5 +1,6 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import {
   describeMeta,
   globalOptionShape,
@@ -44,28 +45,34 @@ export const swapOptions = z.object({
   "idempotency-key": idempotencyKeyOption,
 });
 
+const address = { address: true };
+const amountIn = { amount: "token_in_symbol" };
+const amountOut = { amount: "token_out_symbol" };
+
 const swapBaseOutputShape = {
   ...networkOutputShape,
   mode: z.union([z.literal("exact_in"), z.literal("exact_out")]),
   from: z.string(),
-  dex: z.string(),
-  token_in: z.string(),
+  dex: z.string().register(displayMeta, address),
+  token_in: z.string().register(displayMeta, address),
   token_in_symbol: z.string().nullable(),
-  token_out: z.string(),
+  token_out: z.string().register(displayMeta, address),
   token_out_symbol: z.string().nullable(),
-  amount_in: z.string(),
-  max_amount_in: z.string(),
-  amount_out: z.string(),
-  min_amount_out: z.string(),
+  amount_in: z.string().register(displayMeta, amountIn),
+  max_amount_in: z.string().register(displayMeta, amountIn),
+  amount_out: z.string().register(displayMeta, amountOut),
+  min_amount_out: z.string().register(displayMeta, amountOut),
   slippage_bps: z.number(),
-  fee_token: z.string(),
-  access_key_limit: z.string().nullable(),
+  fee_token: z.string().register(displayMeta, address),
+  access_key_limit: z.string().register(displayMeta, amountIn).nullable(),
   requires_access_key_update: z.boolean(),
-  calls: z.array(z.object({ to: z.string(), data: z.string() })),
+  calls: z
+    .array(z.object({ to: z.string(), data: z.string() }))
+    .register(displayMeta, { hidden: true }),
 };
 
 export const swapSuccessOutput = z.object({
-  status: z.literal("success"),
+  status: z.literal("success").register(displayMeta, { tone: { success: "ok" } }),
   tx_hash: z.string(),
   ...swapBaseOutputShape,
 });

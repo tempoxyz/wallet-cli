@@ -1,0 +1,4 @@
+Error: The RPC request failed.
+
+URL: https://rpc.tempo.xyz
+Details: timeout

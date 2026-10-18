@@ -1,5 +1,6 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import { networkOutputShape, nextOutputShape } from "./shared.js";
 
 /** `tempo request --dry-run`: a quote for a 402, else the status of a probe that needed no payment. */
@@ -10,7 +11,7 @@ export const requestDryRunOutput = z.union([
     intent: z.string(),
     recurring: z.boolean(),
     amount: z.string().describe("Per-call amount"),
-    raw_amount: z.string(),
+    raw_amount: z.string().register(displayMeta, { hidden: true }),
     session: z
       .enum(["open", "reuse"])
       .nullable()
@@ -21,7 +22,7 @@ export const requestDryRunOutput = z.union([
       .describe(
         "Deposit the payment locks: a new session's deposit, or the top-up a reused session's voucher needs",
       ),
-    raw_deposit: z.string().nullable(),
+    raw_deposit: z.string().register(displayMeta, { hidden: true }).nullable(),
     token: z.string(),
     symbol: z.string().nullable().describe("Listed symbol; null for a token viem does not list"),
     decimals: z.number().nullable(),

@@ -1,0 +1,2 @@
+Error: Invalid options
+  amount: Expected a positive amount

@@ -1207,7 +1207,7 @@ describe("tempo wallet logout", () => {
       args: [],
       interactive: true,
       exitCode: 2,
-      output: "E_USAGE",
+      output: "needs confirmation.",
     },
     {
       name: "an agent run with --yes logs out",
@@ -1226,7 +1226,11 @@ describe("tempo wallet logout", () => {
     const result = await wallet(["logout", ...args], { interactive });
 
     expect(result.code, result.stderr).toBe(exitCode);
-    if (typeof output === "string") expect(result.stdout + result.stderr).toContain(output);
+    // A person at a terminal gets the error and the command that fixes it on stderr.
+    if (typeof output === "string")
+      expect(result.stderr).toMatch(
+        new RegExp(`^Error: .*${output}.*\\nNext: tempo wallet logout --yes\\n`, "m"),
+      );
     else expect(JSON.parse(result.stdout)).toMatchObject(output);
     expect((await loadWalletState()).accounts).toEqual(
       exitCode === 0 ? [] : [{ address: testWallet }],

@@ -4,12 +4,19 @@
  * https://github.com/wevm/incur/pull/252, merged but unreleased. Remove the patch and its
  * `pnpm-workspace.yaml` entry once incur > 0.7.1 includes wevm/incur#252.
  */
-import { Errors, type z } from "incur";
+import { Errors, z, type Cli } from "incur";
 
 import { cliGlobalAlias, cliGlobals } from "../schemas/shared.js";
 import type { CommandErrorPayload } from "../shared/errors.js";
-import { commandTokens } from "./argv.js";
-import { isCommandGroup, isRunnableCommand, type RunnableCommand } from "./command.js";
+import { commandTokens, firstCommandIndex } from "./argv.js";
+import {
+  commandMap,
+  isCommandGroup,
+  isRunnableCommand,
+  outputSchema,
+  type RunnableCommand,
+} from "./command.js";
+import { renderError, renderResult, streamOptions } from "./render.js";
 
 /** An option schema and its short aliases, as passed to incur. */
 export type OptionSpec = {
@@ -152,5 +159,116 @@ export async function ctaErrors(
   } catch (error) {
     if (!(error instanceof CtaError)) throw error;
     context.error(error.payload);
+  }
+}
+
+/** incur's builtin commands, which print their own human output. */
+const incurBuiltins = new Set(["mcp", "skills", "skill"]);
+
+/** Flags that ask incur for agent output, or for something other than a command's result. */
+const agentFlags = new Set([
+  "--format",
+  "--json",
+  "--json-output",
+  "--toon-output",
+  "--full-output",
+  "--filter-output",
+  "--token-count",
+  "--token-limit",
+  "--token-offset",
+  "--schema",
+  "--llms",
+  "--llms-full",
+  "--help",
+  "-h",
+  "--version",
+  "--mcp",
+  "--update",
+]);
+
+/**
+ * Whether `args` is a person's run of a command, which `serveHuman` renders: stdout is a terminal,
+ * as incur requires for its human mode, and no flag asks for agent output or something else, such
+ * as help. `-j` and `-t` count as asking for agent output, even stacked (`-sj`). Bare
+ * `tempo wallet`, incur's builtins, and shell completion print what incur prints.
+ *
+ * Upstream: see `serveHuman`. Remove with it.
+ */
+export function humanRun(args: readonly string[], terminal = process.stdout.isTTY === true) {
+  if (!terminal || process.env.COMPLETE) return false;
+  if (args.some((arg) => agentFlags.has(arg.split("=")[0]!) || /^-[^-]*[jt]/.test(arg)))
+    return false;
+  const index = firstCommandIndex(args);
+  return index !== undefined && !incurBuiltins.has(args[index]!);
+}
+
+const cta = z
+  .object({
+    commands: z.array(z.object({ command: z.string(), description: z.string().optional() })),
+  })
+  .optional();
+
+/** The result envelope incur writes with `--full-output`. */
+const envelope = z.union([
+  z.object({
+    ok: z.literal(true),
+    data: z.unknown(),
+    meta: z.object({ command: z.string(), cta }),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.object({
+      message: z.string(),
+      fieldErrors: z.array(z.object({ path: z.string(), message: z.string() })).optional(),
+    }),
+    meta: z.object({ command: z.string(), cta }),
+  }),
+]);
+
+/**
+ * Serves a person's run (see `humanRun`), printing the human view of its result on stdout or its
+ * error on stderr, and returns the exit code incur set, if any.
+ *
+ * incur 0.7.1 has no hook to render a result for a person: on a terminal it prints the TOON an
+ * agent gets, and an error with its code, both on stdout. So for such a run `tempo wallet` gives
+ * the CLI JSON as its format, and this serves `args` with `--full-output`, capturing what incur
+ * writes and the exit code it sets. A result envelope is rendered from the command's output schema;
+ * anything else, such as a usage error with help, is written as incur wrote it, on stderr when the
+ * run failed.
+ *
+ * Upstream: .agents/friction-log/20261018110834-incur-has-no. Remove this, `humanRun`, and the
+ * CLI's JSON format for a human run once incur takes a renderer for human runs, passing it
+ * `renderResult` and `renderError`.
+ */
+export async function serveHuman(cli: Cli.Cli<any, any, any, any, any>, args: readonly string[]) {
+  let written = "";
+  let exitCode: number | undefined;
+  await cli.serve(["--full-output", ...args], {
+    stdout: (text) => {
+      written += text;
+    },
+    exit: (code) => {
+      exitCode = code;
+    },
+  });
+  const result = envelope.safeParse(parseJson(written));
+  if (!result.success) (exitCode ? process.stderr : process.stdout).write(written);
+  else if (result.data.ok) {
+    const { data, meta } = result.data;
+    const schema = outputSchema(commandMap(cli), meta.command);
+    const text = renderResult(data, schema, meta.cta, streamOptions(process.stdout));
+    if (text) process.stdout.write(`${text}\n`);
+  } else {
+    const { error, meta } = result.data;
+    process.stderr.write(`${renderError(error, meta.cta, streamOptions(process.stderr))}\n`);
+  }
+  return exitCode;
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
   }
 }

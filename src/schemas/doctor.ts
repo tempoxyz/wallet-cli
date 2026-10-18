@@ -1,5 +1,6 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import { accessKeyOutput } from "./keys.js";
 import { networkOutputShape, nextOutputShape } from "./shared.js";
 
@@ -52,7 +53,9 @@ export const doctorOutput = z.object({
   checks: z.array(
     z.object({
       name: z.string(),
-      status: z.enum(["ok", "warn", "fail"]),
+      status: z
+        .enum(["ok", "warn", "fail"])
+        .register(displayMeta, { tone: { ok: "ok", fail: "error" } }),
       message: z.string(),
     }),
   ),

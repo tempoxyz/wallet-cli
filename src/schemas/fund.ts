@@ -1,5 +1,6 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import {
   browserOption,
   describeMeta,
@@ -55,15 +56,15 @@ export const fundStatusOptions = z.object({
 });
 
 export const fundOutput = z.object({
-  status: z.enum(["success", "pending"]),
+  status: z.enum(["success", "pending"]).register(displayMeta, { tone: { success: "ok" } }),
   wallet: z.string().nullable(),
   action: z.string(),
   url: z.string(),
   ...networkOutputShape,
-  token: z.string(),
+  token: z.string().register(displayMeta, { address: true }),
   symbol: z.string().nullable(),
   amount: z.string().nullable(),
-  balance: z.string().nullable(),
-  raw_balance: z.string().nullable(),
+  balance: z.string().register(displayMeta, { amount: "symbol" }).nullable(),
+  raw_balance: z.string().register(displayMeta, { hidden: true }).nullable(),
   ...nextOutputShape,
 });
