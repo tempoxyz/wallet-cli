@@ -165,12 +165,13 @@ export async function ctaErrors(
 /** incur's builtin commands, which print their own human output. */
 const incurBuiltins = new Set(["mcp", "skills", "skill"]);
 
-/** Flags that ask incur for agent output, or for something other than a command's result. */
+/**
+ * Flags that ask incur for agent output, or for something other than a command's result. The
+ * wallet's `--json-output` and `--toon-output` are `outputAliases`.
+ */
 const agentFlags = new Set([
   "--format",
   "--json",
-  "--json-output",
-  "--toon-output",
   "--full-output",
   "--filter-output",
   "--token-count",
@@ -189,18 +190,28 @@ const agentFlags = new Set([
 /**
  * Whether `args` is a person's run of a command, which `serveHuman` renders: stdout is a terminal,
  * as incur requires for its human mode, and no flag asks for agent output or something else, such
- * as help. `-j` and `-t` count as asking for agent output, even stacked (`-sj`). Bare
- * `tempo wallet`, incur's builtins, and shell completion print what incur prints.
+ * as help. `-j` and `-t` count as asking for agent output, even stacked (`-sj`), and so do
+ * `--json-output` and `--toon-output` unless given as `=false`. Bare `tempo wallet`, incur's
+ * builtins, and shell completion print what incur prints.
  *
  * Upstream: see `serveHuman`. Remove with it.
  */
 export function humanRun(args: readonly string[], terminal = process.stdout.isTTY === true) {
   if (!terminal || process.env.COMPLETE) return false;
-  if (args.some((arg) => agentFlags.has(arg.split("=")[0]!) || /^-[^-]*[jt]/.test(arg)))
-    return false;
+  if (args.some(requestsAgentOutput)) return false;
   const index = firstCommandIndex(args);
   return index !== undefined && !incurBuiltins.has(args[index]!);
 }
+
+/** Whether `arg` asks for agent output; `--json-output=false` and `--toon-output=false` do not. */
+function requestsAgentOutput(arg: string) {
+  const [name = "", value] = arg.split("=");
+  if (outputAliases.has(name)) return value !== "false";
+  return agentFlags.has(name) || /^-[^-]*[jt]/.test(arg);
+}
+
+/** The wallet's output aliases, booleans that incur reads as false only in the `=false` form. */
+const outputAliases = new Set(["--json-output", "--toon-output"]);
 
 const cta = z
   .object({

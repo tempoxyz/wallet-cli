@@ -17,12 +17,19 @@ import { z } from "incur";
  * copy into the JSON Schema of `--schema`, `--llms-full`, and MCP tools. Agent output ignores it.
  */
 export const displayMeta = z.registry<{
-  /** Token units, shown with the symbol in the sibling field this names, which is not shown alone. */
+  /**
+   * Token units, shown with the symbol in the sibling field this names, which is shown alone only
+   * when no amount shows it.
+   */
   amount?: string | undefined;
   /** An address or hash, shortened to its ends (`0x20c0…0b50`). */
   address?: boolean | undefined;
-  /** Left out, like a raw base-unit amount that repeats a formatted one. */
-  hidden?: boolean | undefined;
+  /**
+   * Left out, like a raw base-unit amount that repeats a formatted one. Naming a sibling field, it
+   * is left out only while that field has a value, so a raw amount shows when it has no formatted
+   * form.
+   */
+  hidden?: boolean | string | undefined;
   /** A shell command to run next, shown as a `Next:` line after the output. */
   next?: boolean | undefined;
   /** A sentence about what to do next, shown after the output, above any `Next:` line. */
@@ -208,11 +215,12 @@ function renderTable(
   if (columns.length === 0) return undefined;
 
   const header = columns.map((key) => ({ text: humanize(key), tone: "dim" as const }));
-  const body = rows.map((row) =>
-    columns.map((key) =>
-      key in row ? cell(row[key], hintOf(schema, key), row, schema) : { text: "" },
-    ),
-  );
+  const body = rows.map((row) => {
+    const shown = new Set(visibleFields(row, schema).map(({ key }) => key));
+    return columns.map((key) =>
+      shown.has(key) ? cell(row[key], hintOf(schema, key), row, schema) : { text: "" },
+    );
+  });
   const widths = columns.map((_, index) =>
     Math.max(...[header, ...body].map((line) => line[index]!.text.length)),
   );
@@ -234,16 +242,33 @@ function renderTable(
   );
 }
 
-/** The fields shown of `record`: those not hidden, nor the symbol an amount field shows with it. */
+/**
+ * The fields shown of `record`: those not hidden, nor a unit an amount field shows with its value.
+ * A unit with a value that no amount shows, because each is empty, is shown on its own.
+ */
 function visibleFields(record: Record<string, unknown>, schema: Schema | undefined) {
   const fields = Object.entries(record).map(([key, value]) => {
     const field = fieldSchema(schema, key);
     return { key, value, schema: field, hint: field && displayOf(field) };
   });
   const units = new Set(fields.flatMap(({ hint }) => (hint?.amount ? [hint.amount] : [])));
-  return fields.filter(
-    ({ key, value, hint }) => value !== undefined && !hint?.hidden && !units.has(key),
+  const shown = new Set(
+    fields.flatMap(({ value, hint }) => (hint?.amount && !isEmpty(value) ? [hint.amount] : [])),
   );
+  return fields.filter(
+    ({ key, value, hint }) =>
+      value !== undefined &&
+      !hidden(hint, record) &&
+      !(units.has(key) && (shown.has(key) || isEmpty(value))),
+  );
+}
+
+function hidden(hint: Display | undefined, record: Record<string, unknown>) {
+  return typeof hint?.hidden === "string" ? !isEmpty(record[hint.hidden]) : hint?.hidden === true;
+}
+
+function isEmpty(value: unknown) {
+  return value === null || value === undefined || value === "";
 }
 
 /** The text of a scalar field, or of a list of scalars, with its hint applied. */
@@ -253,7 +278,7 @@ function cell(
   record: Record<string, unknown>,
   schema: Schema | undefined,
 ): Cell {
-  if (value === null || value === undefined || value === "") return { text: "-", tone: "dim" };
+  if (isEmpty(value)) return { text: "-", tone: "dim" };
   if (Array.isArray(value))
     return value.length === 0
       ? { text: "none", tone: "dim" }
@@ -262,7 +287,7 @@ function cell(
   if (hint?.address) text = shorten(text);
   if (hint?.amount) {
     const unit = record[hint.amount];
-    if (unit !== null && unit !== undefined && unit !== "")
+    if (!isEmpty(unit))
       text = `${text} ${cell(unit, hintOf(schema, hint.amount), record, schema).text}`;
   }
   return { text, tone: hint?.tone?.[String(value)] };

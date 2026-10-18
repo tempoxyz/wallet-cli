@@ -45,7 +45,7 @@ const serviceEndpointOutput = z.object({
     intent: z.string(),
     raw_amount: z
       .string()
-      .register(displayMeta, { hidden: true })
+      .register(displayMeta, { hidden: "price" })
       .describe("Price in the token's base units, as the directory lists it"),
     decimals: z.number().nullable(),
     price: z

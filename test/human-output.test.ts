@@ -24,6 +24,10 @@ describe("humanRun", () => {
     { argv: [], human: false },
     { argv: ["skills", "list"], human: false },
     { argv: ["mcp", "add"], human: false },
+    // An output alias given as false asks for nothing.
+    { argv: ["whoami", "--json-output=false"], human: true },
+    { argv: ["whoami", "--toon-output=false"], human: true },
+    { argv: ["whoami", "--json-output=true"], human: false },
     ...[
       ["--format", "json"],
       ["--format", "toon"],

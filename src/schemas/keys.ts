@@ -16,7 +16,7 @@ const spendingLimitOutput = z.object({
   symbol: z.string().nullable(),
   token: z.string().register(displayMeta, { address: true }),
   limit: z.string().register(displayMeta, amount).nullable(),
-  raw_limit: z.string().register(displayMeta, { hidden: true }),
+  raw_limit: z.string().register(displayMeta, { hidden: "limit" }),
   period_seconds: z.number().nullable(),
   remaining: z
     .string()

@@ -495,6 +495,82 @@ describe("human view", () => {
     );
   });
 
+  it.each([
+    {
+      name: "a key limit in a token of unknown decimals shows its raw limit",
+      schema: keysOutput,
+      data: {
+        keys: [
+          {
+            ...accessKey,
+            spending_limits: [
+              { ...limit, symbol: null, limit: null, raw_limit: "1500000000000000000" },
+            ],
+          },
+        ],
+        total: 1,
+      },
+      shown: ["1500000000000000000"],
+      hidden: [],
+    },
+    {
+      name: "a formatted key limit leaves its raw limit out",
+      schema: keysOutput,
+      data: { keys: [accessKey], total: 1 },
+      shown: ["100 USDC.e"],
+      hidden: ["Raw limit", "100000000"],
+    },
+    {
+      name: "a price the directory gives no decimals for shows its raw amount",
+      schema: serviceDetailOutput,
+      data: {
+        ...weather,
+        endpoints: [
+          {
+            method: "GET",
+            path: "/now",
+            description: "",
+            payment: {
+              intent: "pay",
+              raw_amount: "100",
+              decimals: null,
+              price: null,
+              unit_type: null,
+              description: "",
+              dynamic: null,
+            },
+            docs: null,
+          },
+        ],
+      },
+      shown: ["Raw amount   100"],
+      hidden: [],
+    },
+    {
+      name: "a dry run whose fee reads failed still names its fee token",
+      schema: sendOutput,
+      data: {
+        ...(results.find((row) => row.name === "send-dry-run")!.data as object),
+        fee_estimate: null,
+        fee_token_balance: null,
+      },
+      shown: ["Fee token           0x20c0…0000", "Fee estimate        -"],
+      hidden: [],
+    },
+    {
+      name: "a dry run whose fee reads succeeded shows its fee token with each amount",
+      schema: sendOutput,
+      data: results.find((row) => row.name === "send-dry-run")!.data,
+      shown: ["Fee estimate        0.001 0x20c0…0000"],
+      hidden: ["Fee token   "],
+    },
+  ])("$name", ({ schema, data, shown, hidden }) => {
+    expect(schema.safeParse(data).success).toBe(true);
+    const text = renderResult(data, schema, undefined, options);
+    for (const line of shown) expect(text).toContain(line);
+    for (const line of hidden) expect(text).not.toContain(line);
+  });
+
   it("colors labels dim, successes green, and failures red", () => {
     const color = { color: true, width: 80 };
     const doctor = results.find((row) => row.name === "doctor")!;
