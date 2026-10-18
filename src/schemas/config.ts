@@ -85,7 +85,8 @@ export const configSettings = {
       "The new rpc-url will receive all of the CLI's RPC traffic on that network, including balance and channel reads.",
   },
   "max-spend": {
-    about: "a positive amount in payment token units",
+    about:
+      "a positive amount in payment token units, or in MACH (1 MACH = 1 USD) for a MACH payment",
     env: "TEMPO_MAX_SPEND",
     parse: parseMaxSpend,
     effective: (_flag: string | undefined, _state?: WalletState, config?: Config) =>

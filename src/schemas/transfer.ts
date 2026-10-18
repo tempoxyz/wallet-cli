@@ -15,7 +15,7 @@ export const transferOptions = z.object({
   "max-spend": z
     .string()
     .optional()
-    .describe("Maximum MACH spend in USD for the exact MPP challenge")
+    .describe("Maximum MACH spend for the exact MPP challenge, in MACH (1 MACH = 1 USD)")
     .register(describeMeta, { valueName: "AMOUNT" }),
   "amount-cents": z.coerce
     .number()
@@ -34,7 +34,9 @@ export const transferOptions = z.object({
     .optional()
     .describe("File containing an MPP WWW-Authenticate challenge"),
   "mpp-client-id": z.string().optional().describe("Optional client ID for MPP attribution memo"),
-  address,
+  address: address.describe(
+    "Guard: refuse unless this is the paying wallet's address; with --credits, the wallet whose credits to spend (default: the logged-in wallet)",
+  ),
 });
 
 /** A MACH or MPP Credits payment: reviewed with `--dry-run`, else sent. */

@@ -148,7 +148,8 @@ that is not configured, reports `null`. Any other status prints
 `payment_required: false` with the status instead of the body. The probe request is still
 sent, so methods other than GET, HEAD and OPTIONS also report a side-effect `warning`.
 `--max-spend <amount>` (or `TEMPO_MAX_SPEND`, or a saved `max-spend`) caps spending in payment
-token units; without any of them, the cap is 10 (about $10 in stablecoins).
+token units, and a MACH payment in MACH (1 MACH = 1 USD); without any of them, the cap is 10 (about
+$10 in stablecoins).
 An offer above the cap is refused with
 `E_LIMIT_EXCEEDED` in both preview and execution, before anything is signed, and the error's
 `cta` reruns the same command with the `--max-spend` it needs. That command shows

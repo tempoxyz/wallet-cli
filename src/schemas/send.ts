@@ -28,7 +28,10 @@ export const sendOptions = z.object({
     .optional()
     .describe("Send without the confirmation prompt; required for agent runs"),
   "idempotency-key": idempotencyKeyOption,
-  address: z.string().optional().describe("Wallet address (defaults to current wallet)"),
+  address: z
+    .string()
+    .optional()
+    .describe("Guard: refuse unless this is the logged-in wallet's address"),
 });
 
 export const sendDryRunOutput = z.object({
