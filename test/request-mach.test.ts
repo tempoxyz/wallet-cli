@@ -527,21 +527,12 @@ it.each([
     label: "MACH",
     limit: "0.015",
   },
-  {
-    route: "a direct transfer of an 18-decimal token",
-    request: { currency: unlistedToken, methodDetails: { chainId: 4217 } },
-    metadata: { decimals: 18, symbol: "WIDE" },
-    token: unlistedToken,
-    label: "WIDE",
-    limit: "0.000000000000015",
-  },
 ])(
   "names the token $route debits when the access key's limit refuses a charge",
-  async ({ request, metadata, token, label, limit }) => {
+  async ({ request, token, label, limit }) => {
     await useTempHome();
     await writeWalletState(walletState());
     vi.stubEnv("TEMPO_PRIVATE_KEY", "");
-    if (metadata) vi.mocked(Actions.token.getMetadata).mockResolvedValue(metadata as never);
     vi.mocked(prepareTransactionRequest).mockRejectedValue(
       new Error("Execution reverted: SpendingLimitExceeded()"),
     );
@@ -576,34 +567,46 @@ it.each([
     key: true,
     message: "FeeTokenSpendingLimitExceeded()",
   },
-  {
-    name: "the debited token's decimals cannot be read",
-    key: true,
-    message: "SpendingLimitExceeded()",
-    currency: unlistedToken,
-  },
-])(
-  "reports a spending-limit refusal without a cta when $name",
-  async ({ key, message, currency }) => {
-    if (key) {
-      await useTempHome();
-      await writeWalletState(walletState());
-      vi.stubEnv("TEMPO_PRIVATE_KEY", "");
-    }
-    vi.mocked(prepareTransactionRequest).mockRejectedValue(new Error(message));
-    const service = await server([
-      offer({ ...(currency ? { currency } : {}), methodDetails: { chainId: 4217 } }),
-    ]);
+])("reports a spending-limit refusal without a cta when $name", async ({ key, message }) => {
+  if (key) {
+    await useTempHome();
+    await writeWalletState(walletState());
+    vi.stubEnv("TEMPO_PRIVATE_KEY", "");
+  }
+  vi.mocked(prepareTransactionRequest).mockRejectedValue(new Error(message));
+  const service = await server([offer({ methodDetails: { chainId: 4217 } })]);
 
-    const error = await runRequest(["--max-spend", "0.015", service.url]).catch(
-      (value: unknown) => value,
-    );
+  const error = await runRequest(["--max-spend", "0.015", service.url]).catch(
+    (value: unknown) => value,
+  );
 
-    expect(error).toMatchObject({ code: "E_PAYMENT", message });
-    expect(error).not.toBeInstanceOf(CtaError);
-    expect(service.paid).toEqual([]);
-  },
-);
+  expect(error).toMatchObject({ code: "E_PAYMENT", message });
+  expect(error).not.toBeInstanceOf(CtaError);
+  expect(service.paid).toEqual([]);
+});
+
+// --max-spend caps only the USD tokens the CLI lists, whose decimals it knows; a charge in any
+// other token is refused before anything is signed, however small.
+it("refuses a charge in a token --max-spend cannot cap before signing", async () => {
+  await useTempHome();
+  await writeWalletState(walletState());
+  vi.stubEnv("TEMPO_PRIVATE_KEY", "");
+  const service = await server([
+    offer({ currency: unlistedToken, amount: "1", methodDetails: { chainId: 4217 } }),
+  ]);
+
+  const error = await runRequest(["--max-spend", "0.015", service.url]).catch(
+    (value: unknown) => value,
+  );
+
+  expect(error).toMatchObject({
+    code: "E_LIMIT_EXCEEDED",
+    exitCode: 4,
+    message: `--max-spend cannot cap a payment in ${unlistedToken} on mainnet: it is not a USD token the CLI lists, so it was not paid`,
+  });
+  expect(prepareTransactionRequest).not.toHaveBeenCalled();
+  expect(service.paid).toEqual([]);
+});
 it("uses MACH automatically for an ordinary machine-enabled charge", async () => {
   const service = await server();
   await runRequest(["--max-spend", "0.015", service.url], {

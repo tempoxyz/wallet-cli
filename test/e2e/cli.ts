@@ -23,8 +23,14 @@ export function cliEnv(net: Localnet, wallet: LocalWallet, env: Record<string, s
     TEMPO_AUTH_URL: "http://127.0.0.1:9",
     TEMPO_RPC_URL: net.tempoUrl,
     TEMPO_WALLET_NETWORK: "testnet",
+    TEMPO_DEV_CHAINS: JSON.stringify(devChains(net)),
     ...env,
   };
+}
+
+/** The `TEMPO_DEV_CHAINS` table that makes the CLI trust the local chains' tokens. */
+export function devChains(net: Localnet) {
+  return { tempo: { [net.tempoChainId]: { usdTokens: [net.ousd, net.usdc] } } };
 }
 
 /** Starts `tempo request` or `tempo wallet` from the prebuilt bundle. */

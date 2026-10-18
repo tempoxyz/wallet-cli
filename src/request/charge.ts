@@ -31,6 +31,7 @@ import {
   runsMachRoute,
 } from "./mach.js";
 import type { RequestOptions } from "./options.js";
+import { checkCharge, prepareCharge } from "./funding.js";
 import { fetchPaidRequest, paymentReceipts } from "./paid.js";
 import { dryRunRpc, paySessionAndRetryRequest } from "./session.js";
 import { formatTokenAmount, MaxSpendExceededError, spendCap } from "./spend.js";
@@ -46,6 +47,8 @@ export async function payAndRetryRequest(
     options,
     request.url,
   );
+  // Policy refuses a charge before anything names the payer.
+  if (selectedChallenge.intent !== "session") await checkCharge(selectedChallenge, options);
   writePrivateKeyNotice(stderr, options);
   const header = selectPaymentTokenResponse(
     paymentRequiredResponse,
@@ -92,12 +95,10 @@ export async function payAndRetryRequest(
       polyfill: false,
     });
 
-    payment.onChallengeReceived(async ({ challenge, createCredential }) =>
-      createCredential(paymentContext(challenge, options) as never),
-    );
-
+    // Policy and funding run before signing; the credential carries the context they prepared.
+    const prepared = await prepareCharge(selectedChallenge, options, { payer: identity.address });
     const credential = await payment
-      .createCredential(challengeResponse)
+      .createCredential(challengeResponse, prepared.credentialContext as never)
       .catch(async (error: unknown) => {
         throw (await charge.limitError(error)) ?? error;
       });
@@ -261,9 +262,4 @@ function chargeWithinCap(
     // A malformed charge offer is no alternative.
   }
   return undefined;
-}
-
-function paymentContext(challenge: { intent: string }, options: RequestOptions) {
-  if (challenge.intent !== "session" || !options.maxSpend) return undefined;
-  return { depositRaw: parseUnits(options.maxSpend, 6).toString() };
 }
