@@ -36,12 +36,14 @@
     "start": "node dist/cli.js",
     "typecheck": "tsc -b --noEmit",
     "test:types": "tsc -p tsconfig.test.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "vendor": "scripts/vendor.sh"
   },
   "dependencies": {
     "accounts": "0.21.0",
     "incur": "0.7.1",
-    "mppx": "0.12.0",
+    "machine-fetch": "file:./vendor/machine-fetch",
+    "mppx": "file:./vendor/mppx",
     "qr": "0.7.2",
     "undici": "8.10.2",
     "viem": "2.57.1"
