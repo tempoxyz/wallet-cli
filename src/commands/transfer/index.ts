@@ -2,13 +2,11 @@ import { Cli } from "incur";
 
 import { flagSet } from "../../cli/argv.js";
 import { destructive, type WalletCommand } from "../../cli/command.js";
-import { flag, option, positional } from "../../cli/describe.js";
 import { cliGlobals, globalAlias } from "../../schemas/shared.js";
 import { transferArgs, transferOptions, transferOutput } from "../../schemas/transfer.js";
 import { usageError } from "../../shared/errors.js";
 import { withWallet } from "../../shared/require-wallet.js";
 import { creditsOnlyFlags, sendArgv, sendCommand, valueFlag } from "../send.js";
-import { idempotencyKeyArg } from "../tx.js";
 import { transferCredits } from "./credits.js";
 import { machAmountCentsError, machAmountCentsFlag, transferMach } from "./mach.js";
 
@@ -71,60 +69,6 @@ export default {
   }),
   // MACH and MPP Credits payments, like a token send, move funds over the network.
   annotations: { transfer: { ...destructive, idempotentHint: false, openWorldHint: true } },
-  describe: {
-    name: "transfer",
-    about: transferDescription,
-    args: [
-      positional("amount", 'Amount in human units ("1.00", "50") — required for token transfers'),
-      positional(
-        "token",
-        "Token address (0x...) or symbol (e.g. USDC.e) — required for token transfers",
-      ),
-      positional("to", "Recipient address (0x...)"),
-      option(
-        "fee_token",
-        "--fee-token",
-        "Pay fees in a different token, by address or symbol (default: the account's fee token, else the same token)",
-        { valueName: "FEE_TOKEN" },
-      ),
-      flag("dry_run", "--dry-run", "Show plan, fee estimate, and balance; don't send"),
-      flag("yes", "--yes", "Send without the confirmation prompt; required for agent runs"),
-      idempotencyKeyArg,
-      flag("mach", "--mach", "Pay with on-chain MACH"),
-      flag("credits", "--credits", "Spend existing MPP Credits (deprecated)"),
-      option("max_spend", "--max-spend", "Maximum MACH spend in USD", { valueName: "AMOUNT" }),
-      option(
-        "amount_cents",
-        "--amount-cents",
-        "Credits amount or MPP challenge spending cap in USD cents; --credits only",
-        { valueName: "AMOUNT_CENTS" },
-      ),
-      option("credits_to", "--to", "Credits recipient; --credits only", {
-        valueName: "CREDITS_TO",
-      }),
-      option("data", "--data", "Credits calldata; --credits only", {
-        valueName: "DATA",
-      }),
-      option("mpp_challenge", "--mpp-challenge", "MPP WWW-Authenticate challenge", {
-        valueName: "MPP_CHALLENGE",
-      }),
-      option(
-        "mpp_challenge_file",
-        "--mpp-challenge-file",
-        "File containing an MPP WWW-Authenticate challenge",
-        { valueName: "MPP_CHALLENGE_FILE" },
-      ),
-      option(
-        "mpp_client_id",
-        "--mpp-client-id",
-        "Optional client ID to include in the generated MPP attribution memo",
-        { valueName: "MPP_CLIENT_ID" },
-      ),
-      option("address", "--address", "Wallet address (defaults to current wallet)", {
-        valueName: "ADDRESS",
-      }),
-    ],
-  },
   // `--credits` keeps its options, and MACH refuses `--to` and `--data` itself.
   retiredFlags: [
     ...creditsOnlyFlags,

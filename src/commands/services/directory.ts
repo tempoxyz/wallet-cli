@@ -5,7 +5,6 @@ import { dirname, join } from "node:path";
 
 import { formatUnits } from "viem";
 
-import { flag } from "../../cli/describe.js";
 import { version } from "../../shared/constants.js";
 import { httpError, networkError } from "../../shared/errors.js";
 import { getArray, getRecord, sanitizeText, stringValue } from "../../shared/utils.js";
@@ -22,16 +21,9 @@ export type ServiceSummary = {
 };
 
 type ServiceDetail = ServiceSummary & {
-  docs?: unknown;
-  endpoints?: unknown[] | undefined;
+  docs?: ReturnType<typeof serviceDocs> | undefined;
+  endpoints?: ReturnType<typeof serviceEndpoint>[] | undefined;
 };
-
-/** The `--describe` entry of `--refresh`, which bare `services` and each subcommand take. */
-export const refreshFlag = flag(
-  "refresh",
-  "--refresh",
-  "Fetch the service directory instead of using the cached copy",
-);
 
 // Ids select a service, so they are matched raw and must be plain slugs.
 const serviceIdPattern = /^[a-z0-9][a-z0-9._-]*$/i;
@@ -194,9 +186,9 @@ function serviceDocs(value: unknown) {
   const docs = getRecord(value);
   return {
     homepage: displayText(docs.homepage) || null,
-    llmsTxt: displayText(docs.llmsTxt ?? docs.llms_txt) || null,
+    llms_txt: displayText(docs.llmsTxt ?? docs.llms_txt) || null,
     openapi: displayText(docs.openapi) || null,
-    apiReference: displayText(docs.apiReference ?? docs.api_reference) || null,
+    api_reference: displayText(docs.apiReference ?? docs.api_reference) || null,
   };
 }
 
@@ -211,10 +203,10 @@ function serviceEndpoint(value: unknown) {
     description: displayText(endpoint.description),
     payment: {
       intent: displayText(payment.intent),
-      amount,
+      raw_amount: amount,
       decimals,
       price: formatPrice(amount, decimals),
-      unitType: displayText(payment.unitType ?? payment.unit_type) || null,
+      unit_type: displayText(payment.unitType ?? payment.unit_type) || null,
       description: displayText(payment.description),
       dynamic: typeof payment.dynamic === "boolean" ? payment.dynamic : null,
     },

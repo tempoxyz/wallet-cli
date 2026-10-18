@@ -2,7 +2,6 @@ import { Cli } from "incur";
 import type { Address } from "viem";
 
 import { readOnly, type WalletCommand } from "../cli/command.js";
-import { option } from "../cli/describe.js";
 import { balanceOptions, balanceOutput } from "../schemas/balance.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { networkError } from "../shared/errors.js";
@@ -37,18 +36,6 @@ export default {
     },
   }),
   annotations: { balance: { ...readOnly, openWorldHint: true } },
-  describe: {
-    name: "balance",
-    about: "Show the wallet's token balances",
-    args: [
-      option(
-        "token",
-        "--token",
-        "Token address or symbol to show (default: every token the wallet holds)",
-        { valueName: "TOKEN" },
-      ),
-    ],
-  },
 } satisfies WalletCommand;
 
 /**
@@ -72,7 +59,7 @@ export async function balanceHandler(
   const balances = assetBalances(assets, held);
   if (!balances.some((balance) => balance.token === token.toLowerCase()))
     throw networkError(balanceQueryError.message, { retryable: true });
-  return { address: account.address.toLowerCase(), ...networkFields(chain), balances };
+  return { wallet: account.address.toLowerCase(), ...networkFields(chain), balances };
 }
 
 /**

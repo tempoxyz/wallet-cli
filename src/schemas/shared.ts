@@ -1,5 +1,24 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
+
+/**
+ * What `--describe` shows of an option beyond its schema, registered on the option with
+ * `.register(describeMeta, { ... })`. It is a registry rather than `.meta()`, which incur would
+ * copy into the JSON Schema of `--schema`, `--llms-full`, and MCP tools.
+ */
+export const describeMeta = z.registry<{
+  /** The entry's name, when its own would repeat a positional's, as `--to` does in `transfer`. */
+  name?: string | undefined;
+  /** The placeholder for the option's value; defaults to its name in upper case. */
+  valueName?: string | undefined;
+  /**
+   * Help for the `--no-<name>` form of a boolean, which `--describe` and the README then list
+   * after the flag. A boolean that defaults to true is listed in this form only.
+   */
+  negated?: string | undefined;
+}>();
+
 /** CLI-level options incur parses anywhere in argv; commands and middleware read `c.globals`. */
 export const cliGlobals = z.object({
   network: z
@@ -16,7 +35,10 @@ export const globalOptionShape = {
   verbose: z.boolean().optional().describe("Increase verbosity"),
   silent: z.boolean().optional().describe("Silent mode: suppress non-essential output"),
   "json-output": z.boolean().optional().describe("Quick switch for JSON output format"),
-  "toon-output": z.boolean().optional().describe("Quick switch for TOON output format"),
+  "toon-output": z
+    .boolean()
+    .optional()
+    .describe("Quick switch for TOON output format (compact, token-efficient)"),
 };
 
 export const globalAlias = {
@@ -32,7 +54,8 @@ export const globalOptions = z.object(globalOptionShape);
 export const browserOption = z
   .boolean()
   .default(true)
-  .describe("Open a browser; use --no-browser to disable");
+  .describe("Open a browser; use --no-browser to disable")
+  .register(describeMeta, { negated: "Do not attempt to open a browser" });
 
 /** Matches `networkFields`: the chain a command ran against and its network label. */
 export const networkOutputShape = {
@@ -42,17 +65,29 @@ export const networkOutputShape = {
 
 /** Continuation fields on results with a follow-up command; built by `nextStep`. */
 export const nextOutputShape = {
-  instruction: z.string().optional().describe("What to do next"),
+  instruction: z
+    .string()
+    .register(displayMeta, { note: true })
+    .optional()
+    .describe("What to do next"),
   _next: z
     .object({
-      argv: z.array(z.string()).describe("Next command as an argument vector; authoritative"),
-      command: z.string().describe("argv quoted for a POSIX shell"),
+      argv: z
+        .array(z.string())
+        .register(displayMeta, { hidden: true })
+        .describe("Next command as an argument vector; authoritative"),
+      command: z
+        .string()
+        .register(displayMeta, { next: true })
+        .describe("argv quoted for a POSIX shell"),
       until: z
         .string()
+        .register(displayMeta, { hidden: true })
         .optional()
         .describe("jq condition on the next command's JSON output; rerun it until true"),
       poll_interval_seconds: z
         .number()
+        .register(displayMeta, { hidden: true })
         .optional()
         .describe("Seconds to wait before running the next command, and between reruns"),
     })
@@ -60,7 +95,9 @@ export const nextOutputShape = {
 };
 
 /** A transaction's state on chain, as `tx status` reads it. */
-export const txStateSchema = z.enum(["success", "reverted", "pending", "not_found"]);
+export const txStateSchema = z
+  .enum(["success", "reverted", "pending", "not_found"])
+  .register(displayMeta, { tone: { success: "ok", reverted: "error" } });
 
 /** `--idempotency-key` on the commands that send a transaction. */
 export const idempotencyKeyOption = z
@@ -68,7 +105,8 @@ export const idempotencyKeyOption = z
   .optional()
   .describe(
     "Send at most once per key for this wallet and network; a retry with the same key returns the recorded result instead of sending again",
-  );
+  )
+  .register(describeMeta, { valueName: "KEY" });
 
 /** Fields a send replayed from its idempotency key adds to the result it recorded. */
 export const replayOutputShape = {

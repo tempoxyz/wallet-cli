@@ -1,0 +1,5 @@
+Address   0xabfb663c1f9cd7438f54846d6b827e315719ec0f
+Chain ID  4217
+Network   tempo
+
+Next: tempo wallet skills add  # sync outdated skills

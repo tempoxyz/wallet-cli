@@ -126,8 +126,9 @@ describe("login", () => {
     const host = useHost(["pending", "pending", "approve"]);
 
     expect(await loginHandler({ network: "testnet", browser: false, wait: true })).toEqual({
-      accounts: [testWallet],
-      chainId: 42431,
+      accounts: [testWallet.toLowerCase()],
+      chain_id: 42431,
+      network: "tempo-moderato",
       instruction: "Run the next command to confirm the wallet is ready.",
       _next: {
         argv: ["tempo", "wallet", "whoami", "--network", "testnet"],
@@ -147,7 +148,7 @@ describe("login", () => {
     await loginHandler({ network: "testnet", browser: false, wait: false });
 
     expect((await loadPendingLogin())?.registration.device_code).toBe("device-2");
-    expect(await loginStatusHandler({})).toMatchObject({ accounts: [testWallet] });
+    expect(await loginStatusHandler({})).toMatchObject({ accounts: [testWallet.toLowerCase()] });
     expect(host.polls.map((poll) => poll.device_code)).toEqual(["device-2"]);
     await expectLoggedIn(host, 42431, 1);
   });
@@ -190,8 +191,8 @@ describe("login status", () => {
       options: {},
       polls: 3,
       result: {
-        accounts: [testWallet],
-        chainId: 42431,
+        accounts: [testWallet.toLowerCase()],
+        chain_id: 42431,
         _next: { command: "tempo wallet whoami --network testnet" },
       },
       kept: false,
@@ -259,7 +260,10 @@ describe("login status", () => {
     const lock = join(home, ".tempo", "wallet", "pending-login.lock");
     await writeFile(lock, "not a database");
 
-    expect(await loginStatusHandler({})).toMatchObject({ accounts: [testWallet], chainId: 42431 });
+    expect(await loginStatusHandler({})).toMatchObject({
+      accounts: [testWallet.toLowerCase()],
+      chain_id: 42431,
+    });
     expect(await loadWalletState()).toMatchObject({
       accounts: [{ address: testWallet }],
       accessKeys: [{ address: registeredKey(host).capabilities.authorizeAccessKey.address }],
@@ -431,7 +435,7 @@ describe("login status", () => {
       code: "E_POLL_TIMEOUT",
       retryable: true,
     });
-    expect(await loginStatusHandler({})).toMatchObject({ accounts: [testWallet] });
+    expect(await loginStatusHandler({})).toMatchObject({ accounts: [testWallet.toLowerCase()] });
     expect(host.polls).toHaveLength(4);
     await expectLoggedIn(host, 42431);
   });

@@ -1,11 +1,10 @@
 import type { z } from "incur";
 
 import { readOnly } from "../../cli/command.js";
-import { positional } from "../../cli/describe.js";
 import { serviceDetailOutput, servicesOptions, servicesShowArgs } from "../../schemas/services.js";
 import { globalAlias } from "../../schemas/shared.js";
 import { usageError, walletError } from "../../shared/errors.js";
-import { loadServices, refreshFlag } from "./directory.js";
+import { loadServices } from "./directory.js";
 
 // The definition is declared apart from the group's `.command()`, so its run context is typed here.
 type ShowContext = {
@@ -20,17 +19,11 @@ export const showCommand = {
   alias: globalAlias,
   output: serviceDetailOutput,
   async run({ args, options }: ShowContext) {
-    return showService({ serviceId: args.serviceId, refresh: options.refresh });
+    return showService({ serviceId: args["service-id"], refresh: options.refresh });
   },
 };
 
 export const showAnnotations = { ...readOnly, openWorldHint: true };
-
-export const showDescribe = {
-  name: "show",
-  about: "Show a service's endpoints, prices, and docs",
-  args: [positional("service_id", "Service ID to show details for"), refreshFlag],
-};
 
 /** The details of the service `serviceId` names; an unknown id suggests up to 3 close ones. */
 export async function showService(options: { serviceId: string; refresh?: boolean | undefined }) {

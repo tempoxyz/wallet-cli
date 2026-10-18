@@ -3,7 +3,6 @@ import { formatUnits, toHex } from "viem";
 import { Actions, Addresses } from "viem/tempo";
 
 import { destructive, type WalletCommand } from "../cli/command.js";
-import { flag, option, positional } from "../cli/describe.js";
 import type { CtaError } from "../cli/incur-compat.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { swapArgs, swapOptions, swapOutput, type swapSuccessOutput } from "../schemas/swap.js";
@@ -31,7 +30,6 @@ import {
   deferredKeyRefusal,
   defersKeyCheck,
   idempotencyKey,
-  idempotencyKeyArg,
   recordedSend,
   submitTransaction,
   txStatus,
@@ -49,7 +47,7 @@ export default {
     output: swapOutput,
     examples: [
       {
-        args: { amount: "10", tokenIn: "USDC.e", tokenOut: "pathUSD" },
+        args: { amount: "10", "token-in": "USDC.e", "token-out": "pathUSD" },
         options: { "dry-run": true },
       },
     ],
@@ -59,7 +57,11 @@ export default {
       return withWallet(
         async (_, wallet) => {
           const result = await swapTokens(wallet, {
-            args: context.args,
+            args: {
+              amount: context.args.amount,
+              tokenIn: context.args["token-in"],
+              tokenOut: context.args["token-out"],
+            },
             options: context.options,
             keyRequired: deferKey ? deferredKeyRefusal(context.agent, wallet) : undefined,
           });
@@ -70,37 +72,6 @@ export default {
     },
   }),
   annotations: { swap: { ...destructive, idempotentHint: false, openWorldHint: true } },
-  describe: {
-    name: "swap",
-    about: "Swap TIP-20 tokens on the Tempo Stablecoin DEX",
-    args: [
-      positional("amount", "Exact input amount by default; exact output with --exact-out"),
-      positional("token_in", "Input token address (0x...) or symbol (e.g. USDC.e)"),
-      positional("token_out", "Output token address (0x...) or symbol (e.g. pathUSD)"),
-      flag("exact_out", "--exact-out", "Treat amount as the exact output amount"),
-      option("slippage_bps", "--slippage-bps", "Maximum slippage in basis points", {
-        valueName: "BPS",
-      }),
-      option(
-        "min_amount_out",
-        "--min-amount-out",
-        "Exact input: refuse to receive less than this reviewed amount",
-        { valueName: "AMOUNT" },
-      ),
-      option(
-        "max_amount_in",
-        "--max-amount-in",
-        "Exact output: refuse to spend more than this reviewed amount",
-        { valueName: "AMOUNT" },
-      ),
-      option("fee_token", "--fee-token", "Token address or symbol used to pay fees", {
-        valueName: "FEE_TOKEN",
-      }),
-      flag("dry_run", "--dry-run", "Quote and show calls without submitting"),
-      flag("yes", "--yes", "Confirm the reviewed swap for submission"),
-      idempotencyKeyArg,
-    ],
-  },
 } satisfies WalletCommand;
 
 const slippageScale = 10_000n;
@@ -156,7 +127,7 @@ export async function swapTokens(
   const tokenIn = resolveTokenAddress(input.args.tokenIn, network);
   const tokenOut = resolveTokenAddress(input.args.tokenOut, network);
   if (tokenIn === tokenOut)
-    throw usageError("Invalid swap: tokenIn and tokenOut must be different");
+    throw usageError("Invalid swap: token-in and token-out must be different");
   if (
     !Number.isSafeInteger(input.options["slippage-bps"]) ||
     input.options["slippage-bps"] < 0 ||

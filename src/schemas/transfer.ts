@@ -1,7 +1,8 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import { sendArgs, sendOptions, sendOutput } from "./send.js";
-import { networkOutputShape, nextOutputShape } from "./shared.js";
+import { describeMeta, networkOutputShape, nextOutputShape } from "./shared.js";
 
 // A token transfer is `send` under its former name, so it takes the same arguments and options.
 export const transferArgs = sendArgs.partial();
@@ -15,20 +16,35 @@ export const transferOptions = z.object({
   "max-spend": z
     .string()
     .optional()
-    .describe("Maximum MACH spend in USD for the exact MPP challenge"),
+    .describe("Maximum MACH spend for the exact MPP challenge, in MACH (1 MACH = 1 USD)")
+    .register(describeMeta, { valueName: "AMOUNT" }),
   "amount-cents": z.coerce
     .number()
     .optional()
     .describe("Credits amount or MPP challenge spending cap in USD cents; --credits only"),
-  to: z.string().optional().describe("Credits recipient; --credits only"),
+  // Named apart from the recipient argument, as `--describe` names each argument once.
+  to: z
+    .string()
+    .optional()
+    .describe("Credits recipient; --credits only")
+    .register(describeMeta, { name: "credits_to" }),
   data: z.string().optional().describe("Credits calldata; --credits only"),
   "mpp-challenge": z.string().optional().describe("MPP WWW-Authenticate challenge"),
-  "mpp-challenge-file": z.string().optional().describe("File containing an MPP challenge"),
+  "mpp-challenge-file": z
+    .string()
+    .optional()
+    .describe("File containing an MPP WWW-Authenticate challenge"),
   "mpp-client-id": z.string().optional().describe("Optional client ID for MPP attribution memo"),
-  address,
+  address: address.describe(
+    "Guard: refuse unless this is the paying wallet's address; with --credits, the wallet whose credits to spend (default: the logged-in wallet)",
+  ),
 });
 
+/** A MACH or MPP Credits payment: reviewed with `--dry-run`, else sent. */
+const paymentStatus = z.enum(["dry_run", "success"]);
+
 export const spendCreditsOutput = z.object({
+  status: paymentStatus,
   wallet: z.string(),
   amount_cents: z.number(),
   ...networkOutputShape,
@@ -40,20 +56,22 @@ export const spendCreditsOutput = z.object({
     z.object({ transaction: z.object({ to: z.string(), data: z.string() }) }),
   ]),
   tx_hash: z.string().optional(),
-  dry_run: z.boolean().optional(),
 });
 
 export const spendMachOutput = z.object({
+  status: paymentStatus,
   wallet: z.string().optional(),
-  amount: z.string(),
-  amount_raw: z.string(),
+  amount: z.string().register(displayMeta, { amount: "token" }),
+  raw_amount: z
+    .string()
+    .register(displayMeta, { hidden: true })
+    .describe("amount in MACH base units"),
   token: z.literal("MACH"),
   settlement_currency: z.string(),
   ...networkOutputShape,
   challenge_id: z.string(),
   max_spend: z.string().nullable(),
   tx_hash: z.string().optional(),
-  dry_run: z.boolean().optional(),
   ...nextOutputShape,
 });
 

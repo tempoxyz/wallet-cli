@@ -12,7 +12,7 @@ import { continuationCommand } from "./shared/next.js";
 import { WalletRequiredError } from "./shared/require-wallet.js";
 import { configSnapshot } from "./wallet/config.js";
 
-const maxSpendHelp = `Hard cap for cumulative payment spend in token units (or TEMPO_MAX_SPEND, then the saved max-spend setting; default ${defaultMaxSpend})`;
+const maxSpendHelp = `Hard cap for cumulative payment spend in payment token units, or in MACH (1 MACH = 1 USD) for a MACH payment (or TEMPO_MAX_SPEND, then the saved max-spend setting; default ${defaultMaxSpend})`;
 
 const args = z.object({
   url: z.string().describe("URL to request"),

@@ -1,5 +1,6 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import { globalOptionShape } from "./shared.js";
 
 const refresh = z
@@ -15,7 +16,7 @@ export const servicesSearchArgs = z.object({
 });
 
 export const servicesShowArgs = z.object({
-  serviceId: z.string().describe("Service ID to show details for"),
+  "service-id": z.string().describe("Service ID to show details for"),
 });
 
 export const serviceOutput = z.object({
@@ -29,9 +30,38 @@ export const serviceOutput = z.object({
   endpoint_count: z.number().optional(),
 });
 
+const serviceDocsOutput = z.object({
+  homepage: z.string().nullable(),
+  llms_txt: z.string().nullable(),
+  openapi: z.string().nullable(),
+  api_reference: z.string().nullable(),
+});
+
+const serviceEndpointOutput = z.object({
+  method: z.string(),
+  path: z.string(),
+  description: z.string(),
+  payment: z.object({
+    intent: z.string(),
+    raw_amount: z
+      .string()
+      .register(displayMeta, { hidden: "price" })
+      .describe("Price in the token's base units, as the directory lists it"),
+    decimals: z.number().nullable(),
+    price: z
+      .string()
+      .nullable()
+      .describe("raw_amount in whole tokens; null without a whole-number amount and decimals"),
+    unit_type: z.string().nullable(),
+    description: z.string(),
+    dynamic: z.boolean().nullable(),
+  }),
+  docs: z.string().nullable(),
+});
+
 export const serviceDetailOutput = serviceOutput.extend({
-  docs: z.unknown().optional(),
-  endpoints: z.array(z.unknown()).optional(),
+  docs: serviceDocsOutput.optional(),
+  endpoints: z.array(serviceEndpointOutput).optional(),
   stale: z.boolean().optional(),
   fetched_at: z.string().optional(),
 });

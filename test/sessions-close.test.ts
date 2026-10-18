@@ -367,7 +367,7 @@ describe("--finalize", () => {
     const result = await closeSessions({ ...options, finalize: true });
 
     expect(dryRun.targets).toEqual(
-      withdrawn.map((id) => expect.objectContaining({ channel_id: id, state: "Finalizable" })),
+      withdrawn.map((id) => expect.objectContaining({ channel_id: id, status: "finalizable" })),
     );
     expect(result).toMatchObject({ closed: withdrawn.length, pending: 0, failed: 0 });
     expect(withdrawals()).toEqual(
@@ -392,7 +392,7 @@ describe("--finalize", () => {
     {
       name: "reports a channel still in its grace period as pending",
       closeRequestedAt: now - 100,
-      result: { channel_id: channelId, status: "pending", origin, remaining_secs: 800 },
+      result: { channel_id: channelId, status: "pending", origin, remaining_seconds: 800 },
     },
   ])("with a target $name", async ({ closeRequestedAt, result }) => {
     await writeWalletState(stateFor(mainnet));
@@ -670,7 +670,7 @@ describe("--cooperative", () => {
     const rerun = await closeSessions({ target: channelId });
 
     expect(rerun.results).toEqual([
-      { channel_id: channelId, status: "pending", origin, remaining_secs: 900 },
+      { channel_id: channelId, status: "pending", origin, remaining_seconds: 900 },
     ]);
     expect(withdrawals()).toEqual([{ functionName: "requestClose", args: [channelId] }]);
     expect(await readSessionRecordsByOrigin(origin)).toEqual([
@@ -846,7 +846,7 @@ describe("confirming a close", () => {
   const closing = { state: "closing", close_requested_at: now - 1000, grace_ready_at: now - 100 };
   const closeOutcome =
     "Each close is requested on-chain; its unspent deposit returns to the wallet once withdrawn after the grace period.";
-  const entry = (id: string, origin: string, deposit = "0.010000 USDC.e", network = "mainnet") => [
+  const entry = (id: string, origin: string, deposit = "0.01 USDC.e", network = "mainnet") => [
     `  - channel: ${id}`,
     `    origin:  ${origin}`,
     `    network: ${network} (chain ${network === "testnet" ? testnet : mainnet})`,
@@ -896,7 +896,7 @@ describe("confirming a close", () => {
       command: `tempo wallet sessions close ${channelId} --yes --network testnet`,
       prompt: [
         "Close 1 session:",
-        ...entry(channelId, origin, "0.010000 USDC.e", "testnet"),
+        ...entry(channelId, origin, "0.01 USDC.e", "testnet"),
         closeOutcome,
         "Close this session? This cannot be undone.",
       ],

@@ -56,7 +56,7 @@ describe("credits CLI compatibility", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       wallet: testWallet.toLowerCase(),
       amount_cents: 100,
-      dry_run: true,
+      status: "dry_run",
     });
     expect(result.stderr.match(/--credits is deprecated/g)).toHaveLength(1);
     expect(result.stderr).toContain("tempo wallet fund --mach");
@@ -80,14 +80,14 @@ describe("credits CLI compatibility", () => {
     );
     const credits = await cli(["transfer", "--credits", "--mpp-challenge-file", file, "--dry-run"]);
     expect(credits.code).toBe(0);
-    expect(JSON.parse(credits.stdout)).toMatchObject({ amount_cents: 100, dry_run: true });
+    expect(JSON.parse(credits.stdout)).toMatchObject({ amount_cents: 100, status: "dry_run" });
     expect(credits.stderr).toContain("--credits is deprecated");
     const mach = await cli(["transfer", "--mach", "--mpp-challenge-file", file, "--dry-run"]);
     expect(mach.code).toBe(0);
     expect(JSON.parse(mach.stdout)).toMatchObject({
       token: "MACH",
-      amount_raw: "1000000",
-      dry_run: true,
+      raw_amount: "1000000",
+      status: "dry_run",
     });
     expect(mach.stderr).not.toContain("--credits is deprecated");
   });

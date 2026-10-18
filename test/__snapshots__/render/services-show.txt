@@ -1,0 +1,29 @@
+ID              weather
+Name            Weather API
+URL             https://weather.example.com
+Service URL     https://weather.mpp.tempo.xyz
+Description     Forecasts and current conditions
+Categories      data, climate
+Tags            forecast, meteorology
+Endpoint count  1
+
+Docs
+  Homepage       https://weather.example.com
+  Llms txt       https://weather.example.com/llms.txt
+  Openapi        -
+  API reference  -
+
+Endpoints
+  Method       GET
+  Path         /now
+  Description  Current weather
+
+  Payment
+    Intent       pay
+    Decimals     6
+    Price        0.0001
+    Unit type    request
+    Description  -
+    Dynamic      no
+
+  Docs         -

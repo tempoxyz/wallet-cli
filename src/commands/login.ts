@@ -3,7 +3,6 @@ import { TimeoutError } from "accounts/deviceCode";
 import { Cli } from "incur";
 
 import { destructive, type WalletCommand } from "../cli/command.js";
-import { flag, option } from "../cli/describe.js";
 import {
   loginOptions,
   loginOutput,
@@ -14,7 +13,13 @@ import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { connect, createLoginProvider } from "../provider.js";
 import { commandError } from "../shared/errors.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
-import { explicitNetwork, parseNetwork, resolveNetwork, type Network } from "../shared/network.js";
+import {
+  explicitNetwork,
+  networkFields,
+  parseNetwork,
+  resolveNetwork,
+  type Network,
+} from "../shared/network.js";
 import { openExternal } from "../shared/process.js";
 import { formatUnixTimestamp, getRecord, nowSeconds, sanitizeText } from "../shared/utils.js";
 import {
@@ -63,29 +68,6 @@ export default {
     // login, and once approved, stores the approved account in place of the current one.
     login: { ...destructive, idempotentHint: false, openWorldHint: true },
     login_status: { ...destructive, idempotentHint: true, openWorldHint: true },
-  },
-  describe: {
-    name: "login",
-    about: "Sign up or log in to your Tempo wallet",
-    args: [
-      flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
-      flag("wait", "--wait", "Wait for approval (default in a terminal)"),
-      flag("no_wait", "--no-wait", "Return the code and URL for 'login status' immediately"),
-    ],
-    subcommands: [
-      {
-        name: "status",
-        about: "Wait for a pending login's approval and finish it",
-        args: [
-          option("interval", "--interval", "Seconds between checks", {
-            valueName: "SECONDS",
-          }),
-          option("max_attempts", "--max-attempts", "Checks before giving up", {
-            valueName: "COUNT",
-          }),
-        ],
-      },
-    ],
   },
 } satisfies WalletCommand;
 
@@ -255,8 +237,8 @@ async function finishLogin(pending: PendingLogin, network: Network, options: Pol
       login,
     );
   return {
-    accounts: result.accounts.map((account) => account.address),
-    chainId: network.chainId,
+    accounts: result.accounts.map((account) => account.address.toLowerCase()),
+    ...networkFields(network.chainId),
     ...nextStep("Run the next command to confirm the wallet is ready.", ["wallet", "whoami"], {
       network,
     }),

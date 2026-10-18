@@ -1,10 +1,9 @@
-import type { Address } from "viem";
+import { formatUnits, type Address } from "viem";
 
 import { networkName, tokenDecimals, type Network } from "../../shared/network.js";
 import { querySql, runSql, sqlString } from "../../shared/process.js";
 import { tokenSymbol } from "../../shared/tokens.js";
 import {
-  formatTokenUnits,
   formatUnixTimestamp,
   getArray,
   getRecord,
@@ -71,13 +70,13 @@ export function sessionItem(record: ChannelRecord) {
     network: record.network,
     origin: record.origin,
     symbol: tokenSymbol(record.token, record.chain_id) ?? null,
-    deposit: formatTokenUnits(record.deposit, tokenDecimals()),
-    spent: formatTokenUnits(spent, tokenDecimals()),
-    remaining: formatTokenUnits(remaining, tokenDecimals()),
+    deposit: formatUnits(record.deposit, tokenDecimals()),
+    spent: formatUnits(spent, tokenDecimals()),
+    remaining: formatUnits(remaining, tokenDecimals()),
     status,
     ...(status === "closing" || status === "finalizable"
       ? {
-          remaining_secs:
+          remaining_seconds:
             record.grace_ready_at > nowSeconds() ? record.grace_ready_at - nowSeconds() : 0,
         }
       : {}),
@@ -226,7 +225,7 @@ export function sessionStateFromCloseTiming(
   return closeRequestedAt + gracePeriod <= nowSeconds() ? "finalizable" : "closing";
 }
 
-export function sessionStatus(record: ChannelRecord) {
+export function sessionStatus(record: ChannelRecord): ChannelState {
   if (record.state === "closing") {
     return record.grace_ready_at > 0 && record.grace_ready_at <= nowSeconds()
       ? "finalizable"

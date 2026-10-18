@@ -2,7 +2,6 @@ import { Cli, type z } from "incur";
 
 import { operandIndexes, type RetiredFlag } from "../cli/argv.js";
 import { destructive, type WalletCommand } from "../cli/command.js";
-import { flag, option, positional } from "../cli/describe.js";
 import { sendArgs, sendOptions, sendOutput } from "../schemas/send.js";
 import { transferOptions } from "../schemas/transfer.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
@@ -10,7 +9,7 @@ import type { CommandContext } from "../shared/errors.js";
 import { canPrompt } from "../shared/process.js";
 import { withWallet } from "../shared/require-wallet.js";
 import { transferNetworkRefusal, transferTokens } from "./transfer/tokens.js";
-import { deferredKeyRefusal, defersKeyCheck, idempotencyKeyArg } from "./tx.js";
+import { deferredKeyRefusal, defersKeyCheck } from "./tx.js";
 
 // The definition is declared apart from `Cli.create`, so its run context is typed here. A token
 // `transfer` runs it too, with each argument optional.
@@ -162,27 +161,6 @@ export function valueFlag(command: (args: string[]) => string[] | undefined): Re
 export default {
   command: Cli.create("send", { ...sendCommand, globals: cliGlobals }),
   annotations: { send: sendAnnotations },
-  describe: {
-    name: "send",
-    about: "Send tokens to an address",
-    args: [
-      positional("amount", 'Amount in human units ("1.00", "50")'),
-      positional("token", "Token address (0x...) or symbol (e.g. USDC.e)"),
-      positional("to", "Recipient address (0x...)"),
-      option(
-        "fee_token",
-        "--fee-token",
-        "Pay fees in a different token, by address or symbol (default: the account's fee token, else the same token)",
-        { valueName: "FEE_TOKEN" },
-      ),
-      flag("dry_run", "--dry-run", "Show plan, fee estimate, and balance; don't send"),
-      flag("yes", "--yes", "Send without the confirmation prompt; required for agent runs"),
-      idempotencyKeyArg,
-      option("address", "--address", "Wallet address (defaults to current wallet)", {
-        valueName: "ADDRESS",
-      }),
-    ],
-  },
   retiredFlags: [
     transferMode("--mach", "pay an MPP challenge with MACH"),
     transferMode("--credits", "spend legacy MPP Credits"),

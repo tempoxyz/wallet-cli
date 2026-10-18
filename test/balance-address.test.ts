@@ -206,7 +206,7 @@ describe("tempo wallet balance", () => {
 
       expect(result).toMatchObject({ code: 0, stderr: "" });
       const output = JSON.parse(result.stdout);
-      expect(output).toEqual({ address: wallet, ...expected });
+      expect(output).toEqual({ wallet, ...expected });
       expect(balanceOutput.parse(output)).toEqual(output);
       expect(host.requests.toSorted()).toEqual(requests.toSorted());
     } finally {
@@ -447,8 +447,12 @@ describe("balance and address", () => {
         state: walletState({ accessKeys: [{ ...walletState().accessKeys[0]!, expiry: 1 }] }),
       },
     ].flatMap((row) => [
-      { ...row, argv: ["balance"], expected: { balances: [listed(usdcToken, "USDC.e", "1")] } },
-      { ...row, argv: ["address"], expected: {} },
+      {
+        ...row,
+        argv: ["balance"],
+        expected: { wallet, balances: [listed(usdcToken, "USDC.e", "1")] },
+      },
+      { ...row, argv: ["address"], expected: { address: wallet } },
     ]),
   )("$argv runs with $name", async ({ state, argv, expected }) => {
     const home = await useTempHome();
@@ -458,7 +462,7 @@ describe("balance and address", () => {
       const result = await run([...argv, "--format", "json"], home, host.url);
 
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({ address: wallet, ...mainnet, ...expected });
+      expect(JSON.parse(result.stdout)).toEqual({ ...mainnet, ...expected });
     } finally {
       await host.close();
     }

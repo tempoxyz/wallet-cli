@@ -223,9 +223,9 @@ describe("service directory", () => {
       id: "weather",
       docs: {
         homepage: "https://weather.example.com",
-        llmsTxt: "https://weather.example.com/llms.txt",
+        llms_txt: "https://weather.example.com/llms.txt",
         openapi: null,
-        apiReference: null,
+        api_reference: null,
       },
       endpoints: [
         {
@@ -234,10 +234,10 @@ describe("service directory", () => {
           description: "Current weather",
           payment: {
             intent: "pay",
-            amount: "100",
+            raw_amount: "100",
             decimals: 6,
             price: "0.0001",
-            unitType: "usdc",
+            unit_type: "usdc",
           },
           docs: "https://weather.example.com/docs",
         },
@@ -281,7 +281,7 @@ describe("service directory", () => {
         {
           path: "/now",
           description: "Current weather",
-          payment: { amount: "100", unitType: "usdc" },
+          payment: { raw_amount: "100", unit_type: "usdc" },
         },
       ],
     });
@@ -455,7 +455,7 @@ describe("service directory", () => {
     });
 
     expect(await showService({ serviceId: "weather" })).toMatchObject({
-      endpoints: [{ payment: { amount: amount ?? "", decimals: decimals ?? null, price } }],
+      endpoints: [{ payment: { raw_amount: amount ?? "", decimals: decimals ?? null, price } }],
     });
   });
 

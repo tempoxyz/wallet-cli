@@ -1,6 +1,7 @@
 import { z } from "incur";
 
-import { nextOutputShape } from "./shared.js";
+import { displayMeta } from "../cli/render.js";
+import { networkOutputShape, nextOutputShape } from "./shared.js";
 
 /** `tempo request --dry-run`: a quote for a 402, else the status of a probe that needed no payment. */
 export const requestDryRunOutput = z.union([
@@ -10,7 +11,7 @@ export const requestDryRunOutput = z.union([
     intent: z.string(),
     recurring: z.boolean(),
     amount: z.string().describe("Per-call amount"),
-    amount_raw: z.string(),
+    raw_amount: z.string().register(displayMeta, { hidden: true }),
     session: z
       .enum(["open", "reuse"])
       .nullable()
@@ -21,7 +22,7 @@ export const requestDryRunOutput = z.union([
       .describe(
         "Deposit the payment locks: a new session's deposit, or the top-up a reused session's voucher needs",
       ),
-    deposit_raw: z.string().nullable(),
+    raw_deposit: z.string().register(displayMeta, { hidden: true }).nullable(),
     token: z.string(),
     symbol: z.string().nullable().describe("Listed symbol; null for a token viem does not list"),
     decimals: z.number().nullable(),
@@ -34,7 +35,7 @@ export const requestDryRunOutput = z.union([
       ),
     machine_token_enabled: z.boolean(),
     payment_token: z.string().nullable(),
-    chain_id: z.number(),
+    ...networkOutputShape,
     max_spend: z
       .string()
       .nullable()
@@ -56,7 +57,7 @@ export const requestDryRunOutput = z.union([
   }),
   z.object({
     payment_required: z.literal(false),
-    status: z.number(),
+    status: z.number().describe("HTTP status of the probe, which needed no payment"),
     probe_sent: z.literal(true),
     warning: z.string().optional(),
   }),

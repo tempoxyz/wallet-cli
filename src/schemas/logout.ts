@@ -31,7 +31,7 @@ export const logoutOutput = z.object({
     .array(
       z.object({
         address: z.string(),
-        wallet_address: z.string(),
+        wallet: z.string(),
         ...networkOutputShape,
         revoked: z
           .boolean()

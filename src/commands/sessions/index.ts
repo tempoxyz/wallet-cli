@@ -3,9 +3,9 @@ import { Cli } from "incur";
 import type { WalletCommand } from "../../cli/command.js";
 import { sessionsListOptions, sessionsListOutput } from "../../schemas/sessions.js";
 import { cliGlobals, globalAlias } from "../../schemas/shared.js";
-import { closeAnnotations, closeCommand, closeDescribe } from "./close.js";
-import { listAnnotations, listCommand, listDescribe, listSessions } from "./list.js";
-import { syncAnnotations, syncCommand, syncDescribe } from "./sync.js";
+import { closeAnnotations, closeCommand } from "./close.js";
+import { listAnnotations, listCommand, listSessions } from "./list.js";
+import { syncAnnotations, syncCommand } from "./sync.js";
 
 // Bare `tempo wallet sessions` lists sessions.
 export default {
@@ -30,10 +30,5 @@ export default {
     sessions_close: closeAnnotations,
     sessions_list: listAnnotations,
     sessions_sync: syncAnnotations,
-  },
-  describe: {
-    name: "sessions",
-    about: "Manage payment sessions",
-    subcommands: [listDescribe, closeDescribe, syncDescribe],
   },
 } satisfies WalletCommand;

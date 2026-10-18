@@ -1,17 +1,32 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import { globalOptionShape, networkOutputShape, nextOutputShape } from "./shared.js";
 
+const amount = { amount: "symbol" };
+
+/** A session's state: `finalizable` once a requested close's grace period has ended. */
+export const sessionStatusSchema = z.enum([
+  "active",
+  "closing",
+  "finalizable",
+  "finalized",
+  "orphaned",
+]);
+
 export const sessionOutput = z.object({
-  channel_id: z.string(),
+  channel_id: z.string().register(displayMeta, { address: true }),
   network: z.string(),
   origin: z.string(),
   symbol: z.string().nullable(),
-  deposit: z.string(),
-  spent: z.string(),
-  remaining: z.string(),
-  status: z.string(),
-  remaining_secs: z.number().optional(),
+  deposit: z.string().register(displayMeta, amount),
+  spent: z.string().register(displayMeta, amount),
+  remaining: z.string().register(displayMeta, amount),
+  status: sessionStatusSchema,
+  remaining_seconds: z
+    .number()
+    .optional()
+    .describe("Seconds until a closing session's deposit can be withdrawn"),
   created_at: z.string().nullable(),
   last_used_at: z.string().nullable(),
 });
@@ -29,7 +44,7 @@ export const sessionsListOutput = z.object({
 });
 
 export const sessionsCloseArgs = z.object({
-  url: z.string().optional().describe("URL, origin, or channel ID (0x...) to close"),
+  target: z.string().optional().describe("URL, origin, or channel ID (0x...) to close"),
 });
 
 export const sessionsCloseOptions = z.object({
@@ -49,7 +64,17 @@ export const sessionsCloseOptions = z.object({
 });
 
 export const sessionsCloseDryRunOutput = z.object({
-  targets: z.array(z.unknown()),
+  status: z.literal("dry_run"),
+  targets: z.array(
+    z.object({
+      channel_id: z.string().describe("Channel ID; empty when no session matches the origin"),
+      origin: z.string().optional(),
+      status: z
+        .enum([...sessionStatusSchema.options, "not_found"])
+        .optional()
+        .describe("The session's status, as sessions list reports it; not_found when none matches"),
+    }),
+  ),
   ...nextOutputShape,
 });
 

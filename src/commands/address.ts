@@ -2,7 +2,6 @@ import { Cli } from "incur";
 import { encodeQR } from "qr";
 
 import { readOnly, type WalletCommand } from "../cli/command.js";
-import { flag } from "../cli/describe.js";
 import { addressOptions, addressOutput } from "../schemas/address.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import { networkFields } from "../shared/network.js";
@@ -23,11 +22,6 @@ export default {
     },
   }),
   annotations: { address: { ...readOnly, openWorldHint: false } },
-  describe: {
-    name: "address",
-    about: "Show the wallet address",
-    args: [flag("qr", "--qr", "Also show a QR code of the address when output is a terminal")],
-  },
 } satisfies WalletCommand;
 
 /**

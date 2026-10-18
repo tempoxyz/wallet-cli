@@ -7,12 +7,15 @@ import { commandMap } from "./cli/command.js";
 import { commands } from "./cli/commands.js";
 import { walletCompletions } from "./cli/completions.js";
 import { describeCli } from "./cli/describe.js";
-import { bindCommandOptions, ctaErrors } from "./cli/incur-compat.js";
+import { bindCommandOptions, ctaErrors, humanRun, serveHuman } from "./cli/incur-compat.js";
 import { serveMcp } from "./cli/mcp.js";
 import { closeCommandFailed } from "./commands/sessions/close.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";
 import { configSnapshot } from "./wallet/config.js";
+
+// A person's run on a terminal is rendered from incur's JSON result; see `serveHuman`.
+const human = humanRun(expandHelp(process.argv.slice(2)));
 
 const cli = Cli.create("tempo wallet", {
   version,
@@ -28,6 +31,7 @@ const cli = Cli.create("tempo wallet", {
   globalAlias: cliGlobalAlias,
   // The Tempo launcher manages updates, so skip incur npm update checks.
   update: false,
+  ...(human ? { format: "json" as const } : {}),
 });
 
 // Returns a thrown CtaError through `c.error`, so it keeps its cta; `serveMcp` registers it too.
@@ -44,7 +48,7 @@ export default cli;
 async function main() {
   const rawArgs = process.argv.slice(2);
   if (rawArgs.includes("--describe")) {
-    process.stdout.write(`${JSON.stringify(describeCli(commands))}\n`);
+    process.stdout.write(`${JSON.stringify(describeCli(cli, commands))}\n`);
     process.exit(0);
   }
 
@@ -71,7 +75,10 @@ async function main() {
   // Middleware runs before the command parses its options, so a retired flag runs nothing.
   if (error) cli.use((context) => context.error(error));
 
-  await cli.serve(args);
+  if (human) {
+    const exitCode = await serveHuman(cli, args);
+    if (exitCode !== undefined) process.exit(exitCode);
+  } else await cli.serve(args);
   // Preserve the summary on stdout; only a one-shot CLI invocation changes exit status.
   if (closeCommandFailed) process.exitCode = 1;
 }

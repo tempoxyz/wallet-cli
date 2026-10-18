@@ -17,6 +17,7 @@ export default {
     },
   }),
   annotations: { completions: { ...readOnly, openWorldHint: false } },
+  hidden: true,
 } satisfies WalletCommand;
 
 export function completionsHandler() {

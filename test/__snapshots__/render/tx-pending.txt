@@ -1,0 +1,11 @@
+Tx hash       0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+Chain ID      4217
+Network       tempo
+Status        pending
+Block number  -
+From          0xabfb663c1f9cd7438f54846d6b827e315719ec0f
+To            0x70997970c51812dc3a010c7d01b50e0d17dc79c8
+Fee           -
+
+The transaction is pending. Rerun the next command until its status is no longer pending.
+Next: tempo wallet tx status 0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc --network mainnet

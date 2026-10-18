@@ -60,15 +60,6 @@ export function formatUnixTimestamp(value: number | undefined) {
   return new Date(value * 1000).toISOString().replace(".000Z", "Z");
 }
 
-export function formatTokenUnits(value: bigint, decimals: number) {
-  const divisor = 10n ** BigInt(decimals);
-  const whole = value / divisor;
-  const fractional = value % divisor;
-  if (decimals === 0) return whole.toString();
-  if (fractional === 0n) return `${whole}.${"0".repeat(decimals)}`;
-  return `${whole}.${fractional.toString().padStart(decimals, "0")}`;
-}
-
 export function formatCreditBalance(rawBalance: bigint) {
   const divisor = 10_000n;
   const whole = rawBalance / divisor;

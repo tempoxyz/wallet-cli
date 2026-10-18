@@ -69,7 +69,7 @@ export async function transferMach(options: {
   );
   const output = {
     amount: formatUnits(BigInt(challenge.request.amount as string), 6),
-    amount_raw: String(challenge.request.amount),
+    raw_amount: String(challenge.request.amount),
     token: "MACH" as const,
     settlement_currency: String(challenge.request.currency),
     ...networkFields(network.chainId),
@@ -78,8 +78,8 @@ export async function transferMach(options: {
   };
   if (flags["dry-run"])
     return {
+      status: "dry_run" as const,
       ...output,
-      dry_run: true,
       ...(output.max_spend !== null
         ? nextStep(
             `Run the next command to pay ${output.amount} MACH for this challenge.`,
@@ -108,7 +108,7 @@ export async function transferMach(options: {
         getClient: identity.getClient,
         expectedChainId: network.chainId,
         ...machChargeParameters(requestOptions, {
-          amount: BigInt(output.amount_raw),
+          amount: BigInt(output.raw_amount),
           key: "key" in identity ? identity.key : undefined,
         }),
         clientId: flags["mpp-client-id"],
@@ -133,7 +133,12 @@ export async function transferMach(options: {
     throw paymentOutcomeUnknownError(
       "MACH settlement did not return a transaction hash; check with the provider before retrying.",
     );
-  return { ...output, wallet: identity.address.toLowerCase(), tx_hash: payload.hash };
+  return {
+    status: "success" as const,
+    ...output,
+    wallet: identity.address.toLowerCase(),
+    tx_hash: payload.hash,
+  };
 }
 
 const amountCentsMessage =

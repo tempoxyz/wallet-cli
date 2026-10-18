@@ -41,14 +41,14 @@ const flagNotice = `Paying with key from --private-key (${flagAddress}), not the
 const warning =
   "--private-key can leak through shell history and process listings; set TEMPO_PRIVATE_KEY instead";
 const flagWarning = `Warning: ${warning}\n`;
-const flagMeta = { address: flagAddress, source: "flag", warning };
+const flagMeta = { address: flagAddress.toLowerCase(), source: "flag", warning };
 
 it.each([
   {
     name: "flag",
     flag: testPrivateKey2,
     env: undefined,
-    signer: { address: flagAddress, source: "flag" },
+    signer: { address: flagAddress.toLowerCase(), source: "flag" },
     stderr: `${flagNotice}${flagWarning}`,
     meta: flagMeta,
   },
@@ -56,15 +56,15 @@ it.each([
     name: "env",
     flag: undefined,
     env: testPrivateKey,
-    signer: { address: envAddress, source: "env" },
+    signer: { address: envAddress.toLowerCase(), source: "env" },
     stderr: `Paying with key from TEMPO_PRIVATE_KEY (${envAddress}), not the logged-in wallet\n`,
-    meta: { address: envAddress, source: "env" },
+    meta: { address: envAddress.toLowerCase(), source: "env" },
   },
   {
     name: "flag over env",
     flag: testPrivateKey2,
     env: testPrivateKey,
-    signer: { address: flagAddress, source: "flag" },
+    signer: { address: flagAddress.toLowerCase(), source: "flag" },
     stderr: `${flagNotice}${flagWarning}`,
     meta: flagMeta,
   },

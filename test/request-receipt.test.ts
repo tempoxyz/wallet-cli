@@ -309,7 +309,7 @@ const charged = {
   deposit_locked: null,
   cumulative: null,
   subscription: null,
-  payer: testWallet,
+  payer: testWallet.toLowerCase(),
   chain_id: 4217,
   network: "tempo",
 };
@@ -409,7 +409,7 @@ it.each<{
     name: "a private-key payer",
     challenge: offer("charge"),
     privateKey: true,
-    payment: { ...charged, payer: keyPayer },
+    payment: { ...charged, payer: keyPayer.toLowerCase() },
     stderr: `Paying with key from TEMPO_PRIVATE_KEY (${keyPayer}), not the logged-in wallet\nPaid 0.01 USDC.e\n`,
   },
   {

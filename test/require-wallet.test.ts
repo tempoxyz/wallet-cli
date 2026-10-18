@@ -315,7 +315,7 @@ const walletAppCommands = [
   {
     command: "sessions close --dry-run",
     argv: ["sessions", "close", "https://service.example", "--dry-run"],
-    ran: { code: 0, stdout: { targets: [{ state: "not found" }] } },
+    ran: { code: 0, stdout: { status: "dry_run", targets: [{ status: "not_found" }] } },
   },
   {
     command: "sessions close --finalize",
@@ -440,7 +440,7 @@ describe("wallet CLI login and access key checks", () => {
     const result = await wallet(argv, { HOME: home, ...env });
 
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ dry_run: true });
+    expect(JSON.parse(result.stdout)).toMatchObject({ status: "dry_run" });
   });
 
   const keyProblems = [
@@ -549,9 +549,10 @@ describe("wallet CLI login and access key checks", () => {
       const command = `tempo wallet login --network ${network}`;
       expect(result.code).toBe(2);
       if (interactive) {
-        expect(result.stdout).toContain("E_USAGE");
-        expect(result.stdout).toContain(`then rerun the ${noun}.`);
-        expect(result.stdout).toContain(`Suggested command:\n  ${command}`);
+        // A person gets the error and the command that fixes it on stderr.
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toMatch(/^Error: (Swap not submitted|Transfer not sent)/m);
+        expect(result.stderr).toContain(`then rerun the ${noun}.\nNext: ${command}\n`);
         expect(result.stderr).not.toContain("[y/N]");
       } else
         expect(JSON.parse(result.stdout)).toEqual({
@@ -609,7 +610,8 @@ describe("wallet CLI login and access key checks", () => {
       );
 
       expect(result.code).toBe(4);
-      expect(result.stdout).toContain("E_NOT_AUTHENTICATED");
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toMatch(/^Error: No wallet is logged in\./m);
       expect(requests).toEqual([]);
     },
   );
@@ -686,7 +688,7 @@ describe("wallet CLI login and access key checks", () => {
       const command = `tempo wallet keys revoke ${testAccessKey.toLowerCase()} --yes --no-browser --network mainnet`;
       expect(result.code).toBe(2);
       expect(result.stderr).not.toContain("[y/N]");
-      expect(result.stdout).toContain(`then run '${command}'.`);
+      expect(result.stderr).toContain(`then run '${command}'.\nNext: ${command}\n`);
       expect(requests).toEqual([]);
     },
   );

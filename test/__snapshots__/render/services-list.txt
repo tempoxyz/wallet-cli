@@ -1,0 +1,17 @@
+ID              weather
+Name            Weather API
+URL             https://weather.example.com
+Service URL     https://weather.mpp.tempo.xyz
+Description     Forecasts and current conditions
+Categories      data, climate
+Tags            forecast, meteorology
+Endpoint count  1
+
+ID              maps
+Name            Maps
+URL             https://weather.example.com
+Service URL     https://weather.mpp.tempo.xyz
+Description     Forecasts and current conditions
+Categories      none
+Tags            none
+Endpoint count  0

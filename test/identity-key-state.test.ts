@@ -215,8 +215,8 @@ describe("remaining and spent limits", () => {
       remaining: [40_000_000n, 5_000_000n],
       published: true,
       limits: [
-        { remaining: "40.000000", spent: null },
-        { remaining: "5.000000", spent: null },
+        { remaining: "40", spent: null },
+        { remaining: "5", spent: null },
       ],
     },
     {
@@ -265,7 +265,7 @@ describe("remaining and spent limits", () => {
       published: true,
       limits: [
         { remaining: null, spent: null },
-        { remaining: "1.000000", spent: null },
+        { remaining: "1", spent: null },
       ],
     },
   ] as const)("reports $name", async (scenario) => {
@@ -309,18 +309,18 @@ describe("stale stored limits", () => {
   const stored: AccessKey = { ...key, limits: [{ token: usdc, limit: "100000000#__bigint" }] };
 
   it.each([
-    { name: "spending from the stored limit", remaining: 60_000_000n, shown: "60.000000" },
+    { name: "spending from the stored limit", remaining: 60_000_000n, shown: "60" },
     // Lowered from 100 to 50 elsewhere, then 10 spent: 60 would be reported spent.
-    { name: "a limit lowered elsewhere, then spent", remaining: 40_000_000n, shown: "40.000000" },
-    { name: "a limit raised elsewhere", remaining: 150_000_000n, shown: "150.000000" },
+    { name: "a limit lowered elsewhere, then spent", remaining: 40_000_000n, shown: "40" },
+    { name: "a limit raised elsewhere", remaining: 150_000_000n, shown: "150" },
   ])("reports the chain's remaining and no spent for $name", async ({ remaining, shown }) => {
     mocks.getRemainingLimit.mockResolvedValue({ remaining, periodEnd: undefined });
 
     const { keys } = await currentKeysOutput({ walletAddress: testWallet, accessKeys: [stored] });
 
     expect(keys[0]).toMatchObject({
-      spending_limit: { limit: "100.000000", remaining: shown, spent: null },
-      spending_limits: [{ limit: "100.000000", remaining: shown, spent: null }],
+      spending_limit: { limit: "100", remaining: shown, spent: null },
+      spending_limits: [{ limit: "100", remaining: shown, spent: null }],
     });
   });
 });
@@ -334,8 +334,8 @@ describe("TEMPO_RPC_URL chain check", () => {
     limits: [{ token: moderatoToken, limit: "1000000#__bigint" }],
   };
   const accessKeys = [key, { ...key, address: testAccessKey2 }, testnetKey];
-  const mainnetRead = { published: true, spending_limits: [{ remaining: "40.000000" }] };
-  const testnetRead = { published: true, spending_limits: [{ remaining: "40.000000" }] };
+  const mainnetRead = { published: true, spending_limits: [{ remaining: "40" }] };
+  const testnetRead = { published: true, spending_limits: [{ remaining: "40" }] };
   const unread = { published: null, spending_limits: [{ remaining: null, spent: null }] };
 
   it.each([
@@ -443,7 +443,7 @@ describe("deprecated spending_limit", () => {
     });
 
     expect(keys[0]).toMatchObject({
-      spending_limit: { mode: "none", limit: "0.000000", raw_limit: "0", remaining: null },
+      spending_limit: { mode: "none", limit: "0", raw_limit: "0", remaining: null },
       spending_limits: [],
     });
   });
@@ -529,7 +529,7 @@ describe("keys list on chain", () => {
     const { keys } = await currentKeysOutput({ walletAddress: testWallet, accessKeys });
 
     expect(keys.at(-1)).toMatchObject({
-      wallet_address: testWallet2.toLowerCase(),
+      wallet: testWallet2.toLowerCase(),
       published: null,
       spending_limits: [{ remaining: null, spent: null }],
     });

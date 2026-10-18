@@ -1,0 +1,8 @@
+Status    success
+Tx hash   0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+Chain ID  4217
+Network   tempo
+Amount    1.5 USDC.e
+Token     0x20c0…8b50
+To        0x70997970c51812dc3a010c7d01b50e0d17dc79c8
+From      0xabfb663c1f9cd7438f54846d6b827e315719ec0f

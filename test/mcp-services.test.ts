@@ -88,7 +88,7 @@ describe("MCP tools", () => {
       wallet: testWallet.toLowerCase(),
       amount_cents: 1,
       to: testWallet.toLowerCase(),
-      dry_run: true,
+      status: "dry_run",
     });
   });
 
@@ -271,8 +271,8 @@ describe("MCP tools", () => {
 
       const status = await mcpCall({ name: "login_status", arguments: { network: "testnet" } });
       expect(status.result.structuredContent).toMatchObject({
-        accounts: [testWallet],
-        chainId: 42431,
+        accounts: [testWallet.toLowerCase()],
+        chain_id: 42431,
       });
       expect(host.polls).toHaveLength(2);
     } finally {
@@ -317,7 +317,7 @@ describe("MCP tools", () => {
 
   it("returns the same keys_revoke dry run from the revoke alias", async () => {
     await writeWalletState(walletState());
-    const args = { accessKey: testAccessKey, "dry-run": true, network: "mainnet" };
+    const args = { "access-key": testAccessKey, "dry-run": true, network: "mainnet" };
 
     const [alias, command] = await Promise.all(
       ["revoke", "keys_revoke"].map((name) => mcpCall({ name, arguments: args })),
@@ -355,17 +355,17 @@ describe("MCP tools", () => {
   it.each([
     {
       name: "swap",
-      arguments: { amount: "1", tokenIn: "USDC.e", tokenOut: "pathUSD" },
+      arguments: { amount: "1", "token-in": "USDC.e", "token-out": "pathUSD" },
       message: "Swap not submitted: review the quote with --dry-run, then pass --yes",
     },
     ...["keys_revoke", "revoke"].map((name) => ({
       name,
-      arguments: { accessKey: testAccessKey },
+      arguments: { "access-key": testAccessKey },
       message: "Revocation cannot be undone, so it needs confirmation.",
     })),
     {
       name: "sessions_close",
-      arguments: { url: `0x${"a".repeat(64)}` },
+      arguments: { target: `0x${"a".repeat(64)}` },
       message: "Closing a session cannot be undone, so it needs confirmation.",
     },
     ...["send", "transfer"].map((name) => ({
@@ -407,7 +407,7 @@ describe("MCP tools", () => {
       name: "balance",
       arguments: {},
       output: {
-        address: testWallet.toLowerCase(),
+        wallet: testWallet.toLowerCase(),
         chain_id: 4217,
         network: "tempo",
         balances: [
@@ -538,7 +538,7 @@ describe("MCP tools", () => {
     },
     {
       tool: "services_show",
-      arguments: { serviceId: "weather" },
+      arguments: { "service-id": "weather" },
       deprecated: { serviceId: "weather" },
       data: { id: "weather", endpoints: [{ payment: { price: "0.0001" } }] },
     },
@@ -556,10 +556,37 @@ describe("MCP tools", () => {
   });
 
   it("shows a service whose id names a subcommand through services_show", async () => {
-    const response = await mcpCall({ name: "services_show", arguments: { serviceId: "list" } });
+    const response = await mcpCall({ name: "services_show", arguments: { "service-id": "list" } });
 
     expect(response.result.isError).not.toBe(true);
     expect(response.result.structuredContent).toMatchObject({ id: "list" });
+  });
+
+  it("takes positional arguments under kebab-case keys only", async () => {
+    type Schema = { properties: Record<string, unknown>; required?: string[] };
+    const response = await mcpRequest<{ tools: { name: string; inputSchema: Schema }[] }>(
+      "tools/list",
+      {},
+    );
+    const schema = (name: string) =>
+      response.result.tools.find((tool) => tool.name === name)!.inputSchema;
+
+    for (const [tool, key, old, required] of [
+      ["keys_revoke", "access-key", "accessKey", true],
+      ["keys_update", "access-key", "accessKey", false],
+      ["revoke", "access-key", "accessKey", true],
+      ["services_show", "service-id", "serviceId", true],
+      ["sessions_close", "target", "url", false],
+      ["swap", "token-in", "tokenIn", true],
+      ["swap", "token-out", "tokenOut", true],
+      ["tx_status", "tx-hash", "txHash", true],
+    ] as const) {
+      expect(schema(tool).properties, tool).toHaveProperty(key);
+      expect(schema(tool).properties, tool).not.toHaveProperty(old);
+      expect((schema(tool).required ?? []).includes(key), tool).toBe(required);
+    }
+    // The deprecated `services` tool keeps `serviceId`; it is removed next release.
+    expect(schema("services").properties).toHaveProperty("serviceId");
   });
 
   it("marks the services tool deprecated in favor of the subcommand tools", async () => {

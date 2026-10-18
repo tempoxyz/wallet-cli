@@ -81,7 +81,7 @@ tempo wallet address --qr
 tempo wallet services search ai
 ```
 
-`tempo wallet login` uses the wallet app's device code. In a terminal it prints the code and URL to stderr and waits for approval until the code expires. An agent run (MCP, `--format`, or output that is not a terminal) returns at once with `status: "pending"`, `verification_url`, `user_code`, `expires_at`, and a `_next` naming `tempo wallet login status`; `--wait` and `--no-wait` choose either behavior. The pending login, including the access key it asks the wallet to authorize, is kept in `~/.tempo/wallet/pending-login.json` (mode 0600) so `login status` can finish it from another process, and a new `login` replaces it. `login status` checks every `--interval` seconds (default: the wallet's interval) until the wallet approves, then stores the account and key and returns what a blocking `login` returns. A denied or expired code fails with `E_LOGIN_DENIED` or `E_LOGIN_EXPIRED` (exit 4) and a `cta` naming `tempo wallet login`; `--max-attempts` checks that all come back pending fail with retryable `E_POLL_TIMEOUT`, and an unreachable or failing wallet (a transport error or an HTTP status other than 200 or 400) with retryable `E_NETWORK`, each with the same `login status` as its `cta` and the login kept. Without a pending login, `login status` fails with `E_USAGE` naming `tempo wallet login`. `tempo wallet logout` cancels a pending login for the networks it logs out of, and a `login status` already waiting when a new `login` or `logout` replaces its code stops with `E_USAGE` and discards any late approval, leaving the newer login in place.
+`tempo wallet login` uses the wallet app's device code. In a terminal it prints the code and URL to stderr and waits for approval until the code expires. An agent run (MCP, `--format`, or output that is not a terminal) returns at once with `status: "pending"`, `verification_url`, `user_code`, `expires_at`, and a `_next` naming `tempo wallet login status`; `--wait` and `--no-wait` choose either behavior. The pending login, including the access key it asks the wallet to authorize, is kept in `~/.tempo/wallet/pending-login.json` (mode 0600) so `login status` can finish it from another process, and a new `login` replaces it. `login status` checks every `--interval` seconds (default: the wallet's interval) until the wallet approves, then stores the account and key and returns what a blocking `login` returns: the lowercase `accounts`, with `chain_id` and `network`. A denied or expired code fails with `E_LOGIN_DENIED` or `E_LOGIN_EXPIRED` (exit 4) and a `cta` naming `tempo wallet login`; `--max-attempts` checks that all come back pending fail with retryable `E_POLL_TIMEOUT`, and an unreachable or failing wallet (a transport error or an HTTP status other than 200 or 400) with retryable `E_NETWORK`, each with the same `login status` as its `cta` and the login kept. Without a pending login, `login status` fails with `E_USAGE` naming `tempo wallet login`. `tempo wallet logout` cancels a pending login for the networks it logs out of, and a `login status` already waiting when a new `login` or `logout` replaces its code stops with `E_USAGE` and discards any late approval, leaving the newer login in place.
 
 Token arguments (`swap`, `send`, `--fee-token`, `keys update --token`, `balance --token`, and `tempo request --payment-token`) take a full 0x address or a symbol that viem lists for the selected network, matched case-insensitively; a bridged token also answers to its symbol without `.e` (`USDC` is `USDC.e`). An unknown symbol fails with `E_USAGE` and lists the network's symbols. Output and `_next` continuations always carry the resolved address.
 
@@ -93,7 +93,7 @@ Token arguments (`swap`, `send`, `--fee-token`, `keys update --token`, `balance 
 
 `tempo wallet whoami` separates available funds, active-session `locked` reserves, and `pending_refund` reserves in closing or finalizable sessions. `total` includes all three; pending refunds remain unavailable until withdrawal completes.
 
-`tempo wallet balance` shows only what the wallet can spend: each token the wallet app reports, plus the network's default token (USDC.e on mainnet, pathUSD on testnet) read on chain even at zero. `--token` shows one token, read on chain in its own decimals. Session deposits are held in escrow, so `locked` and `pending_refund` stay in `whoami`. `tempo wallet address` prints the wallet address to receive tokens, and `--qr` also draws a QR code of it on a terminal; agent and JSON output stay the same. Both need a login but no access key.
+`tempo wallet balance` reports the logged-in `wallet`, its `chain_id` and `network`, and `balances` with only what the wallet can spend: each token the wallet app reports, plus the network's default token (USDC.e on mainnet, pathUSD on testnet) read on chain even at zero. `--token` shows one token, read on chain in its own decimals. Session deposits are held in escrow, so `locked` and `pending_refund` stay in `whoami`. `tempo wallet address` prints the wallet address to receive tokens, and `--qr` also draws a QR code of it on a terminal; agent and JSON output stay the same. Both need a login but no access key.
 
 If the balance RPC is unavailable, `whoami` reports `ready: false`, `balance.available: null`, `balance.total: null`, and a `balance.error` diagnostic. Wallet and key details remain available, along with locally recorded session reserves. An unavailable key balance is also `null`; key details in `whoami` and `keys` include a `balance_error` diagnostic when the query fails. A successful zero-balance query is reported as zero; `ready` checks wallet/key configuration and balance-query success, not whether a particular purchase is affordable.
 
@@ -130,10 +130,11 @@ zero-amount proofs, paid requests answered with an HTTP error or an unfollowed r
 cannot be stored report no receipt.
 
 On HTTP 402, `--dry-run` prints a JSON quote of what paying would spend, without signing,
-opening a session, or paying. It reports the per-call `amount`; for a session offer, whether the
+opening a session, or paying. It reports the per-call `amount` (`raw_amount` in base units); for a session offer, whether the
 payment would `open` a session or `reuse` a stored one (`session`) and the `deposit` it would
-lock, decided as the payment decides them (for a reused session, the top-up its voucher needs
-beyond the on-chain deposit, usually `0`); the offered `token` with its `decimals`, and its
+lock (`raw_deposit` in base units), decided as the payment decides them (for a reused session, the
+top-up its voucher needs beyond the on-chain deposit, usually `0`); the `chain_id` and `network`;
+the offered `token` (lowercase, like every address in the output) with its `decimals`, and its
 `symbol` only when viem lists the token, since the server chooses it; the payer's `balance` and
 the access key's stored `access_key_limit` for the token the payment debits (MACH with
 `--mach`), in that token's decimals, with a limit of `0` when the key's exact stored limits
@@ -147,7 +148,8 @@ that is not configured, reports `null`. Any other status prints
 `payment_required: false` with the status instead of the body. The probe request is still
 sent, so methods other than GET, HEAD and OPTIONS also report a side-effect `warning`.
 `--max-spend <amount>` (or `TEMPO_MAX_SPEND`, or a saved `max-spend`) caps spending in payment
-token units; without any of them, the cap is 10 (about $10 in stablecoins).
+token units, and a MACH payment in MACH (1 MACH = 1 USD); without any of them, the cap is 10 (about
+$10 in stablecoins).
 An offer above the cap is refused with
 `E_LIMIT_EXCEEDED` in both preview and execution, before anything is signed, and the error's
 `cta` reruns the same command with the `--max-spend` it needs. That command shows
@@ -217,6 +219,8 @@ tempo wallet sessions close https://service.mpp.tempo.xyz
 
 `tempo wallet sessions close` requests the close on-chain; the deposit is withdrawn by rerunning it, or with `--finalize`, once the grace period ends, and `--cooperative` closes at once through the session's server. It preserves its per-session result summary and exits with status 1 if any close failed. A pending close awaiting the grace period is successful initiation, so pending-only results still exit 0; dry runs also exit 0. A local record is removed only once the session's chain shows the close. A channel the escrow does not hold is reported as `not_found` (unless it is a v2 session whose close was requested, which the cleared channel shows closed), and a cooperative close the chain does not show yet as `requested`; both keep the record, and a `requested` session is not reused for new payments. A target whose sessions are on another network is refused with `E_USAGE` and the command to rerun with that `--network`, after the `tempo wallet login` for that network when the wallet is logged in on another one. Close transactions are sent only on the chain the wallet is logged in on, and a reverted one keeps the record.
 
+A `--dry-run` returns `status: "dry_run"` and the `targets` it selects, each with its `channel_id`, `origin`, and `status` as `sessions list` reports it (`active`, `closing`, `finalizable`, `finalized`, or `orphaned`; `not_found` for an origin with no session). A closing session in `sessions list` or a pending close result reports `remaining_seconds` until its deposit can be withdrawn.
+
 A close cannot be undone, so `sessions close` needs confirmation before it sends anything, with a target, `--all`, `--orphaned`, `--finalize`, or `--cooperative`. With a terminal on both stdin and stdout, it lists each session's channel, origin, network, and deposit and asks `[y/N]` on stderr; any answer other than `y` or `yes` sends nothing and exits 2 with `E_USAGE`. Every other run (MCP, `--format`, or stdin or stdout that is not a terminal) must pass `--yes`; without it, it sends nothing and exits 2 with `E_USAGE` and a `cta` naming the same command with `--yes`. A close that selects no channel neither asks nor needs `--yes`. `--dry-run` never asks.
 
 Results with a follow-up step include `instruction` and `_next`. `swap`, `send`, `keys revoke`, and `sessions close` dry runs point at the command that submits them, each with `--yes`, and the swap command pins the reviewed `--min-amount-out` (or `--max-amount-in` with `--exact-out`); a pending `sessions close` points at the withdrawal, with `--yes` since the close was confirmed, and sets `poll_interval_seconds` to the remaining grace period; a pending agent `login` points at `login status`, a pending `fund` at `fund status`, and a pending `tx status` (or a replayed send whose transaction is pending) at `tx status`, each with `until: '.status != "pending"'` and `poll_interval_seconds`; `keys update` and a finished `login` or `login status` point at the command that confirms the result; a `logout` that leaves sessions holding deposits points at the `sessions close --all` (or `--finalize`) that withdraws them once the wallet logs in again, which still needs confirmation, and names each network's commands in `instruction` when there are several. `_next.argv` is authoritative and always ends with `--network` set to the network the command resolved, so it targets the same chain wherever it runs; `_next.command` is the same argv quoted for a POSIX shell.
@@ -241,27 +245,27 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `send`,
 - `login status`: Wait for a pending login's approval and finish it. Options: `--interval`, `--max-attempts`.
 - `refresh`: Refresh your access key without logging out. Options: `--no-browser`.
 - `logout`: Log out of every network, or of one with --network. Options: `--revoke`, `--yes`, `--no-browser`.
-- `whoami`: Show who you are: wallet, balances, keys. Options: `--mach`, `--credits`.
+- `whoami`: Show who you are: wallet, balances, keys (key.spending_limit is deprecated; use key.spending_limits). Options: `--mach`, `--credits`.
 - `balance`: Show the wallet's token balances. Options: `--token`.
 - `address`: Show the wallet address. Options: `--qr`.
-- `keys list`: List keys and their spending limits.
-- `keys update [accessKey]`: Update an access key spending limit. Options: `--limit`, `--token`, `--no-browser`.
-- `keys revoke <accessKey>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
-- `revoke <accessKey>`: Deprecated: use 'keys revoke'. Options: `--dry-run`, `--yes`, `--no-browser`.
+- `keys list`: List keys and their spending limits (spending_limit is deprecated; use spending_limits).
+- `keys update [access-key]`: Update an access key spending limit. Options: `--limit`, `--token`, `--no-browser`.
+- `keys revoke <access-key>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
+- `revoke <access-key>`: Deprecated: use 'keys revoke'. Options: `--dry-run`, `--yes`, `--no-browser`.
 - `send <amount> <token> <to>`: Send tokens to an address. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--address`.
 - `transfer [amount] [token] [to]`: Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--credits`, `--max-spend`, `--amount-cents`, `--to`, `--data`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
-- `swap <amount> <tokenIn> <tokenOut>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
-- `tx status <txHash>`: Show a transaction's status on chain.
+- `swap <amount> <token-in> <token-out>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
+- `tx status <tx-hash>`: Show a transaction's status on chain.
 - `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--credits`, `--amount`, `--wait`, `--no-wait`, `--timeout`, `--referral-code`.
 - `fund status`: Wait for a pending funding's balance increase. Options: `--interval`, `--max-attempts`.
 - `sessions`: Manage payment sessions. Options: `--orphaned`, `--all`.
 - `sessions list`: List payment sessions. Options: `--orphaned`, `--all`.
-- `sessions close [url]`: Request a session close, then withdraw after the grace period with --finalize. Options: `--all`, `--orphaned`, `--finalize`, `--cooperative`, `--dry-run`, `--yes`.
+- `sessions close [target]`: Request a session close, then withdraw after the grace period with --finalize. Options: `--all`, `--orphaned`, `--finalize`, `--cooperative`, `--dry-run`, `--yes`.
 - `sessions sync`: Sync local sessions with on-chain state. Options: `--origin`.
 - `services`: Browse the MPP service directory. Options: `--refresh`.
 - `services list`: List every service in the MPP service directory. Options: `--refresh`.
 - `services search <query>`: Search services by name, id, description, tags, or category; every word must match. Options: `--refresh`.
-- `services show <serviceId>`: Show a service's endpoints, prices, and docs. Options: `--refresh`.
+- `services show <service-id>`: Show a service's endpoints, prices, and docs. Options: `--refresh`.
 - `mcp add`: Register as MCP server. Options: `--agent`, `--command` (`-c`), `--no-global`.
 - `skills add`: Sync skill files to agents. Options: `--depth`, `--no-global`.
 - `skills list`: List skills.
@@ -276,11 +280,13 @@ Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--js
 
 <!-- generated:commands end -->
 
+On a terminal with no output format asked for, `tempo wallet` prints a human-readable view of a result: aligned blocks and tables, amounts with their token symbol, shortened token addresses, and `Next:` lines for `_next` and `cta`; errors print on stderr as `Error: <message>`. Piped output, `--format`, `--json`, `-j`, `-t`, `--full-output`, `--filter-output`, `--schema`, `--llms`, and MCP stay structured, so scripts and agents read those.
+
 `sessions` without a subcommand is the same as `sessions list`, `services` the same as `services list`, and `help [command]` the same as `[command] --help`.
 
 `services search` reads unquoted words as one query, so `services search image generation` matches services with both words. `services <id>` and `services --search <query>` are deprecated aliases of `services show <id>` and `services search <query>` with the same output; only a run whose stdout is a terminal, without `--format`, prints a notice on stderr.
 
-`tempo wallet --mcp` serves each command as an MCP tool (`keys update` as `keys_update`), with a `network` option in place of `--network`. Every tool declares MCP annotations so a client can tell reads from spends:
+`tempo wallet --mcp` serves each command as an MCP tool (`keys update` as `keys_update`), with a `network` option in place of `--network`. A tool takes the command's positional arguments under kebab-case keys, like its options: `access-key` (`keys_update`, `keys_revoke`, `revoke`), `token-in` and `token-out` (`swap`), `tx-hash` (`tx_status`), `service-id` (`services_show`), and `target` (`sessions_close`). Every tool declares MCP annotations so a client can tell reads from spends:
 
 <!-- generated:mcp-tools start -->
 
@@ -380,7 +386,7 @@ Use `tempo request --mach --max-spend 0.05 <url>` to require MACH for a one-time
 
 When MACH cannot settle a charge, nothing is signed and the error names the cause: an access key whose stored MACH limit is below the charge returns `E_LIMIT_EXCEEDED`; a MACH balance below it returns `E_INSUFFICIENT_FUNDS` with `tempo wallet fund --mach --address <payer>` as its `cta` on mainnet; an unreadable balance returns retryable `E_NETWORK`; stored call scopes that leave out the MACH token or swapper return `E_PAYMENT` naming the call, since `keys update` cannot change scopes; otherwise the swap route did not simulate (swapper liquidity, call scopes, or a transient RPC error) and it returns `E_PAYMENT` without a `cta`, retryable when the failure looks transient. A charge the access key's spending limit refuses, and a `tempo wallet swap --yes` above it, also return `E_LIMIT_EXCEEDED`; a refusal by the fee token's limit, or for a token whose decimals cannot be read, stays `E_PAYMENT` without a `cta`. Each `E_LIMIT_EXCEEDED` has a `cta` naming `tempo wallet keys update <key> --token <token> --limit <amount>`, which sets the limit of the token the payment debits to the amount it needs.
 
-For a captured challenge, `tempo wallet transfer --mach --max-spend 0.05 --mpp-challenge-file <headers>` settles that exact charge and returns its transaction hash. It does not deliver the credential to the merchant; prefer `tempo request` for the complete request/payment flow. Direct calldata is unsupported with `--mach`.
+For a captured challenge, `tempo wallet transfer --mach --max-spend 0.05 --mpp-challenge-file <headers>` settles that exact charge and returns `status: "success"` with its `tx_hash` and the charge's `amount` and `raw_amount` (base units); with `--dry-run` it returns `status: "dry_run"` and sends nothing, as `transfer --credits --dry-run` does. It does not deliver the credential to the merchant; prefer `tempo request` for the complete request/payment flow. Direct calldata is unsupported with `--mach`.
 
 `tempo request` supports common curl-style flags for methods, headers, bodies, output files, redirects, retries, proxies, and streaming responses.
 

@@ -70,7 +70,7 @@ afterEach(() => {
 function removed(accessKey: WalletState["accessKeys"][number], revoked = false) {
   return {
     address: accessKey.address.toLowerCase(),
-    wallet_address: accessKey.access.toLowerCase(),
+    wallet: accessKey.access.toLowerCase(),
     ...networkFields(accessKey.chainId),
     revoked,
   };
@@ -360,7 +360,7 @@ describe("logout scope", () => {
 describe("logout with sessions holding deposits", () => {
   const closeAll = "tempo wallet sessions close --all --network mainnet";
   const summary =
-    "Unspent deposits remain in 1 stored session: 0.008000 USDC.e with https://example.com on tempo (active).";
+    "Unspent deposits remain in 1 stored session: 0.008 USDC.e with https://example.com on tempo (active).";
 
   it.each<{
     name: string;
@@ -428,7 +428,7 @@ describe("logout with sessions holding deposits", () => {
             channel_id: session().channel_id,
             network: "tempo",
             symbol: "USDC.e",
-            remaining: "0.008000",
+            remaining: "0.008",
             status: "active",
           },
         ],
@@ -458,7 +458,7 @@ describe("logout with sessions holding deposits", () => {
       name: "a session by the voucher the server acknowledged",
       record: { accepted_cumulative: 5_000n, cumulative_amount: 5_000n },
       close: closeAll,
-      remaining: "0.005000",
+      remaining: "0.005",
     },
     {
       name: "a session closing in its grace period",
@@ -493,7 +493,7 @@ describe("logout with sessions holding deposits", () => {
     },
   ])(
     "counts $name",
-    async ({ state = walletState(), record, options = {}, close, remaining = "0.008000" }) => {
+    async ({ state = walletState(), record, options = {}, close, remaining = "0.008" }) => {
       await setup(state, [session(record)]);
       const context = runContext(true);
 
@@ -1207,7 +1207,7 @@ describe("tempo wallet logout", () => {
       args: [],
       interactive: true,
       exitCode: 2,
-      output: "E_USAGE",
+      output: "needs confirmation.",
     },
     {
       name: "an agent run with --yes logs out",
@@ -1216,7 +1216,7 @@ describe("tempo wallet logout", () => {
       output: {
         was_logged_in: true,
         scope: "all",
-        sessions: [{ remaining: "0.008000" }],
+        sessions: [{ remaining: "0.008" }],
         _next: { command: "tempo wallet sessions close --all --network mainnet" },
       },
     },
@@ -1226,7 +1226,11 @@ describe("tempo wallet logout", () => {
     const result = await wallet(["logout", ...args], { interactive });
 
     expect(result.code, result.stderr).toBe(exitCode);
-    if (typeof output === "string") expect(result.stdout + result.stderr).toContain(output);
+    // A person at a terminal gets the error and the command that fixes it on stderr.
+    if (typeof output === "string")
+      expect(result.stderr).toMatch(
+        new RegExp(`^Error: .*${output}.*\\nNext: tempo wallet logout --yes\\n`, "m"),
+      );
     else expect(JSON.parse(result.stdout)).toMatchObject(output);
     expect((await loadWalletState()).accounts).toEqual(
       exitCode === 0 ? [] : [{ address: testWallet }],

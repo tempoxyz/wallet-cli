@@ -3,7 +3,6 @@ import { Cli, type z } from "incur";
 import { formatUnits, isAddress, parseUnits, toHex, type Address } from "viem";
 
 import { destructive, readOnly, type WalletCommand } from "../cli/command.js";
-import { flag, option, positional } from "../cli/describe.js";
 import {
   keysOutput,
   revokeArgs,
@@ -62,7 +61,7 @@ export const revokeCommand = {
   // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
   run: withWallet(
     (context: RevokeContext, wallet) =>
-      revokeHandler(wallet, context.args, context.options, {
+      revokeHandler(wallet, { accessKey: context.args["access-key"] }, context.options, {
         ...context,
         agent: !canPrompt(context.agent),
       }),
@@ -72,17 +71,6 @@ export const revokeCommand = {
 
 export const revokeAnnotations = { ...destructive, idempotentHint: true, openWorldHint: true };
 
-export const revokeDescribe = {
-  name: "revoke",
-  about: "Revoke an access key",
-  args: [
-    positional("access_key", "Access key address to revoke (0x...)"),
-    flag("dry_run", "--dry-run", "Show the key that would be revoked without revoking it"),
-    flag("yes", "--yes", "Revoke without a confirmation prompt"),
-    flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
-  ],
-};
-
 // Mounted groups share the root globals; declaring them types `globals` in their commands.
 export default {
   command: Cli.create("keys", {
@@ -90,7 +78,8 @@ export default {
     globals: cliGlobals,
   })
     .command("list", {
-      description: "List keys and their spending limits",
+      description:
+        "List keys and their spending limits (spending_limit is deprecated; use spending_limits)",
       options: globalOptions,
       alias: globalAlias,
       output: keysOutput,
@@ -107,7 +96,7 @@ export default {
       // The wallet app approves the new limit, so an expired or unusable key can still be limited.
       run: withWallet(
         ({ args, options }, wallet) =>
-          updateAccessKeyHandler(wallet, { ...options, accessKey: args.accessKey }),
+          updateAccessKeyHandler(wallet, { ...options, accessKey: args["access-key"] }),
         { requireKey: "never" },
       ),
     })
@@ -116,35 +105,6 @@ export default {
     keys_list: { ...readOnly, openWorldHint: true },
     keys_update: { ...destructive, idempotentHint: false, openWorldHint: true },
     keys_revoke: revokeAnnotations,
-  },
-  describe: {
-    name: "keys",
-    about: "Manage access keys",
-    subcommands: [
-      {
-        name: "list",
-        about:
-          "List keys and their spending limits (spending_limit is deprecated; use spending_limits)",
-      },
-      {
-        name: "update",
-        about: "Update an access key spending limit",
-        args: [
-          positional(
-            "access_key",
-            "Access key address (defaults to the only key for this wallet and network)",
-          ),
-          option("limit", "--limit", "New remaining limit in human token units", {
-            valueName: "AMOUNT",
-          }),
-          option("token", "--token", "Token address or symbol (defaults to current limit token)", {
-            valueName: "TOKEN",
-          }),
-          flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
-        ],
-      },
-      revokeDescribe,
-    ],
   },
 } satisfies WalletCommand;
 

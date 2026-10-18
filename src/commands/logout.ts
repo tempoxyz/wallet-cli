@@ -4,7 +4,6 @@ import { Cli } from "incur";
 import type { Address } from "viem";
 
 import { destructive, type WalletCommand } from "../cli/command.js";
-import { flag } from "../cli/describe.js";
 import { logoutOptions, logoutOutput } from "../schemas/logout.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import {
@@ -65,23 +64,6 @@ export default {
   annotations: {
     // With `revoke`, asks the wallet app to revoke the keys and reads them on-chain.
     logout: { ...destructive, idempotentHint: true, openWorldHint: true },
-  },
-  describe: {
-    name: "logout",
-    about: "Log out of every network, or of one with --network",
-    args: [
-      flag(
-        "revoke",
-        "--revoke",
-        "Revoke the access keys on-chain through the wallet app before removing them",
-      ),
-      flag(
-        "yes",
-        "--yes",
-        "Log out without a prompt when stored sessions hold unspent deposits or with --revoke",
-      ),
-      flag("no_browser", "--no-browser", "Do not attempt to open a browser"),
-    ],
   },
 } satisfies WalletCommand;
 
@@ -279,7 +261,7 @@ export async function logoutHandler(
     ...output,
     keys: keys.map((key) => ({
       address: key.address.toLowerCase(),
-      wallet_address: key.access.toLowerCase(),
+      wallet: key.access.toLowerCase(),
       ...networkFields(key.chainId),
       revoked: revoked.some(sameKey(key)),
     })),

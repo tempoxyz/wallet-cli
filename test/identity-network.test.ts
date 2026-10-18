@@ -97,7 +97,10 @@ it("refresh connects on Moderato when the persisted chain is mainnet", async () 
     return { accounts: [{ address: testWallet }] };
   });
 
-  expect(await refreshHandler({ network: "testnet" })).toMatchObject({ chainId: 42431 });
+  expect(await refreshHandler({ network: "testnet" })).toMatchObject({
+    chain_id: 42431,
+    network: "tempo-moderato",
+  });
   expect(mocks.request).toHaveBeenCalledWith(
     expect.objectContaining({
       method: "wallet_connect",
@@ -367,7 +370,7 @@ it("whoami stays on the saved network after login --network elsewhere", async ()
   const login = await loginHandler({ network: "testnet", browser: false, wait: true });
 
   expect(login).toMatchObject({
-    chainId: 42431,
+    chain_id: 42431,
     _next: { argv: ["tempo", "wallet", "whoami", "--network", "testnet"] },
   });
   expect((await loadWalletState()).chainId).toBe(42431);
@@ -487,21 +490,21 @@ it("keys list labels each key from its own record and prices only the active wal
       {
         address: testAccessKey.toLowerCase(),
         ...mainnet,
-        wallet_address: testWallet.toLowerCase(),
+        wallet: testWallet.toLowerCase(),
         token: usdc.toLowerCase(),
         balance: "1",
       },
       {
         address: testAccessKey2.toLowerCase(),
         ...testnet,
-        wallet_address: testWallet.toLowerCase(),
+        wallet: testWallet.toLowerCase(),
         token: moderatoToken,
         balance: "2",
       },
       {
         address: otherWalletKey.address,
         ...testnet,
-        wallet_address: testWallet2.toLowerCase(),
+        wallet: testWallet2.toLowerCase(),
         token: moderatoToken,
         balance: null,
       },
@@ -535,7 +538,7 @@ it.each([
 
   const result = await keysHandler();
 
-  expect(result.keys).toMatchObject([{ wallet_address: testWallet.toLowerCase(), balance: null }]);
+  expect(result.keys).toMatchObject([{ wallet: testWallet.toLowerCase(), balance: null }]);
   expect(result.keys[0]).not.toHaveProperty("balance_error");
   expect(mocks.readContract).not.toHaveBeenCalled();
 });

@@ -1,9 +1,10 @@
 import { z } from "incur";
 
+import { displayMeta } from "../cli/render.js";
 import { networkOutputShape, nextOutputShape, txStateSchema } from "./shared.js";
 
 export const txStatusArgs = z.object({
-  txHash: z.string().describe("Transaction hash (0x...)"),
+  "tx-hash": z.string().describe("Transaction hash (0x...)"),
 });
 
 export const txStatusOutput = z.object({
@@ -13,7 +14,15 @@ export const txStatusOutput = z.object({
   block_number: z.number().nullable().describe("Block that included it; null until included"),
   from: z.string().nullable().describe("Sender; null when not found"),
   to: z.string().nullable().describe("Recipient; null when not found or when it has none"),
-  fee: z.string().nullable().describe("Network fee paid, in fee_token units; null until included"),
-  fee_token: z.string().nullable().describe("Token the fee was paid in; null when unknown"),
+  fee: z
+    .string()
+    .register(displayMeta, { amount: "fee_token" })
+    .nullable()
+    .describe("Network fee paid, in fee_token units; null until included"),
+  fee_token: z
+    .string()
+    .register(displayMeta, { address: true })
+    .nullable()
+    .describe("Token the fee was paid in; null when unknown"),
   ...nextOutputShape,
 });

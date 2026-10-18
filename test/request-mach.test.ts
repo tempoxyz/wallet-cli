@@ -661,13 +661,13 @@ describe("transferMach", () => {
       options: { "dry-run": true, "mpp-challenge": Challenge.serialize(challenge) },
     });
 
-    expect(result).toMatchObject({ dry_run: true, chain_id: chain });
+    expect(result).toMatchObject({ status: "dry_run", chain_id: chain });
   });
   it("inspects a standalone challenge without a budget or wallet access", async () => {
     const result = await transferMach({
       options: { "dry-run": true, "mpp-challenge": Challenge.serialize(offer()) },
     });
-    expect(result).toMatchObject({ dry_run: true, amount_raw: "15000", token: "MACH" });
+    expect(result).toMatchObject({ status: "dry_run", raw_amount: "15000", token: "MACH" });
     expect(readContract).not.toHaveBeenCalled();
     expect(signTransaction).not.toHaveBeenCalled();
     expect(sendTransactionSync).not.toHaveBeenCalled();
@@ -681,9 +681,9 @@ describe("transferMach", () => {
       },
     });
     expect(result).toMatchObject({
-      dry_run: true,
+      status: "dry_run",
       amount: "0.015",
-      amount_raw: "15000",
+      raw_amount: "15000",
       token: "MACH",
       settlement_currency: usdcToken,
     });
@@ -709,7 +709,7 @@ describe("transferMach", () => {
       "max spend exceeded",
     );
     expect(await transferMach({ options: { ...options, "max-spend": "0.02" } })).toMatchObject({
-      amount_raw: "15000",
+      raw_amount: "15000",
       max_spend: "0.02",
     });
   });
@@ -717,7 +717,12 @@ describe("transferMach", () => {
     const result = await transferMach({
       options: { "mpp-challenge": Challenge.serialize(offer()), "max-spend": "0.015" },
     });
-    expect(result).toMatchObject({ tx_hash: hash, token: "MACH", amount_raw: "15000" });
+    expect(result).toMatchObject({
+      status: "success",
+      tx_hash: hash,
+      token: "MACH",
+      raw_amount: "15000",
+    });
     expect(
       sdkCalls(vi.mocked(sendTransactionSync).mock.calls[0]![1]).map((item) => item.to),
     ).toEqual([deployment.token, deployment.swap]);

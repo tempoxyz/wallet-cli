@@ -1,7 +1,6 @@
 import { Cli } from "incur";
 
 import { destructive, readOnly, type WalletCommand } from "../cli/command.js";
-import { flag, positional } from "../cli/describe.js";
 import {
   checkSetting,
   configChangeOptions,
@@ -27,12 +26,6 @@ import {
 } from "../wallet/config.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
 import { redactUrl } from "./doctor.js";
-
-const yesArg = flag(
-  "yes",
-  "--yes",
-  "Change the setting without the confirmation prompt; required for agent runs",
-);
 
 // Mounted groups share the root globals; declaring them types `globals` in their commands.
 export default {
@@ -86,31 +79,6 @@ export default {
     // or switch the network later payments use; repeating it changes nothing more.
     config_set: { ...destructive, idempotentHint: true, openWorldHint: false },
     config_unset: { ...destructive, idempotentHint: true, openWorldHint: false },
-  },
-  describe: {
-    name: "config",
-    about: "Read and write persistent CLI settings",
-    subcommands: [
-      {
-        name: "get",
-        about: "Show each setting's effective value and where it comes from",
-        args: [positional("key", configGetArgs.shape.key.description ?? "")],
-      },
-      {
-        name: "set",
-        about: "Save a setting for later commands",
-        args: [
-          positional("key", configSetArgs.shape.key.description ?? ""),
-          positional("value", configSetArgs.shape.value.description ?? ""),
-          yesArg,
-        ],
-      },
-      {
-        name: "unset",
-        about: "Remove a saved setting",
-        args: [positional("key", configUnsetArgs.shape.key.description ?? ""), yesArg],
-      },
-    ],
   },
 } satisfies WalletCommand;
 

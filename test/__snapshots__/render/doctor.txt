@@ -1,0 +1,61 @@
+Chain ID  4217
+Network   tempo
+
+Versions
+  Wallet CLI  0.14.0
+  Node        v24.13.0
+  Platform    darwin
+  Arch        arm64
+  Incur       0.7.1
+  Accounts    0.21.0
+
+Wallet
+  Logged in        yes
+  Address          0xabfb663c1f9cd7438f54846d6b827e315719ec0f
+  Type             device_code
+  Chain ID         4217
+  Network          tempo
+  Private key env  no
+
+Key
+  Address     0x4cdadb819a7fc083b72ada08288a96424f34c8a0
+  Status      ready
+  Expires at  2033-05-18T03:33:20Z
+
+  Spending limits
+    Unlimited  Token        Limit       Period seconds  Remaining    Spent
+    no         0x20c0…8b50  100 USDC.e  -               92.5 USDC.e  -
+
+RPC
+  URL            https://rpc.tempo.xyz
+  OK             yes
+  Chain ID       4217
+  Chain matches  yes
+  Latency ms     42
+
+Auth
+  URL  https://wallet.tempo.xyz
+
+Sqlite3
+  Found    no
+  Version  -
+
+Session store
+  Path      /home/user/.tempo/wallet/channels.db
+  Exists    yes
+  Readable  yes
+
+Env
+  Name           Value
+  TEMPO_RPC_URL  https://rpc.tempo.xyz
+
+Checks
+  Name     Status  Message
+  wallet   ok      Logged in as 0xabfb663c1f9cd7438f54846d6b827e315719ec0f on
+                   mainnet.
+  rpc      warn    RPC https://rpc.tempo.xyz answered in 1200ms, which is slow.
+  sqlite3  fail    sqlite3 is not installed; sessions cannot be stored. Install
+                   sqlite3 and rerun doctor.
+
+sqlite3 is not installed. Install sqlite3, then run the next command.
+Next: tempo wallet doctor --network mainnet

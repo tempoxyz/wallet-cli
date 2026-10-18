@@ -4,7 +4,7 @@ import { machineTokenDeployments } from "mppx/tempo";
 import { erc20Abi, formatUnits, parseUnits, type Address } from "viem";
 
 import type { requestDryRunOutput } from "../schemas/request.js";
-import { createTempoPublicClient } from "../shared/network.js";
+import { createTempoPublicClient, networkFields } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
 import { walletFix } from "../shared/require-wallet.js";
 import { knownToken, readTokenMetadata, tokenMetadata } from "../shared/tokens.js";
@@ -77,11 +77,11 @@ export async function paymentQuote(
     intent: challenge.intent,
     recurring: challenge.intent === "subscription",
     amount: formatTokenAmount(amount),
-    amount_raw: amount.toString(),
+    raw_amount: amount.toString(),
     session: plan ? (plan.reusable ? "reuse" : "open") : null,
     deposit: plan ? formatTokenAmount(plan.depositRaw) : null,
-    deposit_raw: plan ? plan.depositRaw.toString() : null,
-    token,
+    raw_deposit: plan ? plan.depositRaw.toString() : null,
+    token: token.toLowerCase(),
     // The server picks the currency, so an unlisted token's self-declared ticker is not shown.
     symbol: knownToken(token, chainId)?.symbol ?? null,
     decimals: metadata?.decimals ?? null,
@@ -90,11 +90,11 @@ export async function paymentQuote(
       limit === null || decimals === undefined ? null : formatUnits(limit, decimals),
     machine_token_enabled: getRecord(challenge.request.methodDetails).machineTokenEnabled === true,
     payment_token: options.paymentToken ?? null,
-    chain_id: chainId,
+    ...networkFields(chainId),
     max_spend: cap ?? null,
     within_budget: cap === undefined || spend === undefined ? null : spend <= parseUnits(cap, 6),
     signer: signer
-      ? { address: signer.account.address, source: signer.source }
+      ? { address: signer.account.address.toLowerCase(), source: signer.source }
       : { address: null, source: "wallet" },
     ...(fix
       ? nextStep(

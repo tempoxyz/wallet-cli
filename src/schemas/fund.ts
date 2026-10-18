@@ -1,6 +1,13 @@
 import { z } from "incur";
 
-import { browserOption, globalOptionShape, networkOutputShape, nextOutputShape } from "./shared.js";
+import { displayMeta } from "../cli/render.js";
+import {
+  browserOption,
+  describeMeta,
+  globalOptionShape,
+  networkOutputShape,
+  nextOutputShape,
+} from "./shared.js";
 
 export const fundOptions = z.object({
   ...globalOptionShape,
@@ -16,9 +23,18 @@ export const fundOptions = z.object({
   wait: z
     .boolean()
     .default(false)
-    .describe("Wait for a balance increase; otherwise return immediately"),
-  timeout: z.coerce.number().optional().describe("Timeout in seconds with --wait (default: 600)"),
-  "referral-code": z.string().optional().describe("Open referral-code redeem flow"),
+    .describe("Wait for a balance increase; otherwise return immediately")
+    .register(describeMeta, { negated: "Return the funding handoff immediately (default)" }),
+  timeout: z.coerce
+    .number()
+    .optional()
+    .describe("Timeout in seconds with --wait (default: 600)")
+    .register(describeMeta, { valueName: "SECONDS" }),
+  "referral-code": z
+    .string()
+    .optional()
+    .describe("Open referral-code redeem flow")
+    .register(describeMeta, { valueName: "CODE" }),
 });
 
 export const fundStatusOptions = z.object({
@@ -28,25 +44,27 @@ export const fundStatusOptions = z.object({
     .int()
     .positive()
     .optional()
-    .describe("Seconds between balance checks (default: 2)"),
+    .describe("Seconds between balance checks (default: 2)")
+    .register(describeMeta, { valueName: "SECONDS" }),
   "max-attempts": z.coerce
     .number()
     .int()
     .positive()
     .optional()
-    .describe("Checks before giving up with E_POLL_TIMEOUT (default: until the funding expires)"),
+    .describe("Checks before giving up with E_POLL_TIMEOUT (default: until the funding expires)")
+    .register(describeMeta, { valueName: "COUNT" }),
 });
 
 export const fundOutput = z.object({
-  status: z.enum(["success", "pending"]),
+  status: z.enum(["success", "pending"]).register(displayMeta, { tone: { success: "ok" } }),
   wallet: z.string().nullable(),
   action: z.string(),
   url: z.string(),
   ...networkOutputShape,
-  token: z.string(),
-  symbol: z.string().optional(),
+  token: z.string().register(displayMeta, { address: true }),
+  symbol: z.string().nullable(),
   amount: z.string().nullable(),
-  balance: z.string().nullable(),
-  raw_balance: z.string().nullable(),
+  balance: z.string().register(displayMeta, { amount: "symbol" }).nullable(),
+  raw_balance: z.string().register(displayMeta, { hidden: true }).nullable(),
   ...nextOutputShape,
 });

@@ -198,7 +198,7 @@ describe("session close process exit status", () => {
               }),
             );
           if (scenario === "pending") {
-            expect(summary.results[0].remaining_secs).toBeGreaterThan(0);
+            expect(summary.results[0].remaining_seconds).toBeGreaterThan(0);
             expect(summary._next.argv).toEqual([
               "tempo",
               "wallet",
@@ -343,9 +343,10 @@ describe("session close confirmation", () => {
 
       expect(result.stderr.includes(prompt), JSON.stringify(result)).toBe(prompted);
       if (prompted) expect(result.stderr).toContain(`  - channel: ${channelId}\n`);
+      // An agent gets an error on stdout, and a person at a terminal on stderr.
       if (refused) {
         expect(result.code).toBe(2);
-        expect(result.stdout).toContain(refused);
+        expect(terminal ? result.stderr : result.stdout).toContain(refused);
       } else expect(result.code).toBe(0);
       if (output) expect(result.stdout).toContain(output);
       expect(rpcCalls > 0).toBe(Boolean(closed));

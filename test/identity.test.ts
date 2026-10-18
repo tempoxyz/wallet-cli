@@ -99,14 +99,14 @@ describe("wallet store", () => {
       unlimited: true,
       limit: null,
     },
-    { name: "empty", limits: [], scopes: [], mode: "none", unlimited: false, limit: "0.000000" },
+    { name: "empty", limits: [], scopes: [], mode: "none", unlimited: false, limit: "0" },
     {
       name: "bounded",
       limits: [{ token: usdc, limit: "100000000#__bigint" }],
       scopes: [{ address: usdc }],
       mode: "restricted",
       unlimited: false,
-      limit: "100.000000",
+      limit: "100",
     },
   ])(
     "preserves $name permissions through save, reload, and output",
@@ -144,7 +144,7 @@ describe("wallet store", () => {
     {
       name: "bounded",
       limits: [{ token: usdc, limit: "100000000#__bigint" }],
-      limit: "100.000000",
+      limit: "100",
     },
   ])("keeps legacy $name permissions unknown through a round trip", async ({ limits, limit }) => {
     await useTempHome();
@@ -387,10 +387,10 @@ describe("identity commands", () => {
     await upsertSessionRecord(channel);
     expect(await whoamiHandler({})).toMatchObject({
       balance: {
-        total: "1.008000",
+        total: "1.008",
         available: "1",
-        locked: "0.008000",
-        pending_refund: "0.000000",
+        locked: "0.008",
+        pending_refund: "0",
         active_sessions: 1,
       },
     });
@@ -399,10 +399,10 @@ describe("identity commands", () => {
       await upsertSessionRecord({ ...channel, state, close_requested_at: 1 });
       expect(await whoamiHandler({})).toMatchObject({
         balance: {
-          total: "1.008000",
+          total: "1.008",
           available: "1",
-          locked: "0.000000",
-          pending_refund: "0.008000",
+          locked: "0",
+          pending_refund: "0.008",
           active_sessions: 0,
         },
       });
@@ -412,10 +412,10 @@ describe("identity commands", () => {
     mocks.readContract.mockResolvedValue(1_008_000n);
     expect(await whoamiHandler({})).toMatchObject({
       balance: {
-        total: "1.008000",
+        total: "1.008",
         available: "1.008",
-        locked: "0.000000",
-        pending_refund: "0.000000",
+        locked: "0",
+        pending_refund: "0",
         active_sessions: 0,
       },
     });
@@ -439,10 +439,10 @@ describe("identity commands", () => {
 
     expect(await whoamiHandler({})).toMatchObject({
       balance: {
-        total: "0.021000",
+        total: "0.021",
         available: "0",
-        locked: "0.008000",
-        pending_refund: "0.013000",
+        locked: "0.008",
+        pending_refund: "0.013",
         active_sessions: 1,
       },
     });
@@ -512,7 +512,7 @@ describe("identity commands", () => {
   );
 
   it.each([
-    { name: "USDC.e", token: usdc, limit: "100000000", shown: "100.000000" },
+    { name: "USDC.e", token: usdc, limit: "100000000", shown: "100" },
     {
       name: "an unlisted 2-decimal token",
       token: unlistedToken,
@@ -525,7 +525,7 @@ describe("identity commands", () => {
       token: unlistedToken,
       decimals: 18,
       limit: "1500000000000000000",
-      shown: "1.500000000000000000",
+      shown: "1.5",
     },
     // Without decimals the scale is unknown, so only the stored base units are shown.
     { name: "an unreadable unlisted token", token: unlistedToken, limit: "100000000", shown: null },
@@ -571,13 +571,13 @@ describe("identity commands", () => {
     );
 
     expect(result.keys[0]).toMatchObject({
-      wallet_address: testWallet2.toLowerCase(),
+      wallet: testWallet2.toLowerCase(),
       symbol: null,
       balance: null,
       spending_limit: { limit: null, raw_limit: "1021" },
       spending_limits: [
         { symbol: null, token: unlistedToken, limit: null, raw_limit: "1021" },
-        { symbol: "USDC.e", token: usdcToken, limit: "5.000000", raw_limit: "5000000" },
+        { symbol: "USDC.e", token: usdcToken, limit: "5", raw_limit: "5000000" },
       ],
     });
     expect(mocks.getMetadata).not.toHaveBeenCalled();
@@ -859,8 +859,8 @@ describe("identity commands", () => {
       balance: {
         total: null,
         available: null,
-        locked: "0.008000",
-        pending_refund: "0.008000",
+        locked: "0.008",
+        pending_refund: "0.008",
         active_sessions: 1,
         error: { code: "E_RPC" },
       },
@@ -874,7 +874,7 @@ describe("identity commands", () => {
     const recovered = await whoamiHandler({});
     expect(recovered).toMatchObject({
       ready: true,
-      balance: { total: "5.016000", available: "5" },
+      balance: { total: "5.016", available: "5" },
       key: { balance: "5" },
     });
     expect(recovered).not.toHaveProperty("balance.error");
@@ -891,7 +891,7 @@ describe("identity commands", () => {
     const result = await whoamiHandler({});
     expect(result).toMatchObject({
       ready: true,
-      balance: { total: "0.000000", available: "0" },
+      balance: { total: "0", available: "0" },
       key: { balance: "0" },
     });
     expect(result).not.toHaveProperty("balance.error");
@@ -1002,7 +1002,7 @@ limit = "100000000"
     expect(result.keys[0]).toMatchObject({
       address: testAccessKey.toLowerCase(),
       chain_id: 4217,
-      wallet_address: testWallet.toLowerCase(),
+      wallet: testWallet.toLowerCase(),
     });
   });
 
@@ -1035,13 +1035,13 @@ limit = "100000000"
     expect(result.keys[0]).toMatchObject({
       status: "ready",
       spending_limit: {
-        limit: "100.000000",
+        limit: "100",
         raw_limit: "100000000",
         period_seconds: 86_400,
       },
       spending_limits: [
         {
-          limit: "100.000000",
+          limit: "100",
           raw_limit: "100000000",
           period_seconds: 86_400,
           token: usdc.toLowerCase(),
@@ -1214,9 +1214,9 @@ limit = "100000000"
       accessKeys: state.accessKeys,
     });
     expect(result.keys[0]).toMatchObject({
-      spending_limit: { mode: "restricted", unlimited: false, limit: "250.000000" },
+      spending_limit: { mode: "restricted", unlimited: false, limit: "250" },
       call_permissions: "unrestricted",
-      spending_limits: [{ token: usdc.toLowerCase(), limit: "250.000000" }],
+      spending_limits: [{ token: usdc.toLowerCase(), limit: "250" }],
     });
   });
 

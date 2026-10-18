@@ -1,0 +1,19 @@
+Status                      dry_run
+Chain ID                    4217
+Network                     tempo
+Mode                        exact_in
+From                        0xabfb663c1f9cd7438f54846d6b827e315719ec0f
+Dex                         0xdec0…0000
+Token in                    0x20c0…8b50
+Token out                   0x20c0…0000
+Amount in                   1 USDC.e
+Max amount in               1 USDC.e
+Amount out                  0.9985 pathUSD
+Min amount out              0.993507 pathUSD
+Slippage bps                50
+Fee token                   0x20c0…8b50
+Access key limit            100 USDC.e
+Requires access key update  no
+
+Review the quote, then run the next command to submit it. Submission re-quotes and refuses to receive less than 0.993507 pathUSD.
+Next: tempo wallet swap 1 0x20c000000000000000000000b9537d11c60e8b50 0x20c0000000000000000000000000000000000000 --min-amount-out 0.993507 --yes

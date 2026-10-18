@@ -50,10 +50,6 @@ export default {
     },
   }),
   annotations: { doctor: { ...readOnly, openWorldHint: true } },
-  describe: {
-    name: "doctor",
-    about: "Diagnose login, access key, RPC, sqlite3, and environment setup",
-  },
 } satisfies WalletCommand;
 
 /** How long the RPC request and the sqlite3 subprocess may take. */

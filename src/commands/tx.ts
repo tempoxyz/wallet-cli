@@ -2,7 +2,6 @@ import { Cli, Errors } from "incur";
 import { formatUnits, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem";
 
 import { readOnly, type WalletCommand } from "../cli/command.js";
-import { option, positional } from "../cli/describe.js";
 import { CtaError } from "../cli/incur-compat.js";
 import { cliGlobals, globalAlias, globalOptions } from "../schemas/shared.js";
 import { txStatusArgs, txStatusOutput } from "../schemas/tx.js";
@@ -37,30 +36,11 @@ export default {
     alias: globalAlias,
     output: txStatusOutput,
     async run({ args, globals }) {
-      return txStatus(args.txHash, await resolveNetwork(globals.network));
+      return txStatus(args["tx-hash"], await resolveNetwork(globals.network));
     },
   }),
   annotations: { tx_status: { ...readOnly, openWorldHint: true } },
-  describe: {
-    name: "tx",
-    about: "Inspect transactions",
-    subcommands: [
-      {
-        name: "status",
-        about: "Show a transaction's status on chain",
-        args: [positional("tx_hash", "Transaction hash (0x...)")],
-      },
-    ],
-  },
 } satisfies WalletCommand;
-
-/** The `--describe` entry of `--idempotency-key`, on the commands that send a transaction. */
-export const idempotencyKeyArg = option(
-  "idempotency_key",
-  "--idempotency-key",
-  "Send at most once per key for this wallet and network; a retry with the same key returns the recorded result instead of sending again",
-  { valueName: "KEY" },
-);
 
 /** A transaction's state on chain, as `tx status` reports it. */
 export type TxState = "success" | "reverted" | "pending" | "not_found";

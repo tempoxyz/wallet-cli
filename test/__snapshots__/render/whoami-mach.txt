@@ -1,0 +1,6 @@
+Mach
+  Wallet    0xabfb663c1f9cd7438f54846d6b827e315719ec0f
+  Chain ID  4217
+  Network   tempo
+  Token     0x20c0…c032
+  Balance   1.25 MACH

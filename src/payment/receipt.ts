@@ -53,7 +53,7 @@ export function paymentReceipt(payment: {
           expires: escapeInvisible(subscription.expires),
         }
       : null,
-    payer: payment.payer,
+    payer: payment.payer.toLowerCase(),
     ...networkFields(network.chainId),
     ...(session && !session.reused && channelId
       ? nextStep(

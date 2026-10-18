@@ -1,0 +1,8 @@
+Tx hash       0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+Chain ID      4217
+Network       tempo
+Status        success
+Block number  1234567
+From          0xabfb663c1f9cd7438f54846d6b827e315719ec0f
+To            0x70997970c51812dc3a010c7d01b50e0d17dc79c8
+Fee           0.0012 0x20c0…8b50

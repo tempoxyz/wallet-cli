@@ -1,0 +1,9 @@
+Wallet    0xabfb663c1f9cd7438f54846d6b827e315719ec0f
+Chain ID  4217
+Network   tempo
+
+Balances
+  Token        Balance   Verified
+  0x20c0…74be  1.5 OUSD  yes
+  0x20c0…beef  2.5       no
+  0x20c0…8b50  0 USDC.e  yes
