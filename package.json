@@ -37,6 +37,7 @@
     "typecheck": "tsc -b --noEmit",
     "test:types": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
+    "test:e2e": "vitest run --config test/e2e/vitest.config.ts",
     "vendor": "scripts/vendor.sh"
   },
   "dependencies": {

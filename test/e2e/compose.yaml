@@ -1,0 +1,25 @@
+# Adapted from machine-fetch test/e2e/compose.yaml. The Tempo node uses testnet's chain ID, so the
+# CLI's testnet network (--network testnet with TEMPO_RPC_URL) runs against it unchanged; the plain
+# node stands in for Base. Anvil 1.8.1, which machine-fetch pins, never answers an access-key
+# transaction over its spending limit, so this pins 1.8.4.
+services:
+  tempo:
+    image: ghcr.io/foundry-rs/foundry:v1.8.4
+    entrypoint: anvil
+    command: --network tempo --chain-id 42431 --host 0.0.0.0 --silent
+    ports: ["127.0.0.1::8545"]
+    healthcheck:
+      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+  evm:
+    image: ghcr.io/foundry-rs/foundry:v1.8.4
+    entrypoint: anvil
+    command: --chain-id 31338 --host 0.0.0.0 --silent
+    ports: ["127.0.0.1::8545"]
+    healthcheck:
+      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
