@@ -125,7 +125,7 @@ function renderValue(
   indent: number,
   context: Context,
 ): string[] {
-  if (isRecord(value)) return renderObject(value, schema, indent, context);
+  if (isRecord(value)) return renderObject(value, matching(schema, value), indent, context);
   if (Array.isArray(value) && !isScalar(value))
     return renderList(value, elementSchema(schema), indent, context);
   const hint = schema && displayOf(schema);
@@ -207,7 +207,7 @@ function renderTable(
 ) {
   const columns: string[] = [];
   for (const row of rows) {
-    const fields = visibleFields(row, schema);
+    const fields = visibleFields(row, matching(schema, row));
     if (fields.some(({ value, hint }) => !isScalar(value) || hint?.next || hint?.note))
       return undefined;
     for (const { key } of fields) if (!columns.includes(key)) columns.push(key);
@@ -216,9 +216,10 @@ function renderTable(
 
   const header = columns.map((key) => ({ text: humanize(key), tone: "dim" as const }));
   const body = rows.map((row) => {
-    const shown = new Set(visibleFields(row, schema).map(({ key }) => key));
+    const rowSchema = matching(schema, row);
+    const shown = new Set(visibleFields(row, rowSchema).map(({ key }) => key));
     return columns.map((key) =>
-      shown.has(key) ? cell(row[key], hintOf(schema, key), row, schema) : { text: "" },
+      shown.has(key) ? cell(row[key], hintOf(rowSchema, key), row, rowSchema) : { text: "" },
     );
   });
   const widths = columns.map((_, index) =>
@@ -364,6 +365,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isScalar(value: unknown) {
   if (Array.isArray(value)) return value.every((item) => typeof item !== "object" || item === null);
   return typeof value !== "object" || value === null;
+}
+
+/**
+ * The option of a union `schema` that `record` is, so its fields take that option's hints, as a
+ * sent `send` its success `status`: of the options it parses as, the one that names the most of
+ * its fields, since an object option also parses a record with more fields. Otherwise `schema`.
+ */
+function matching(schema: Schema | undefined, record: Record<string, unknown>): Schema | undefined {
+  const def = definition(schema);
+  if (def?.type !== "union") return schema;
+  let best: Schema | undefined;
+  let named = -1;
+  for (const option of def.options ?? []) {
+    if (!z.safeParse(option, record).success) continue;
+    const count = Object.keys(record).filter((key) => fieldSchema(option, key)).length;
+    if (count > named) [best, named] = [option, count];
+  }
+  return best ? matching(best, record) : schema;
 }
 
 /** The schema of field `key` of the objects `schema` describes, trying each option of a union. */

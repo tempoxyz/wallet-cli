@@ -12,6 +12,7 @@ import { sendOutput } from "../src/schemas/send.js";
 import { serviceDetailOutput, servicesListOutput } from "../src/schemas/services.js";
 import { sessionsListOutput } from "../src/schemas/sessions.js";
 import { swapOutput } from "../src/schemas/swap.js";
+import { transferOutput } from "../src/schemas/transfer.js";
 import { txStatusOutput } from "../src/schemas/tx.js";
 import { whoamiOutput } from "../src/schemas/whoami.js";
 
@@ -564,11 +565,36 @@ describe("human view", () => {
       shown: ["Fee estimate        0.001 0x20c0…0000"],
       hidden: ["Fee token   "],
     },
+    {
+      name: "a MACH transfer shows its amount in MACH, from the union option it is",
+      schema: transferOutput,
+      data: {
+        status: "success",
+        wallet,
+        amount: "1",
+        raw_amount: "1000000",
+        token: "MACH",
+        settlement_currency: usdc,
+        ...mainnet,
+        challenge_id: "challenge-1",
+        max_spend: "5",
+        tx_hash: txHash,
+      },
+      shown: ["1 MACH"],
+      hidden: ["Raw amount", "Token  "],
+    },
   ])("$name", ({ schema, data, shown, hidden }) => {
     expect(schema.safeParse(data).success).toBe(true);
     const text = renderResult(data, schema, undefined, options);
     for (const line of shown) expect(text).toContain(line);
     for (const line of hidden) expect(text).not.toContain(line);
+  });
+
+  it("colors a sent send's status from the union option it is", () => {
+    const sent = results.find((row) => row.name === "send")!;
+    expect(renderResult(sent.data, sent.schema, undefined, { color: true, width: 80 })).toContain(
+      "\u001b[32msuccess\u001b[39m",
+    );
   });
 
   it("colors labels dim, successes green, and failures red", () => {
