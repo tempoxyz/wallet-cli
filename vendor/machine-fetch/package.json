@@ -1,0 +1,108 @@
+{
+  "name": "machine-fetch",
+  "version": "0.3.0",
+  "description": "Fetch with automatic machine-payment funding for MPP and x402 clients.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Brendan Ryan",
+  "homepage": "https://github.com/tempoxyz/machine-fetch#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tempoxyz/machine-fetch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tempoxyz/machine-fetch/issues"
+  },
+  "keywords": [
+    "fetch",
+    "machine-payments",
+    "mpp",
+    "x402",
+    "stablecoin",
+    "viem"
+  ],
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./interfaces": {
+      "types": "./dist/interfaces/index.d.ts",
+      "default": "./dist/interfaces/index.js"
+    },
+    "./presets": {
+      "types": "./dist/presets.d.ts",
+      "default": "./dist/presets.js"
+    },
+    "./adapters/mppx": {
+      "types": "./dist/adapters/mppx.d.ts",
+      "default": "./dist/adapters/mppx.js"
+    },
+    "./adapters/x402": {
+      "types": "./dist/adapters/x402.d.ts",
+      "default": "./dist/adapters/x402.js"
+    },
+    "./funders/evm": {
+      "types": "./dist/funders/evm.d.ts",
+      "default": "./dist/funders/evm.js"
+    },
+    "./funders/cross-chain": {
+      "types": "./dist/funders/cross-chain.d.ts",
+      "default": "./dist/funders/cross-chain.js"
+    },
+    "./funders/tempo": {
+      "types": "./dist/funders/tempo.d.ts",
+      "default": "./dist/funders/tempo.js"
+    },
+    "./routes/privy": {
+      "types": "./dist/routes/privy.d.ts",
+      "default": "./dist/routes/privy.js"
+    },
+    "./routes/relay-protocol": {
+      "types": "./dist/routes/relay-protocol.d.ts",
+      "default": "./dist/routes/relay-protocol.js"
+    },
+    "./interfaces/evm": {
+      "types": "./dist/interfaces/evm.d.ts",
+      "default": "./dist/interfaces/evm.js"
+    },
+    "./stores/memory": {
+      "types": "./dist/stores/memory.d.ts",
+      "default": "./dist/stores/memory.js"
+    },
+    "./stores/local-storage": {
+      "types": "./dist/stores/local-storage.d.ts",
+      "default": "./dist/stores/local-storage.js"
+    },
+    "./stores/file": {
+      "types": "./dist/stores/file.d.ts",
+      "default": "./dist/stores/file.js"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@x402/core": ">=2.25.0 <3",
+    "@x402/fetch": ">=2.25.0 <3",
+    "mppx": ">=0.12.0 <0.13",
+    "viem": ">=2.57.1 <3"
+  },
+  "peerDependenciesMeta": {
+    "@x402/core": {
+      "optional": true
+    },
+    "@x402/fetch": {
+      "optional": true
+    },
+    "mppx": {
+      "optional": true
+    },
+    "viem": {
+      "optional": true
+    }
+  }
+}

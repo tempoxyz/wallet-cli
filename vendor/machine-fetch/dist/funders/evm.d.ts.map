@@ -1,0 +1,1 @@
+{"version":3,"file":"evm.d.ts","sourceRoot":"","sources":["../../src/funders/evm.ts"],"names":[],"mappings":"AAqBA,OAAO,KAAK,EAEV,cAAc,EAGd,QAAQ,EAET,MAAM,sBAAsB,CAAA;AAC7B,OAAO,KAAK,EAAe,MAAM,EAAsB,MAAM,yBAAyB,CAAA;AA6BtF,wFAAwF;AACxF,wBAAgB,QAAQ,CAAC,KAAK,EAAE,QAAQ,GAAG,QAAQ,CAclD;AAED;;;GAGG;AACH,wBAAgB,OAAO,CAAC,OAAO,EAAE,cAAc,GAAG,MAAM,CAmCvD"}
