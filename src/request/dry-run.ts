@@ -9,9 +9,11 @@ import { nextStep } from "../shared/next.js";
 import { walletFix } from "../shared/require-wallet.js";
 import { knownToken, readTokenMetadata, tokenMetadata } from "../shared/tokens.js";
 import { getRecord, stringValue } from "../shared/utils.js";
-import { tempoFundingInputs } from "../shared/chains.js";
+import { destinationBalance, tempoFundingInputs } from "../shared/chains.js";
 import { challengeAmount, normalizedChallengeChainId, sessionDetails } from "./challenge.js";
+import { loadRemotePayer } from "../wallet/remote-payer.js";
 import { chargeFunder } from "./funding.js";
+import type { EvmOffer } from "./offers.js";
 import {
   privateKeyIdentity,
   privateKeySigner,
@@ -127,4 +129,52 @@ function dryRunBalance(payer: string, token: string, chainId: number) {
       args: [payer as Address],
     })
     .catch(() => null);
+}
+
+/**
+ * The `--dry-run` quote for an EVM offer, in the shape of a Tempo charge's. The payer is the
+ * private-key signer or the wallet's remote payer, which a quote never creates; `balance` is its
+ * USDC on the offer's chain, `null` when unknown.
+ */
+export async function evmPaymentQuote(
+  offer: EvmOffer,
+  options: RequestOptions,
+): Promise<RequestDryRunOutput> {
+  const { destination, requirement } = offer;
+  const signer = privateKeySigner(options);
+  const wallet = signer ? undefined : await walletIdentity(options).catch(() => undefined);
+  const remote =
+    wallet && !("code" in wallet)
+      ? await loadRemotePayer(wallet.address).catch(() => undefined)
+      : undefined;
+  const payer = signer?.account.address ?? remote?.address;
+  const balance = payer
+    ? await destinationBalance(destination, payer).catch(() => null)
+    : remote === undefined && wallet && !("code" in wallet)
+      ? 0n
+      : null;
+  const cap = spendCap(options);
+  return {
+    payment_required: true,
+    method: offer.kind === "x402" ? "x402" : offer.challenge.method,
+    intent: "charge",
+    recurring: false,
+    amount: formatTokenAmount(requirement.amount),
+    raw_amount: requirement.amount.toString(),
+    session: null,
+    deposit: null,
+    raw_deposit: null,
+    token: destination.usdc.address.toLowerCase(),
+    symbol: "USDC",
+    decimals: destination.usdc.decimals,
+    balance: balance === null ? null : formatUnits(balance, destination.usdc.decimals),
+    access_key_limit: null,
+    machine_token_enabled: false,
+    payment_token: options.paymentToken ?? null,
+    chain_id: destination.chainId,
+    network: destination.name,
+    max_spend: cap,
+    within_budget: requirement.amount <= parseUnits(cap, 6),
+    signer: { address: payer?.toLowerCase() ?? null, source: signer ? signer.source : "wallet" },
+  };
 }

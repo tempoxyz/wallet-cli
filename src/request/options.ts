@@ -23,6 +23,8 @@ export type RequestOptions = {
   mach?: boolean | undefined;
   /** `--funding`; resolved with `fundingSetting`. */
   funding?: string | undefined;
+  /** `--payment-network`: `tempo`, or a destination name such as `base`, to pay on; else ranked. */
+  paymentNetwork?: string | undefined;
   /** `--max-slippage-bps` for Tempo DEX funding; `defaultMaxSlippageBps` when unset. */
   maxSlippageBps?: number | undefined;
   network?: string | undefined;

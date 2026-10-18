@@ -32,9 +32,13 @@ export function paymentReceipt(payment: {
   subscription?: { period: string; expires: string } | undefined;
   /** How the payment acquired `token`: a swap's route, its input token, and the most it spent. */
   funding?: { route: string; input: { token: string; maxAmount: bigint } } | undefined;
+  /** The chain paid on when it is not `network`'s Tempo chain, such as Base. */
+  chain?: { chainId: number; name: string } | undefined;
+  /** `token`'s listing on `chain`, which the Tempo token list does not cover. */
+  listed?: { symbol: string; decimals: number } | undefined;
 }) {
-  const { network, session, subscription, funding } = payment;
-  const listed = knownToken(payment.token, network.chainId);
+  const { network, session, subscription, funding, chain } = payment;
+  const listed = payment.listed ?? knownToken(payment.token, network.chainId);
   const token = escapeInvisible(payment.token.toLowerCase());
   const channelId = session ? escapeInvisible(session.channelId) : null;
   const deposit = session ? tokenUnits(session.deposit) : null;
@@ -68,7 +72,7 @@ export function paymentReceipt(payment: {
           },
         }
       : {}),
-    ...networkFields(network.chainId),
+    ...(chain ? { chain_id: chain.chainId, network: chain.name } : networkFields(network.chainId)),
     ...(session && !session.reused && channelId
       ? nextStep(
           `Session ${channelId} keeps ${deposit} ${listed?.symbol ?? token} locked until it is closed. When you are done with this service, run the next command to request its close, then follow that command's _next to withdraw the unspent deposit once the close grace period ends.`,

@@ -32,8 +32,10 @@ import {
   runsMachRoute,
 } from "./mach.js";
 import type { RequestOptions } from "./options.js";
+import { payEvmAndRetry } from "./evm-charge.js";
 import { checkCharge, prepareCharge } from "./funding.js";
 import { fetchPaidRequest, paymentReceipts } from "./paid.js";
+import { selectPayment } from "./select.js";
 import { dryRunRpc, paySessionAndRetryRequest } from "./session.js";
 import { formatTokenAmount, MaxSpendExceededError, spendCap } from "./spend.js";
 
@@ -43,6 +45,9 @@ export async function payAndRetryRequest(
   options: RequestOptions,
   stderr: Pick<NodeJS.WriteStream, "write">,
 ) {
+  const selection = await selectPayment(paymentRequiredResponse, options, request.url);
+  if (selection.kind === "evm")
+    return await payEvmAndRetry(selection.offer, request, options, stderr);
   const { challenge: selectedChallenge, response: selectedResponse } = preparePaymentChallenge(
     paymentRequiredResponse,
     options,

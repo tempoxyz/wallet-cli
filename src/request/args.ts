@@ -60,6 +60,9 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
       case "--funding":
         options.funding = requireValue(argv, ++index, arg);
         break;
+      case "--payment-network":
+        options.paymentNetwork = requireValue(argv, ++index, arg);
+        break;
       case "--max-slippage-bps":
         options.maxSlippageBps = Number(requireValue(argv, ++index, arg));
         break;
