@@ -4,11 +4,18 @@ import { promisify } from "node:util";
 import { createServer, type ServerResponse, type IncomingMessage } from "node:http";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterEach, expect, it, vi } from "vitest";
 import { parseRequestArgs } from "../src/request/args.js";
 import { executeRequest, runRequest } from "../src/request/run.js";
 import { useTempHome } from "./helpers.js";
 import { cliBundle } from "./cli-bundle.js";
+
+// Lets a test observe the retry backoff; every other wait runs unchanged.
+vi.mock("node:timers/promises", async (original) => {
+  const actual = await original<typeof import("node:timers/promises")>();
+  return { ...actual, setTimeout: vi.fn(actual.setTimeout) };
+});
 
 const execFileAsync = promisify(execFile);
 const cleanup: (() => Promise<void>)[] = [];
@@ -166,11 +173,23 @@ it("aborts Retry-After backoff at the request deadline without another request",
     res.writeHead(503, { "retry-after": "5" });
     res.end("busy");
   });
-  const started = Date.now();
+  // The deadline expires while the 5s Retry-After wait is pending, however long the first
+  // request took to reach the server, instead of on a wall clock that can beat it there.
+  const deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  const { setTimeout: wait } =
+    await vi.importActual<typeof import("node:timers/promises")>("node:timers/promises");
+  const backoff = vi.mocked(sleep).mockImplementationOnce((delay, value, options) => {
+    const pending = wait(delay, value, options);
+    deadline.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+    return pending;
+  });
   await expect(
     executeRequest({ ...parseRequestArgs([url]), maxTime: 0.1, retries: 2 }),
   ).rejects.toMatchObject({ code: "E_NETWORK" });
-  expect(Date.now() - started).toBeLessThan(1500);
+  expect(timeout).toHaveBeenCalledExactlyOnceWith(100);
+  expect(backoff).toHaveBeenCalledExactlyOnceWith(5_000, undefined, { signal: deadline.signal });
+  await expect(backoff.mock.results[0]!.value).rejects.toMatchObject({ name: "AbortError" });
   expect(requests).toBe(1);
 });
 
