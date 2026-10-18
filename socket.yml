@@ -1,0 +1,6 @@
+version: 2
+# vendor/ holds built packages (scripts/vendor.sh). Their package.json files are not install
+# manifests: pnpm-lock.yaml lists every package they install, so scanning them again would resolve
+# their optional peers to versions nothing installs.
+projectIgnorePaths:
+  - "vendor/"
