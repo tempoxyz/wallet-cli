@@ -1,6 +1,7 @@
 import { Rpc } from "accounts";
 import { Storage } from "accounts/cli";
 import { z } from "incur";
+import { toHex } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Account } from "viem/tempo";
 
@@ -21,6 +22,7 @@ import {
   testWallet2,
   usdc,
   useTempHome,
+  approvingDeviceCode,
   walletApp,
   walletState,
   writeWalletState,
@@ -49,6 +51,30 @@ const key = walletState().accessKeys[0]!;
 const mainnet = { name: "mainnet", chainId: 4217 } as const;
 const testnet = { name: "testnet", chainId: 42431 } as const;
 
+/**
+ * Has the wallet app issue a device code that expires before the user approves it, and returns
+ * the registrations it receives.
+ */
+function expiringDeviceCode() {
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const registered: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init: { body: string }) => {
+      if (!url.endsWith("/register"))
+        return Response.json({ error: "expired_token" }, { status: 400 });
+      registered.push(JSON.parse(init.body));
+      return Response.json({
+        device_code: "device",
+        user_code: "ABCDEFGH",
+        verification_uri: "https://wallet.tempo.xyz/device",
+        verification_uri_complete: "https://wallet.tempo.xyz/device?user_code=ABCDEFGH",
+      });
+    }),
+  );
+  return registered;
+}
+
 describe("keys revoke", () => {
   it.each([
     {
@@ -62,10 +88,10 @@ describe("keys revoke", () => {
       status: "revoked" as const,
       kept: [],
     },
-  ])("$name, after the SDK drops it from the store", async ({ status, error, kept }) => {
+  ])("$name", async ({ status, error, kept }) => {
     await useTempHome();
     await writeWalletState(walletState());
-    const app = walletApp(mainnet.chainId, { dropsRevokedKey: true });
+    const app = walletApp();
 
     const result = await revokeHandler(
       await readyWallet(undefined, false),
@@ -96,7 +122,7 @@ describe("keys revoke", () => {
       await writeWalletState(
         walletState({ chainId: network.chainId, accessKeys: [otherWallet, target, otherChain] }),
       );
-      const app = walletApp(network.chainId);
+      const app = walletApp();
       const confirm = vi.fn();
       const readKey = keychain("revoked");
 
@@ -113,12 +139,18 @@ describe("keys revoke", () => {
       expect(readKey.mock.calls).toEqual([
         [{ chainId: network.chainId, walletAddress: testWallet, accessKeyAddress: testAccessKey }],
       ]);
+      // The revocation names the key's chain, so the wallet app revokes it there.
       expect(app.request.mock.calls).toEqual([
-        [{ method: "eth_chainId" }],
         [
           {
             method: "wallet_revokeAccessKey",
-            params: [{ address: testWallet, accessKeyAddress: testAccessKey }],
+            params: [
+              {
+                address: testWallet,
+                accessKeyAddress: testAccessKey,
+                chainId: toHex(network.chainId),
+              },
+            ],
           },
         ],
       ]);
@@ -135,25 +167,119 @@ describe("keys revoke", () => {
     },
   );
 
-  it("refuses a provider on another chain and keeps the key", async () => {
+  // Another process logs in on testnet after the command read the store, so the provider it
+  // creates is on testnet.
+  it("asks the wallet app to revoke on the key's chain when the provider is on another", async () => {
     await useTempHome();
     await writeWalletState(walletState());
-    const app = walletApp(testnet.chainId);
+    const wallet = await readyWallet();
+    await writeWalletState(walletState({ chainId: testnet.chainId }));
+    const registered = expiringDeviceCode();
 
     const error = await revokeHandler(
+      wallet,
+      { accessKey: testAccessKey },
+      { yes: true, browser: false },
+      runContext(true),
+    ).catch((value: unknown) => value);
+    await Storage.filesystem().getItem("store");
+
+    expect(error).toMatchObject({ message: expect.stringContaining("Device code expired") });
+    expect(registered).toEqual([
+      expect.objectContaining({
+        message: {
+          type: "rpc-requests",
+          payload: [
+            expect.objectContaining({
+              method: "wallet_revokeAccessKey",
+              params: [
+                {
+                  address: testWallet,
+                  accessKeyAddress: testAccessKey,
+                  chainId: toHex(mainnet.chainId),
+                },
+              ],
+              context: { account: testWallet, chainId: mainnet.chainId },
+            }),
+          ],
+        },
+      }),
+    ]);
+    expect((await loadWalletState()).accessKeys).toEqual([key]);
+  });
+
+  // Another process logs the wallet in on testnet while the revoke waits at its prompt.
+  const testnetKey = {
+    ...key,
+    address: testAccessKey2,
+    privateKey: testPrivateKey2,
+    chainId: testnet.chainId,
+  };
+  it.each([
+    { name: "removes the revoked key", status: "revoked" as const, kept: [testnetKey] },
+    { name: "keeps a key not revoked", status: "published" as const, kept: [key, testnetKey] },
+  ])("$name and keeps a login on another network made meanwhile", async ({ status, kept }) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const login = walletState({ chainId: testnet.chainId, accessKeys: [key, testnetKey] });
+    const app = walletApp();
+
+    const result = await revokeHandler(
       await readyWallet(),
       { accessKey: testAccessKey },
-      { yes: true },
-      runContext(true),
-      { createProvider: app.createProvider },
+      {},
+      runContext(false),
+      {
+        confirm: async () => {
+          await writeWalletState(login);
+          return true;
+        },
+        createProvider: app.createProvider,
+        readKey: keychain(status),
+      },
     ).catch((value: unknown) => value);
 
-    expectUsageError(
-      error,
-      "Wallet is not configured for the requested network. Run 'tempo wallet login'.",
+    expect(result).toMatchObject(
+      status === "revoked"
+        ? { status: "success", local_key_removed: true }
+        : { code: "E_NETWORK", exitCode: 3 },
     );
-    expect(app.request.mock.calls).toEqual([[{ method: "eth_chainId" }]]);
-    expect((await loadWalletState()).accessKeys).toEqual([key]);
+    expect(app.request).toHaveBeenCalledExactlyOnceWith({
+      method: "wallet_revokeAccessKey",
+      params: [
+        { address: testWallet, accessKeyAddress: testAccessKey, chainId: toHex(mainnet.chainId) },
+      ],
+    });
+    expect(await loadWalletState()).toMatchObject({
+      accounts: [{ address: testWallet }],
+      accessKeys: kept,
+      chainId: testnet.chainId,
+    });
+  });
+
+  // The SDK saves its store once the wallet app returns, which must not undo a login another
+  // process made while the wallet app waited for approval.
+  it("keeps a login on another network made while the wallet app waits, with the real SDK", async () => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const login = walletState({ chainId: testnet.chainId, accessKeys: [key, testnetKey] });
+    approvingDeviceCode(() => writeWalletState(login));
+
+    const result = await revokeHandler(
+      await readyWallet(),
+      { accessKey: testAccessKey },
+      { yes: true, browser: false },
+      runContext(true),
+      { readKey: keychain("revoked") },
+    );
+    await Storage.filesystem().getItem("store");
+
+    expect(result).toMatchObject({ status: "success", local_key_removed: true });
+    expect(await loadWalletState()).toMatchObject({
+      accounts: [{ address: testWallet }],
+      accessKeys: [testnetKey],
+      chainId: testnet.chainId,
+    });
   });
 
   it.each([mainnet, testnet])(
@@ -198,23 +324,7 @@ describe("keys revoke", () => {
           accessKeys: [{ ...key, chainId: network.chainId }],
         }),
       );
-      vi.spyOn(console, "error").mockImplementation(() => undefined);
-      const registered: unknown[] = [];
-      // The wallet app issues a device code that expires before the user approves it.
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string, init: { body: string }) => {
-          if (!url.endsWith("/register"))
-            return Response.json({ error: "expired_token" }, { status: 400 });
-          registered.push(JSON.parse(init.body));
-          return Response.json({
-            device_code: "device",
-            user_code: "ABCDEFGH",
-            verification_uri: "https://wallet.tempo.xyz/device",
-            verification_uri_complete: "https://wallet.tempo.xyz/device?user_code=ABCDEFGH",
-          });
-        }),
-      );
+      const registered = expiringDeviceCode();
 
       const error = await revokeHandler(
         await readyWallet(network.name),
@@ -225,7 +335,7 @@ describe("keys revoke", () => {
       await Storage.filesystem().getItem("store");
 
       expect(error).toMatchObject({ message: expect.stringContaining("Device code expired") });
-      // One approval request, which carries the key's chain since the RPC has no chain parameter.
+      // One approval request, on the key's chain.
       expect(registered).toEqual([
         expect.objectContaining({
           message: {
@@ -233,7 +343,13 @@ describe("keys revoke", () => {
             payload: [
               expect.objectContaining({
                 method: "wallet_revokeAccessKey",
-                params: [{ address: testWallet, accessKeyAddress: testAccessKey }],
+                params: [
+                  {
+                    address: testWallet,
+                    accessKeyAddress: testAccessKey,
+                    chainId: toHex(network.chainId),
+                  },
+                ],
                 context: { account: testWallet, chainId: network.chainId },
               }),
             ],
@@ -342,7 +458,7 @@ describe("keys revoke", () => {
           },
     );
     expect(readKey).toHaveBeenCalledTimes(scenario.revoked ? 2 : 1);
-    expect(app.request).toHaveBeenCalledTimes(scenario.revoked ? 2 : 0);
+    expect(app.request).toHaveBeenCalledTimes(scenario.revoked ? 1 : 0);
     expect((await loadWalletState()).accessKeys).toEqual([key]);
   });
 
@@ -552,12 +668,13 @@ describe("keys revoke", () => {
         { createProvider: app.createProvider, readKey },
       ).catch((value: unknown) => value);
 
-      const [, [revoke]] = app.request.mock.calls as [unknown, [{ params: [unknown] }]];
+      const [[revoke]] = app.request.mock.calls as [[{ params: [unknown] }]];
       const sent = z.decode(Rpc.wallet_revokeAccessKey.parameters, revoke.params[0] as never);
       // An unpublished key is authorized and revoked in one transaction.
       expect(sent).toEqual({
         address: testWallet,
         accessKeyAddress: testAccessKey,
+        chainId: BigInt(mainnet.chainId),
         ...(authorizes ? { keyAuthorization } : {}),
       });
       expect(readKey).toHaveBeenCalledTimes(reads.length);

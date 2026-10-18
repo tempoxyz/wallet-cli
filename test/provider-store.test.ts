@@ -2,17 +2,16 @@ import { Keystore, type Provider as CoreProvider } from "accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const store = vi.hoisted(() => {
-  // The SDK stops waiting for its store after 100ms; a slow read finishes well after that.
+  // A slow read, which the provider must wait for before it uses the store.
   const slow = async (read: () => Promise<unknown>) => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     return await read();
   };
   return {
     slow,
-    /** Answers read `n` (from 1) of the wallet store, given the real read. */
-    answer: (_n: number, read: () => Promise<unknown>) => slow(read),
+    /** Answers a read of the wallet store, given the real read. */
+    answer: (read: () => Promise<unknown>) => slow(read),
     queue: Promise.resolve() as Promise<unknown>,
-    reads: 0,
   };
 });
 
@@ -27,10 +26,9 @@ vi.mock("accounts/cli", async (importOriginal) => {
         return {
           ...storage,
           getItem<value>(name: string) {
-            const n = ++store.reads;
             // Reads settle in order, as the SDK's filesystem storage runs them.
             const result = store.queue.then(() =>
-              store.answer(n, async () => await storage.getItem<value>(name)),
+              store.answer(async () => await storage.getItem<value>(name)),
             );
             store.queue = result.catch(() => undefined);
             return result as Promise<value | null>;
@@ -54,9 +52,8 @@ import {
 } from "./helpers.js";
 
 beforeEach(async () => {
-  store.answer = (_n, read) => store.slow(read);
+  store.answer = (read) => store.slow(read);
   store.queue = Promise.resolve();
-  store.reads = 0;
   await useTempHome();
 });
 
@@ -71,12 +68,12 @@ const mainnet = { name: "mainnet", chainId: 4217 } as const;
 const storedKey = { ...walletState().accessKeys[0]!, chainId: 42431 };
 const reachedWallet = /device-code \/register returned status 500/;
 const storeError = "The wallet store could not be loaded. Run the command again.";
+const storeErrorCode = { code: "E_RUNTIME", exitCode: 1, retryable: true };
 
 describe("provider with a slow wallet store", () => {
   it.each<{
     name: string;
     accounts?: { address: string }[];
-    answer?: typeof store.answer;
     provider?: () => Promise<CoreProvider.Provider>;
     run: (provider: CoreProvider.Provider) => Promise<unknown>;
     expected: { resolves: unknown } | { rejects: RegExp | string };
@@ -125,38 +122,6 @@ describe("provider with a slow wallet store", () => {
       expected: { resolves: testWallet },
     },
     {
-      // A later read must not replace the first one's result.
-      name: "keeps the loaded store when a later read fails",
-      answer: (n, read) =>
-        n === 1
-          ? store.slow(read)
-          : read().then(() => {
-              throw new Error("unreadable");
-            }),
-      run: (provider) => provider.request({ method: "eth_accounts" }),
-      expected: { resolves: [testWallet] },
-    },
-    {
-      name: "loads the store again when only the first read fails",
-      answer: (n, read) =>
-        n === 1
-          ? store.slow(read).then(() => {
-              throw new Error("unreadable");
-            })
-          : read(),
-      run: (provider) => provider.request({ method: "eth_accounts" }),
-      expected: { resolves: [testWallet] },
-    },
-    {
-      name: "fails with E_RUNTIME when the store cannot be read",
-      answer: (_n, read) =>
-        read().then(() => {
-          throw new Error("unreadable");
-        }),
-      run: async () => undefined,
-      expected: { rejects: storeError },
-    },
-    {
       name: "sends from the wallet a command checked",
       run: async (provider) => requireSender(provider, testWallet.toLowerCase()),
       expected: { resolves: testWallet },
@@ -186,17 +151,10 @@ describe("provider with a slow wallet store", () => {
     },
   ])(
     "$name",
-    async ({
-      accounts,
-      answer,
-      provider = () => createProvider({ network: mainnet }),
-      run,
-      expected,
-    }) => {
+    async ({ accounts, provider = () => createProvider({ network: mainnet }), run, expected }) => {
       await writeWalletState(
         walletState({ accessKeys: [storedKey], ...(accounts ? { accounts } : {}) }),
       );
-      if (answer) store.answer = answer;
       vi.stubGlobal(
         "fetch",
         vi.fn(async () => new Response(null, { status: 500 })),
@@ -220,7 +178,7 @@ describe("provider with a slow wallet store", () => {
       let approved = false;
       let written = false;
       // The other process writes the store during the first read after the wallet approves.
-      store.answer = async (_n, read) => {
+      store.answer = async (read) => {
         const value = await read();
         if (approved && !written) {
           written = true;
@@ -244,13 +202,26 @@ describe("provider with a slow wallet store", () => {
     },
   );
 
-  it("fails with E_RUNTIME when the store never loads", async () => {
+  it("fails with a retryable E_RUNTIME when the store cannot be read", async () => {
+    await writeWalletState(walletState());
+    store.answer = (read) =>
+      read().then(() => {
+        throw new Error("unreadable");
+      });
+
+    const result = createProvider({ network: mainnet });
+
+    await expect(result).rejects.toMatchObject(storeErrorCode);
+    await expect(result).rejects.toThrow(storeError);
+  });
+
+  it("fails with a retryable E_RUNTIME when the store never loads", async () => {
     await writeWalletState(walletState());
     store.answer = () => new Promise(() => undefined);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
     const result = createProvider({ network: mainnet });
-    const assertion = expect(result).rejects.toMatchObject({ code: "E_RUNTIME" });
+    const assertion = expect(result).rejects.toMatchObject(storeErrorCode);
     await vi.advanceTimersByTimeAsync(60_000);
 
     await assertion;
