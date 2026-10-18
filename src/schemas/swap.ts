@@ -13,8 +13,8 @@ export const swapArgs = z.object({
   amount: z
     .string()
     .describe("Exact input amount by default; exact output amount with --exact-out"),
-  tokenIn: z.string().describe("Input token address (0x...) or symbol (e.g. USDC.e)"),
-  tokenOut: z.string().describe("Output token address (0x...) or symbol (e.g. pathUSD)"),
+  "token-in": z.string().describe("Input token address (0x...) or symbol (e.g. USDC.e)"),
+  "token-out": z.string().describe("Output token address (0x...) or symbol (e.g. pathUSD)"),
 });
 
 export const swapOptions = z.object({
@@ -28,17 +28,17 @@ export const swapOptions = z.object({
   "min-amount-out": z
     .string()
     .optional()
-    .describe("Exact input: refuse to receive less than this reviewed tokenOut amount")
+    .describe("Exact input: refuse to receive less than this reviewed token-out amount")
     .register(describeMeta, { valueName: "AMOUNT" }),
   "max-amount-in": z
     .string()
     .optional()
-    .describe("Exact output: refuse to spend more than this reviewed tokenIn amount")
+    .describe("Exact output: refuse to spend more than this reviewed token-in amount")
     .register(describeMeta, { valueName: "AMOUNT" }),
   "fee-token": z
     .string()
     .optional()
-    .describe("Token address or symbol used to pay fees; defaults to tokenIn"),
+    .describe("Token address or symbol used to pay fees; defaults to token-in"),
   "dry-run": z.boolean().optional().describe("Quote and show calls without submitting"),
   yes: z.boolean().optional().describe("Confirm the reviewed swap for submission"),
   "idempotency-key": idempotencyKeyOption,

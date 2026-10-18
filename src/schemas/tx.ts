@@ -3,7 +3,7 @@ import { z } from "incur";
 import { networkOutputShape, nextOutputShape, txStateSchema } from "./shared.js";
 
 export const txStatusArgs = z.object({
-  txHash: z.string().describe("Transaction hash (0x...)"),
+  "tx-hash": z.string().describe("Transaction hash (0x...)"),
 });
 
 export const txStatusOutput = z.object({

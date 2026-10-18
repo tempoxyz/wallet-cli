@@ -728,7 +728,7 @@ describe("swapTokens", () => {
       dependencies(),
     ).catch((value: unknown) => value);
 
-    expectUsageError(error, "Invalid swap: tokenIn and tokenOut must be different");
+    expectUsageError(error, "Invalid swap: token-in and token-out must be different");
   });
 
   it.each(untrustedSymbols)(

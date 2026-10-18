@@ -35,7 +35,7 @@ describe("generated CLI metadata", () => {
     },
     {
       command: ["services", "show"],
-      usage: "Usage: tempo wallet services show <serviceId> [options]",
+      usage: "Usage: tempo wallet services show <service-id> [options]",
     },
   ])("documents $command in its help", async ({ command, usage }) => {
     const output = await walletCli([...command, "--help"]);
@@ -48,7 +48,7 @@ describe("generated CLI metadata", () => {
   it("documents access key limit updates", async () => {
     const output = await walletCli(["keys", "update", "--help"]);
 
-    expect(output).toContain("Usage: tempo wallet keys update [accessKey] [options]");
+    expect(output).toContain("Usage: tempo wallet keys update [access-key] [options]");
     expect(output).toContain("--limit <string>");
     expect(output).toContain("--token <string>");
     expect(output).toContain("--no-browser");
@@ -57,7 +57,7 @@ describe("generated CLI metadata", () => {
   it("documents dry-run-first wallet swaps", async () => {
     const output = await walletCli(["swap", "--help"]);
 
-    expect(output).toContain("Usage: tempo wallet swap <amount> <tokenIn> <tokenOut> [options]");
+    expect(output).toContain("Usage: tempo wallet swap <amount> <token-in> <token-out> [options]");
     expect(output).toContain("--exact-out");
     expect(output).toContain("--slippage-bps <number>");
     expect(output).toContain("--min-amount-out <string>");
@@ -227,7 +227,7 @@ describe("generated CLI metadata", () => {
 
   it.each([
     { command: ["services", "search"], arg: "query", description: "Words to match" },
-    { command: ["services", "show"], arg: "serviceId", description: "Service ID" },
+    { command: ["services", "show"], arg: "service-id", description: "Service ID" },
   ])("returns the $command schema", async ({ command, arg, description }) => {
     const output = await walletCli([...command, "--schema", "--format", "json"]);
     const schema = JSON.parse(output) as {
@@ -365,7 +365,7 @@ describe("generated CLI metadata", () => {
 
   it("documents tx status in help, --describe, and its schema", async () => {
     expect(await walletCli(["tx", "status", "--help"])).toContain(
-      "Usage: tempo wallet tx status <txHash> [options]",
+      "Usage: tempo wallet tx status <tx-hash> [options]",
     );
     expect(await walletCli(["send", "--help"])).toContain("--idempotency-key <string>");
     expect(await walletCli(["transfer", "--help"])).toContain("--idempotency-key <string>");

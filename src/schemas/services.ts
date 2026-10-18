@@ -15,7 +15,7 @@ export const servicesSearchArgs = z.object({
 });
 
 export const servicesShowArgs = z.object({
-  serviceId: z.string().describe("Service ID to show details for"),
+  "service-id": z.string().describe("Service ID to show details for"),
 });
 
 export const serviceOutput = z.object({

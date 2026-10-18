@@ -19,7 +19,7 @@ export const showCommand = {
   alias: globalAlias,
   output: serviceDetailOutput,
   async run({ args, options }: ShowContext) {
-    return showService({ serviceId: args.serviceId, refresh: options.refresh });
+    return showService({ serviceId: args["service-id"], refresh: options.refresh });
   },
 };
 

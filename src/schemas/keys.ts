@@ -81,7 +81,7 @@ export const keysOutput = z.object({
 });
 
 export const updateAccessKeyArgs = z.object({
-  accessKey: z
+  "access-key": z
     .string()
     .optional()
     .describe("Access key address; defaults to the only key for this wallet and network"),
@@ -111,7 +111,7 @@ export const updateAccessKeyOutput = z.object({
 });
 
 export const revokeArgs = z.object({
-  accessKey: z.string().describe("Access key address to revoke (0x...)"),
+  "access-key": z.string().describe("Access key address to revoke (0x...)"),
 });
 
 export const revokeOptions = z.object({

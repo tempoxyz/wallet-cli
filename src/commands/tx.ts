@@ -36,7 +36,7 @@ export default {
     alias: globalAlias,
     output: txStatusOutput,
     async run({ args, globals }) {
-      return txStatus(args.txHash, await resolveNetwork(globals.network));
+      return txStatus(args["tx-hash"], await resolveNetwork(globals.network));
     },
   }),
   annotations: { tx_status: { ...readOnly, openWorldHint: true } },

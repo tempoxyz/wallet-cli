@@ -256,6 +256,7 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
   - `sessions_close`, when it selects a session to close
   - `config_set` and `config_unset`, when they change the saved value
   - `logout`, when it would revoke keys, or stored sessions on the networks it logs out of hold deposits or cannot be read
+- Tools take positional arguments under kebab-case keys, like options: `access-key` (`keys_update`, `keys_revoke`), `token-in` and `token-out` (`swap`), `tx-hash` (`tx_status`), `service-id` (`services_show`), and `target` (`sessions_close`).
 - Call `send` for token transfers and keep `transfer` for `mach` and `credits` payments; call `keys_revoke`, not the deprecated `revoke`, and `services_list`, `services_search`, or `services_show`, not the deprecated `services`.
 
 ## Common Issues

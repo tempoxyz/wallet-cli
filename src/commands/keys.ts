@@ -61,7 +61,7 @@ export const revokeCommand = {
   // Piped stdin cannot answer the prompt, so such a run confirms like an agent's, with --yes.
   run: withWallet(
     (context: RevokeContext, wallet) =>
-      revokeHandler(wallet, context.args, context.options, {
+      revokeHandler(wallet, { accessKey: context.args["access-key"] }, context.options, {
         ...context,
         agent: !canPrompt(context.agent),
       }),
@@ -96,7 +96,7 @@ export default {
       // The wallet app approves the new limit, so an expired or unusable key can still be limited.
       run: withWallet(
         ({ args, options }, wallet) =>
-          updateAccessKeyHandler(wallet, { ...options, accessKey: args.accessKey }),
+          updateAccessKeyHandler(wallet, { ...options, accessKey: args["access-key"] }),
         { requireKey: "never" },
       ),
     })

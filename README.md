@@ -248,23 +248,23 @@ Results with a follow-up step include `instruction` and `_next`. `swap`, `send`,
 - `balance`: Show the wallet's token balances. Options: `--token`.
 - `address`: Show the wallet address. Options: `--qr`.
 - `keys list`: List keys and their spending limits (spending_limit is deprecated; use spending_limits).
-- `keys update [accessKey]`: Update an access key spending limit. Options: `--limit`, `--token`, `--no-browser`.
-- `keys revoke <accessKey>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
-- `revoke <accessKey>`: Deprecated: use 'keys revoke'. Options: `--dry-run`, `--yes`, `--no-browser`.
+- `keys update [access-key]`: Update an access key spending limit. Options: `--limit`, `--token`, `--no-browser`.
+- `keys revoke <access-key>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
+- `revoke <access-key>`: Deprecated: use 'keys revoke'. Options: `--dry-run`, `--yes`, `--no-browser`.
 - `send <amount> <token> <to>`: Send tokens to an address. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--address`.
 - `transfer [amount] [token] [to]`: Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--credits`, `--max-spend`, `--amount-cents`, `--to`, `--data`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
-- `swap <amount> <tokenIn> <tokenOut>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
-- `tx status <txHash>`: Show a transaction's status on chain.
+- `swap <amount> <token-in> <token-out>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
+- `tx status <tx-hash>`: Show a transaction's status on chain.
 - `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--credits`, `--amount`, `--wait`, `--no-wait`, `--timeout`, `--referral-code`.
 - `fund status`: Wait for a pending funding's balance increase. Options: `--interval`, `--max-attempts`.
 - `sessions`: Manage payment sessions. Options: `--orphaned`, `--all`.
 - `sessions list`: List payment sessions. Options: `--orphaned`, `--all`.
-- `sessions close [url]`: Request a session close, then withdraw after the grace period with --finalize. Options: `--all`, `--orphaned`, `--finalize`, `--cooperative`, `--dry-run`, `--yes`.
+- `sessions close [target]`: Request a session close, then withdraw after the grace period with --finalize. Options: `--all`, `--orphaned`, `--finalize`, `--cooperative`, `--dry-run`, `--yes`.
 - `sessions sync`: Sync local sessions with on-chain state. Options: `--origin`.
 - `services`: Browse the MPP service directory. Options: `--refresh`.
 - `services list`: List every service in the MPP service directory. Options: `--refresh`.
 - `services search <query>`: Search services by name, id, description, tags, or category; every word must match. Options: `--refresh`.
-- `services show <serviceId>`: Show a service's endpoints, prices, and docs. Options: `--refresh`.
+- `services show <service-id>`: Show a service's endpoints, prices, and docs. Options: `--refresh`.
 - `mcp add`: Register as MCP server. Options: `--agent`, `--command` (`-c`), `--no-global`.
 - `skills add`: Sync skill files to agents. Options: `--depth`, `--no-global`.
 - `skills list`: List skills.
@@ -283,7 +283,7 @@ Global options: `--network` (`-n`), `--verbose` (`-v`), `--silent` (`-s`), `--js
 
 `services search` reads unquoted words as one query, so `services search image generation` matches services with both words. `services <id>` and `services --search <query>` are deprecated aliases of `services show <id>` and `services search <query>` with the same output; only a run whose stdout is a terminal, without `--format`, prints a notice on stderr.
 
-`tempo wallet --mcp` serves each command as an MCP tool (`keys update` as `keys_update`), with a `network` option in place of `--network`. Every tool declares MCP annotations so a client can tell reads from spends:
+`tempo wallet --mcp` serves each command as an MCP tool (`keys update` as `keys_update`), with a `network` option in place of `--network`. A tool takes the command's positional arguments under kebab-case keys, like its options: `access-key` (`keys_update`, `keys_revoke`, `revoke`), `token-in` and `token-out` (`swap`), `tx-hash` (`tx_status`), `service-id` (`services_show`), and `target` (`sessions_close`). Every tool declares MCP annotations so a client can tell reads from spends:
 
 <!-- generated:mcp-tools start -->
 

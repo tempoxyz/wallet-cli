@@ -334,7 +334,7 @@ describe("tempo wallet services", () => {
 
   it.each([
     { args: ["services", "search"], missing: "query" },
-    { args: ["services", "show"], missing: "serviceId" },
+    { args: ["services", "show"], missing: "service-id" },
   ])("$args is the subcommand, not a lookup", async ({ args, missing }) => {
     const result = await wallet([...args, "--format", "json"], home);
     expect(result.code).toBe(1);
@@ -365,7 +365,7 @@ describe("tempo wallet services", () => {
   ])("%j shows the help of services show", async (...args) => {
     const result = await wallet(args, home);
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain("Usage: tempo wallet services show <serviceId> [options]");
+    expect(result.stdout).toContain("Usage: tempo wallet services show <service-id> [options]");
   });
 
   it.each([

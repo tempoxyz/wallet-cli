@@ -84,7 +84,7 @@ export const closeCommand = {
         cooperative: options.cooperative,
         finalize: options.finalize,
         orphaned: options.orphaned,
-        target: args.url,
+        target: args.target,
         yes: options.yes,
       };
       if (options["dry-run"]) return dryRunCloseSessions(wallet, close);

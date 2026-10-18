@@ -41,7 +41,7 @@ export const sessionsListOutput = z.object({
 });
 
 export const sessionsCloseArgs = z.object({
-  url: z.string().optional().describe("URL, origin, or channel ID (0x...) to close"),
+  target: z.string().optional().describe("URL, origin, or channel ID (0x...) to close"),
 });
 
 export const sessionsCloseOptions = z.object({

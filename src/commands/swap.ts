@@ -47,7 +47,7 @@ export default {
     output: swapOutput,
     examples: [
       {
-        args: { amount: "10", tokenIn: "USDC.e", tokenOut: "pathUSD" },
+        args: { amount: "10", "token-in": "USDC.e", "token-out": "pathUSD" },
         options: { "dry-run": true },
       },
     ],
@@ -57,7 +57,11 @@ export default {
       return withWallet(
         async (_, wallet) => {
           const result = await swapTokens(wallet, {
-            args: context.args,
+            args: {
+              amount: context.args.amount,
+              tokenIn: context.args["token-in"],
+              tokenOut: context.args["token-out"],
+            },
             options: context.options,
             keyRequired: deferKey ? deferredKeyRefusal(context.agent, wallet) : undefined,
           });
@@ -123,7 +127,7 @@ export async function swapTokens(
   const tokenIn = resolveTokenAddress(input.args.tokenIn, network);
   const tokenOut = resolveTokenAddress(input.args.tokenOut, network);
   if (tokenIn === tokenOut)
-    throw usageError("Invalid swap: tokenIn and tokenOut must be different");
+    throw usageError("Invalid swap: token-in and token-out must be different");
   if (
     !Number.isSafeInteger(input.options["slippage-bps"]) ||
     input.options["slippage-bps"] < 0 ||
