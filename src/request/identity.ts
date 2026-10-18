@@ -90,7 +90,8 @@ export async function walletIdentity(options: RequestOptions) {
 
 /**
  * The network a payment uses. A private-key payer is unrelated to the logged-in wallet, so that
- * wallet's chain never applies: only `--network`, `TEMPO_WALLET_NETWORK`, or the mainnet default.
+ * wallet's chain never applies: only `--network`, `TEMPO_WALLET_NETWORK`, the saved `network`
+ * setting, or the mainnet default.
  */
 export function resolvePaymentNetwork(options: RequestOptions) {
   return resolveNetwork(
