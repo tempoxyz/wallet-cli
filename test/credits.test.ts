@@ -767,8 +767,12 @@ it.each(
   ),
 )("aborts stalled $endpoint $stalled without retrying", async ({ endpoint, stalled }) => {
   const fetch = globalThis.fetch;
-  const timeout = AbortSignal.timeout;
-  const deadline = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => timeout(100));
+  // The deadline expires once the stalled request is in flight, so a slow runner cannot abort
+  // it before it reaches the server, as a wall-clock timeout can.
+  const expiry = new AbortController();
+  const expire = () =>
+    expiry.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+  const deadline = vi.spyOn(AbortSignal, "timeout").mockReturnValue(expiry.signal);
   const paths: string[] = [];
   const server = createServer((request, response) => {
     paths.push(request.url!);
@@ -776,7 +780,7 @@ it.each(
       if (stalled === "body") {
         response.writeHead(200, { "Content-Type": "application/json" });
         response.write("{");
-      }
+      } else expire();
       return;
     }
     response.writeHead(200, { "Content-Type": "application/json" });
@@ -786,9 +790,13 @@ it.each(
   try {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Missing server address");
-    vi.spyOn(globalThis, "fetch").mockImplementation((url, options) =>
-      fetch(`http://127.0.0.1:${address.port}${new URL(String(url)).pathname}`, options),
-    );
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
+      const { pathname } = new URL(String(url));
+      const response = await fetch(`http://127.0.0.1:${address.port}${pathname}`, options);
+      // A stalled body's headers have arrived, so the deadline now cuts the body short.
+      if (stalled === "body" && pathname.endsWith(endpoint)) expire();
+      return response;
+    });
     const action =
       endpoint === "balances"
         ? whoamiHandler({ credits: true })
