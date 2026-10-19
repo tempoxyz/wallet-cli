@@ -6,8 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { cliBundle } from "./cli-bundle.js";
 import { appUrl } from "../src/shared/network.js";
-import { loadPendingFund } from "../src/wallet/store.js";
-import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
+import { useTempHome, walletState, writeWalletState } from "./helpers.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -16,7 +15,7 @@ const handoff = ["--address", address, "--no-browser", "--no-wait"];
 /** The wallet app's funding page, on the app `TEMPO_AUTH_URL` names for these subprocesses. */
 const agent = new URL("/agent", appUrl).toString();
 const fundUrl = `${agent}?action=fund&address=${address}&chainId=42431`;
-// The test RPC is unreachable, so the handoff carries an instruction instead of a `_next`.
+// Funding is a browser handoff with no balance reads or `_next`.
 const fundToon = `status: pending
 wallet: ${address}
 action: fund
@@ -28,7 +27,7 @@ symbol: pathUSD
 amount: null
 balance: null
 raw_balance: null
-instruction: "Could not read the wallet's starting balance (check TEMPO_RPC_URL), so 'tempo wallet fund status' cannot tell when funds arrive. Finish funding at ${fundUrl}, then check the balance of ${address}."
+instruction: Complete funding in the wallet app. Check your balance before spending.
 `;
 const sessionsToon = `chain_id: 42431
 network: tempo-moderato
@@ -61,8 +60,7 @@ describe("wallet flags parse the same in any position", () => {
       amount: null,
       balance: null,
       raw_balance: null,
-      // The default RPC is unreachable, so the handoff cannot be resumed.
-      instruction: expect.stringContaining(`Finish funding at ${fundUrl}`),
+      instruction: "Complete funding in the wallet app. Check your balance before spending.",
     });
   });
 
@@ -164,7 +162,7 @@ describe("fund", () => {
     { flags: ["--no-wait"] },
     { flags: ["--wait=false"] },
     { flags: ["--wait", "false"] },
-  ])("returns a handoff with only its starting balance read with $flags", async ({ flags }) => {
+  ])("returns a handoff without reading balances with $flags", async ({ flags }) => {
     await useTempHome();
     await writeWalletState(walletState({ chainId: 42431 }));
     const rpc = await balanceRpc([0n]);
@@ -186,11 +184,10 @@ describe("fund", () => {
         amount: "17.43",
         balance: null,
         raw_balance: null,
-        _next: { command: "tempo wallet fund status --interval 5 --network testnet" },
       });
       expect(result.stderr).not.toContain("Waiting");
-      expect(rpc.calls()).toBe(1);
-      expect(await loadPendingFund()).toMatchObject({ network: "testnet", amount: "17.43" });
+      expect(JSON.parse(result.stdout)).not.toHaveProperty("_next");
+      expect(rpc.calls()).toBe(0);
     } finally {
       await rpc.close();
     }
@@ -205,7 +202,6 @@ describe("fund", () => {
       try {
         const result = await wallet(["fund", flag, "--no-browser"], {
           TEMPO_RPC_URL: rpc.url,
-          TEMPO_WALLET_FUND_POLL_MS: "50",
         });
 
         expect(result.code).toBe(0);
@@ -239,60 +235,47 @@ describe("fund", () => {
       expect(JSON.parse(result.stdout)).toMatchObject({
         code: "E_USAGE",
         retryable: false,
-        message: expect.stringMatching(/was removed.*tempo wallet fund status/),
+        message: expect.stringContaining("was removed"),
       });
       expect(result.stderr).not.toContain("Open this link");
       expect(rpc.calls()).toBe(0);
-      expect(await loadPendingFund()).toBeUndefined();
     } finally {
       await rpc.close();
     }
   });
 
   it.each([
-    {
-      name: "funds that arrived",
-      balances: [0n, 17_430_000n],
-      code: 0,
-      output: { status: "success", action: "fund", balance: "17.43", symbol: "pathUSD" },
-    },
-    {
-      name: "funds still on their way",
-      balances: [0n],
-      code: 3,
-      output: {
-        code: "E_POLL_TIMEOUT",
-        retryable: true,
-        cta: {
-          commands: [{ command: "tempo wallet fund status --max-attempts 1 --network testnet" }],
-        },
-      },
-    },
-  ])("fund status resumes in a later process with $name", async ({ balances, code, output }) => {
+    ["fund", "status"],
+    ["fund", "status", "--interval", "5", "--max-attempts", "1"],
+    ["-n", "mainnet", "fund", "--no-wait", "status"],
+    ["fund", "--mach", "false", "status"],
+  ])("refuses removed %j without opening another handoff", async (...args) => {
     await useTempHome();
-    await writeWalletState(walletState({ chainId: 42431 }));
-    const rpc = await balanceRpc(balances);
-    const env = { TEMPO_RPC_URL: rpc.url, TEMPO_AUTH_URL: "https://wallet-preview.tempo.local" };
-    try {
-      const fund = await wallet(
-        ["fund", "--no-browser", "--amount", "17.43", "-n", "testnet", "--format", "json"],
-        env,
-      );
-      const status = await wallet(
-        ["fund", "status", "--max-attempts", "1", "-n", "testnet", "--format", "json"],
-        env,
-      );
+    await writeWalletState(walletState());
+    const result = await wallet([...args, "--no-browser", "--format", "json"]);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "E_USAGE",
+      message: expect.stringContaining("'tempo wallet fund status' was removed"),
+    });
+    expect(result.stderr).not.toContain("Open this link");
+  });
 
-      expect(fund.code, fund.stderr).toBe(0);
-      expect(JSON.parse(fund.stdout)).toMatchObject({
-        status: "pending",
-        url: `https://wallet-preview.tempo.local/agent?action=fund&address=${testWallet.toLowerCase()}&chainId=42431&amount=17.43`,
-      });
-      expect(status.code, status.stderr).toBe(code);
-      expect(JSON.parse(status.stdout)).toMatchObject(output);
-    } finally {
-      await rpc.close();
-    }
+  it("accepts a referral code named status", async () => {
+    await useTempHome();
+    const result = await wallet([
+      "fund",
+      "--referral-code",
+      "status",
+      "--no-browser",
+      "--format",
+      "json",
+    ]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "pending",
+      url: expect.stringContaining("claim=status"),
+    });
   });
 
   it.each([
@@ -309,20 +292,6 @@ describe("fund", () => {
       args: ["fund", "--not-a-real-option"],
       code: 1,
       output: { code: "UNKNOWN", message: "Unknown flag: --not-a-real-option" },
-    },
-    {
-      args: ["fund", "status", "-n", "testnet"],
-      code: 2,
-      output: {
-        code: "E_USAGE",
-        message:
-          "No funding is pending on testnet. Run 'tempo wallet fund --network testnet' to start one.",
-        retryable: false,
-        cta: {
-          description: "Suggested command:",
-          commands: [{ command: "tempo wallet fund --network testnet" }],
-        },
-      },
     },
   ])("reports $output.code for $args", async ({ args, code, output }) => {
     await useTempHome();

@@ -47,7 +47,7 @@ Provide:
 - `ready: true` means the wallet can pay on the network. A `key.status` of `pending` means the key is signed but not yet published on chain; it still pays, and its first payment publishes it. Token amounts are decimal strings without padding (`"10"`, not `"10.000000"`), and addresses are lowercase. Read limits from `key.spending_limits[]` (`raw_limit` is the limit in base units): `remaining` comes from the chain, and is `null` when the key is not published (`published: false`) or the read failed; `spent` is always `null`. `key.spending_limit` is deprecated and will be removed in a future release.
 - Check MACH with `tempo wallet whoami --mach`. Fund with `tempo wallet fund --mach --amount <USD>`; MACH is an on-chain six-decimal token, not a legacy credit balance.
 - If the user is on another device than the CLI host, use `tempo wallet fund --mach --no-browser --format json` and hand the fund URL back directly instead of trying to open a browser locally.
-- After handing over the URL, run its `_next` (`tempo wallet fund status --interval 5`) to wait for the funds, or ask the user to message back once they have funded the wallet.
+- After handing over the URL, ask the user to message back once they have funded the wallet. Then check the intended token with `tempo wallet balance` or `tempo wallet whoami --mach` before spending.
 - 2-3 simple starter prompts tailored to currently available services.
 
 To generate starter prompts, list available services and pick useful beginner examples:
@@ -107,11 +107,11 @@ tempo request -t -X GET --max-spend <APPROVED_AMOUNT> --network <QUOTED_NETWORK>
 tempo wallet whoami --mach
 # Hand this JSON URL to the human on any device.
 tempo wallet fund --mach --amount 10 --no-browser --format json
-# Then wait for the funds, as its _next says.
-tempo wallet fund status --interval 5 --network mainnet --format json
+# After the human completes funding, check the MACH balance.
+tempo wallet whoami --mach --network mainnet --format json
 ```
 
-Hosted MACH checkout accepts $5–$100 USD with at most two decimal places. The command opens the browser and returns without polling for funds; `--no-browser` returns the URL without opening it. The funding handoff identifies the destination wallet, chain, and USD amount, and its `_next` runs `tempo wallet fund status`, which waits for the funds until they arrive or the funding expires an hour later. Both general and direct MACH funding use the amount as an editable prefill; an existing checkout retains its own amount for safe retries. Pending means funding has not been verified, even when the command exits successfully. Only `status: "success"` from `fund status` means the funds arrived: MACH by the full `--amount` (or $5 without one), stablecoins by 95% of it (or $1 without one), since card onramps take fees from the purchase amount. A small unrelated deposit does not count. `E_POLL_TIMEOUT` and `E_NETWORK` from `fund status` are retryable: hand the URL in the message back to the user if needed, and rerun the `cta` command. A handoff with an `instruction` but no `_next` could not read the starting balance; recheck the balance with `tempo wallet whoami` after checkout instead. `fund --wait` and `fund --timeout` have been removed and fail with `E_USAGE`; run `fund`, then `fund status` to wait before spending. This observes incoming funds; it does not verify a particular checkout or purchase amount. `--no-wait` remains accepted for compatibility. Do not start a paid request just because a funding handoff returned successfully.
+Hosted MACH checkout accepts $5–$100 USD with at most two decimal places. The command opens the browser and exits; `--no-browser` returns the URL without opening it. The handoff identifies the destination wallet, chain, and USD amount. `--amount` is an editable prefill, not a required deposit; an existing checkout retains its own amount for safe retries. `fund` reads no balances, saves no pending funding, and returns no `_next`. Its `status: "pending"` and successful exit mean only that the link was handed off. Ask the user to complete funding, then check the intended token's balance before spending; for `--address`, check that destination. `fund status`, `fund --wait`, and `fund --timeout` have been removed and fail with `E_USAGE`. `--no-wait` and `--wait=false` remain harmless compatibility options. Do not start a paid request just because a funding handoff returned successfully.
 
 Use `tempo request --mach --max-spend <USD> <URL>` (or `--payment-token MACH`) to require MACH settlement for a one-time charge. The challenge must explicitly enable machine tokens. Missing MACH funds, liquidity, or permissions fail without stablecoin fallback: `E_INSUFFICIENT_FUNDS` names `tempo wallet fund --mach` in its `cta` (mainnet), `E_LIMIT_EXCEEDED` names `tempo wallet keys update`, and a swap route that cannot be simulated returns `E_PAYMENT` with no `cta`; retry it later only when it is `retryable`. Sessions are unsupported; use `--dry-run` to inspect an offer without spending.
 
@@ -223,7 +223,6 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 | `debug`           | true           | false             | true             | true            |
 | `doctor`          | true           | false             | true             | true            |
 | `fund`            | false          | false             | false            | true            |
-| `fund_status`     | false          | false             | true             | true            |
 | `keys_list`       | true           | false             | true             | true            |
 | `keys_revoke`     | false          | true              | true             | true            |
 | `keys_update`     | false          | true              | false            | true            |

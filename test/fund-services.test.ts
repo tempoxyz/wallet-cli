@@ -78,10 +78,6 @@ describe("runFundingFlow", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  afterEach(() => {
-    delete process.env.TEMPO_WALLET_FUND_POLL_MS;
-  });
-
   it("throws E_USAGE for crypto funding when no wallet is configured", async () => {
     await useTempHome();
 

@@ -182,7 +182,7 @@ describe("generated CLI metadata", () => {
           "--network",
           "mainnet",
         ],
-        // The test RPC is unreachable, so no pending funding is saved, and never in the real home.
+        // Use an isolated home for the handoff.
         { HOME: await useTempHome() },
       ),
     );
@@ -204,7 +204,7 @@ describe("generated CLI metadata", () => {
     const schema = JSON.parse(await walletCli(["fund", "--schema", "--format", "json"]));
     expect(schema.options.properties).toHaveProperty("mach");
     expect(schema.options.properties).toHaveProperty("amount");
-    expect(schema.output.properties.status.enum).toEqual(["success", "pending"]);
+    expect(schema.output.properties.status.const).toBe("pending");
   });
 
   it.each([
@@ -528,7 +528,13 @@ describe("generated CLI metadata", () => {
   it("removes funding wait options from discovery while keeping login waiting", async () => {
     const fundHelp = await walletCli(["fund", "--help"]);
     for (const flag of ["--wait", "--no-wait", "--timeout"]) expect(fundHelp).not.toContain(flag);
+    const description = JSON.parse(await walletCli(["--describe"]));
+    const fund = description.subcommands.find(
+      (command: { name: string }) => command.name === "fund",
+    );
+    expect(fund.subcommands ?? []).toEqual([]);
     const schema = JSON.parse(await walletCli(["fund", "--schema", "--format", "json"]));
+    expect(schema.output.properties).not.toHaveProperty("_next");
     expect(schema.options.properties).not.toHaveProperty("wait");
     expect(schema.options.properties).not.toHaveProperty("timeout");
     expect(await walletCli(["login", "--help"])).toContain("--wait");

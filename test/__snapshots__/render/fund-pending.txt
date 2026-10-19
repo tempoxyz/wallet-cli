@@ -5,8 +5,8 @@ URL       https://wallet.tempo.xyz/fund?address=0xabfb
 Chain ID  4217
 Network   tempo
 Token     0x20c0…8b50
+Symbol    USDC.e
 Amount    -
-Balance   5.89 USDC.e
+Balance   -
 
-Have the user open url and finish funding. Then run the next command to wait for the funds to arrive.
-Next: tempo wallet fund status --network mainnet
+Complete funding in the wallet app. Check your balance before spending.

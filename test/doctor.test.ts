@@ -33,7 +33,6 @@ const overrides = [
   "TEMPO_RPC_URL",
   "TEMPO_AUTH_URL",
   "TEMPO_MAX_SPEND",
-  "TEMPO_WALLET_FUND_POLL_MS",
   "TEMPO_PRIVATE_KEY",
 ];
 

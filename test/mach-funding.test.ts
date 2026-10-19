@@ -32,12 +32,9 @@ beforeEach(async () => {
   mocks.readContract.mockReset();
   mocks.open.mockClear();
   vi.spyOn(console, "error").mockImplementation(() => {});
-  process.env.TEMPO_WALLET_FUND_POLL_MS = "1";
 });
 afterEach(() => {
   vi.restoreAllMocks();
-  delete process.env.TEMPO_WALLET_FUND_POLL_MS;
-  delete process.env.TEMPO_WALLET_FUND_TIMEOUT_MS;
 });
 
 describe("MACH funding", () => {
@@ -104,11 +101,8 @@ describe("MACH funding", () => {
       symbol: "MACH",
       amount: "5",
       balance: null,
-      _next: { command: "tempo wallet fund status --interval 5 --network mainnet" },
     });
-    expect(mocks.readContract).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ address: machToken(4217), args: [wallet] }),
-    );
+    expect(mocks.readContract).not.toHaveBeenCalled();
     expect(mocks.open).not.toHaveBeenCalled();
   });
   it.each(["invalid", `0x${"0".repeat(40)}`])(
@@ -127,7 +121,7 @@ describe("MACH funding", () => {
 
 describe("default funding", () => {
   it.each(["fund", "mach", "crypto", "claim"] as const)(
-    "opens %s and returns a pending handoff that fund status resumes",
+    "opens %s and returns a pending handoff without tracking funding",
     async (action) => {
       mocks.readContract.mockResolvedValue(0n);
       const result = await runFundingFlow({ action, amount: "17.43", code: "REF123" });
@@ -137,14 +131,13 @@ describe("default funding", () => {
         amount: "17.43",
         balance: null,
         raw_balance: null,
-        _next: { command: "tempo wallet fund status --interval 5 --network mainnet" },
       });
+      expect(result).not.toHaveProperty("_next");
+      expect(mocks.readContract).not.toHaveBeenCalled();
       expect(mocks.open).toHaveBeenCalledExactlyOnceWith("url" in result ? result.url : "");
     },
   );
   it("returns a handoff without opening a browser or polling", async () => {
-    process.env.TEMPO_WALLET_FUND_TIMEOUT_MS = "invalid";
-    process.env.TEMPO_WALLET_FUND_POLL_MS = "invalid";
     mocks.readContract.mockResolvedValue(0n);
     const result = await runFundingFlow({ action: "fund", noBrowser: true });
     expect(result).toMatchObject({
@@ -155,7 +148,7 @@ describe("default funding", () => {
     });
     expect(mocks.open).not.toHaveBeenCalled();
   });
-  it("returns a testnet handoff after reading the pathUSD balance once", async () => {
+  it("returns a testnet handoff without reading the pathUSD balance", async () => {
     mocks.readContract.mockResolvedValue(0n);
     const result = await runFundingFlow({ action: "fund", network: "testnet", amount: "0.000001" });
     expect(result).toMatchObject({
@@ -166,7 +159,7 @@ describe("default funding", () => {
       symbol: "pathUSD",
     });
     expect("url" in result && result.url).toContain("chainId=42431&amount=0.000001");
-    expect(mocks.readContract).toHaveBeenCalledOnce();
+    expect(mocks.readContract).not.toHaveBeenCalled();
   });
 });
 

@@ -95,7 +95,6 @@ const envOverrides: Record<string, (value: string) => string | null> = {
   TEMPO_RPC_URL: redactUrl,
   TEMPO_AUTH_URL: redactUrl,
   TEMPO_MAX_SPEND: sanitizeText,
-  TEMPO_WALLET_FUND_POLL_MS: sanitizeText,
   TEMPO_PRIVATE_KEY: () => null,
 };
 

@@ -1,19 +1,14 @@
 import { chmod, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import {
-  clearPendingFund,
   clearPendingLogin,
   emptyWalletState,
-  loadPendingFund,
   loadPendingLogin,
   loadWalletState,
-  parsePendingFund,
-  pendingFundPath,
   pendingLoginPath,
-  savePendingFund,
   savePendingLogin,
   saveWalletState,
   walletStorePath,
@@ -506,65 +501,6 @@ describe("pending login file", () => {
     await clearPendingLogin(clear);
 
     expect((await loadPendingLogin())?.registration.device_code).toBe(left);
-  });
-});
-
-describe("pending funding file", () => {
-  const pending = (url: string) =>
-    parsePendingFund({
-      network: "mainnet",
-      action: "mach",
-      wallet: "0x1111111111111111111111111111111111111111",
-      activeWallet: false,
-      url,
-      amount: "10",
-      assets: [
-        {
-          token: "0x20c000000000000000000000f37de3740adec032",
-          symbol: "MACH",
-          baseline: "3000000",
-          minimum: "10000000",
-        },
-      ],
-      expiresAt: 2_000_000_000,
-    });
-
-  it("saves the funding for the owner only and loads it back", async () => {
-    await useTempHome();
-    await savePendingFund(pending("https://wallet.tempo.xyz/agent?action=fund"));
-
-    await expectMode(pendingFundPath(), 0o600);
-    await expectMode(dirname(pendingFundPath()), 0o700);
-    expect(await loadPendingFund()).toEqual(pending("https://wallet.tempo.xyz/agent?action=fund"));
-  });
-
-  it.each([
-    { name: "missing", contents: undefined },
-    { name: "not JSON", contents: "{" },
-    { name: "without balances", contents: JSON.stringify({ network: "mainnet", assets: [] }) },
-  ])("reads a $name file as no funding", async ({ contents }) => {
-    await useTempHome();
-    if (contents !== undefined) await writeFile(pendingFundPath(), contents);
-
-    expect(await loadPendingFund()).toBeUndefined();
-  });
-
-  it.each([
-    { name: "any funding", clear: undefined, left: undefined },
-    { name: "the saved funding", clear: "https://example.test/2", left: undefined },
-    {
-      name: "a funding it replaced",
-      clear: "https://example.test/1",
-      left: "https://example.test/2",
-    },
-  ])("clearing $name leaves $left", async ({ clear, left }) => {
-    await useTempHome();
-    await savePendingFund(pending("https://example.test/1"));
-    await savePendingFund(pending("https://example.test/2"));
-
-    await clearPendingFund(clear === undefined ? undefined : pending(clear));
-
-    expect((await loadPendingFund())?.url).toBe(left);
   });
 });
 

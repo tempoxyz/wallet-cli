@@ -27,10 +27,8 @@ import { continuationCommand, nextStep, shellQuote } from "../shared/next.js";
 import { canPrompt, channelsDbPath, confirm as confirmPrompt } from "../shared/process.js";
 import { createRevokeProvider } from "../provider.js";
 import {
-  clearPendingFund,
   clearPendingLogin,
   emptyWalletState,
-  loadPendingFund,
   loadPendingLogin,
   loadWalletState,
   saveWalletState,
@@ -112,7 +110,6 @@ export async function logoutHandler(
   if (!wasLoggedIn) {
     const notCancelled = await cancelLoggedOutPendingLogin(network, logoutCommand(flags));
     if (notCancelled) return context.error(notCancelled);
-    await clearLoggedOutPendingFund(network);
     return {
       was_logged_in: false,
       disconnected: false,
@@ -252,9 +249,6 @@ export async function logoutHandler(
           ]),
     ...(unchecked ? [unchecked] : []),
   ].join("; ");
-  // The logged-in wallet's pending funding must not hand its checkout to whoever logs in next.
-  await clearLoggedOutPendingFund(network);
-
   return {
     was_logged_in: true,
     disconnected: loggedOutDisconnected,
@@ -306,16 +300,6 @@ async function cancelLoggedOutPendingLogin(network: Network | undefined, command
       { retryable: true },
     );
   }
-}
-
-/**
- * Cancels the logged-in wallet's pending funding when it is for a network logged out. An
- * `--address` funding is not tied to the login, so it is kept.
- */
-async function clearLoggedOutPendingFund(network: Network | undefined) {
-  const pending = await loadPendingFund();
-  if (pending?.activeWallet && (!network || pending.network === network.name))
-    await clearPendingFund(pending);
 }
 
 /** A logout command; without a network it logs out of every network, so it has no `--network`. */

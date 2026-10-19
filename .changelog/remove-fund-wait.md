@@ -2,4 +2,4 @@
 wallet-cli: minor
 ---
 
-Remove `tempo wallet fund --wait` and `--timeout`: `fund` always returns the browser handoff without polling for deposits. Both flags fail with `E_USAGE` before starting a flow, including through MCP, so scripts cannot mistake a handoff for completed funding. Use `fund status` to wait for an existing handoff; `--no-wait` and `--wait=false` remain harmless compatibility options. Remove the unused `TEMPO_WALLET_FUND_TIMEOUT_MS` setting.
+Make `tempo wallet fund` a browser handoff only. Remove `fund status`, its MCP tool, `--wait`, `--timeout`, balance reads and thresholds, pending funding storage, and funding polling environment settings. `--amount` is only an editable checkout prefill. Old CLI polling commands fail with `E_USAGE` instead of silently starting another handoff; `--no-wait` and `--wait=false` remain harmless compatibility options. A successful exit with `status: "pending"` confirms the handoff, not a deposit; check the intended token's balance after funding before spending.
