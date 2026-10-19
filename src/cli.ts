@@ -7,7 +7,13 @@ import { commandMap } from "./cli/command.js";
 import { commands } from "./cli/commands.js";
 import { walletCompletions } from "./cli/completions.js";
 import { describeCli } from "./cli/describe.js";
-import { bindCommandOptions, ctaErrors, humanRun, serveHuman } from "./cli/incur-compat.js";
+import {
+  bindCommandOptions,
+  ctaErrors,
+  humanRun,
+  retiredFundStatusError,
+  serveHuman,
+} from "./cli/incur-compat.js";
 import { serveMcp } from "./cli/mcp.js";
 import { closeCommandFailed } from "./commands/sessions/close.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
@@ -54,10 +60,11 @@ async function main() {
 
   const mounted = commandMap(cli);
   // A retired flag is stripped with its value first, so a value such as `--mcp` stays its value.
-  const { args, error } = retireFlags(
+  const { args, error: retiredFlagError } = retireFlags(
     normalizeServicesArgs(expandHelp(bindCommandOptions(rawArgs, mounted))),
     commands,
   );
+  const error = retiredFlagError ?? retiredFundStatusError(args);
 
   if (handleBuiltinSchema(args)) process.exit(0);
 

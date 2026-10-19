@@ -184,8 +184,6 @@ describe("retireFlags", () => {
     ["transfer", "--amount-cents=100", "--to=0xabc", "--credits=true"],
     // MACH refuses these itself, naming its own replacements.
     ["transfer", "--mach", "--to=0xabc", "--data=0x12"],
-    // A group's retired flags are its own command's, not its subcommands'.
-    ["fund", "status", "--claim", "CODE"],
   ])("leaves %j to the command", (...args) => {
     expect(retireFlags(args, commands)).toEqual({ args });
   });

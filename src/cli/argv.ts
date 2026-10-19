@@ -110,8 +110,7 @@ function servicesParts(args: readonly string[]) {
     // An absent boolean option is false.
     else if (servicesBooleanFlags.has(arg) && isBooleanLiteral(next))
       parts.push({ flag: args[++index] === "true" ? [arg] : [] });
-    else if ((takesValue(arg) || arg === "--filter-output") && next !== undefined)
-      parts.push({ flag: [arg, args[++index]!] });
+    else if (takesValue(arg) && next !== undefined) parts.push({ flag: [arg, args[++index]!] });
     else if (arg.startsWith("-")) parts.push({ flag: [arg] });
     else parts.push({ operand: arg });
   }
@@ -306,7 +305,14 @@ export function firstCommandIndex(args: readonly string[]) {
 
 /** Flags whose next token is their value rather than a command name. */
 function takesValue(arg: string) {
-  return ["--format", "--token-limit", "--token-offset", "--network", "-n"].includes(arg);
+  return [
+    "--format",
+    "--filter-output",
+    "--token-limit",
+    "--token-offset",
+    "--network",
+    "-n",
+  ].includes(arg);
 }
 
 function hasFormat(args: readonly string[]) {

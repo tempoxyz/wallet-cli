@@ -7,7 +7,7 @@
 import { Errors, z, type Cli } from "incur";
 
 import { cliGlobalAlias, cliGlobals } from "../schemas/shared.js";
-import type { CommandErrorPayload } from "../shared/errors.js";
+import { errorCodes, type CommandErrorPayload } from "../shared/errors.js";
 import { commandTokens, firstCommandIndex } from "./argv.js";
 import {
   commandMap,
@@ -107,6 +107,26 @@ export function bindCommandOptions(args: readonly string[], commands: Map<string
     ...(isRunnableCommand(command) ? [command] : []),
     { options: cliGlobals, alias: cliGlobalAlias },
   ]);
+}
+
+/**
+ * incur ignores surplus positional arguments. Refuse the removed `fund status` before it can
+ * fall through to `fund` and report a successful handoff to a script expecting deposited funds.
+ * Call after binding option values and stripping retired flags, so a referral code named status
+ * remains a value rather than a subcommand.
+ *
+ * Upstream: https://github.com/wevm/incur/pull/240. Remove once a published incur version
+ * rejects surplus positional arguments before running command handlers.
+ */
+export function retiredFundStatusError(args: readonly string[]) {
+  const [name, ...operands] = commandTokens(args);
+  if (name !== "fund" || !operands.includes("status")) return;
+  return {
+    code: "E_USAGE",
+    ...errorCodes.E_USAGE,
+    message:
+      "'tempo wallet fund status' was removed. Complete funding in the wallet app and check the destination wallet's balance before spending.",
+  };
 }
 
 /**

@@ -30,7 +30,6 @@ const toolHints = [
   ["debug", true, false, true, true],
   ["doctor", true, false, true, true],
   ["fund", false, false, false, true],
-  ["fund_status", false, false, true, true],
   ["keys_list", true, false, true, true],
   ["keys_revoke", false, true, true, true],
   ["keys_update", false, true, false, true],
@@ -167,6 +166,18 @@ describe("MCP tools", () => {
   // A retired argument stays in its tool's schema for a release, refused with the CLI's message.
   it.each([
     {
+      name: "fund",
+      arguments: { wait: true, browser: false },
+      message:
+        "--wait was removed; 'tempo wallet fund' only opens the funding page. Complete funding in the wallet app and check the destination wallet's balance before spending.",
+    },
+    {
+      name: "fund",
+      arguments: { timeout: 30, browser: false },
+      message:
+        "--timeout was removed; 'tempo wallet fund' only opens the funding page and does not wait for deposits.",
+    },
+    {
       name: "transfer",
       arguments: { credits: true, "amount-cents": 1, to: testWallet, value: "0" },
       message: "--value was removed: transfers carry no ETH value.",
@@ -233,6 +244,39 @@ describe("MCP tools", () => {
     }
   });
 
+  it("accepts the old MCP wait: false as a funding handoff without polling", async () => {
+    await writeWalletState(walletState());
+    const host = await recordingHost();
+    vi.stubEnv("TEMPO_RPC_URL", host.url);
+    try {
+      const response = await mcpCall({
+        name: "fund",
+        arguments: { mach: true, wait: false, browser: false, network: "mainnet", amount: "5" },
+      });
+
+      expect(response.result.isError).not.toBe(true);
+      expect(JSON.parse(firstToolText(response))).toMatchObject({
+        status: "pending",
+        action: "mach",
+        amount: "5",
+        balance: null,
+      });
+      expect(JSON.parse(firstToolText(response))).not.toHaveProperty("_next");
+      expect(host.requests).toEqual([]);
+    } finally {
+      await host.close();
+    }
+  });
+
+  it("rejects the removed fund_status tool", async () => {
+    const response = await mcpCall({ name: "fund_status", arguments: {} });
+    expect(response.result).toBeUndefined();
+    expect(response.error).toMatchObject({
+      code: -32602,
+      message: expect.stringContaining("fund_status"),
+    });
+  });
+
   it("marks retired arguments as removed in the tool schemas", async () => {
     const response = await mcpRequest<{
       tools: {
@@ -247,7 +291,9 @@ describe("MCP tools", () => {
       "Removed: --value was removed: transfers carry no ETH value.",
     );
     expect(property("fund", "claim")?.description).toMatch(/^Removed: --claim was removed;/);
-    expect(property("fund_status", "claim")).toBeUndefined();
+    for (const flag of ["wait", "timeout"]) {
+      expect(property("fund", flag)?.description).toMatch(/^Removed:/);
+    }
     expect(property("send", "value")).toBeUndefined();
   });
 
@@ -288,7 +334,6 @@ describe("MCP tools", () => {
     expect(names).toEqual(
       expect.arrayContaining([
         "fund",
-        "fund_status",
         "keys_list",
         "keys_revoke",
         "keys_update",
@@ -297,6 +342,7 @@ describe("MCP tools", () => {
         "sessions_list",
       ]),
     );
+    expect(names).not.toContain("fund_status");
     expect(names).not.toContain("keys");
     expect(names).not.toContain("sessions");
   });
