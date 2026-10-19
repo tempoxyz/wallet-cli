@@ -113,7 +113,10 @@ export function bindCommandOptions(args: readonly string[], commands: Map<string
  * incur ignores surplus positional arguments. Refuse the removed `fund status` before it can
  * fall through to `fund` and report a successful handoff to a script expecting deposited funds.
  * Call after binding option values and stripping retired flags, so a referral code named status
- * remains a value rather than a subcommand. Remove once incur rejects surplus positionals.
+ * remains a value rather than a subcommand.
+ *
+ * Upstream: https://github.com/wevm/incur/pull/240. Remove once a published incur version
+ * rejects surplus positional arguments before running command handlers.
  */
 export function retiredFundStatusError(args: readonly string[]) {
   const [name, ...operands] = commandTokens(args);
@@ -122,7 +125,7 @@ export function retiredFundStatusError(args: readonly string[]) {
     code: "E_USAGE",
     ...errorCodes.E_USAGE,
     message:
-      "'tempo wallet fund status' was removed. Complete funding in the wallet app and check your balance before spending.",
+      "'tempo wallet fund status' was removed. Complete funding in the wallet app and check the destination wallet's balance before spending.",
   };
 }
 

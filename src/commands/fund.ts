@@ -50,7 +50,7 @@ export default {
       mcp: true,
       replacement: () => ({
         message:
-          "--wait was removed; 'tempo wallet fund' only opens the funding page. Complete funding in the wallet app and check your balance before spending.",
+          "--wait was removed; 'tempo wallet fund' only opens the funding page. Complete funding in the wallet app and check the destination wallet's balance before spending.",
       }),
     },
     {
@@ -133,7 +133,8 @@ export async function runFundingFlow(options: {
     amount: options.amount ?? null,
     balance: null,
     raw_balance: null,
-    instruction: "Complete funding in the wallet app. Check your balance before spending.",
+    instruction:
+      "Complete funding in the wallet app. Check the destination wallet's balance before spending.",
   };
 }
 

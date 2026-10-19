@@ -61,7 +61,8 @@ describe("funding handoff", () => {
         amount: "17.43",
         balance: null,
         raw_balance: null,
-        instruction: "Complete funding in the wallet app. Check your balance before spending.",
+        instruction:
+          "Complete funding in the wallet app. Check the destination wallet's balance before spending.",
       });
       expect(result).not.toHaveProperty("_next");
       expect(mocks.open).toHaveBeenCalledExactlyOnceWith(url);

@@ -169,7 +169,7 @@ describe("MCP tools", () => {
       name: "fund",
       arguments: { wait: true, browser: false },
       message:
-        "--wait was removed; 'tempo wallet fund' only opens the funding page. Complete funding in the wallet app and check your balance before spending.",
+        "--wait was removed; 'tempo wallet fund' only opens the funding page. Complete funding in the wallet app and check the destination wallet's balance before spending.",
     },
     {
       name: "fund",

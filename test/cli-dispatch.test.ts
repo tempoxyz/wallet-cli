@@ -27,7 +27,7 @@ symbol: pathUSD
 amount: null
 balance: null
 raw_balance: null
-instruction: Complete funding in the wallet app. Check your balance before spending.
+instruction: Complete funding in the wallet app. Check the destination wallet's balance before spending.
 `;
 const sessionsToon = `chain_id: 42431
 network: tempo-moderato
@@ -60,7 +60,8 @@ describe("wallet flags parse the same in any position", () => {
       amount: null,
       balance: null,
       raw_balance: null,
-      instruction: "Complete funding in the wallet app. Check your balance before spending.",
+      instruction:
+        "Complete funding in the wallet app. Check the destination wallet's balance before spending.",
     });
   });
 
@@ -249,6 +250,8 @@ describe("fund", () => {
     ["fund", "status", "--interval", "5", "--max-attempts", "1"],
     ["-n", "mainnet", "fund", "--no-wait", "status"],
     ["fund", "--mach", "false", "status"],
+    ["fund", "status", "--filter-output", "status"],
+    ["--filter-output", "status", "fund", "status"],
   ])("refuses removed %j without opening another handoff", async (...args) => {
     await useTempHome();
     await writeWalletState(walletState());
@@ -276,6 +279,19 @@ describe("fund", () => {
       status: "pending",
       url: expect.stringContaining("claim=status"),
     });
+  });
+
+  it.each([
+    ["fund", "--filter-output", "status"],
+    ["--filter-output", "status", "fund"],
+    ["--filter-output", "status", "fund", "--referral-code", "status"],
+  ])("preserves the status output filter in %j", async (...args) => {
+    await useTempHome();
+    const result = await wallet([...args, ...handoff, "--network", "mainnet", "--format", "json"]);
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toBe("pending");
+    expect(result.stderr).toContain("Open this link");
   });
 
   it.each([

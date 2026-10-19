@@ -424,7 +424,8 @@ const results: { name: string; schema: z.ZodType; data: unknown; cta?: Cta }[] =
       amount: null,
       balance: null,
       raw_balance: null,
-      instruction: "Complete funding in the wallet app. Check your balance before spending.",
+      instruction:
+        "Complete funding in the wallet app. Check the destination wallet's balance before spending.",
     },
   },
 ];

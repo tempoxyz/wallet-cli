@@ -9,4 +9,4 @@ Symbol    USDC.e
 Amount    -
 Balance   -
 
-Complete funding in the wallet app. Check your balance before spending.
+Complete funding in the wallet app. Check the destination wallet's balance before spending.
