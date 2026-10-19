@@ -306,140 +306,16 @@ describe("the funding link comes first", () => {
     },
   );
 
-  it("names the link in the error when a wait's balance read fails", async () => {
+  it("names the --address recipient when its starting balance cannot be read", async () => {
     mocks.readContract.mockRejectedValue(new Error("RPC down"));
-    const result = await runFundingFlow({
-      action: "mach",
-      noBrowser: true,
-      noWait: false,
-      timeout: 0.01,
-    });
+    const recipient = "0x2222222222222222222222222222222222222222";
+    const result = await runFundingFlow({ action: "mach", address: recipient, noBrowser: true });
 
     expect(result).toMatchObject({
-      code: "E_NETWORK",
-      message: expect.stringContaining(link),
-      cta: { commands: [{ command: "tempo wallet whoami --mach --network mainnet" }] },
+      status: "pending",
+      instruction: expect.stringContaining(`then check the balance of ${recipient}.`),
     });
-    expect(stderr[0]).toBe(`Open this link on your device: ${link}`);
-    expect(await loadPendingFund()).toBeUndefined();
-  });
-
-  it.each([
-    { name: "a handoff", noWait: true },
-    { name: "a wait", noWait: false },
-  ])(
-    "names the --address recipient rather than whoami when $name cannot read its balance",
-    async ({ noWait }) => {
-      mocks.readContract.mockRejectedValue(new Error("RPC down"));
-      const recipient = "0x2222222222222222222222222222222222222222";
-      const run = runFundingFlow({ action: "mach", address: recipient, noBrowser: true, noWait });
-      const expected = expect.stringContaining(`then check the balance of ${recipient}.`);
-
-      if (noWait) expect(await run).toMatchObject({ status: "pending", instruction: expected });
-      else await expect(run).rejects.toMatchObject({ code: "E_NETWORK", message: expected });
-      expect(stderr.join("\n")).not.toContain("whoami");
-    },
-  );
-});
-
-describe("fund --wait", () => {
-  const resume = "tempo wallet fund status --interval 5 --network mainnet";
-
-  it("succeeds once the amount arrives", async () => {
-    mocks.readContract
-      .mockResolvedValueOnce(baseline)
-      .mockResolvedValueOnce(baseline)
-      .mockResolvedValueOnce(baseline)
-      .mockResolvedValueOnce(baseline)
-      .mockResolvedValueOnce(baseline + 1n)
-      .mockResolvedValueOnce(baseline)
-      .mockResolvedValue(baseline + 10_000_000n);
-    const result = await runFundingFlow({ action: "fund", amount: "10", noWait: false });
-
-    expect(result).toMatchObject({ status: "success", token: ousdToken, symbol: "OUSD" });
-    expect(stderr).toContain("Waiting for funding...");
-    expect(await loadPendingFund()).toBeUndefined();
-  });
-
-  it("counts the starting balance read against --timeout", async () => {
-    mocks.readContract
-      .mockImplementationOnce(() => new Promise((resolve) => setTimeout(resolve, 900, baseline)))
-      .mockResolvedValue(baseline);
-    const started = Date.now();
-    const result = await runFundingFlow({
-      action: "mach",
-      noBrowser: true,
-      noWait: false,
-      timeout: 1,
-    });
-
-    expect(result).toMatchObject({ code: "E_POLL_TIMEOUT", retryable: true });
-    // Restarting the timeout after the 900 ms read would wait about 1.9 s.
-    expect(Date.now() - started).toBeLessThan(1500);
-  });
-
-  // The 50 ms starting balance read outlasts the 10 ms --timeout in both cases.
-  it.each([
-    { name: "answered balance checks", check: () => Promise.resolve(baseline) },
-    { name: "a stalled balance check", check: () => new Promise<never>(() => {}) },
-  ])("keeps a funding resumable past a short --timeout with $name", async ({ check }) => {
-    mocks.readContract
-      .mockImplementationOnce(() => new Promise((resolve) => setTimeout(resolve, 50, baseline)))
-      .mockImplementation(check);
-    const result = await runFundingFlow({
-      action: "mach",
-      noBrowser: true,
-      noWait: false,
-      timeout: 0.01,
-    });
-
-    expect(result).toMatchObject({
-      code: "E_POLL_TIMEOUT",
-      retryable: true,
-      cta: { commands: [{ command: resume }] },
-    });
-    expect(await loadPendingFund()).toMatchObject({
-      assets: [{ baseline: baseline.toString() }],
-    });
-  });
-
-  it.each([
-    {
-      name: "timed out",
-      options: { timeout: 0.05 },
-      message: "Timed out waiting for funding.",
-    },
-    {
-      name: "cancelled",
-      options: { signal: AbortSignal.abort() },
-      message: "Funding wait cancelled.",
-    },
-  ])("keeps a $name wait resumable with fund status", async ({ options, message }) => {
-    balances();
-    const link = url(`action=fund&address=${wallet}&chainId=4217&amount=10`);
-    const result = await runFundingFlow({
-      action: "fund",
-      amount: "10",
-      noBrowser: true,
-      noWait: false,
-      ...options,
-    });
-
-    expect(result).toEqual({
-      code: "E_POLL_TIMEOUT",
-      message: `${message} Continue at ${link}, then run '${resume}' to keep waiting.`,
-      exitCode: 3,
-      retryable: true,
-      cta: { commands: [{ command: resume }] },
-    });
-    expect(await loadPendingFund()).toMatchObject({ url: link, amount: "10" });
-
-    balances({ OUSD: 10_000_000n });
-    expect(await fundStatusHandler({ interval: 5, network: "mainnet" })).toMatchObject({
-      status: "success",
-      url: link,
-      raw_balance: (baseline + 10_000_000n).toString(),
-    });
+    expect(stderr.join("\n")).not.toContain("whoami");
   });
 });
 

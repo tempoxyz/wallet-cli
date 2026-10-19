@@ -204,7 +204,6 @@ describe("generated CLI metadata", () => {
     const schema = JSON.parse(await walletCli(["fund", "--schema", "--format", "json"]));
     expect(schema.options.properties).toHaveProperty("mach");
     expect(schema.options.properties).toHaveProperty("amount");
-    expect(schema.options.properties.wait.default).toBe(false);
     expect(schema.output.properties.status.enum).toEqual(["success", "pending"]);
   });
 
@@ -526,15 +525,13 @@ describe("generated CLI metadata", () => {
     expect(described?.args?.map((arg) => arg.long)).toEqual(expect.arrayContaining(flags));
   });
 
-  it.each([
-    [[], false],
-    [["--amount", "17.43", "--timeout", "30"], false],
-    [["--wait"], true],
-    [["--no-wait"], false],
-    [["--wait", "--no-wait"], false],
-    [["--no-wait", "--wait"], true],
-  ] as const)("parses funding waiting preference for %j", (args, wait) => {
-    expect(Parser.parse([...args], { options: fundOptions }).options).toMatchObject({ wait });
+  it("removes funding wait options from discovery while keeping login waiting", async () => {
+    const fundHelp = await walletCli(["fund", "--help"]);
+    for (const flag of ["--wait", "--no-wait", "--timeout"]) expect(fundHelp).not.toContain(flag);
+    const schema = JSON.parse(await walletCli(["fund", "--schema", "--format", "json"]));
+    expect(schema.options.properties).not.toHaveProperty("wait");
+    expect(schema.options.properties).not.toHaveProperty("timeout");
+    expect(await walletCli(["login", "--help"])).toContain("--wait");
   });
 
   it("returns strongly typed schema properties for sessions list output", async () => {

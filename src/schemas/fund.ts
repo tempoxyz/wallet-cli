@@ -20,16 +20,6 @@ export const fundOptions = z.object({
     .string()
     .optional()
     .describe("USD amount to prefill; MACH: 5–100, up to 2 decimal places"),
-  wait: z
-    .boolean()
-    .default(false)
-    .describe("Wait for a balance increase; otherwise return immediately")
-    .register(describeMeta, { negated: "Return the funding handoff immediately (default)" }),
-  timeout: z.coerce
-    .number()
-    .optional()
-    .describe("Timeout in seconds with --wait (default: 600)")
-    .register(describeMeta, { valueName: "SECONDS" }),
   "referral-code": z
     .string()
     .optional()

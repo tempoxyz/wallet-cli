@@ -167,6 +167,18 @@ describe("MCP tools", () => {
   // A retired argument stays in its tool's schema for a release, refused with the CLI's message.
   it.each([
     {
+      name: "fund",
+      arguments: { wait: true, browser: false },
+      message:
+        "--wait was removed; run 'tempo wallet fund' without it, then 'tempo wallet fund status' to wait for funds before spending.",
+    },
+    {
+      name: "fund",
+      arguments: { timeout: 30, browser: false },
+      message:
+        "--timeout was removed from 'tempo wallet fund'; use 'tempo wallet fund status --interval <seconds> --max-attempts <count>' to bound balance checks after the handoff.",
+    },
+    {
       name: "transfer",
       arguments: { credits: true, "amount-cents": 1, to: testWallet, value: "0" },
       message: "--value was removed: transfers carry no ETH value.",
@@ -233,6 +245,30 @@ describe("MCP tools", () => {
     }
   });
 
+  it("accepts the old MCP wait: false as a funding handoff without polling", async () => {
+    await writeWalletState(walletState());
+    const host = await recordingHost();
+    vi.stubEnv("TEMPO_RPC_URL", host.url);
+    try {
+      const response = await mcpCall({
+        name: "fund",
+        arguments: { mach: true, wait: false, browser: false, network: "mainnet", amount: "5" },
+      });
+
+      expect(response.result.isError).not.toBe(true);
+      expect(JSON.parse(firstToolText(response))).toMatchObject({
+        status: "pending",
+        action: "mach",
+        amount: "5",
+        balance: null,
+        _next: { command: "tempo wallet fund status --interval 5 --network mainnet" },
+      });
+      expect(host.requests).toEqual(["eth_call"]);
+    } finally {
+      await host.close();
+    }
+  });
+
   it("marks retired arguments as removed in the tool schemas", async () => {
     const response = await mcpRequest<{
       tools: {
@@ -248,6 +284,10 @@ describe("MCP tools", () => {
     );
     expect(property("fund", "claim")?.description).toMatch(/^Removed: --claim was removed;/);
     expect(property("fund_status", "claim")).toBeUndefined();
+    for (const flag of ["wait", "timeout"]) {
+      expect(property("fund", flag)?.description).toMatch(/^Removed:/);
+      expect(property("fund_status", flag)).toBeUndefined();
+    }
     expect(property("send", "value")).toBeUndefined();
   });
 

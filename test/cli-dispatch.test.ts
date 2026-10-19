@@ -159,40 +159,42 @@ describe("help", () => {
 });
 
 describe("fund", () => {
-  it.each([{ flags: [] }, { flags: ["--no-wait"] }, { flags: ["--wait", "--no-wait"] }])(
-    "returns a handoff with only its starting balance read with $flags",
-    async ({ flags }) => {
-      await useTempHome();
-      await writeWalletState(walletState({ chainId: 42431 }));
-      const rpc = await balanceRpc([0n]);
-      try {
-        const result = await wallet(
-          ["fund", "--no-browser", "--amount", "17.43", ...flags, "--format", "json"],
-          {
-            TEMPO_RPC_URL: rpc.url,
-            TEMPO_WALLET_FUND_TIMEOUT_MS: "invalid",
-            TEMPO_WALLET_FUND_POLL_MS: "invalid",
-          },
-        );
+  it.each([
+    { flags: [] },
+    { flags: ["--no-wait"] },
+    { flags: ["--wait=false"] },
+    { flags: ["--wait", "false"] },
+  ])("returns a handoff with only its starting balance read with $flags", async ({ flags }) => {
+    await useTempHome();
+    await writeWalletState(walletState({ chainId: 42431 }));
+    const rpc = await balanceRpc([0n]);
+    try {
+      const result = await wallet(
+        ["fund", "--no-browser", "--amount", "17.43", ...flags, "--format", "json"],
+        {
+          TEMPO_RPC_URL: rpc.url,
+          TEMPO_WALLET_FUND_TIMEOUT_MS: "invalid",
+          TEMPO_WALLET_FUND_POLL_MS: "invalid",
+        },
+      );
 
-        expect(result.code).toBe(0);
-        expect(JSON.parse(result.stdout)).toMatchObject({
-          status: "pending",
-          chain_id: 42431,
-          network: "tempo-moderato",
-          amount: "17.43",
-          balance: null,
-          raw_balance: null,
-          _next: { command: "tempo wallet fund status --interval 5 --network testnet" },
-        });
-        expect(result.stderr).not.toContain("Waiting");
-        expect(rpc.calls()).toBe(1);
-        expect(await loadPendingFund()).toMatchObject({ network: "testnet", amount: "17.43" });
-      } finally {
-        await rpc.close();
-      }
-    },
-  );
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "pending",
+        chain_id: 42431,
+        network: "tempo-moderato",
+        amount: "17.43",
+        balance: null,
+        raw_balance: null,
+        _next: { command: "tempo wallet fund status --interval 5 --network testnet" },
+      });
+      expect(result.stderr).not.toContain("Waiting");
+      expect(rpc.calls()).toBe(1);
+      expect(await loadPendingFund()).toMatchObject({ network: "testnet", amount: "17.43" });
+    } finally {
+      await rpc.close();
+    }
+  });
 
   it.each(["--llms", "--llms-full", "--schema", "--help"])(
     "%s describes the command without starting a funding flow",
@@ -204,7 +206,6 @@ describe("fund", () => {
         const result = await wallet(["fund", flag, "--no-browser"], {
           TEMPO_RPC_URL: rpc.url,
           TEMPO_WALLET_FUND_POLL_MS: "50",
-          TEMPO_WALLET_FUND_TIMEOUT_MS: "2000",
         });
 
         expect(result.code).toBe(0);
@@ -218,56 +219,31 @@ describe("fund", () => {
   );
 
   it.each([
-    {
-      name: "the requested deposit",
-      balances: [0n, 17_430_000n],
-      code: 0,
-      output: {
-        status: "success",
-        wallet: testWallet.toLowerCase(),
-        chain_id: 42431,
-        balance: "17.43",
-      },
-    },
-    {
-      name: "a timeout after an unrelated deposit",
-      balances: [0n, 1_000_000n],
-      code: 3,
-      output: {
-        code: "E_POLL_TIMEOUT",
-        retryable: true,
-        message: expect.stringContaining(`${agent}?action=fund`),
-        cta: {
-          commands: [{ command: "tempo wallet fund status --interval 5 --network testnet" }],
-        },
-      },
-    },
-  ])("waits for funding and renders $name through incur", async ({ balances, code, output }) => {
+    ["--wait"],
+    ["--wait=true"],
+    ["--wait", "true"],
+    ["--timeout", "1"],
+    ["--timeout=30"],
+    ["--no-wait", "--wait", "--timeout", "1"],
+    ["--wait", "--no-wait"],
+  ])("rejects retired funding flags %j before starting a handoff", async (...flags) => {
     await useTempHome();
-    await writeWalletState(walletState());
-    const rpc = await balanceRpc(balances);
+    await writeWalletState(walletState({ chainId: 42431 }));
+    const rpc = await balanceRpc([0n]);
     try {
-      const result = await wallet(
-        [
-          "-n",
-          "testnet",
-          "fund",
-          "--no-browser",
-          "--no-wait",
-          "--wait",
-          "--amount",
-          "17.43",
-          "--timeout",
-          "1",
-          "--format",
-          "json",
-        ],
-        { TEMPO_RPC_URL: rpc.url, TEMPO_WALLET_FUND_POLL_MS: "50" },
-      );
+      const result = await wallet(["fund", "--no-browser", ...flags, "--format", "json"], {
+        TEMPO_RPC_URL: rpc.url,
+      });
 
-      expect(result.code).toBe(code);
-      expect(JSON.parse(result.stdout)).toMatchObject(output);
-      expect(result.stderr).toContain("Waiting for funding...");
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        code: "E_USAGE",
+        retryable: false,
+        message: expect.stringMatching(/was removed.*tempo wallet fund status/),
+      });
+      expect(result.stderr).not.toContain("Open this link");
+      expect(rpc.calls()).toBe(0);
+      expect(await loadPendingFund()).toBeUndefined();
     } finally {
       await rpc.close();
     }

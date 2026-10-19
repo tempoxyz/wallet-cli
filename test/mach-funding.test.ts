@@ -57,7 +57,7 @@ describe("MACH funding", () => {
   it.each(["4.99", "100.01", "5.001"])(
     "rejects unsupported MACH checkout amount %s",
     async (amount) => {
-      await expect(runFundingFlow({ action: "mach", amount, noWait: true })).rejects.toThrow(
+      await expect(runFundingFlow({ action: "mach", amount })).rejects.toThrow(
         "between 5 and 100 USD",
       );
     },
@@ -94,7 +94,6 @@ describe("MACH funding", () => {
         address: wallet,
         amount: "5",
         noBrowser: true,
-        noWait: true,
       }),
     ).toMatchObject({
       status: "pending",
@@ -115,22 +114,14 @@ describe("MACH funding", () => {
   it.each(["invalid", `0x${"0".repeat(40)}`])(
     "rejects invalid destination %s before handoff",
     async (address) => {
-      await expect(runFundingFlow({ action: "mach", address, noWait: true })).rejects.toThrow(
-        "Invalid wallet",
-      );
+      await expect(runFundingFlow({ action: "mach", address })).rejects.toThrow("Invalid wallet");
     },
   );
   it("rejects unsupported testnet before reading balances", async () => {
-    await expect(
-      runFundingFlow({ action: "mach", network: "testnet", noWait: true }),
-    ).rejects.toThrow("not supported");
+    await expect(runFundingFlow({ action: "mach", network: "testnet" })).rejects.toThrow(
+      "not supported",
+    );
     expect(mocks.readContract).not.toHaveBeenCalled();
-  });
-  it.each([NaN, Infinity, -1])("rejects unbounded timeout %s", async (timeout) => {
-    await expect(
-      runFundingFlow({ action: "mach", noBrowser: true, noWait: false, timeout }),
-    ).rejects.toThrow("finite");
-    expect(mocks.open).not.toHaveBeenCalled();
   });
 });
 
@@ -151,11 +142,11 @@ describe("default funding", () => {
       expect(mocks.open).toHaveBeenCalledExactlyOnceWith("url" in result ? result.url : "");
     },
   );
-  it("returns a handoff without opening a browser and ignores unused wait settings", async () => {
+  it("returns a handoff without opening a browser or polling", async () => {
     process.env.TEMPO_WALLET_FUND_TIMEOUT_MS = "invalid";
     process.env.TEMPO_WALLET_FUND_POLL_MS = "invalid";
     mocks.readContract.mockResolvedValue(0n);
-    const result = await runFundingFlow({ action: "fund", noBrowser: true, timeout: 1 });
+    const result = await runFundingFlow({ action: "fund", noBrowser: true });
     expect(result).toMatchObject({
       status: "pending",
       amount: null,

@@ -6,7 +6,7 @@ import { ousd } from "viem/tokens";
 import { nonDestructive, type WalletCommand } from "../cli/command.js";
 import { fundOptions, fundOutput, fundStatusOptions } from "../schemas/fund.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
-import { commandError, networkError, usageError } from "../shared/errors.js";
+import { commandError, usageError } from "../shared/errors.js";
 import { continuationCommand, nextStep } from "../shared/next.js";
 import {
   appUrl,
@@ -45,8 +45,8 @@ export default {
     options: fundOptions,
     alias: globalAlias,
     output: fundOutput,
-    async run({ error, globals, options }) {
-      const result = await runFundingFlow({
+    async run({ globals, options }) {
+      return runFundingFlow({
         action: fundAction({
           credits: options.credits,
           mach: options.mach,
@@ -56,12 +56,9 @@ export default {
         address: options.address,
         code: options["referral-code"],
         noBrowser: options.browser === false,
-        noWait: options.wait === false,
         amount: options.amount,
-        timeout: options.timeout,
         network: globals.network,
       });
-      return "code" in result ? error(result) : result;
     },
   }).command("status", {
     description: "Wait for a pending funding's balance increase",
@@ -85,6 +82,23 @@ export default {
     fund_status: { ...nonDestructive, idempotentHint: true, openWorldHint: true },
   },
   retiredFlags: [
+    {
+      flag: "--wait",
+      mcp: true,
+      replacement: () => ({
+        message:
+          "--wait was removed; run 'tempo wallet fund' without it, then 'tempo wallet fund status' to wait for funds before spending.",
+      }),
+    },
+    {
+      flag: "--timeout",
+      takesValue: true,
+      mcp: true,
+      replacement: () => ({
+        message:
+          "--timeout was removed from 'tempo wallet fund'; use 'tempo wallet fund status --interval <seconds> --max-attempts <count>' to bound balance checks after the handoff.",
+      }),
+    },
     {
       flag: "--claim",
       takesValue: true,
@@ -115,14 +129,14 @@ export type FundAction = "fund" | "mach" | "crypto" | "credits" | "claim";
 /** How long `fund status` can resume a funding: long enough for a card or bridge checkout. */
 const pendingFundSeconds = 3600;
 
-/** The `fund status` a pending funding's `_next` and a timed-out wait name. */
+/** The `fund status` a pending funding's `_next` names. */
 const statusIntervalSeconds = 5;
 const resumeArgv = ["wallet", "fund", "status", "--interval", String(statusIntervalSeconds)];
 
 /**
  * Opens a wallet funding flow and saves it as the pending funding, with the starting balance of
- * each token the flow can deliver. By default returns at once with a `_next` to `fund status`;
- * with `noWait: false`, waits here. The link is printed before any RPC read, so a failing RPC never
+ * each token the flow can deliver. Returns a handoff with a `_next` to `fund status`, without
+ * polling for funds. The link is printed before any RPC read, so a failing RPC never
  * hides it: without a starting balance the handoff is still returned, but cannot be resumed. The
  * browser opens only after that read.
  */
@@ -133,9 +147,6 @@ export async function runFundingFlow(options: {
   code?: string | undefined;
   network?: string | undefined;
   noBrowser?: boolean | undefined;
-  noWait?: boolean | undefined;
-  timeout?: number | undefined;
-  signal?: AbortSignal | undefined;
 }) {
   if (options.action === "credits") throw creditsFundingError();
   const action = options.action;
@@ -153,7 +164,6 @@ export async function runFundingFlow(options: {
     chainId: chain,
     code: options.code,
   });
-  const wait = options.noWait === false && wallet ? waitSettings(options.timeout) : undefined;
 
   console.error(`Open this link on your device: ${url}`);
   // This funding replaces the pending one, even when it cannot be resumed itself.
@@ -180,9 +190,6 @@ export async function runFundingFlow(options: {
   }
 
   // The flow opens after the read, so funds it delivers quickly are not in the starting balance.
-  // `--timeout` bounds the whole wait, starting balance read included; the read keeps its own
-  // RPC bound, so a `--timeout` shorter than it still saves a funding `fund status` can resume.
-  const deadline = Date.now() + (wait?.timeoutMs ?? 0);
   const baselines = await readBalances(
     chain,
     wallet,
@@ -200,8 +207,6 @@ export async function runFundingFlow(options: {
         );
     const check = whoami ? `the balance with '${whoami}'` : `the balance of ${wallet}`;
     const message = `Could not read the wallet's starting balance (check TEMPO_RPC_URL), so 'tempo wallet fund status' cannot tell when funds arrive. Finish funding at ${url}, then check ${check}.`;
-    if (wait && whoami) return commandError("E_NETWORK", message, whoami);
-    if (wait) throw networkError(message);
     console.error(message);
     return { ...handoff, instruction: message };
   }
@@ -219,30 +224,20 @@ export async function runFundingFlow(options: {
       baseline: baselines[index]!.toString(),
       minimum: asset.minimum.toString(),
     })),
-    expiresAt:
-      nowSeconds() + Math.max(pendingFundSeconds, Math.ceil((wait?.timeoutMs ?? 0) / 1000)),
+    expiresAt: nowSeconds() + pendingFundSeconds,
   });
   // A logout during the read must not leave the logged-out wallet's checkout for the next login.
   if (pending.activeWallet && (await activeWallet()) !== wallet)
     throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
   await savePendingFund(pending);
-  if (!wait)
-    return {
-      ...handoff,
-      ...nextStep(
-        "Have the user open url and finish funding. Then run the next command to wait for the funds to arrive.",
-        resumeArgv,
-        { network, until: '.status != "pending"', pollIntervalSeconds: statusIntervalSeconds },
-      ),
-    };
-
-  console.error(`Waiting for ${action === "mach" ? "MACH" : "funding"}...`);
-  return await finishFunding(pending, {
-    intervalMs: wait.intervalMs,
-    timeoutMs: Math.max(0, deadline - Date.now()),
-    signal: options.signal,
-    status: resumeArgv,
-  });
+  return {
+    ...handoff,
+    ...nextStep(
+      "Have the user open url and finish funding. Then run the next command to wait for the funds to arrive.",
+      resumeArgv,
+      { network, until: '.status != "pending"', pollIntervalSeconds: statusIntervalSeconds },
+    ),
+  };
 }
 
 type StatusOptions = {
@@ -478,18 +473,6 @@ async function readBalances(
       ),
     ),
   );
-}
-
-function waitSettings(timeout: number | undefined) {
-  return {
-    timeoutMs: finiteDuration(
-      timeout === undefined
-        ? Number(process.env.TEMPO_WALLET_FUND_TIMEOUT_MS ?? 600_000)
-        : timeout * 1000,
-      "Funding timeout",
-    ),
-    intervalMs: pollInterval(),
-  };
 }
 
 function pollInterval() {
