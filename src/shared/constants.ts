@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import { walletError } from "./errors.js";
+import { pathusd, usdce } from "viem/tokens";
 
 type PackageJson = {
   version?: string;
@@ -8,8 +9,8 @@ type PackageJson = {
 };
 
 export const version = process.env.TEMPO_WALLET_VERSION ?? packageVersion();
-export const usdcToken = "0x20c000000000000000000000b9537d11c60e8b50" as const;
-export const moderatoToken = "0x20c0000000000000000000000000000000000000" as const;
+export const usdcToken = usdce(4217).address;
+export const moderatoToken = pathusd(42431).address;
 export const mainnetEscrow = "0x33b901018174ddabe4841042ab76ba85d4e24f25" as const;
 export const moderatoEscrow = "0xe1c4d3dce17bc111181ddf716f75bae49e61a336" as const;
 export const defaultGracePeriodSeconds = 900;
