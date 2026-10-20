@@ -11,10 +11,19 @@ const maxDeadlineSeconds = 86_400;
 /** Bounds human-readable policy input before decimal expansion. */
 const maxDecimalAmountLength = 1_024;
 /**
+ * Rejects the nested `policy` option that flat policy fields replaced. Untyped callers, and options
+ * built outside an object literal, would otherwise lose every limit without an error.
+ */
+export function assertFlatPolicy(options) {
+    if (Object.hasOwn(options, 'policy'))
+        throw new InvalidConfigurationError('The policy option was removed; pass maxPayment and the other policy fields directly');
+}
+/**
  * Resolves defaults and validates the policy fields of flat options once at construction time.
  * Only policy fields are read, so options may carry funders, observers, or adapter settings.
  */
 export function resolvePolicy(options = {}) {
+    assertFlatPolicy(options);
     // Not a spread over defaults: an explicit `undefined` keeps the default, while `null` from an
     // untyped caller still fails validation below.
     const pick = (key) => options[key] === undefined ? defaults[key] : options[key];

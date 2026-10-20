@@ -1,4 +1,4 @@
-import { InvalidConfigurationError } from './errors.js';
+import { InvalidConfigurationError, LimitExceededError } from './errors.js';
 import { immutableSnapshot } from './immutable.js';
 import { assertRequirement, resolvePolicy } from './policy.js';
 import { neverAborted } from './time.js';
@@ -11,6 +11,9 @@ export async function planPayment(initial, options = {}) {
 }
 /** Plans an already-snapshotted requirement with validated configuration. */
 async function planSnapshot(selected, policy, funders) {
+    // The client's own funding runs whichever funder matches, so no funder can enforce a ceiling on it.
+    if (policy.maxFundingSpend && selected.unboundedFunding === true)
+        throw new LimitExceededError("maxFundingSpend cannot bound the payment client's own funding");
     for (const funder of funders) {
         const resolved = funder.resolve ? await funder.resolve(selected) : selected;
         if (!resolved)
@@ -39,6 +42,7 @@ function assertSamePayment(selected, resolved) {
         selected.amount !== resolved.amount ||
         identifier(selected.recipient) !== identifier(resolved.recipient) ||
         selected.resource !== resolved.resource ||
+        (selected.unboundedFunding === true) !== (resolved.unboundedFunding === true) ||
         !sameOptional(selected.currency, resolved.currency, (left, right) => left.toUpperCase() === right.toUpperCase()) ||
         !sameOptional(selected.decimals, resolved.decimals, (left, right) => left === right);
     if (changed)

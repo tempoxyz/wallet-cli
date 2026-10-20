@@ -41,6 +41,7 @@ export function relayProtocolRoute(options) {
         fetch,
         url,
         useDepositAddress: options.useDepositAddress === true,
+        settled: new Map(),
     });
     const guarantees = options.guarantees?.bind(options) ?? viemGuarantees.bind(undefined, viem);
     const submit = options.submit?.bind(options) ?? viemSubmit.bind(undefined, viem);
@@ -72,11 +73,13 @@ export function relayProtocolRoute(options) {
         status: options.status?.bind(options) ?? viemStatus.bind(undefined, viem),
         ...(options.clients === undefined
             ? {}
-            : { balance: (account) => viemBalance(clients, account) }),
+            : { balance: (account) => viemBalance(viem, account) }),
     });
 }
 async function fetchRelayQuote(options, request) {
-    const response = await options.fetch(`${options.url}/quote/v2`, {
+    // Called without a receiver: browser and Workers fetch rejects any `this` but the global.
+    const { fetch } = options;
+    const response = await fetch(`${options.url}/quote/v2`, {
         body: JSON.stringify({
             amount: request.amountOut.toString(),
             destinationChainId: request.to.chainId,
@@ -141,6 +144,10 @@ function parseQuote(value, request) {
     const reference = steps?.find((step) => step.requestId)?.requestId;
     if (!reference)
         throw new FundingError('Relay Protocol quote has no request ID');
+    // Status is polled by this ID, so every step that names a request, and the quote, must name it.
+    if (steps.some((step) => step.requestId !== undefined && step.requestId !== reference) ||
+        (value.requestId !== undefined && value.requestId !== reference))
+        throw new FundingError('Relay Protocol quote steps belong to different requests');
     return Object.freeze({
         quote: value,
         amountIn: BigInt(input.amount),

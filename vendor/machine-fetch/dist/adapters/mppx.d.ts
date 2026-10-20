@@ -35,7 +35,8 @@ export type MppxAutoSwapOptions = Readonly<{
      * Swaps into the requested Tempo stablecoin atomically with payment, through Mppx and the Tempo
      * Stablecoin DEX, under machine-fetch's `maxSlippageBps` and `sameCurrencyOnly`. `false` never
      * swaps; `{ tokens }` adds Viem tokens to trust and swap from first. Machine-fetch supplies this
-     * per payment, so it overrides the Tempo method's own `autoSwap`.
+     * per payment, so it overrides the Tempo method's own `autoSwap`. Mppx cannot cap a swap's input,
+     * so a policy with `maxFundingSpend` must set `false`.
      * @default true
      */
     autoSwap?: TempoAutoSwap | undefined;

@@ -1,14 +1,27 @@
 import { encodeFunctionData, erc20Abi, hashStruct, parseAbi, zeroAddress, } from 'viem';
-import { estimateFeesPerGas, estimateGas, getBalance, getTransactionReceipt, prepareTransactionRequest, readContract, sendTransaction, waitForTransactionReceipt, } from 'viem/actions';
+import { estimateFeesPerGas, estimateGas, getBalance, getBlockNumber, getTransactionReceipt, prepareTransactionRequest, readContract, sendTransaction, waitForTransactionReceipt, } from 'viem/actions';
 import { tempo } from 'viem/chains';
 import { FundingError, InvalidConfigurationError } from '../core/errors.js';
-import { nowSeconds, untilDeadline } from '../core/time.js';
+import { nowSeconds, sleep, untilDeadline } from '../core/time.js';
 import { isEvmAddress, isRecord } from '../core/validate.js';
 /**
  * Tempo source transactions expire with their quote; 25 seconds is the longest validity Tempo
- * accepts for an expiring nonce.
+ * accepts for an expiring nonce. Other chains send calls one at a time, so their quotes last until
+ * the request deadline and an approval is never cut off from its deposit.
  */
-const quoteValiditySeconds = 25;
+const tempoQuoteValiditySeconds = 25;
+/** The chain registry is shared by every lookup, so its one request has its own bound. */
+const registryTimeoutMs = 10_000;
+/** Relay fills with one or a few transactions; more is malformed, not more RPC work. */
+const maxDestinationHashes = 8;
+/** A lagging destination RPC gets this many tries to reach the delivery block. */
+const settledReadAttempts = 4;
+const settledReadPauseMs = 250;
+/**
+ * Gas bound for a call that depends on an earlier one (a deposit after its approval) when the quote
+ * gives none; it only sizes the declared fee, and signing still uses a fresh estimate.
+ */
+const dependentCallGas = 500000n;
 /** Declared gas fees allow twice the estimated cost, so fee movement before signing still fits. */
 const feeHeadroom = 2n;
 /** Tempo gas prices are in attodollars; TIP-20 fee tokens have six decimals. */
@@ -88,11 +101,26 @@ export function clientsOf(clients) {
 export function relayChains(fetch, url) {
     let registry;
     return async (chainId, signal) => {
-        registry ??= loadChains(fetch, url, signal).catch((cause) => {
+        signal.throwIfAborted();
+        // Shared by every lookup, so it runs under its own timeout; each caller stops waiting on abort.
+        registry ??= loadChains(fetch, url, AbortSignal.timeout(registryTimeoutMs)).catch((cause) => {
             registry = undefined;
             throw cause;
         });
-        const chain = (await registry).get(chainId);
+        let abort;
+        const aborted = new Promise((_resolve, reject) => {
+            abort = () => reject(signal.reason);
+        });
+        signal.addEventListener('abort', abort);
+        let loaded;
+        try {
+            loaded = await Promise.race([registry, aborted]);
+        }
+        finally {
+            // Long-lived signals would otherwise keep one listener per lookup.
+            signal.removeEventListener('abort', abort);
+        }
+        const chain = loaded.get(chainId);
         if (!chain)
             throw new FundingError(`Relay Protocol does not list chain ${chainId}`);
         return chain;
@@ -124,12 +152,12 @@ async function loadChains(fetch, url, signal) {
 export async function relayCalls(viem, quote, request) {
     const amount = BigInt(quote.details.currencyIn.amount);
     if (viem.useDepositAddress)
-        return depositAddressCalls(quote, request, amount);
+        return { calls: depositAddressCalls(quote, request, amount), deadline: request.deadline };
     const [from, to] = await Promise.all([
         viem.chains(request.from.chainId, request.signal),
         viem.chains(request.to.chainId, request.signal),
     ]);
-    const orderId = verifiedOrder(quote, request, amount, from, to);
+    const { orderId, deadline } = verifiedOrder(quote, request, amount, from, to);
     const calls = [];
     for (const step of quote.steps)
         for (const item of step.items ?? []) {
@@ -163,7 +191,7 @@ export async function relayCalls(viem, quote, request) {
     check(calls.length <= 2 &&
         calls.filter((call) => call.to === from.depository).length === 1 &&
         calls.at(-1).to === from.depository, 'Relay Protocol steps must be at most one approval followed by one deposit');
-    return calls;
+    return { calls, deadline: Math.min(request.deadline, deadline) };
 }
 function depositAddressCalls(quote, request, amount) {
     // Quote parsing guarantees a step carrying the request ID.
@@ -207,6 +235,7 @@ function verifiedOrder(quote, request, amount, from, to) {
             same(output.recipient, request.to.owner) &&
             same(output.currency, request.to.asset) &&
             BigInt(output.minimumAmount) >= request.amountOut &&
+            Number.isSafeInteger(order.output.deadline) &&
             order.output.deadline > nowSeconds(), 'Relay Protocol order output does not pay the destination account');
         for (const refund of input.refunds) {
             const account = refund.chainId === from.name
@@ -222,7 +251,7 @@ function verifiedOrder(quote, request, amount, from, to) {
         check(same(protocol.orderId, orderId), 'Relay Protocol order ID does not match its order');
         check(isRecord(protocol.paymentDetails) &&
             same(protocol.paymentDetails.depository, from.depository), 'Relay Protocol order pays an unexpected depository');
-        return orderId;
+        return { orderId, deadline: order.output.deadline };
     }
     catch (cause) {
         if (cause instanceof FundingError)
@@ -235,12 +264,27 @@ function verifiedOrder(quote, request, amount, from, to) {
  * source transaction, priced in the asset the source chain charges.
  */
 export async function viemGuarantees(viem, { quote, request }) {
-    const calls = await relayCalls(viem, quote, request);
+    const { calls, deadline } = await relayCalls(viem, quote, request);
     const client = clientFor(viem.clients, request.from.chainId);
     const account = request.from.owner;
+    const tempoChain = isTempo(client);
     let gas = 0n;
-    for (const call of calls)
-        gas += call.gas ?? (await estimateGas(client, { account, ...withoutGas(call) }));
+    if (tempoChain && calls.some((call) => call.gas === undefined))
+        // Tempo sends every call as one transaction, so the approval is in effect when the deposit runs.
+        gas = await estimateGas(client, {
+            account,
+            calls: calls.map(withoutGas),
+            feeToken: feeAsset(client, request),
+        });
+    else
+        for (const [index, call] of calls.entries()) {
+            // A later call depends on the approval before it, which estimation cannot see.
+            gas +=
+                call.gas ??
+                    (index === 0
+                        ? await estimateGas(client, { account, ...withoutGas(call) })
+                        : dependentCallGas);
+        }
     const { maxFeePerGas } = await estimateFeesPerGas(client);
     const fee = {
         kind: 'gas',
@@ -252,7 +296,7 @@ export async function viemGuarantees(viem, { quote, request }) {
     return {
         maxAmountIn: BigInt(quote.details.currencyIn.amount),
         fees: [fee],
-        expiresAt: Math.min(request.deadline, nowSeconds() + quoteValiditySeconds),
+        expiresAt: tempoChain ? Math.min(deadline, nowSeconds() + tempoQuoteValiditySeconds) : deadline,
     };
 }
 /**
@@ -262,7 +306,7 @@ export async function viemGuarantees(viem, { quote, request }) {
  * quote.
  */
 export async function viemSubmit(viem, { quote, limits, request, }) {
-    const calls = await relayCalls(viem, quote, request);
+    const { calls } = await relayCalls(viem, quote, request);
     const client = signer(viem, request);
     const tempoChain = isTempo(client);
     const asset = feeAsset(client, request);
@@ -270,7 +314,7 @@ export async function viemSubmit(viem, { quote, limits, request, }) {
         .filter((fee) => fee.kind === 'gas' && fee.network === request.from.network && same(fee.asset, asset))
         .reduce((total, fee) => total + fee.amount, 0n);
     const batches = tempoChain ? [calls] : calls.map((call) => [call]);
-    for (const batch of batches) {
+    for (const [index, batch] of batches.entries()) {
         const prepared = (await prepareTransactionRequest(client, (tempoChain
             ? {
                 account: client.account,
@@ -286,7 +330,8 @@ export async function viemSubmit(viem, { quote, limits, request, }) {
         check(cost > 0n && cost <= budget, 'Relay Protocol gas exceeds the quoted fee');
         budget -= cost;
         request.signal.throwIfAborted();
-        check(limits.expiresAt > nowSeconds(), 'Relay Protocol quote expired before signing');
+        // Once an approval is out, its deposit must follow, so only the first signature checks expiry.
+        check(index > 0 || limits.expiresAt > nowSeconds(), 'Relay Protocol quote expired before signing');
         const hash = await sendTransaction(client, prepared);
         const receipt = await waitForTransactionReceipt(client, {
             hash,
@@ -294,6 +339,7 @@ export async function viemSubmit(viem, { quote, limits, request, }) {
         });
         check(receipt.status === 'success', 'Relay Protocol source transaction reverted');
     }
+    // Quote parsing guarantees one request ID across the steps that carry one.
     return { reference: quote.steps.find((step) => step.requestId)?.requestId };
 }
 /**
@@ -302,10 +348,29 @@ export async function viemSubmit(viem, { quote, limits, request, }) {
  */
 export async function viemStatus(viem, operation, { signal }) {
     const reference = operation.reference ?? operation.quote.reference;
-    const response = await viem.fetch(`${viem.url}/intents/status/v3?requestId=${encodeURIComponent(reference)}`, { signal });
+    const { fetch } = viem;
+    let response;
+    try {
+        response = await fetch(`${viem.url}/intents/status/v3?requestId=${encodeURIComponent(reference)}`, { signal });
+    }
+    catch {
+        // A network failure is polled again until the deadline; cancellation is not.
+        signal.throwIfAborted();
+        return { status: 'pending' };
+    }
+    if (response.status === 429 || response.status >= 500)
+        return { status: 'pending' };
     if (!response.ok)
         throw new FundingError(`Relay Protocol status request failed with HTTP ${response.status}`);
-    const body = await response.json();
+    let body;
+    try {
+        body = await response.json();
+    }
+    catch {
+        // The connection can fail while the body streams; poll again unless cancelled.
+        signal.throwIfAborted();
+        return { status: 'pending' };
+    }
     const status = isRecord(body) ? body.status : undefined;
     if (status === 'refund')
         return { status: 'refunded' };
@@ -318,37 +383,75 @@ export async function viemStatus(viem, operation, { signal }) {
     const hashes = body.txHashes;
     check(Array.isArray(hashes) &&
         hashes.length > 0 &&
+        hashes.length <= maxDestinationHashes &&
         hashes.every((hash) => typeof hash === 'string' && hash32.test(hash)), 'Relay Protocol success has no destination transaction');
-    const client = viem.clients[operation.request.to.chainId];
+    const destination = operation.request.to;
+    const client = viem.clients[destination.chainId];
     if (!client)
         return { status: 'completed' };
+    let delivered = 0n;
     for (const hash of hashes) {
+        signal.throwIfAborted();
         let receipt;
         try {
             receipt = await getTransactionReceipt(client, { hash });
         }
-        catch (cause) {
-            // The destination RPC may lag Relay; keep polling until the receipt is visible.
-            if (isRecord(cause) && cause.name === 'TransactionReceiptNotFoundError')
-                return { status: 'pending' };
-            throw cause;
+        catch {
+            // The destination RPC may lag Relay or fail transiently; poll again until the deadline.
+            return { status: 'pending' };
         }
         if (receipt.status !== 'success')
             return { status: 'actionRequired' };
+        // Stryker disable next-line EqualityOperator: on equal blocks either comparison keeps the same value
+        if (receipt.blockNumber > delivered)
+            delivered = receipt.blockNumber;
     }
+    // Balance reads for this account wait for this block, so a lagging RPC node cannot hide delivery.
+    const key = accountKey(destination);
+    // Stryker disable next-line EqualityOperator: on equal blocks either comparison stores the same value
+    if (delivered > (viem.settled.get(key) ?? 0n))
+        viem.settled.set(key, delivered);
     return { status: 'completed' };
 }
-/** Reads an account's token balance on its chain, or its native balance for the zero address. */
-export function viemBalance(clients, account) {
-    const client = clientFor(clients, account.chainId);
-    return same(account.asset, zeroAddress)
-        ? getBalance(client, { address: account.owner })
+/**
+ * Reads an account's token balance on its chain, or its native balance for the zero address. After
+ * a delivery to the account, the read waits until the RPC reaches the delivery block and reads at
+ * that height or later.
+ */
+export async function viemBalance(viem, account) {
+    const client = clientFor(viem.clients, account.chainId);
+    const read = (blockNumber) => same(account.asset, zeroAddress)
+        ? getBalance(client, { address: account.owner, blockNumber })
         : readContract(client, {
             address: account.asset,
             abi: erc20Abi,
             functionName: 'balanceOf',
             args: [account.owner],
+            blockNumber,
         });
+    const delivered = viem.settled.get(accountKey(account));
+    if (delivered === undefined)
+        return read(undefined);
+    let failure;
+    for (let attempt = 1;; attempt++) {
+        try {
+            const head = await getBlockNumber(client, { cacheTime: 0 });
+            if (head >= delivered)
+                return await read(head);
+        }
+        catch (cause) {
+            // A load-balanced backend behind the head may not serve that block yet.
+            failure = cause;
+        }
+        if (attempt === settledReadAttempts)
+            throw new FundingError('Destination RPC has not reached the delivery block', {
+                cause: failure,
+            });
+        await sleep(settledReadPauseMs);
+    }
+}
+function accountKey(account) {
+    return `${account.chainId}:${account.asset.toLowerCase()}:${account.owner.toLowerCase()}`;
 }
 function clientFor(clients, chainId) {
     const client = clients[chainId];

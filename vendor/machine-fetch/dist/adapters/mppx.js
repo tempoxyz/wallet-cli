@@ -3,13 +3,15 @@ import { Types as X402 } from 'mppx/x402';
 import { InvalidConfigurationError } from '../core/errors.js';
 import { immutableSnapshot } from '../core/immutable.js';
 import { machineFetch } from '../core/machine-fetch.js';
+import { assertFlatPolicy } from '../core/policy.js';
 import { createBeforePayment } from '../core/prepare.js';
 import { neverAborted } from '../core/time.js';
 import { assertOperationId, assertPayer, isPayer, isRecord } from '../core/validate.js';
-import { autoSwapDisabled, tempoFunder } from '../funders/tempo.js';
+import { autoSwapDisabled, isTempoContext, tempoFunder, } from '../funders/tempo.js';
 import { invalidPayment, parseAtomicAmount, parseNetwork, x402PaymentRequirement, } from './shared.js';
 /** Creates a paid Fetch function from Mppx methods plus machine-fetch funders and policy. */
 export function mppxFetch(options) {
+    assertFlatPolicy(options);
     const { deadlineSeconds, funders, maxFundingSpend, maxPayment, maxSlippageBps, onFundingComplete, onPaymentFailed, onPaymentReady, onPaymentRequired, payer, sameCurrencyOnly, ...mppx } = options;
     return machineFetch({
         client: createMppxPayment(mppx),
@@ -53,11 +55,10 @@ export function mppxExtension(options = {}) {
         ...machineFetchOptions,
         funders: [...(machineFetchOptions.funders ?? []), tempoFunder(autoSwap)],
     });
+    // `prepared` is never undefined: an undefined context counts as none.
     const combine = (current, prepared) => {
         if (current === undefined)
             return prepared;
-        if (prepared === undefined)
-            return current;
         if (compose)
             return compose(current, prepared);
         if (isRecord(current) && isRecord(prepared))
@@ -79,11 +80,15 @@ export function mppxExtension(options = {}) {
                 ...(payer === undefined ? {} : { payer }),
             }));
             const funding = prepared?.funding ? { funding: immutableSnapshot(prepared.funding) } : {};
-            const source = prepared && Object.hasOwn(prepared, 'context') ? prepared : unprepared(challenge);
-            if (!source)
+            const context = preparedContext(challenge, prepared?.context);
+            if (context === undefined)
                 return prepared?.funding ? Object.freeze(funding) : undefined;
             return Object.freeze({
-                credentialContext: combine(credentialContext, source.context),
+                // Machine-fetch's own Tempo context sets only `autoSwap`, outside `compose`, which sees only
+                // the configured funders' contexts.
+                credentialContext: isTempoContext(context)
+                    ? withAutoSwap(credentialContext, context)
+                    : combine(credentialContext, context),
                 ...funding,
             });
         },
@@ -108,7 +113,7 @@ function createMppxPayment({ autoSwap, ...config }) {
                             const prepared = await beforePayment(mppxRequirement(challenge), context);
                             // Observers and other callbacks may cancel after the hook settles; never sign then.
                             context.signal.throwIfAborted();
-                            return createCredential((prepared?.context ?? unprepared(challenge)?.context));
+                            return createCredential(preparedContext(challenge, prepared?.context));
                         },
                     }).fetch(input, init);
                 },
@@ -118,11 +123,22 @@ function createMppxPayment({ autoSwap, ...config }) {
     });
 }
 /**
- * Context for a payment no funder prepared. Mppx's Tempo auto-swap then stays off, so it never runs
- * with the method's own settings outside machine-fetch policy, such as for an unknown token.
+ * The funder's credential context. Only an undefined context counts as none; `null` is a context. A Tempo payment with none
+ * keeps Mppx auto-swap off, so the method's own settings never swap outside machine-fetch policy,
+ * such as for an unknown token.
  */
-function unprepared(challenge) {
-    return challenge.method === 'tempo' ? autoSwapDisabled : undefined;
+function preparedContext(challenge, context) {
+    if (context !== undefined)
+        return context;
+    return challenge.method === 'tempo' ? autoSwapDisabled.context : undefined;
+}
+/** Sets only the built-in `autoSwap` on the host's Tempo credential context. */
+function withAutoSwap(current, context) {
+    if (current === undefined)
+        return context;
+    if (!isRecord(current))
+        throw new InvalidConfigurationError('Cannot set Tempo auto-swap on a non-object Mppx credential context');
+    return Object.freeze({ ...current, autoSwap: context.autoSwap });
 }
 /** Converts an MPP or Mppx-translated x402 challenge to the common model. */
 export function mppxRequirement(challenge) {
@@ -139,19 +155,38 @@ export function mppxRequirement(challenge) {
     const decimals = numberField(request, 'decimals') ?? numberField(methodDetails ?? {}, 'decimals');
     const currency = stringField(request, 'currencyCode') ??
         (challenge.method === 'stripe' ? stringField(request, 'currency')?.toUpperCase() : undefined);
+    const amount = parseAtomicAmount(request.amount ?? request.maxAmountRequired);
     return immutableSnapshot({
         protocol: 'mpp',
         method: challenge.method,
         intent: challenge.intent,
         network: nativeNetwork(challenge.method, request, methodDetails),
         asset,
-        amount: parseAtomicAmount(request.amount ?? request.maxAmountRequired),
+        amount,
         ...(recipient ? { recipient } : {}),
         resource: challenge.realm,
         ...(decimals !== undefined ? { decimals } : {}),
         ...(currency ? { currency } : {}),
+        ...(machineTokenFunding(challenge, asset, amount, methodDetails)
+            ? { unboundedFunding: true }
+            : {}),
         metadata: { challengeMeta: challenge.meta, request },
     });
+}
+/** Mppx's first-party machine token, at this address on Tempo mainnet and Moderato. */
+const machineToken = '0x20c000000000000000000000f37de3740adec032';
+/**
+ * Whether Mppx may pay by swapping its machine token, which ignores auto-swap context, and debit
+ * the transaction fee in a token it selects; neither debit is known before signing. A zero amount
+ * is a signed proof, and a payment in the machine token itself funds nothing. The flag comes from
+ * the challenge Mppx itself reads, so trusting it only makes funding stricter.
+ */
+function machineTokenFunding(challenge, asset, amount, methodDetails) {
+    return (challenge.method === 'tempo' &&
+        challenge.intent === 'charge' &&
+        amount > 0n &&
+        methodDetails?.machineTokenEnabled === true &&
+        asset.toLowerCase() !== machineToken);
 }
 function normalizeX402Challenge(challenge) {
     const parsed = X402.PaymentRequirementsSchema.safeParse(challenge.request);

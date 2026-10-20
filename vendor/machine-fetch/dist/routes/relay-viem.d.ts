@@ -11,6 +11,11 @@ type RelayChain = Readonly<{
 }>;
 /** Looks up a chain in Relay's registry, fetched once per route. */
 export type RelayChains = (chainId: number, signal: AbortSignal) => Promise<RelayChain>;
+/** Verified calls, and the latest time they may be submitted: the request or order deadline. */
+type Verified = Readonly<{
+    calls: readonly Call[];
+    deadline: number;
+}>;
 /** A source transaction reconstructed locally, never copied from provider calldata. */
 type Call = Readonly<{
     to: Address;
@@ -25,6 +30,8 @@ export type RelayViem = Readonly<{
     fetch: typeof globalThis.fetch;
     url: string;
     useDepositAddress: boolean;
+    /** Highest delivery block seen per destination account, by status, for balance reads. */
+    settled: Map<string, bigint>;
 }>;
 /** Validates clients by chain ID and returns a frozen copy. */
 export declare function clientsOf(clients: unknown): RelayClients;
@@ -35,7 +42,7 @@ export declare function relayChains(fetch: typeof globalThis.fetch, url: string)
  * calls. Contract deposits must carry an order whose recomputed ID, input, output, and refunds
  * match the request; deposit-address quotes must be one exact token transfer.
  */
-export declare function relayCalls(viem: RelayViem, quote: RelayApiQuote, request: CrossChainRequest): Promise<readonly Call[]>;
+export declare function relayCalls(viem: RelayViem, quote: RelayApiQuote, request: CrossChainRequest): Promise<Verified>;
 /**
  * Default `guarantees`: verifies the steps, then bounds gas by twice the estimated cost of every
  * source transaction, priced in the asset the source chain charges.
@@ -61,9 +68,13 @@ export declare function viemSubmit(viem: RelayViem, { quote, limits, request, }:
  * Default `status`: reads Relay's intent status. Success also needs every reported destination
  * transaction to have a successful receipt when a destination client is configured.
  */
-export declare function viemStatus(viem: Pick<RelayViem, 'clients' | 'fetch' | 'url'>, operation: CrossChainOperation<BoundedCrossChainQuote>, { signal }: Readonly<{
+export declare function viemStatus(viem: Pick<RelayViem, 'clients' | 'fetch' | 'url' | 'settled'>, operation: CrossChainOperation<BoundedCrossChainQuote>, { signal }: Readonly<{
     signal: AbortSignal;
 }>): Promise<CrossChainStatus>;
-/** Reads an account's token balance on its chain, or its native balance for the zero address. */
-export declare function viemBalance(clients: RelayClients, account: EvmTokenAccount): Promise<bigint>;
+/**
+ * Reads an account's token balance on its chain, or its native balance for the zero address. After
+ * a delivery to the account, the read waits until the RPC reaches the delivery block and reads at
+ * that height or later.
+ */
+export declare function viemBalance(viem: Pick<RelayViem, 'clients' | 'settled'>, account: EvmTokenAccount): Promise<bigint>;
 export {};

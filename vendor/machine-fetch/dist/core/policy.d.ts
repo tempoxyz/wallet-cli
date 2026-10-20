@@ -1,6 +1,11 @@
 import type { PaymentRequirement } from '../interfaces/payment.js';
 import type { PaymentPolicy, ResolvedPaymentPolicy } from '../interfaces/policy.js';
 /**
+ * Rejects the nested `policy` option that flat policy fields replaced. Untyped callers, and options
+ * built outside an object literal, would otherwise lose every limit without an error.
+ */
+export declare function assertFlatPolicy(options: object): void;
+/**
  * Resolves defaults and validates the policy fields of flat options once at construction time.
  * Only policy fields are read, so options may carry funders, observers, or adapter settings.
  */

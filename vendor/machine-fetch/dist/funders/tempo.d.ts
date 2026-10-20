@@ -26,6 +26,8 @@ export type TempoContext = Readonly<{
         slippage: number;
     }>;
 }>;
+/** Whether a credential context came from the built-in Tempo funder. */
+export declare function isTempoContext(context: unknown): context is TempoContext;
 /** Context that stops Mppx from swapping, whatever the method's own auto-swap setting. */
 export declare const autoSwapDisabled: PaymentPreparation<TempoContext>;
 /**

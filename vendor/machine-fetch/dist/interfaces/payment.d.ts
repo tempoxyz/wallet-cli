@@ -22,6 +22,12 @@ export type PaymentRequirement = Readonly<{
     currency?: string | undefined;
     /** Number of atomic decimal places, an integer from 0 to 255, used for display-value limits. */
     decimals?: number | undefined;
+    /**
+     * Set when the payment client may itself spend assets other than `asset` to pay, in amounts it
+     * cannot bound before signing, such as Mppx's Tempo machine-token route. Every `maxFundingSpend`
+     * policy rejects such a payment, whichever funder matches; funders must preserve it.
+     */
+    unboundedFunding?: boolean | undefined;
     /** Protocol data may be untrusted. Never include credentials, signatures, or private keys. */
     metadata?: Readonly<Record<string, unknown>> | undefined;
 }>;

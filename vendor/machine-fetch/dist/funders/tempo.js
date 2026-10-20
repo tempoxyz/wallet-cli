@@ -6,10 +6,19 @@ import { assetKey, isEvmAddress, isEvmNetwork, isRecord, isTokenDecimals, } from
 const defaultTokens = [pathusd, usdce];
 /** Currency of the inputs Mppx appends to every auto-swap list (pathUSD and USDC). */
 const mppxDefaultInputCurrency = 'USD';
+/** Contexts the built-in funder produced, so adapters can merge them outside a host's `compose`. */
+const builtIn = new WeakSet();
+/** Whether a credential context came from the built-in Tempo funder. */
+export function isTempoContext(context) {
+    return isRecord(context) && builtIn.has(context);
+}
+function tempoContext(autoSwap) {
+    const context = Object.freeze({ autoSwap });
+    builtIn.add(context);
+    return Object.freeze({ context });
+}
 /** Context that stops Mppx from swapping, whatever the method's own auto-swap setting. */
-export const autoSwapDisabled = Object.freeze({
-    context: Object.freeze({ autoSwap: false }),
-});
+export const autoSwapDisabled = tempoContext(false);
 /**
  * The funder every Mppx entry point adds after the configured ones. It trusts metadata only for
  * known tokens, and supplies auto-swap context from machine-fetch policy immediately before
@@ -26,7 +35,9 @@ export function tempoFunder(autoSwap = true) {
     const find = (network, asset) => known.get(assetKey({ network, asset }));
     return Object.freeze({
         name: 'tempo',
-        // A swap that does not run spends nothing, and it never runs while `maxFundingSpend` is set.
+        // With `maxFundingSpend` set, `prepare` rejects unless auto-swap is off, so its context funds
+        // nothing. Mppx's machine-token route ignores that context; the adapter marks it
+        // `unboundedFunding`, which planning rejects under any ceiling.
         enforcesFundingSpend: true,
         resolve(requirement) {
             const token = find(requirement.network, requirement.asset);
@@ -41,29 +52,27 @@ export function tempoFunder(autoSwap = true) {
         },
         prepare(requirement, { policy, signal }) {
             signal.throwIfAborted();
+            if (policy.maxFundingSpend !== undefined) {
+                // Mppx cannot cap an auto-swap's input, so a ceiling cannot bound it. Fail loudly rather
+                // than silently turning swaps off.
+                if (autoSwap !== false)
+                    throw new InvalidConfigurationError('Tempo auto-swap cannot enforce maxFundingSpend; set autoSwap: false or remove maxFundingSpend');
+            }
+            if (autoSwap === false)
+                return autoSwapDisabled;
             const requested = find(requirement.network, requirement.asset);
             const tokenIn = [...known.values()]
                 .filter((token) => token.network === requested.network &&
                 token.address !== requested.address &&
                 (!policy.sameCurrencyOnly || token.currency === requested.currency))
                 .map((token) => token.address);
-            // Mppx appends its USD default inputs to any list and cannot cap a swap's input, so a swap
-            // into another currency under `sameCurrencyOnly`, or under a `maxFundingSpend` ceiling, cannot
-            // be enforced. Disable swapping then, and when nothing is eligible: payment uses the existing
-            // balance, and Mppx rejects a shortfall.
-            if (autoSwap === false ||
-                policy.maxFundingSpend !== undefined ||
-                tokenIn.length === 0 ||
+            // Mppx appends its USD default inputs to any list, so a swap into another currency under
+            // `sameCurrencyOnly` cannot be enforced. Disable swapping then, and when nothing is eligible:
+            // payment uses the existing balance, and Mppx rejects a shortfall.
+            if (tokenIn.length === 0 ||
                 (policy.sameCurrencyOnly && requested.currency !== mppxDefaultInputCurrency))
                 return autoSwapDisabled;
-            return Object.freeze({
-                context: Object.freeze({
-                    autoSwap: Object.freeze({
-                        tokenIn: Object.freeze(tokenIn),
-                        slippage: policy.maxSlippageBps / 100,
-                    }),
-                }),
-            });
+            return tempoContext(Object.freeze({ tokenIn: Object.freeze(tokenIn), slippage: policy.maxSlippageBps / 100 }));
         },
     });
 }
