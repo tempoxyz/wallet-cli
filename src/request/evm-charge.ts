@@ -5,7 +5,7 @@ import { Assets } from "mppx/evm";
 import { formatUnits, parseUnits } from "viem";
 
 import { fundingError, planAndFund } from "../payment/funding.js";
-import { paymentReceipt } from "../payment/receipt.js";
+import { evmReceiptTxHash, paymentReceipt } from "../payment/receipt.js";
 import { WalletRequiredError } from "../shared/require-wallet.js";
 import { destinationBalance } from "../shared/chains.js";
 import { paymentError, walletError } from "../shared/errors.js";
@@ -24,6 +24,13 @@ import { credentialHeader, type EvmOffer } from "./offers.js";
 import type { RequestOptions } from "./options.js";
 import { fetchPaidRequest, paymentReceipts } from "./paid.js";
 import { MaxSpendExceededError, spendCap } from "./spend.js";
+
+/**
+ * How long one cross-chain funding may take, quote to confirmed delivery: machine-fetch's 30 s
+ * default is shorter than a bridge. Relay deliveries took ~10-20 s and Stargate's LayerZero
+ * delivery ~25 s on mainnet, before the destination RPC shows the balance.
+ */
+export const crossChainDeadlineSeconds = 300;
 
 /**
  * The account that pays EVM offers: a `--private-key` / `TEMPO_PRIVATE_KEY` signer, which is an
@@ -75,7 +82,12 @@ export async function payEvmAndRetry(
   const payer = await evmPayer(options);
   const funding = await crossChainFunding(offer, payer.address, request, options, stderr);
   const funders = funding?.funders ?? [];
-  if (funding) policy = { ...policy, maxFundingSpend: funding.maxFundingSpend };
+  if (funding)
+    policy = {
+      ...policy,
+      maxFundingSpend: funding.maxFundingSpend,
+      deadlineSeconds: crossChainDeadlineSeconds,
+    };
   let prepared;
   try {
     // The attempt ID was saved before this; the payer travels with it, so funding refuses to
@@ -137,7 +149,10 @@ export async function payEvmAndRetry(
         token: destination.usdc.address,
         network,
         payer: payer.address,
-        txHash: null,
+        txHash: evmReceiptTxHash(response, [
+          destination.network.toLowerCase(),
+          destination.name.toLowerCase(),
+        ]),
         chain: { chainId: destination.chainId, name: destination.name },
         listed: { symbol: "USDC", decimals: destination.usdc.decimals },
       }),

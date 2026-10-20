@@ -57,16 +57,17 @@ export function accessKeyMatches(
 /**
  * E_LIMIT_EXCEEDED for an access key whose spending limit cannot cover `amount` (token units) of
  * `token`, with the `tempo wallet keys update` that sets the limit to that amount as its `cta`.
- * `label` names the token in the message.
+ * `label` names the token in the message, and `remaining`, when given, what the key has left.
  */
 export function accessKeyLimitError(options: {
   key: string;
   token: string;
   label: string;
   amount: string;
+  remaining?: string | undefined;
   network: Network;
 }) {
-  const { key, token, label, amount, network } = options;
+  const { key, token, label, amount, remaining, network } = options;
   const command = continuationCommand(
     ["wallet", "keys", "update", key.toLowerCase(), "--token", token, "--limit", amount],
     network,
@@ -74,7 +75,9 @@ export function accessKeyLimitError(options: {
   return new CtaError(
     commandError(
       "E_LIMIT_EXCEEDED",
-      `The access key cannot spend ${amount} ${label}. Ask the wallet owner to run '${command}', then retry.`,
+      remaining === undefined
+        ? `The access key cannot spend ${amount} ${label}. Ask the wallet owner to run '${command}', then retry.`
+        : `The access key has ${remaining} ${label} left of its spending limit, short of ${amount}, so nothing was sent: sending would need the wallet app to approve it instead. Ask the wallet owner to run '${command}', then retry.`,
       command,
     ),
   );

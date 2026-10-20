@@ -159,7 +159,13 @@ function evmOffer(overrides: Record<string, unknown> = {}) {
 }
 
 /** A paid endpoint offering `x402` accepts and `mpp` WWW-Authenticate offers; records credentials. */
-async function service(offers: { x402?: Accept[]; x402Version?: number; mpp?: string[] }) {
+async function service(offers: {
+  x402?: Accept[];
+  x402Version?: number;
+  mpp?: string[];
+  /** Headers the paid response carries, such as a settlement receipt. */
+  settled?: Record<string, string>;
+}) {
   const paid: { header: string; value: string }[] = [];
   let origin = "";
   const server = createServer((req, res) => {
@@ -171,7 +177,7 @@ async function service(offers: { x402?: Accept[]; x402Version?: number; mpp?: st
           ? { header: "payment-signature", value: signature }
           : { header: "authorization", value: authorization as string },
       );
-      res.writeHead(200).end("paid");
+      res.writeHead(200, offers.settled).end("paid");
       return;
     }
     const headers: Record<string, string> = {};
@@ -251,6 +257,54 @@ describe("EVM offers", () => {
       payer: payer.toLowerCase(),
       chain_id: 8453,
       network: "base",
+    });
+  });
+
+  describe("settlement transaction", () => {
+    const tx = `0x${"bc".repeat(32)}`;
+    const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
+    const paidMeta = async (settled: Record<string, string>, offers = { x402: [x402Accept()] }) => {
+      const payer = await remotePayerAddress();
+      fund(baseUsdc, payer, 100_000n);
+      const endpoint = await service({ ...offers, settled });
+      const meta = join(process.env.HOME!, "meta.json");
+      const { stderr } = await run(["--write-meta", meta], endpoint.url);
+      return { stderr, payment: JSON.parse(await readFile(meta, "utf8")).payment };
+    };
+
+    it("records the transaction x402's payment-response names", async () => {
+      const { stderr, payment } = await paidMeta({
+        "payment-response": base64({
+          success: true,
+          payer: seller,
+          transaction: tx,
+          network: "eip155:8453",
+        }),
+      });
+
+      expect(payment.tx_hash).toBe(tx);
+      expect(stderr).toBe(`Paid 0.1 USDC · tx ${tx}\n`);
+    });
+
+    it.each([
+      ["a failed settlement", { success: false, transaction: tx, network: "eip155:8453" }],
+      ["another network", { success: true, transaction: tx, network: "eip155:1" }],
+      ["a malformed hash", { success: true, transaction: "0x12", network: "eip155:8453" }],
+    ])("records no transaction for %s", async (_name, settlement) => {
+      const { payment } = await paidMeta({ "payment-response": base64(settlement) });
+
+      expect(payment.tx_hash).toBeNull();
+    });
+
+    it("records the transaction an MPP evm receipt names", async () => {
+      const receipt = Buffer.from(
+        JSON.stringify({ method: "evm", status: "success", reference: tx }),
+      ).toString("base64url");
+      const { payment } = await paidMeta({ "payment-receipt": receipt }, {
+        mpp: [evmOffer()],
+      } as never);
+
+      expect(payment.tx_hash).toBe(tx);
     });
   });
 

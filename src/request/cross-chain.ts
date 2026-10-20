@@ -110,6 +110,11 @@ export function fundingRoutes(options: {
   stderr?: Pick<NodeJS.WriteStream, "write"> | undefined;
   payer?: Address | undefined;
   symbol?: string | undefined;
+  /**
+   * The destination balance a completed bridge must show, in atomic units: the payment's amount.
+   * @default the operation's own exact output, for reconciliation without the payment
+   */
+  target?: bigint | undefined;
 }): CrossChain.Route[] {
   const { network, asset, destination } = options;
   const symbol = options.symbol ?? tokenSymbol(asset, network.chainId) ?? asset;
@@ -191,7 +196,33 @@ export function fundingRoutes(options: {
       }),
     );
   }
-  return routes;
+  return routes.map((route) =>
+    confirmedDelivery(route, (owner) => destinationBalance(destination, owner), options.target),
+  );
+}
+
+/**
+ * `route` whose `completed` status also requires the destination balance to show the delivery:
+ * until it does, the operation is still `pending`, so machine-fetch keeps polling within its
+ * deadline. A provider can report success before the destination chain's RPC reflects the
+ * transfer, and machine-fetch verifies the balance only once, which then reported a delivered
+ * bridge as an unknown outcome.
+ */
+export function confirmedDelivery(
+  route: CrossChain.Route,
+  balance: (owner: Address) => Promise<bigint>,
+  target: bigint | undefined,
+): CrossChain.Route {
+  return {
+    ...route,
+    async status(operation, context) {
+      const result = await route.status(operation, context);
+      if (result.status !== "completed") return result;
+      const expected = target ?? operation.request.amountOut;
+      const held = await balance(operation.request.to.owner).catch(() => undefined);
+      return held !== undefined && held >= expected ? result : { status: "pending" };
+    },
+  };
 }
 
 /** The route `operation` was submitted through, rebuilt without a signer, for reconciliation. */
@@ -238,6 +269,8 @@ export async function crossChainFunders(options: {
   destination: Destination;
   payer: Address;
   needed: bigint;
+  /** The payment's amount: the destination balance a completed bridge must show. */
+  target: bigint;
   /** The source token of a saved operation this attempt resumes: it must fund from that token. */
   resumeAsset?: Address | undefined;
   maxSpend?: bigint | undefined;
@@ -306,6 +339,7 @@ export async function crossChainFunders(options: {
         stderr: options.stderr,
         payer: options.payer,
         symbol,
+        target: options.target,
       }),
       operations: FileStore.create(operationsDirectory()),
       balance: (account: Evm.TokenAccount) => destinationBalance(destination, account.owner),
@@ -373,6 +407,7 @@ export async function crossChainFunding(
       destination: offer.destination,
       payer,
       needed,
+      target: offer.requirement.amount,
       resumeAsset: resumed?.request.from.asset as Address | undefined,
       maxSpend: limit,
       stderr,

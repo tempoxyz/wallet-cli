@@ -3,7 +3,6 @@ import { MppxFetch } from "machine-fetch/mppx";
 import type { Challenge } from "mppx";
 
 import { type Address, erc20Abi, formatUnits } from "viem";
-import { Actions } from "viem/tempo";
 
 import {
   chargePolicy,
@@ -19,7 +18,7 @@ import { getRecord } from "../shared/utils.js";
 import { accessKeyLimitError } from "../wallet/access-key.js";
 import type { WalletState } from "../wallet/store.js";
 import { fundingSetting, parseMaxSlippageBps } from "./funding-mode.js";
-import { requestNetwork, storedAccessKeyLimit } from "./identity.js";
+import { accessKeySpendLimit, requestNetwork } from "./identity.js";
 import { isMachPaymentToken } from "./mach.js";
 import type { RequestOptions } from "./options.js";
 import { MaxSpendExceededError, spendCap } from "./spend.js";
@@ -67,33 +66,6 @@ export function chargeFunders(
       },
     }) as Funder.Funder<unknown>,
   ];
-}
-
-/**
- * How much of `token` the access key may spend: its stored limit when the store records one (or
- * records its limits exactly), else what the chain enforces. A key the chain holds with a limited
- * spend policy may spend only its remaining limit, zero for a token it lists none for; an
- * unpublished key will be published with its signed limits, under which an unlisted token is zero.
- * `null` when it is unrestricted or cannot be read.
- */
-async function accessKeySpendLimit(key: WalletState["accessKeys"][number], token: Address) {
-  const stored = storedAccessKeyLimit(key, token);
-  if (stored !== null) return stored;
-  const limited = (key.limits?.length ?? 0) > 0;
-  const client = createTempoPublicClient(key.chainId);
-  const account = key.access as Address;
-  const accessKey = key.address as Address;
-  const metadata = await Actions.accessKey
-    .getMetadata(client, { account, accessKey })
-    .catch(() => undefined);
-  const published =
-    metadata && !metadata.isRevoked && metadata.address.toLowerCase() === accessKey.toLowerCase();
-  if (!published) return limited ? 0n : null;
-  if (metadata.spendPolicy !== "limited") return null;
-  return Actions.accessKey.getRemainingLimit(client, { account, accessKey, token }).then(
-    (result) => result.remaining,
-    () => null,
-  );
 }
 
 function tokenBalance(chainId: number, token: Address, owner: Address) {

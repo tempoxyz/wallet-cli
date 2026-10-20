@@ -3,7 +3,7 @@ import { formatUnits } from "viem";
 import { networkFields, type Network } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
 import { knownToken } from "../shared/tokens.js";
-import { decodeBase64UrlJson, escapeInvisible, stringValue } from "../shared/utils.js";
+import { decodeBase64UrlJson, escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
 
 /** What a paid request spent, as `--write-meta` reports it under `payment`. */
 export type PaymentReceipt = ReturnType<typeof paymentReceipt>;
@@ -121,6 +121,35 @@ export function receiptTxHash(response: Response, channelId?: string) {
     if (channelId === undefined) return transactionHash(receipt.reference);
     const sameChannel = stringValue(receipt.channelId).toLowerCase() === channelId.toLowerCase();
     return receipt.intent === "session" && sameChannel ? transactionHash(receipt.txHash) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The settlement transaction a paid EVM charge's response names, or `null`: x402's
+ * `payment-response` header (`x-payment-response` before v2) when it reports success on one of
+ * `networks`, else an MPP `payment-receipt` for the `evm` method. x402 encodes the header in
+ * standard base64.
+ */
+export function evmReceiptTxHash(response: Response, networks: readonly string[]) {
+  for (const name of ["payment-response", "x-payment-response"]) {
+    const header = response.headers.get(name);
+    if (!header) continue;
+    try {
+      const settled = getRecord(JSON.parse(Buffer.from(header, "base64").toString("utf8")));
+      const network = stringValue(settled.network).toLowerCase();
+      if (settled.success === true && (!network || networks.includes(network)))
+        return transactionHash(settled.transaction);
+    } catch {}
+    return null;
+  }
+  const header = response.headers.get("payment-receipt");
+  if (!header) return null;
+  try {
+    const receipt = decodeBase64UrlJson(header);
+    if (receipt.method !== "evm" || receipt.status !== "success") return null;
+    return transactionHash(receipt.reference);
   } catch {
     return null;
   }
