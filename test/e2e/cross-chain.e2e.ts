@@ -244,6 +244,25 @@ describe("cross-chain funding", () => {
     expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
   });
 
+  test("refuses before signing when the wallet cannot cover any route's quote", async () => {
+    // 0.101 USDC passes the rough pre-quote check, but Relay needs 0.1013 and Stargate 0.10101.
+    const wallet = await localWallet(net, { funds: [{ token: net.usdc, limit: 101_000n }] });
+    const endpoint = await x402Endpoint();
+
+    const result = await runCli("request", [endpoint.url], env(wallet));
+
+    expect(result.code).toBe(4);
+    expect(output(result)).toContain("E_INSUFFICIENT_FUNDS");
+    expect(output(result)).toContain("needs 0.10101 of the source token");
+    expect(output(result)).toContain("holds 0.101; nothing was sent");
+    expect(output(result)).not.toContain("Bridging");
+    expect(relay.deposited).toHaveLength(0);
+    expect(stargate.sent).toHaveLength(0);
+    expect(await tempoBalance(net, net.usdc, wallet.address)).toBe(101_000n);
+    const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
+  });
+
   test("recovers a Stargate bridge after the CLI is killed, without bridging again", async () => {
     const wallet = await localWallet(net, { funds: [{ token: net.usdc, limit: 1_000_000n }] });
     const endpoint = await x402Endpoint();

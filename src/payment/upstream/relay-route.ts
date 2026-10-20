@@ -30,7 +30,7 @@ import {
   parseAbi,
 } from "viem";
 
-import { FundingLimitError } from "./funding-limit.js";
+import { FundingLimitError, SourceBalanceError } from "./funding-limit.js";
 
 /** Relay's v2 depository entry point for ERC-20 (TIP-20) deposits. */
 export const relayDepositoryAbi = parseAbi([
@@ -72,6 +72,11 @@ export type RelayDepositRouteOptions = {
   maxGas: bigint;
   /** Ceiling on the source debit, deposit plus gas; checked before anything is signed. */
   maxSpend?: bigint | undefined;
+  /**
+   * The source account's balance of the source token. When given, a quote debiting more than it
+   * is refused before anything is signed, instead of signing a deposit that would revert.
+   */
+  balance?(request: CrossChainRequest): Promise<bigint>;
   /** Validity of a quote that carries no `expiresAt`, in seconds. @default 60 */
   quoteTtlSeconds?: number;
   /** Sign and broadcast exactly `deposit.calls`, atomically; resolve once they are accepted. */
@@ -111,8 +116,13 @@ export function relayDepositRoute(
     url,
     fetch: fetchJson,
     useDepositAddress: !options.depository,
-    guarantees({ quote, request }) {
+    async guarantees({ quote, request }) {
       const deposit = validate(quote, request);
+      if (options.balance) {
+        const held = await options.balance(request);
+        if (held < deposit.amount)
+          throw new SourceBalanceError(deposit.amount, held, request.from.asset);
+      }
       const required = deposit.amount + options.maxGas;
       if (options.maxSpend !== undefined && required > options.maxSpend)
         throw new RelayFundingLimitError(required, options.maxSpend, request.from.asset);

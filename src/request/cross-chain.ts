@@ -124,6 +124,15 @@ export function fundingRoutes(options: {
     return options.signer.sendCalls(calls, asset);
   };
   const routes: CrossChainRoute[] = [];
+  // Both routes refuse a quote the source account cannot cover, before anything is signed.
+  const sourceClient = createTempoPublicClient(network.chainId);
+  const balance = (request: { from: { account: Address; asset: Address } }) =>
+    sourceClient.readContract({
+      address: request.from.asset,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [request.from.account],
+    });
   const url = relayUrl(network);
   if (url) {
     let waiting = false;
@@ -133,6 +142,7 @@ export function fundingRoutes(options: {
         depository: relayDepository(network.chainId),
         maxGas: maxDepositGas,
         maxSpend: options.maxSpend,
+        balance,
         async execute(deposit) {
           await send(deposit.calls);
         },
@@ -164,6 +174,7 @@ export function fundingRoutes(options: {
         client: client as never,
         maxGas: maxDepositGas,
         maxSpend: options.maxSpend,
+        balance,
         ...(process.env.TEMPO_LAYERZERO_SCAN_URL
           ? { scanUrl: process.env.TEMPO_LAYERZERO_SCAN_URL }
           : {}),

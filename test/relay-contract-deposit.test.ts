@@ -5,7 +5,7 @@ import { encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { describe, expect, it } from "vitest";
 
 import { fundingError } from "../src/payment/funding.js";
-import { FundingLimitError } from "../src/payment/upstream/funding-limit.js";
+import { FundingLimitError, SourceBalanceError } from "../src/payment/upstream/funding-limit.js";
 import {
   relayContractDeposit,
   relayDepositoryAbi,
@@ -190,7 +190,7 @@ describe("Relay contract-deposit validation", () => {
 });
 
 describe("Relay route in contract-deposit mode", () => {
-  function route(body: unknown, sent: unknown[] = []) {
+  function route(body: unknown, sent: unknown[] = [], held?: bigint) {
     const requests: Record<string, unknown>[] = [];
     const fetch = (async (_url: string, init?: RequestInit) => {
       requests.push(JSON.parse(String(init?.body ?? "{}")));
@@ -203,6 +203,7 @@ describe("Relay route in contract-deposit mode", () => {
         fetch,
         depository,
         maxGas: 20_000n,
+        ...(held === undefined ? {} : { balance: async () => held }),
         execute: async (deposit) => {
           sent.push(deposit.calls);
         },
@@ -271,5 +272,61 @@ describe("Relay route in contract-deposit mode", () => {
       code: "E_LIMIT_EXCEEDED",
       message: expect.stringContaining("needs up to 0.051303 OUSD, the bridge's fee"),
     });
+  });
+
+  it("refuses a quote the wallet's balance cannot cover, before signing", async () => {
+    const sent: unknown[] = [];
+    await expect(route(quote(), sent, 101_299n).route.quote(request)).rejects.toBeInstanceOf(
+      SourceBalanceError,
+    );
+    await expect(route(quote(), sent, 101_300n).route.quote(request)).resolves.toMatchObject({
+      maxAmountIn: 101_300n,
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  const report = (error: unknown) =>
+    fundingError(error, {
+      network: parseNetwork("mainnet"),
+      policy: {},
+      maxSpendExceeded: () => walletError({ code: "E_RUNTIME", message: "unexpected" }),
+    });
+
+  it.each([
+    ["Relay first", [51_303n, 288_431n]],
+    ["Stargate first", [288_431n, 51_303n]],
+  ])("reports the cheapest route over the cap whichever refused first (%s)", (_name, amounts) => {
+    const error = new NoRouteError("No trusted cross-chain route can fund the payment", {
+      cause: new AggregateError(amounts.map((amount) => new FundingLimitError(amount, 0n, ousd))),
+    });
+    expect(report(error)).toMatchObject({
+      code: "E_LIMIT_EXCEEDED",
+      message: expect.stringContaining("needs up to 0.051303 OUSD"),
+    });
+  });
+
+  it("reports a source shortfall as insufficient funds with what the wallet holds", () => {
+    const error = new NoRouteError("No trusted cross-chain route can fund the payment", {
+      cause: new AggregateError([
+        new SourceBalanceError(268_432n, 14_030n, ousd),
+        new SourceBalanceError(31_305n, 14_030n, ousd),
+      ]),
+    });
+    expect(report(error)).toMatchObject({
+      code: "E_INSUFFICIENT_FUNDS",
+      message: expect.stringContaining(
+        "needs 0.031305 OUSD, the bridge's fee included, and the wallet holds 0.01403; nothing was sent",
+      ),
+    });
+  });
+
+  it("prefers the cap over a shortfall when some route only exceeded the cap", () => {
+    const error = new NoRouteError("No trusted cross-chain route can fund the payment", {
+      cause: new AggregateError([
+        new SourceBalanceError(268_432n, 100_000n, ousd),
+        new FundingLimitError(51_303n, 0n, ousd),
+      ]),
+    });
+    expect(report(error)).toMatchObject({ code: "E_LIMIT_EXCEEDED" });
   });
 });

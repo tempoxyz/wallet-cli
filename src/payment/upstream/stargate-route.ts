@@ -18,7 +18,7 @@ import type {
 } from "machine-fetch/interfaces/evm";
 import { type Address, encodeFunctionData, erc20Abi, type Hex, pad, parseAbi } from "viem";
 
-import { FundingLimitError } from "./funding-limit.js";
+import { FundingLimitError, SourceBalanceError } from "./funding-limit.js";
 
 export const stargateAbi = parseAbi([
   "struct SendParam { uint32 dstEid; bytes32 to; uint256 amountLD; uint256 minAmountLD; bytes extraOptions; bytes composeMsg; bytes oftCmd; }",
@@ -60,6 +60,11 @@ export type StargateRouteOptions = {
   maxGas: bigint;
   /** Ceiling on the source debit, amount plus messaging fee plus gas; checked before signing. */
   maxSpend?: bigint | undefined;
+  /**
+   * The source account's balance of `token`. When given, a quote debiting more than it is refused
+   * before anything is signed, instead of signing a send that would revert.
+   */
+  balance?(request: CrossChainRequest): Promise<bigint>;
   /** LayerZero Scan API base URL. @default https://scan.layerzero-api.com */
   scanUrl?: string;
   fetch?: typeof globalThis.fetch;
@@ -158,6 +163,11 @@ export function stargateRoute(
       })) as { nativeFee: bigint; lzTokenFee: bigint };
       if (lzTokenFee !== 0n || nativeFee <= 0n)
         throw new FundingError("Stargate messaging fee quote is malformed");
+      if (options.balance) {
+        const held = await options.balance(request);
+        if (held < amountLD + nativeFee)
+          throw new SourceBalanceError(amountLD + nativeFee, held, request.from.asset);
+      }
       const required = amountLD + nativeFee + options.maxGas;
       if (options.maxSpend !== undefined && required > options.maxSpend)
         throw new FundingLimitError(required, options.maxSpend, request.from.asset);

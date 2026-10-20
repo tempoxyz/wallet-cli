@@ -2,7 +2,7 @@ import type { CrossChainRequest } from "machine-fetch/interfaces/evm";
 import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress, type Hex, pad } from "viem";
 import { describe, expect, it } from "vitest";
 
-import { FundingLimitError } from "../src/payment/upstream/funding-limit.js";
+import { FundingLimitError, SourceBalanceError } from "../src/payment/upstream/funding-limit.js";
 import {
   feeWrapperAbi,
   stargateAbi,
@@ -135,6 +135,18 @@ describe("Stargate route quotes", () => {
   ])("declines %s", async (_name, change) => {
     const changed = typeof change === "function" ? change(request) : { ...request, ...change };
     await expect(route().stargate.quote(changed)).rejects.toThrow(/^Stargate route declined: /);
+  });
+
+  it("refuses a quote the wallet's balance cannot cover, fee included, before signing", async () => {
+    // 1,000,100 sent plus the 258,429 fee.
+    const short = route({ balance: async () => 1_258_528n });
+    await expect(short.stargate.quote(request)).rejects.toBeInstanceOf(SourceBalanceError);
+    expect(short.executed).toHaveLength(0);
+    await expect(
+      route({ balance: async () => 1_258_529n }).stargate.quote(request),
+    ).resolves.toMatchObject({
+      maxAmountIn: 1_258_529n,
+    });
   });
 
   it("refuses an amount above the OFT's limit", async () => {

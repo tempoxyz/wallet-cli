@@ -18,3 +18,24 @@ export class FundingLimitError extends FundingError {
     this.asset = asset;
   }
 }
+
+/**
+ * [MF-2] A route refused a quote because the source account holds less of the source token than
+ * the quote debits, before anything was signed. Without this, the route would sign a transaction
+ * that reverts on chain, which a durable funder must treat as possibly having moved funds.
+ */
+export class SourceBalanceError extends FundingError {
+  override readonly name: string = "SourceBalanceError";
+  /** The source debit the quote needs, before gas, in atomic units. */
+  readonly required: bigint;
+  /** What the source account holds, in atomic units. */
+  readonly held: bigint;
+  readonly asset: string;
+
+  constructor(required: bigint, held: bigint, asset: string) {
+    super(`Funding needs ${required} atomic units of the source token; the wallet holds ${held}`);
+    this.required = required;
+    this.held = held;
+    this.asset = asset;
+  }
+}
