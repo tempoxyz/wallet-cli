@@ -138,17 +138,19 @@ function validate(challenges = [offer()], flags: string[] = []) {
     options.url,
   );
 }
-async function server(challenges = [offer()]) {
+async function server(challenges = [offer()], sessionByDefault = false) {
   const paid: string[] = [];
   const service = createServer((request, response) => {
     if (request.headers.authorization) {
       paid.push(request.headers.authorization);
       response.end("paid");
     } else {
+      const offered =
+        sessionByDefault && request.headers["accept-payment"] !== "tempo/charge"
+          ? [offer({}, { intent: "session" })]
+          : challenges;
       response.writeHead(402, {
-        "www-authenticate": challenges
-          .map((challenge) => Challenge.serialize(challenge))
-          .join(", "),
+        "www-authenticate": offered.map((challenge) => Challenge.serialize(challenge)).join(", "),
         "payment-required": "untrusted-alternative",
       });
       response.end("payment required");
@@ -172,6 +174,27 @@ it("accepts the concise MACH flag and rejects conflicting selectors", () => {
     ["--payment-token", usdcToken, "--mach"],
   ])
     expect(() => parseRequestArgs([...flags, "https://example.com"])).toThrow("conflicts");
+});
+it.each([
+  ["--mach", "--payment-intent", "charge"],
+  ["--mach"],
+  ["--payment-token", "MACH"],
+  ["--payment-token", deployment.token],
+])("negotiates a MACH charge from a session-default server with %j", async (...flags) => {
+  const selected = offer();
+  const service = await server([selected], true);
+  const chunks: string[] = [];
+  await runRequest([...flags, "--max-spend", "0.015", service.url], {
+    stdout: {
+      write(chunk) {
+        chunks.push(String(chunk));
+        return true;
+      },
+    },
+  });
+  expect(chunks.join("")).toBe("paid");
+  expect(service.paid).toHaveLength(1);
+  expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(selected);
 });
 it("requires a budget before explicit MACH payment, but allows inspection", () => {
   const options = parseRequestArgs(["--mach", "https://example.com"]);

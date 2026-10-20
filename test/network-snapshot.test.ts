@@ -106,8 +106,8 @@ it.each<{ command: string; run: () => Promise<unknown>; continues?: boolean }>([
       ),
   },
   {
-    command: "fund --no-wait",
-    run: () => runFundingFlow({ action: fundAction({}), noBrowser: true, noWait: true }),
+    command: "fund",
+    run: () => runFundingFlow({ action: fundAction({}), noBrowser: true }),
   },
 ])("$command resolves its network from one wallet snapshot", async ({ run, continues }) => {
   const result = await run();

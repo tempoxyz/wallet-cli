@@ -47,6 +47,28 @@ function capture() {
   };
 }
 
+it.each([
+  { flags: ["--payment-intent", "charge"], expected: "tempo/charge" },
+  { flags: ["--payment-intent", "session"], expected: "tempo/session" },
+  { flags: [], expected: undefined },
+  {
+    flags: ["--payment-intent", "charge", "-H", "accept-payment: custom/charge"],
+    expected: "custom/charge",
+  },
+  {
+    flags: ["--mach", "-H", "Accept-Payment: tempo/session"],
+    expected: "tempo/session",
+  },
+])("sends the payment preference for $flags", async ({ flags, expected }) => {
+  const seen: (string | string[] | undefined)[] = [];
+  const url = await server((req, res) => {
+    seen.push(req.headers["accept-payment"]);
+    res.end("ok");
+  });
+  await runRequest([...flags, "--dry-run", url], { stdout: capture() });
+  expect(seen).toEqual([expected]);
+});
+
 it.each(["\n", "\r\n", "\r"])(
   "streams SSE with %j framing before EOF, preserving split UTF-8",
   async (newline) => {

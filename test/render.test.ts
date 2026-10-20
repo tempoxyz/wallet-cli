@@ -422,13 +422,10 @@ const results: { name: string; schema: z.ZodType; data: unknown; cta?: Cta }[] =
       token: usdc,
       symbol: "USDC.e",
       amount: null,
-      balance: "5.89",
-      raw_balance: "5890000",
-      ...next(
-        "Have the user open url and finish funding. Then run the next command to wait for the funds to arrive.",
-        ["tempo", "wallet", "fund", "status", "--network", "mainnet"],
-        { until: '.status != "pending"', poll_interval_seconds: 2 },
-      ),
+      balance: null,
+      raw_balance: null,
+      instruction:
+        "Complete funding in the wallet app. Check the destination wallet's balance before spending.",
     },
   },
 ];
