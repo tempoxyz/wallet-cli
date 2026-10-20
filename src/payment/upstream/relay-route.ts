@@ -115,7 +115,7 @@ export function relayDepositRoute(
       const deposit = validate(quote, request);
       const required = deposit.amount + options.maxGas;
       if (options.maxSpend !== undefined && required > options.maxSpend)
-        throw new RelayFundingLimitError(required, options.maxSpend);
+        throw new RelayFundingLimitError(required, options.maxSpend, request.from.asset);
       const now = Math.floor(Date.now() / 1000);
       const quoted = quote.expiresAt;
       if (quoted !== undefined && (!Number.isSafeInteger(quoted) || (quoted as number) <= now))

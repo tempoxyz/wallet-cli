@@ -160,7 +160,7 @@ export function stargateRoute(
         throw new FundingError("Stargate messaging fee quote is malformed");
       const required = amountLD + nativeFee + options.maxGas;
       if (options.maxSpend !== undefined && required > options.maxSpend)
-        throw new FundingLimitError(required, options.maxSpend);
+        throw new FundingLimitError(required, options.maxSpend, request.from.asset);
       const data: StargateQuoteData = { dstEid, amountLD, nativeFee };
       // The messaging fee is debited in the same token, so it is part of the input: machine-fetch
       // ranks routes by `amountIn` alone ([MF-22]), and this keeps Stargate's flat fee in the

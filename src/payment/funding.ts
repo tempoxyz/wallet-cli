@@ -14,6 +14,7 @@ import { formatUnits, parseUnits } from "viem";
 import { CtaError } from "../cli/incur-compat.js";
 import { commandError, paymentError, walletError } from "../shared/errors.js";
 import { tempoUsdTokens } from "../shared/chains.js";
+import { tokenSymbol } from "../shared/tokens.js";
 import type { Network } from "../shared/network.js";
 import { continuationCommand } from "../shared/next.js";
 import { escapeInvisible, sanitizeText } from "../shared/utils.js";
@@ -172,7 +173,7 @@ export function fundingError(error: unknown, context: FundingErrorContext): unkn
       if (limit)
         return walletError({
           code: "E_LIMIT_EXCEEDED",
-          message: `Cross-chain funding needs up to ${formatUnits(limit.required, 6)} of the source token, the bridge's fee and gas included, above --max-funding-spend. Review it, then rerun with --max-funding-spend ${formatUnits(limit.required, 6)}; nothing was sent.`,
+          message: `Cross-chain funding needs up to ${formatUnits(limit.required, 6)} ${(limit.asset && tokenSymbol(limit.asset, context.network.chainId)) || "of the source token"}, the bridge's fee and gas included, above --max-funding-spend. Review it, then rerun with --max-funding-spend ${formatUnits(limit.required, 6)}; nothing was sent.`,
         });
       const reasons = routeReasons(error);
       return paymentError(reasons.length > 0 ? `${message}: ${reasons.join("; ")}` : message);

@@ -5,6 +5,7 @@ import { encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { describe, expect, it } from "vitest";
 
 import { fundingError } from "../src/payment/funding.js";
+import { FundingLimitError } from "../src/payment/upstream/funding-limit.js";
 import {
   relayContractDeposit,
   relayDepositoryAbi,
@@ -253,6 +254,22 @@ describe("Relay route in contract-deposit mode", () => {
       code: "E_PAYMENT",
       message:
         "No trusted cross-chain route can fund the payment: Relay quote rejected: it approves a spender other than Relay's depository; Stargate cannot bridge this amount right now",
+    });
+  });
+
+  it("names the source token when funding would exceed --max-funding-spend", () => {
+    const error = new NoRouteError("No trusted cross-chain route can fund the payment", {
+      cause: new AggregateError([new FundingLimitError(51_303n, 0n, ousd)]),
+    });
+    expect(
+      fundingError(error, {
+        network: parseNetwork("mainnet"),
+        policy: {},
+        maxSpendExceeded: () => walletError({ code: "E_RUNTIME", message: "unexpected" }),
+      }),
+    ).toMatchObject({
+      code: "E_LIMIT_EXCEEDED",
+      message: expect.stringContaining("needs up to 0.051303 OUSD, the bridge's fee"),
     });
   });
 });
