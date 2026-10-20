@@ -24,4 +24,3 @@ export async function settleConcurrent(values, concurrency, map) {
 export function failureCause(failures, message) {
     return failures.length > 1 ? new AggregateError(failures, message) : failures[0];
 }
-//# sourceMappingURL=concurrent.js.map

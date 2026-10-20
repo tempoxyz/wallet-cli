@@ -1,25 +1,33 @@
-import { MachineFetchError } from './errors.js';
+import { DisposedError } from './errors.js';
 import { createBeforePayment } from './prepare.js';
 import { neverAborted } from './time.js';
-import { assertAttemptId } from './validate.js';
+import { assertOperationId, assertPayer } from './validate.js';
+/** Creates a paid Fetch function from any protocol client; `client` overrides `options.client`. */
+export function machineFetchFrom(client, options = {}) {
+    return machineFetch({ ...options, client });
+}
 /** Creates a Fetch-compatible client that prepares funds before payment signing. */
 export function machineFetch(options) {
-    const bound = options.client.bind({ beforePayment: createBeforePayment(options) });
+    const { payer } = options;
+    if (payer !== undefined)
+        assertPayer(payer);
+    const funders = [...(options.funders ?? []), ...(options.client.funders ?? [])];
+    const bound = options.client.bind({
+        beforePayment: createBeforePayment({ ...options, funders }),
+    });
     let disposed = false;
-    const attempt = (attemptId) => async (input, init) => {
+    const fetcher = (async (input, init) => {
         if (disposed)
-            throw new MachineFetchError('machine-fetch wrapper was disposed', { code: 'DISPOSED' });
-        return bound.fetch(input, init, Object.freeze({ attemptId, signal: requestSignal(input, init) }));
-    };
-    const fetcher = ((input, init) => attempt(crypto.randomUUID())(input, init));
+            throw new DisposedError('machine-fetch wrapper was disposed');
+        const { operationId = crypto.randomUUID(), ...requestInit } = init ?? {};
+        assertOperationId(operationId);
+        return bound.fetch(input, init === undefined ? undefined : requestInit, Object.freeze({
+            operationId,
+            signal: requestSignal(input, init),
+            ...(payer === undefined ? {} : { payer }),
+        }));
+    });
     Object.defineProperties(fetcher, {
-        withAttempt: {
-            value: (attemptId) => {
-                assertAttemptId(attemptId);
-                return attempt(attemptId);
-            },
-            enumerable: true,
-        },
         raw: { value: bound.raw, enumerable: true },
         dispose: {
             value: () => {
@@ -37,4 +45,3 @@ export function requestSignal(input, init) {
         return neverAborted;
     return init?.signal ?? (input instanceof Request ? input.signal : neverAborted);
 }
-//# sourceMappingURL=machine-fetch.js.map

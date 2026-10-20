@@ -3,9 +3,9 @@
  * ceiling (`--max-funding-spend`), before anything was signed. Shared by every bridge route so the
  * CLI reports the amount the quote needed, whichever route quoted it.
  */
-import { FundingError } from "machine-fetch";
+import { Funder } from "machine-fetch";
 
-export class FundingLimitError extends FundingError {
+export class FundingLimitError extends Funder.FundingError {
   override readonly name: string = "FundingLimitError";
   /** The source debit the quote needs, fees and gas included, in atomic units. */
   readonly required: bigint;
@@ -24,7 +24,7 @@ export class FundingLimitError extends FundingError {
  * the quote debits, before anything was signed. Without this, the route would sign a transaction
  * that reverts on chain, which a durable funder must treat as possibly having moved funds.
  */
-export class SourceBalanceError extends FundingError {
+export class SourceBalanceError extends Funder.FundingError {
   override readonly name: string = "SourceBalanceError";
   /** The source debit the quote needs, before gas, in atomic units. */
   readonly required: bigint;

@@ -14,13 +14,9 @@
  * hands the application exactly those calls to sign and send atomically. Proven here by the CLI's
  * hostile-quote tests, then lifted into machine-fetch.
  */
-import { FundingError } from "machine-fetch";
-import type {
-  BoundedCrossChainQuote,
-  CrossChainRequest,
-  CrossChainRoute,
-} from "machine-fetch/interfaces/evm";
-import { type RelayApiQuote, relayProtocol } from "machine-fetch/routes/relay-protocol";
+import { Funder } from "machine-fetch";
+import type { CrossChain } from "machine-fetch/cross-chain";
+import { RelayProtocolRoute } from "machine-fetch/relay";
 import {
   type Address,
   decodeFunctionData,
@@ -76,15 +72,15 @@ export type RelayDepositRouteOptions = {
    * The source account's balance of the source token. When given, a quote debiting more than it
    * is refused before anything is signed, instead of signing a deposit that would revert.
    */
-  balance?(request: CrossChainRequest): Promise<bigint>;
+  balance?(request: CrossChain.Request): Promise<bigint>;
   /** Validity of a quote that carries no `expiresAt`, in seconds. @default 60 */
   quoteTtlSeconds?: number;
   /** Sign and broadcast exactly `deposit.calls`, atomically; resolve once they are accepted. */
-  execute(deposit: RelayDeposit, request: CrossChainRequest): Promise<void>;
+  execute(deposit: RelayDeposit, request: CrossChain.Request): Promise<void>;
   /** Observes progress without affecting it, for example to print it. */
   onProgress?(
     event:
-      | { type: "submitted"; deposit: RelayDeposit; request: CrossChainRequest }
+      | { type: "submitted"; deposit: RelayDeposit; request: CrossChain.Request }
       | { type: "pending"; requestId: string },
   ): void;
 };
@@ -103,15 +99,15 @@ const relayStatuses: Record<string, "pending" | "completed" | "refunded" | "acti
 /** A bounded Relay route, with every quote validated against the configured deposit mode. */
 export function relayDepositRoute(
   options: RelayDepositRouteOptions,
-): CrossChainRoute<BoundedCrossChainQuote> {
+): CrossChain.Route<CrossChain.BoundedQuote> {
   const url = (options.url ?? "https://api.relay.link").replace(/\/$/, "");
   const fetchJson = options.fetch ?? globalThis.fetch;
   const ttl = options.quoteTtlSeconds ?? 60;
-  const validate = (quote: RelayApiQuote, request: CrossChainRequest) =>
+  const validate = (quote: RelayProtocolRoute.ApiQuote, request: CrossChain.Request) =>
     options.depository
       ? relayContractDeposit(quote, request, options.depository)
       : relayDeposit(quote, request);
-  return relayProtocol({
+  return RelayProtocolRoute.create({
     name: options.name ?? "relay",
     url,
     fetch: fetchJson,
@@ -129,7 +125,7 @@ export function relayDepositRoute(
       const now = Math.floor(Date.now() / 1000);
       const quoted = quote.expiresAt;
       if (quoted !== undefined && (!Number.isSafeInteger(quoted) || (quoted as number) <= now))
-        throw new FundingError("Relay quote is expired");
+        throw new Funder.FundingError("Relay quote is expired");
       return {
         maxAmountIn: deposit.amount,
         fees: [
@@ -148,7 +144,7 @@ export function relayDepositRoute(
       // Revalidated from the saved quote: nothing reaches the signer that guarantees did not check.
       const deposit = validate(quote, request);
       if (deposit.amount > limits.maxAmountIn)
-        throw new FundingError("Relay deposit exceeds its maximum input");
+        throw new Funder.FundingError("Relay deposit exceeds its maximum input");
       await options.execute(deposit, request);
       options.onProgress?.({ type: "submitted", deposit, request });
       return { reference: deposit.requestId };
@@ -161,17 +157,17 @@ export function relayDepositRoute(
       );
       if (response.status === 404) return { status: "pending" };
       if (!response.ok)
-        throw new FundingError(`Relay status request failed with HTTP ${response.status}`);
+        throw new Funder.FundingError(`Relay status request failed with HTTP ${response.status}`);
       const body = (await response.json().catch(() => ({}))) as { status?: unknown };
       const status = typeof body.status === "string" ? relayStatuses[body.status] : undefined;
-      if (!status) throw new FundingError("Relay status response is malformed");
+      if (!status) throw new Funder.FundingError("Relay status response is malformed");
       if (status === "pending") options.onProgress?.({ type: "pending", requestId });
       return { status };
     },
   });
 }
 
-const fail = (message: string) => new FundingError(`Relay quote rejected: ${message}`);
+const fail = (message: string) => new Funder.FundingError(`Relay quote rejected: ${message}`);
 
 /**
  * The single transfer a deposit-address quote may ask for, or a FundingError: exactly one
@@ -180,7 +176,10 @@ const fail = (message: string) => new FundingError(`Relay quote rejected: ${mess
  * quoted input and at most that plus slippage. Relay must deliver exactly the requested output of
  * the destination token to the destination account.
  */
-export function relayDeposit(quote: RelayApiQuote, request: CrossChainRequest): RelayDeposit {
+export function relayDeposit(
+  quote: RelayProtocolRoute.ApiQuote,
+  request: CrossChain.Request,
+): RelayDeposit {
   checkDelivery(quote, request);
   const { steps } = quote;
   if (steps.length !== 1) throw fail("it must have exactly one step");
@@ -224,8 +223,8 @@ export function relayDeposit(quote: RelayApiQuote, request: CrossChainRequest): 
  * to the destination account.
  */
 export function relayContractDeposit(
-  quote: RelayApiQuote,
-  request: CrossChainRequest,
+  quote: RelayProtocolRoute.ApiQuote,
+  request: CrossChain.Request,
   depository: Address,
 ): RelayDeposit {
   checkDelivery(quote, request);
@@ -244,7 +243,7 @@ export function relayContractDeposit(
   const deposit = decodeDeposit(depositTx.data);
   if (!deposit) throw fail("its second step is not a depository deposit");
   const [depositor, token, amount, id] = deposit;
-  if (!same(depositor, request.from.account)) throw fail("its deposit credits another account");
+  if (!same(depositor, request.from.owner)) throw fail("its deposit credits another account");
   if (!same(token, request.from.asset)) throw fail("its deposit is of another token");
   if (amount !== approved) throw fail("its approval and deposit amounts differ");
   const orderId = protocolOrderId(quote);
@@ -272,35 +271,35 @@ export function relayContractDeposit(
         data: encodeFunctionData({
           abi: relayDepositoryAbi,
           functionName: "depositErc20",
-          args: [request.from.account, request.from.asset, amount, id as Hex],
+          args: [request.from.owner, request.from.asset, amount, id as Hex],
         }),
       },
     ],
   };
 }
 
-type Step = RelayApiQuote["steps"][number] | undefined;
+type Step = RelayProtocolRoute.ApiQuote["steps"][number] | undefined;
 
 /** Relay must deliver exactly the requested output of the destination token to the payer. */
-function checkDelivery(quote: RelayApiQuote, request: CrossChainRequest) {
+function checkDelivery(quote: RelayProtocolRoute.ApiQuote, request: CrossChain.Request) {
   const { details } = quote;
   if (
     details.currencyOut.currency.chainId !== request.to.chainId ||
     !same(details.currencyOut.currency.address, request.to.asset) ||
-    !same(details.recipient, request.to.account) ||
+    !same(details.recipient, request.to.owner) ||
     details.currencyOut.amount !== request.amountOut.toString()
   )
     throw fail("it does not deliver the requested output to the destination account");
 }
 
 /** A step's one transaction, checked to run on the source chain from the source account. */
-function sourceTransaction(step: Step, request: CrossChainRequest) {
+function sourceTransaction(step: Step, request: CrossChain.Request) {
   const items = step?.items ?? [];
   if (step?.kind !== "transaction" || items.length !== 1 || !items[0]?.data)
     throw fail("each step must be one transaction");
   const tx = items[0].data;
   if (tx.chainId !== request.from.chainId) throw fail("its transaction is on another chain");
-  if (tx.from !== undefined && !same(tx.from, request.from.account))
+  if (tx.from !== undefined && !same(tx.from, request.from.owner))
     throw fail("its transaction is from another account");
   if (tx.value !== undefined && tx.value !== "0") throw fail("its transaction sends value");
   return tx;
@@ -314,8 +313,8 @@ function stepRequestId(step: Step) {
 /** At least the quoted input, at most that plus slippage. */
 function checkAmount(
   amount: bigint,
-  quote: RelayApiQuote,
-  request: CrossChainRequest,
+  quote: RelayProtocolRoute.ApiQuote,
+  request: CrossChain.Request,
   what: string,
 ) {
   const quotedIn = BigInt(quote.details.currencyIn.amount);
@@ -323,7 +322,7 @@ function checkAmount(
   if (amount < quotedIn || amount > bound) throw fail(`${what} is outside the quoted input`);
 }
 
-function protocolOrderId(quote: RelayApiQuote) {
+function protocolOrderId(quote: RelayProtocolRoute.ApiQuote) {
   const protocol = quote.protocol as { v2?: { orderId?: unknown } } | undefined;
   const orderId = protocol?.v2?.orderId;
   return typeof orderId === "string" && /^0x[\da-fA-F]{64}$/.test(orderId) ? orderId : undefined;

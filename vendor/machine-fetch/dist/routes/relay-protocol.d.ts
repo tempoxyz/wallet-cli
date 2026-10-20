@@ -1,32 +1,34 @@
-import type { MaybePromise } from '../interfaces/common.js';
 import type { BoundedCrossChainQuote, CrossChainRequest, CrossChainRoute } from '../interfaces/cross-chain.js';
+import type { EvmClient } from '../interfaces/evm.js';
 /** Transaction fields returned in a Relay Protocol step. Execution must validate them before use. */
-type RelayTx = Readonly<Record<string, unknown>> & Readonly<{
-    chainId?: number;
-    data?: string;
-    from?: string;
-    to?: string;
-    value?: string;
+export type RelayTx = Readonly<Record<string, unknown>> & Readonly<{
+    chainId?: number | undefined;
+    data?: string | undefined;
+    from?: string | undefined;
+    /** Provider gas estimate; used only as an upper bound, never as the signed gas limit. */
+    gas?: string | undefined;
+    to?: string | undefined;
+    value?: string | undefined;
 }>;
 /** One executable or checkable item in a Relay Protocol step. */
-type RelayItem = Readonly<Record<string, unknown>> & Readonly<{
-    check?: Readonly<Record<string, unknown>> & Readonly<{
-        endpoint?: string;
-        method?: string;
-    }>;
-    data?: RelayTx;
-    status?: string;
+export type RelayItem = Readonly<Record<string, unknown>> & Readonly<{
+    check?: (Readonly<Record<string, unknown>> & Readonly<{
+        endpoint?: string | undefined;
+        method?: string | undefined;
+    }>) | undefined;
+    data?: RelayTx | undefined;
+    status?: string | undefined;
 }>;
 /** One Relay Protocol execution step. */
-type RelayStep = Readonly<Record<string, unknown>> & Readonly<{
-    id?: string;
-    items?: readonly RelayItem[];
-    kind?: string;
-    requestId?: string;
-    depositAddress?: string;
+export type RelayStep = Readonly<Record<string, unknown>> & Readonly<{
+    id?: string | undefined;
+    items?: readonly RelayItem[] | undefined;
+    kind?: string | undefined;
+    requestId?: string | undefined;
+    depositAddress?: string | undefined;
 }>;
 /** A source or destination amount in a Relay Protocol quote. */
-type RelayProtocolCurrencyAmount = Readonly<Record<string, unknown>> & Readonly<{
+export type RelayProtocolCurrencyAmount = Readonly<Record<string, unknown>> & Readonly<{
     /** Canonical decimal integer string in atomic units. */
     amount: string;
     currency: Readonly<Record<string, unknown>> & Readonly<{
@@ -47,38 +49,56 @@ export type RelayApiQuote = Readonly<Record<string, unknown>> & Readonly<{
     }>;
     steps: readonly RelayStep[];
 }>;
-/** Executable spending bounds; `submit` must enforce them against the signed wallet actions. */
+/** Executable spending bounds; `submit` enforces them against the signed wallet actions. */
 export type RelayProtocolLimits = Pick<BoundedCrossChainQuote, 'maxAmountIn' | 'fees' | 'expiresAt'>;
-/** Provider endpoint and quote settings. */
-type RelayQuoteOptions = Readonly<{
+/**
+ * Relay Protocol route settings. With `clients`, the route signs, bounds, and tracks Relay steps
+ * itself; each callback replaces one default, for custom signers or provider checks.
+ */
+export type RelayProtocolRouteOptions = Readonly<{
+    /**
+     * Viem clients by chain ID. The source chain's client signs as the `from` owner; the destination
+     * chain's client confirms delivery receipts and reads balances. Required unless both
+     * `guarantees` and `submit` are supplied.
+     */
+    clients?: Readonly<Record<number, EvmClient>> | undefined;
     /** Route name; set distinct names to configure several Relay endpoints. @default relay-protocol */
-    name?: string;
+    name?: string | undefined;
     /** Relay API base URL. @default https://api.relay.link */
-    url?: string;
+    url?: string | undefined;
     /** Fetch implementation override. @default globalThis.fetch */
-    fetch?: typeof globalThis.fetch;
+    fetch?: typeof globalThis.fetch | undefined;
     /** Request a strict single-use deposit address; unsupported origins reject the quote. */
-    useDepositAddress?: boolean;
-}>;
-/** Wallet-owned spending bounds and recoverable execution for Relay Protocol. */
-export type RelayProtocolOptions = RelayQuoteOptions & Readonly<{
-    /** Validate executable source debits, gas maxima, and quote validity before submission. */
-    guarantees(input: Readonly<{
+    useDepositAddress?: boolean | undefined;
+    /**
+     * Validate executable source debits, gas maxima, and quote validity before submission.
+     * @default verifies the steps against a recomputed Relay order and bounds gas with the source client
+     */
+    guarantees?: ((input: Readonly<{
         quote: RelayApiQuote;
         request: CrossChainRequest;
-    }>): MaybePromise<RelayProtocolLimits>;
-    /** Sign and submit the revalidated quote within the saved `limits`. */
-    submit(input: Readonly<{
+    }>) => RelayProtocolLimits | Promise<RelayProtocolLimits>) | undefined;
+    /**
+     * Sign and submit the revalidated quote within the saved `limits`.
+     * @default signs the verified steps with the source client, refusing any transaction whose gas could exceed `limits`
+     */
+    submit?: ((input: Readonly<{
         quote: RelayApiQuote;
         limits: RelayProtocolLimits;
         request: CrossChainRequest;
-    }>): MaybePromise<{
+    }>) => {
         reference: string;
-    }>;
-    /** Recover via operation.quote.reference even when no submission reference was saved. */
-    status: CrossChainRoute<BoundedCrossChainQuote>['status'];
+    } | Promise<{
+        reference: string;
+    }>) | undefined;
+    /**
+     * Recover via operation.quote.reference even when no submission reference was saved.
+     * @default polls Relay's intent status and checks destination receipts with the destination client
+     */
+    status?: CrossChainRoute<BoundedCrossChainQuote>['status'] | undefined;
 }>;
-/** Creates a resumable Relay route with application-supplied signing and status lookup. */
-export declare function relayProtocol(options: RelayProtocolOptions): CrossChainRoute<BoundedCrossChainQuote>;
-export {};
-//# sourceMappingURL=relay-protocol.d.ts.map
+/**
+ * Creates a resumable Relay route. Callbacks default to Viem implementations over `clients`; a
+ * route with clients also reads balances for `CrossChainFunder.create`.
+ */
+export declare function relayProtocolRoute(options: RelayProtocolRouteOptions): CrossChainRoute<BoundedCrossChainQuote>;

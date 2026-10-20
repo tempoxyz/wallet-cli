@@ -57,4 +57,3 @@ export async function withTimeout(run, options) {
         signal.removeEventListener('abort', abort);
     }
 }
-//# sourceMappingURL=time.js.map

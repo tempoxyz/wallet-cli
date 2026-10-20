@@ -2,7 +2,7 @@ import { erc20Abi, getAddress } from 'viem';
 import { readContract } from 'viem/actions';
 import { defineToken } from 'viem/tokens';
 import { failureCause, settleConcurrent } from '../core/concurrent.js';
-import { FundingError, FundingRecoveryError, InsufficientFundsError, NoRouteError, } from '../core/errors.js';
+import { FundingError, FundingRecoveryError, InsufficientFundsError, InvalidConfigurationError, NoRouteError, } from '../core/errors.js';
 import { addSlippage } from '../core/policy.js';
 import { acquiredReceipt, availableReceipt } from '../core/receipt.js';
 import { nowSeconds, untilDeadline, withTimeout } from '../core/time.js';
@@ -13,11 +13,11 @@ const executionModes = ['bounded', 'provider-managed'];
 /** Validates a caller-owned route and returns a frozen snapshot of its route fields. */
 export function evmRoute(route) {
     if (typeof route.name !== 'string' || !route.name.trim())
-        throw configuration('EVM route name must be a non-empty string');
+        throw new InvalidConfigurationError('EVM route name must be a non-empty string');
     if (route.executionMode !== undefined && !executionModes.includes(route.executionMode))
-        throw configuration('EVM route executionMode must be bounded or provider-managed');
+        throw new InvalidConfigurationError('EVM route executionMode must be bounded or provider-managed');
     if (typeof route.quote !== 'function' || typeof route.execute !== 'function')
-        throw configuration('EVM route quote and execute must be functions');
+        throw new InvalidConfigurationError('EVM route quote and execute must be functions');
     return Object.freeze({
         // Reads prototype getters too, so class-based routes keep their name.
         name: route.name,
@@ -30,7 +30,7 @@ export function evmRoute(route) {
  * Creates a funder that acquires exact EVM payment assets through caller-trusted routes. It does
  * not enforce `maxFundingSpend`, so payment funding rejects that policy before calling it.
  */
-export function evmFund(options) {
+export function evmFunder(options) {
     validateOptions(options);
     const configured = optionsSnapshot(options);
     // One settled tail per chain and account; the set of keys is bounded by the configured accounts.
@@ -52,16 +52,16 @@ export function evmFund(options) {
             context.signal.throwIfAborted();
             const resolved = resolveRequirement(requirement, configured.outputs);
             if (!resolved)
-                throw configuration('EVM payment token is not configured');
+                throw new InvalidConfigurationError('EVM payment token is not configured');
             const client = await configured.client(resolved.chainId);
             if (!client)
-                throw configuration(`No Viem client configured for chain ${resolved.chainId}`);
+                throw new InvalidConfigurationError(`No Viem client configured for chain ${resolved.chainId}`);
             const account = configured.account ?? client.account?.address;
             if (!account)
-                throw configuration('An EVM account address is required');
+                throw new InvalidConfigurationError('An EVM account address is required');
             // Funds acquired by an account that will not sign the payment cannot pay for it.
             if (!isPayer(context.payer, account))
-                throw configuration('EVM funding account is not the payer');
+                throw new InvalidConfigurationError('EVM funding account is not the payer');
             // Stryker disable next-line MethodExpression: any consistent case fold yields equal lock keys
             const key = `${resolved.chainId}:${account.toLowerCase()}`;
             return withLock(locks, key, () => acquire({ options: configured, context, client, account, requirement, resolved }));
@@ -82,7 +82,7 @@ async function acquire(acquisition) {
     const selected = await selectCandidate(acquisition, amountOut, deadline);
     const result = await selected.route.execute(Object.freeze({
         account,
-        attemptId: context.attemptId,
+        operationId: context.operationId,
         chainId: resolved.chainId,
         client,
         tokenIn: selected.tokenIn,
@@ -95,7 +95,7 @@ async function acquire(acquisition) {
         signal: context.signal,
     }));
     // The route has executed, so funds may have moved even if verification fails.
-    const recovery = (detail) => new FundingRecoveryError(context.attemptId, {
+    const recovery = (detail) => new FundingRecoveryError(context.operationId, {
         ...detail,
         ...(result?.reference ? { reference: result.reference } : {}),
     });
@@ -104,7 +104,7 @@ async function acquire(acquisition) {
     });
     if (fundedBalance < requirement.amount)
         throw recovery({
-            message: `Route completed without acquiring the required payment balance; reconcile operation ${context.attemptId} before retrying`,
+            message: `Route completed without acquiring the required payment balance; reconcile operation ${context.operationId} before retrying`,
         });
     return Object.freeze({
         funding: acquiredReceipt({
@@ -128,7 +128,7 @@ async function selectCandidate(acquisition, amountOut, deadline) {
     const { results, failures } = await settleConcurrent(jobs, options.concurrency ?? defaultConcurrency, async ({ balance, route, tokenIn }) => {
         const quoted = await quoteRoute(route, {
             account,
-            attemptId: context.attemptId,
+            operationId: context.operationId,
             amountOut,
             chainId: resolved.chainId,
             client,
@@ -266,17 +266,17 @@ async function withLock(locks, key, run) {
 }
 function validateOptions(options) {
     if (options.outputs.length === 0)
-        throw configuration('At least one payment token is required');
+        throw new InvalidConfigurationError('At least one payment token is required');
     if (options.inputs.length === 0)
-        throw configuration('At least one source token is required');
+        throw new InvalidConfigurationError('At least one source token is required');
     if (options.routes.length === 0)
-        throw configuration('At least one trusted route is required');
+        throw new InvalidConfigurationError('At least one trusted route is required');
     assertQuoteOptions(options);
     for (const token of [...options.outputs, ...options.inputs]) {
         if (!isTokenDecimals(token.decimals))
-            throw configuration('Token decimals must be an integer from 0 to 255');
+            throw new InvalidConfigurationError('Token decimals must be an integer from 0 to 255');
         if (!Object.values(token.addresses).every(isEvmAddress))
-            throw configuration('Token addresses must be EVM addresses');
+            throw new InvalidConfigurationError('Token addresses must be EVM addresses');
     }
 }
 function optionsSnapshot(options) {
@@ -301,7 +301,3 @@ function tokenSnapshot(token) {
     Object.freeze(snapshot);
     return snapshot;
 }
-function configuration(message) {
-    return new FundingError(message, { code: 'INVALID_CONFIGURATION' });
-}
-//# sourceMappingURL=evm.js.map

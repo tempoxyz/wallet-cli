@@ -1,4 +1,4 @@
-import { FundingError, MachineFetchError } from './errors.js';
+import { InvalidConfigurationError } from './errors.js';
 /** Largest ERC-20/TIP-20 decimal value representable by the uint8 convention. */
 const maxTokenDecimals = 255;
 /** Whether a value is a valid token decimal count. */
@@ -26,19 +26,15 @@ export function canonicalIdentifier(network, identifier) {
 export function assetKey(asset) {
     return JSON.stringify([asset.network, canonicalIdentifier(asset.network, asset.asset)]);
 }
-/** Rejects attempt IDs that cannot identify a request. */
-export function assertAttemptId(attemptId) {
-    if (typeof attemptId !== 'string' || !attemptId.trim())
-        throw new MachineFetchError('Attempt ID must be a non-empty string', {
-            code: 'INVALID_CONFIGURATION',
-        });
+/** Rejects operation IDs that cannot identify a request. */
+export function assertOperationId(operationId) {
+    if (typeof operationId !== 'string' || !operationId.trim())
+        throw new InvalidConfigurationError('Operation ID must be a non-empty string');
 }
 /** Rejects a payer that cannot identify a signing account. */
 export function assertPayer(payer) {
     if (typeof payer !== 'string' || !payer.trim())
-        throw new MachineFetchError('Payer must be a non-empty string', {
-            code: 'INVALID_CONFIGURATION',
-        });
+        throw new InvalidConfigurationError('Payer must be a non-empty string');
 }
 /** Whether an optional payer is `account`; EVM addresses compare case-insensitively. */
 export function isPayer(payer, account) {
@@ -54,14 +50,11 @@ export function isRecord(value) {
 export function assertQuoteOptions(options) {
     if (options.concurrency !== undefined &&
         (!Number.isInteger(options.concurrency) || options.concurrency <= 0))
-        throw new FundingError('concurrency must be a positive integer', {
-            code: 'INVALID_CONFIGURATION',
-        });
+        throw new InvalidConfigurationError('concurrency must be a positive integer');
     if (options.timeoutMs !== undefined && !isPositive(options.timeoutMs))
-        throw new FundingError('timeoutMs must be a positive number', { code: 'INVALID_CONFIGURATION' });
+        throw new InvalidConfigurationError('timeoutMs must be a positive number');
 }
 /** Whether a value is a finite number greater than zero. */
 export function isPositive(value) {
     return Number.isFinite(value) && value > 0;
 }
-//# sourceMappingURL=validate.js.map

@@ -1,5 +1,5 @@
 import { Errors } from "incur";
-import type { PaymentPolicy } from "machine-fetch/interfaces";
+import type { Policy } from "machine-fetch";
 import { evm, Mppx } from "mppx/client";
 import { Assets } from "mppx/evm";
 import { formatUnits, parseUnits } from "viem";
@@ -54,7 +54,7 @@ export async function payEvmAndRetry(
 ) {
   const network = requestNetwork(options);
   const { destination, requirement } = offer;
-  let policy: PaymentPolicy = {
+  let policy: Policy.Policy = {
     maxPayment: [
       {
         network: destination.network,
@@ -84,7 +84,7 @@ export async function payEvmAndRetry(
       policy,
       funders,
       payer: payer.address,
-      attemptId: funding?.attemptId,
+      operationId: funding?.attemptId,
     });
   } catch (error) {
     await funding?.abandon().catch(() => undefined);

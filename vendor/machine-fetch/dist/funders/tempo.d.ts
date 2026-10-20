@@ -1,13 +1,22 @@
 import { type Address } from 'viem';
-import type { Funder } from '../interfaces/funder.js';
-/** A TIP-20 token and its reference currency. */
-export type TempoToken = Readonly<{
-    address: Address;
-    /** Reference currency reported by the token, such as USD or EUR. */
-    currency: string;
+import { type Token } from 'viem/tokens';
+import type { Funder, PaymentPreparation } from '../interfaces/funder.js';
+/**
+ * Tempo auto-swap settings for Mppx payments. `false` never swaps; `true` swaps from pathUSD and
+ * USDC; `{ tokens }` also trusts and swaps from the given Viem tokens, first and in order.
+ */
+export type TempoAutoSwap = boolean | Readonly<{
+    /**
+     * Viem tokens to swap from first, in order, on each chain in their `addresses`. They are also
+     * trusted payment tokens: a Tempo payment in one resolves the token's `currency` and
+     * `decimals`, which a currency `maxPayment` needs. Each must declare a `currency`. Mppx
+     * appends pathUSD and USDC to every swap list, so this sets priority and is not an allowlist.
+     * @default []
+     */
+    tokens?: readonly Token[] | undefined;
 }>;
-/** Mppx Tempo charge context that {@link tempoDex} supplies for each payment. */
-export type TempoDexContext = Readonly<{
+/** Mppx Tempo charge context machine-fetch supplies for each Tempo payment. */
+export type TempoContext = Readonly<{
     /**
      * `false` disables auto-swap for the payment. Otherwise Mppx tries `tokenIn` in order, then its
      * own pathUSD and USDC defaults, with `slippage` in percent.
@@ -17,32 +26,11 @@ export type TempoDexContext = Readonly<{
         slippage: number;
     }>;
 }>;
-/** Options for Mppx's canonical Tempo stablecoin DEX route. */
-export type TempoDexOptions = Readonly<{
-    /** Tempo chain ID; set explicitly for testnet or local Tempo nodes. Defaults to mainnet. */
-    chainId?: number;
-    /**
-     * Funding tokens to try first, in order; defaults to canonical pathUSD then USDC. Mppx 0.12
-     * appends pathUSD and USDC to every swap list, so this sets priority and is not an allowlist.
-     * Inputs that are the requested token, or in another currency under `sameCurrencyOnly`, are
-     * skipped; when none remains, auto-swap is disabled for that payment. A bare address is a USD
-     * token; pass `{ address, currency }` for any other currency.
-     */
-    preferredInputs?: readonly (Address | TempoToken)[];
-    /**
-     * Requested tokens eligible for automatic acquisition, in the same form as `preferredInputs`;
-     * defaults to canonical pathUSD and USDC.
-     */
-    outputs?: readonly (Address | TempoToken)[];
-}>;
+/** Context that stops Mppx from swapping, whatever the method's own auto-swap setting. */
+export declare const autoSwapDisabled: PaymentPreparation<TempoContext>;
 /**
- * Uses Mppx's atomic canonical Tempo stablecoin DEX path.
- *
- * Slippage comes from machine-fetch `maxSlippageBps`; method-level Mppx auto-swap configuration is
- * unnecessary because the funder supplies credential context immediately before signing. With
- * `sameCurrencyOnly`, only inputs in the requested token's currency are offered to the swap, and
- * swaps into a non-USD token are disabled because Mppx's appended inputs are USD. It does not
- * enforce `maxFundingSpend`, so payment funding rejects that policy before calling it.
+ * The funder every Mppx entry point adds after the configured ones. It trusts metadata only for
+ * known tokens, and supplies auto-swap context from machine-fetch policy immediately before
+ * signing, so policy overrides the method's own auto-swap setting.
  */
-export declare function tempoDex(options?: TempoDexOptions): Funder<TempoDexContext>;
-//# sourceMappingURL=tempo.d.ts.map
+export declare function tempoFunder(autoSwap?: TempoAutoSwap): Funder<TempoContext>;

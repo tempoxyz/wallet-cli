@@ -6,6 +6,9 @@ export function memoryStore() {
         get(id) {
             return structuredClone(operations.get(id));
         },
+        list() {
+            return [...operations.values()].map((operation) => structuredClone(operation));
+        },
         claim(operation) {
             if (operations.has(operation.id))
                 return false;
@@ -23,4 +26,3 @@ export function memoryStore() {
         },
     });
 }
-//# sourceMappingURL=memory.js.map

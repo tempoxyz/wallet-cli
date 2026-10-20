@@ -201,7 +201,8 @@ describe("Tempo DEX funding", () => {
     await run([], paid.url);
 
     expect(paid.paid()).toBe(1);
-    expect(credentialContexts).toEqual([undefined]);
+    // No swap, stated explicitly so a method-level auto-swap cannot apply either.
+    expect(credentialContexts).toEqual([{ autoSwap: false }]);
   });
 
   it.each([
@@ -216,7 +217,8 @@ describe("Tempo DEX funding", () => {
 
     await run(args, paid.url);
 
-    expect(credentialContexts).toEqual([undefined]);
+    // No swap, stated explicitly so a method-level auto-swap cannot apply either.
+    expect(credentialContexts).toEqual([{ autoSwap: false }]);
   });
 
   it("refuses a non-USD token before signing instead of swapping into it", async () => {

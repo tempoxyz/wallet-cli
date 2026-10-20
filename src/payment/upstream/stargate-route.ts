@@ -10,12 +10,8 @@
  * amount to the OFT, and `sendToken` with `minAmountLD` equal to the exact output, so Stargate
  * reverts rather than deliver less.
  */
-import { FundingError } from "machine-fetch";
-import type {
-  BoundedCrossChainQuote,
-  CrossChainRequest,
-  CrossChainRoute,
-} from "machine-fetch/interfaces/evm";
+import { Funder } from "machine-fetch";
+import type { CrossChain } from "machine-fetch/cross-chain";
 import { type Address, encodeFunctionData, erc20Abi, type Hex, pad, parseAbi } from "viem";
 
 import { FundingLimitError, SourceBalanceError } from "./funding-limit.js";
@@ -64,19 +60,19 @@ export type StargateRouteOptions = {
    * The source account's balance of `token`. When given, a quote debiting more than it is refused
    * before anything is signed, instead of signing a send that would revert.
    */
-  balance?(request: CrossChainRequest): Promise<bigint>;
+  balance?(request: CrossChain.Request): Promise<bigint>;
   /** LayerZero Scan API base URL. @default https://scan.layerzero-api.com */
   scanUrl?: string;
   fetch?: typeof globalThis.fetch;
   /** Validity of a quote, in seconds; messaging fees move with gas prices. @default 30 */
   quoteTtlSeconds?: number;
   /** Sign and broadcast exactly `calls`, atomically; resolve with the transaction hash. */
-  execute(calls: readonly { to: Address; data: Hex }[], request: CrossChainRequest): Promise<Hex>;
+  execute(calls: readonly { to: Address; data: Hex }[], request: CrossChain.Request): Promise<Hex>;
   /** Whether the source transaction `hash` reverted, so nothing moved; `undefined` if unknown. */
   reverted?(hash: Hex): Promise<boolean | undefined>;
   onProgress?(
     event:
-      | { type: "submitted"; hash: Hex; amount: bigint; fee: bigint; request: CrossChainRequest }
+      | { type: "submitted"; hash: Hex; amount: bigint; fee: bigint; request: CrossChain.Request }
       | { type: "pending"; hash: Hex },
   ): void;
 };
@@ -96,15 +92,15 @@ const scanStatuses: Record<string, "pending" | "completed" | "actionRequired"> =
 /** A bounded Stargate route from `token` on Tempo to native USDC on a configured destination. */
 export function stargateRoute(
   options: StargateRouteOptions,
-): CrossChainRoute<BoundedCrossChainQuote> {
+): CrossChain.Route<CrossChain.BoundedQuote> {
   const name = options.name ?? "stargate";
   const scanUrl = (options.scanUrl ?? "https://scan.layerzero-api.com").replace(/\/$/, "");
   const fetchJson = options.fetch ?? globalThis.fetch;
   const ttl = options.quoteTtlSeconds ?? 30;
 
-  const sendParam = (request: CrossChainRequest, dstEid: number, amountLD: bigint) => ({
+  const sendParam = (request: CrossChain.Request, dstEid: number, amountLD: bigint) => ({
     dstEid,
-    to: pad(request.to.account),
+    to: pad(request.to.owner),
     amountLD,
     minAmountLD: request.amountOut,
     extraOptions: "0x" as Hex,
@@ -113,8 +109,9 @@ export function stargateRoute(
     oftCmd: "0x" as Hex,
   });
 
-  const check = (request: CrossChainRequest) => {
-    const fail = (message: string) => new FundingError(`Stargate route declined: ${message}`);
+  const check = (request: CrossChain.Request) => {
+    const fail = (message: string) =>
+      new Funder.FundingError(`Stargate route declined: ${message}`);
     if (request.from.asset.toLowerCase() !== options.token.toLowerCase())
       throw fail("the source token is not the OFT's token");
     const dstEid = options.endpointIds[String(request.to.chainId)];
@@ -140,7 +137,7 @@ export function stargateRoute(
           args: [sendParam(request, dstEid, amountLD)],
         })) as [{ maxAmountLD: bigint }, unknown, { amountReceivedLD: bigint }];
         if (amountLD > limit.maxAmountLD)
-          throw new FundingError("Stargate cannot bridge this amount right now");
+          throw new Funder.FundingError("Stargate cannot bridge this amount right now");
         return receipt.amountReceivedLD;
       };
       let amountLD = request.amountOut;
@@ -148,7 +145,7 @@ export function stargateRoute(
         const received = await receive(amountLD);
         if (received >= request.amountOut) break;
         if (round === 3 || received === 0n)
-          throw new FundingError("Stargate quote does not cover the requested output");
+          throw new Funder.FundingError("Stargate quote does not cover the requested output");
         amountLD = (amountLD * request.amountOut + received - 1n) / received;
       }
       for (let step = 0; step < 2 && amountLD > request.amountOut; step += 1) {
@@ -162,7 +159,7 @@ export function stargateRoute(
         args: [sendParam(request, dstEid, amountLD), false],
       })) as { nativeFee: bigint; lzTokenFee: bigint };
       if (lzTokenFee !== 0n || nativeFee <= 0n)
-        throw new FundingError("Stargate messaging fee quote is malformed");
+        throw new Funder.FundingError("Stargate messaging fee quote is malformed");
       if (options.balance) {
         const held = await options.balance(request);
         if (held < amountLD + nativeFee)
@@ -182,7 +179,7 @@ export function stargateRoute(
         amountOut: request.amountOut,
         minAmountOut: request.amountOut,
         expiresAt: Math.min(Math.floor(Date.now() / 1000) + ttl, request.deadline),
-        reference: `stargate:${request.id}`,
+        reference: `stargate:${request.operationId}`,
         data,
         fees: [
           {
@@ -212,7 +209,7 @@ export function stargateRoute(
         typeof data.nativeFee !== "bigint" ||
         data.amountLD + data.nativeFee !== quote.maxAmountIn
       )
-        throw new FundingError("Stargate quote data is malformed");
+        throw new Funder.FundingError("Stargate quote data is malformed");
       const { amountLD, nativeFee } = data;
       const calls = [
         {
@@ -228,7 +225,7 @@ export function stargateRoute(
           data: encodeFunctionData({
             abi: feeWrapperAbi,
             functionName: "wrap",
-            args: [options.token, request.from.account, nativeFee],
+            args: [options.token, request.from.owner, nativeFee],
           }),
         },
         {
@@ -255,7 +252,7 @@ export function stargateRoute(
             args: [
               sendParam(request, dstEid, amountLD),
               { nativeFee, lzTokenFee: 0n },
-              request.from.account,
+              request.from.owner,
             ],
           }),
         },
@@ -272,14 +269,14 @@ export function stargateRoute(
       const response = await fetchJson(`${scanUrl}/v1/messages/tx/${hash}`, { signal });
       if (response.status === 404) return { status: "pending" };
       if (!response.ok)
-        throw new FundingError(`LayerZero Scan request failed with HTTP ${response.status}`);
+        throw new Funder.FundingError(`LayerZero Scan request failed with HTTP ${response.status}`);
       const body = (await response.json().catch(() => ({}))) as {
         data?: { status?: { name?: unknown } }[];
       };
       const first = body.data?.[0]?.status?.name;
       if (body.data?.length === 0) return { status: "pending" };
       const status = typeof first === "string" ? scanStatuses[first] : undefined;
-      if (!status) throw new FundingError("LayerZero Scan response is malformed");
+      if (!status) throw new Funder.FundingError("LayerZero Scan response is malformed");
       if (status === "pending") options.onProgress?.({ type: "pending", hash: hash as Hex });
       return { status };
     },

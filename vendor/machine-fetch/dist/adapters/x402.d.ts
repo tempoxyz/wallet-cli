@@ -17,4 +17,3 @@ export declare function x402Fetch(client: x402Client, options?: X402FetchOptions
 export declare function fromX402(client: x402Client, options?: FromX402Options): PaymentClient<never>;
 /** Converts an official x402 selection to the common payment model. */
 export declare function x402Requirement(context: PaymentCreationContext): PaymentRequirement;
-//# sourceMappingURL=x402.d.ts.map

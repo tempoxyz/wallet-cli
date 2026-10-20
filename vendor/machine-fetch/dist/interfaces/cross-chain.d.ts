@@ -1,10 +1,11 @@
 import type { Address } from 'viem';
-import type { MaybePromise } from './common.js';
 import type { Funder, FundingReceipt } from './funder.js';
 import type { AssetAmount, FundingPolicy } from './policy.js';
-/** Canonical metadata for one account-held EVM asset used by a relay route. */
-export type EvmAccount = Readonly<{
-    account: Address;
+/** One EVM token held by one owner: the source or destination of cross-chain funding. */
+export type EvmTokenAccount = Readonly<{
+    /** Address that holds the token and signs or receives funding. */
+    owner: Address;
+    /** Token contract address. */
     asset: Address;
     chainId: number;
     currency: string;
@@ -17,16 +18,16 @@ export type CrossChainRequest = Readonly<{
     amountOut: bigint;
     /** Unix timestamp in seconds bounding the funding operation. */
     deadline: number;
-    from: EvmAccount;
+    from: EvmTokenAccount;
     maxSlippageBps: number;
     /**
-     * Operation identity shared by quoting and execution: the attempt ID of the paid request, or the
-     * explicit top-up ID. Use it as the provider idempotency key.
+     * Shared by quoting and execution: the paid request's operation ID, or the explicit top-up ID.
+     * Use it as the provider idempotency key.
      */
-    id: string;
+    operationId: string;
     /** Cooperative cancellation signal; abort does not prove funds have not moved. */
     signal: AbortSignal;
-    to: EvmAccount;
+    to: EvmTokenAccount;
 }>;
 /** Fields every route-bound exact-output quote carries. */
 export type CrossChainQuoteBase = Readonly<{
@@ -35,7 +36,7 @@ export type CrossChainQuoteBase = Readonly<{
     /** Opaque provider-owned quote data; execution must independently validate it. */
     data?: unknown;
     /** Unix timestamp in seconds; an expired quote cannot execute. */
-    expiresAt?: number;
+    expiresAt?: number | undefined;
     reference: string;
 }>;
 /** A fee maximum; included fees are already covered by maxAmountIn. */
@@ -67,27 +68,32 @@ export type CrossChainOperation<quote extends CrossChainQuote = CrossChainQuote>
     requirementKey: string;
     request: Omit<CrossChainRequest, 'signal'>;
     quote: quote;
-    reference?: string;
+    reference?: string | undefined;
 }>;
 /** Application-owned durable storage; claim must atomically insert only when absent. */
 export type CrossChainOperationStore = Readonly<{
-    get(id: string): MaybePromise<CrossChainOperation | undefined>;
-    claim(operation: CrossChainOperation): MaybePromise<boolean>;
+    get(id: string): CrossChainOperation | undefined | Promise<CrossChainOperation | undefined>;
+    /**
+     * Every claimed operation that was not released, with its reference when attached, in no
+     * particular order. Completed operations are retained, so reconcile each with `recover`.
+     */
+    list(): readonly CrossChainOperation[] | Promise<readonly CrossChainOperation[]>;
+    claim(operation: CrossChainOperation): boolean | Promise<boolean>;
     /** Atomically attach a reference; reject attempts to replace a different reference. */
-    setReference(id: string, reference: string): MaybePromise<void>;
+    setReference(id: string, reference: string): void | Promise<void>;
     /**
      * Remove a claimed operation that was never submitted, so its ID can be retried with a fresh
      * quote. Must reject when a reference is attached. Without it, such operations stay claimed.
      */
-    release?(id: string): MaybePromise<void>;
+    release?: ((id: string) => void | Promise<void>) | undefined;
 }>;
 /** Provider state; only completed permits payment credential creation. */
 export type CrossChainStatus = Readonly<{
     status: 'pending' | 'completed' | 'refunded' | 'actionRequired';
     /** Actual source spend when the provider reports it after completion. */
-    amountIn?: bigint;
+    amountIn?: bigint | undefined;
     /** Actual destination delivery when the provider reports it after completion. */
-    amountOut?: bigint;
+    amountOut?: bigint | undefined;
 }>;
 /**
  * Resumable relay integration. `bounded` routes (the default) must return
@@ -96,52 +102,64 @@ export type CrossChainStatus = Readonly<{
  */
 export type CrossChainRoute<quote extends CrossChainQuote = CrossChainQuote> = Readonly<{
     name: string;
-    executionMode?: 'bounded' | 'provider-managed';
-    quote(request: CrossChainRequest): MaybePromise<quote>;
+    executionMode?: 'bounded' | 'provider-managed' | undefined;
+    quote(request: CrossChainRequest): quote | Promise<quote>;
     /** Use request.id for provider idempotency and recovery, before broadcasting. */
     submit(input: Readonly<{
         quote: quote;
         request: CrossChainRequest;
-    }>): MaybePromise<{
+    }>): {
+        reference: string;
+    } | Promise<{
         reference: string;
     }>;
     /** Recover using operation.id/quote when submit returned no reference; never resubmit. */
     status(operation: CrossChainOperation<quote>, context: Readonly<{
         signal: AbortSignal;
-    }>): MaybePromise<CrossChainStatus>;
+    }>): CrossChainStatus | Promise<CrossChainStatus>;
+    /**
+     * Reads an account's balance on chain, in atomic units, through the application's own client,
+     * never the provider. `CrossChainFunder.create` uses the first route that has one when no
+     * `balance` option is set.
+     */
+    balance?: ((account: EvmTokenAccount) => bigint | Promise<bigint>) | undefined;
 }>;
 /** Options for exact-output cross-network payment funding. */
-export type CrossChainFundOptions = Readonly<{
-    /** Read the destination balance independently of the relay; return atomic units. */
-    balance(account: EvmAccount): MaybePromise<bigint>;
-    from: EvmAccount;
+export type CrossChainFunderOptions = Readonly<{
+    /**
+     * Read the destination balance independently of the relay; return atomic units.
+     * @default the first route's `balance`, such as a `RelayProtocolRoute` created with `clients`
+     */
+    balance?: ((account: EvmTokenAccount) => bigint | Promise<bigint>) | undefined;
+    from: EvmTokenAccount;
     routes: readonly CrossChainRoute[];
-    to: EvmAccount;
+    to: EvmTokenAccount;
     /** Maximum simultaneous route quote calls. @default 4 */
-    concurrency?: number;
+    concurrency?: number | undefined;
     /** Maximum time allowed for one route quote. @default 10000 */
-    timeoutMs?: number;
+    timeoutMs?: number | undefined;
     /** Durable storage; atomic claims must survive process restarts. */
     operations: CrossChainOperationStore;
     /** Status polling interval. @default 1000 */
-    pollIntervalMs?: number;
+    pollIntervalMs?: number | undefined;
 }>;
-/** Explicit replenishment settings for the funder's configured destination account. */
+/**
+ * Explicit replenishment settings for the funder's configured destination account, plus funding
+ * limits. `maxPayment` does not apply: replenishment is not a payment.
+ */
 export type EnsureBalanceOptions = Readonly<{
     minimum: bigint;
     target: bigint;
     /** Identity shared by quoting and execution; persist it to reconcile ambiguous submission. */
     operationId: string;
-    policy?: FundingPolicy;
-    signal?: AbortSignal;
-}>;
+    signal?: AbortSignal | undefined;
+}> & FundingPolicy;
 /** Payment funding plus explicit, independently budgeted balance replenishment. */
 export type CrossChainFunder = Funder & Readonly<{
     ensureBalance(options: EnsureBalanceOptions): Promise<FundingReceipt | undefined>;
     /** Reconciles an existing operation without quoting or submitting again. */
     recover(operationId: string, options?: Readonly<{
-        signal?: AbortSignal;
-        deadlineSeconds?: number;
-    }>): Promise<FundingReceipt>;
+        signal?: AbortSignal | undefined;
+        deadlineSeconds?: number | undefined;
+    }> | undefined): Promise<FundingReceipt>;
 }>;
-//# sourceMappingURL=cross-chain.d.ts.map

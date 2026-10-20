@@ -48,11 +48,11 @@ for (const asset of crossChainSources(tempo)) {
     );
   for (const amountOut of [10_000n, 1_000_000n, 5_000_000n]) {
     const request = {
-      id: `probe-${crypto.randomUUID()}`,
+      operationId: `probe-${crypto.randomUUID()}`,
       amountOut,
       deadline: Math.floor(Date.now() / 1000) + 120,
       from: {
-        account: source,
+        owner: source,
         asset,
         chainId: tempo,
         currency: "USD",
@@ -60,7 +60,7 @@ for (const asset of crossChainSources(tempo)) {
         network: `eip155:${tempo}`,
       },
       to: {
-        account: payer,
+        owner: payer,
         asset: base.usdc.address,
         chainId: base.chainId,
         currency: "USD",

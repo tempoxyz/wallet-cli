@@ -1,13 +1,4 @@
-import {
-  FundingError,
-  FundingRecoveryError,
-  InsufficientFundsError,
-  MachineFetchError,
-  type MachineFetchErrorCode,
-  NoRouteError,
-  OperationStoreError,
-  PaymentPolicyError,
-} from "machine-fetch";
+import { Errors, Funder, MachineFetch, Policy } from "machine-fetch";
 import { describe, expect, it } from "vitest";
 
 import { CtaError } from "../src/cli/incur-compat.js";
@@ -34,8 +25,8 @@ const context = {
 };
 
 type Row = {
-  code: MachineFetchErrorCode;
-  error: MachineFetchError;
+  name: Errors.ErrorType["name"];
+  error: Errors.BaseError;
   expected: { code: string; exitCode: number; retryable: boolean };
   cta?: string;
   message?: string;
@@ -43,73 +34,74 @@ type Row = {
 
 const rows: Row[] = [
   {
-    code: "LIMIT_EXCEEDED",
-    error: new PaymentPolicyError("Payment exceeds maxPayment", { code: "LIMIT_EXCEEDED" }),
+    name: "Policy.LimitExceededError",
+    error: new Policy.LimitExceededError("Payment exceeds maxPayment"),
     expected: { code: "E_LIMIT_EXCEEDED", exitCode: 4, retryable: false },
     message: "max spend: 2000000",
   },
   {
-    code: "INVALID_PAYMENT",
-    error: new PaymentPolicyError("Payment amount must be canonical", { code: "INVALID_PAYMENT" }),
+    name: "Policy.InvalidPaymentError",
+    error: new Policy.InvalidPaymentError("Payment amount must be canonical"),
     expected: { code: "E_PAYMENT", exitCode: 4, retryable: false },
   },
   {
-    code: "INSUFFICIENT_FUNDS",
-    error: new InsufficientFundsError("Not enough OUSD"),
+    name: "Funder.InsufficientFundsError",
+    error: new Funder.InsufficientFundsError("Not enough OUSD"),
     expected: { code: "E_INSUFFICIENT_FUNDS", exitCode: 4, retryable: false },
     cta: "tempo wallet fund --network mainnet",
   },
   {
-    code: "NO_ROUTE",
-    error: new NoRouteError("No trusted cross-chain route can fund the payment"),
+    name: "Funder.NoRouteError",
+    error: new Funder.NoRouteError("No trusted cross-chain route can fund the payment"),
     expected: { code: "E_PAYMENT", exitCode: 4, retryable: false },
   },
   {
-    code: "FUNDING_FAILED",
-    error: new FundingError("Relay quote failed"),
+    name: "Funder.FundingError",
+    error: new Funder.FundingError("Relay quote failed"),
     expected: { code: "E_PAYMENT", exitCode: 4, retryable: false },
   },
   {
-    code: "RECOVERY_REQUIRED",
-    error: new FundingRecoveryError("attempt-1"),
+    name: "Funder.FundingRecoveryError",
+    error: new Funder.FundingRecoveryError("attempt-1"),
     expected: { code: "E_PAYMENT_OUTCOME_UNKNOWN", exitCode: 4, retryable: false },
     message: expect.stringContaining("Funding operation attempt-1 may have moved funds") as never,
     cta: "tempo wallet funding recover attempt-1 --network mainnet",
   },
   {
-    code: "STORE_FAILED",
-    error: new OperationStoreError("disk full"),
+    name: "Errors.OperationStoreError",
+    error: new Errors.OperationStoreError("disk full"),
     expected: { code: "E_RUNTIME", exitCode: 1, retryable: false },
   },
   {
-    code: "INVALID_CONFIGURATION",
-    error: new FundingError("bad", { code: "INVALID_CONFIGURATION" }),
+    name: "Errors.InvalidConfigurationError",
+    error: new Errors.InvalidConfigurationError("bad"),
     expected: { code: "E_RUNTIME", exitCode: 1, retryable: false },
   },
   {
-    code: "DISPOSED",
-    error: new MachineFetchError("disposed", { code: "DISPOSED" }),
+    name: "MachineFetch.DisposedError",
+    error: new MachineFetch.DisposedError("disposed"),
     expected: { code: "E_RUNTIME", exitCode: 1, retryable: false },
   },
 ];
 
 describe("machine-fetch error mapping", () => {
-  it("covers every machine-fetch error code", () => {
-    const codes: Record<MachineFetchErrorCode, true> = {
-      DISPOSED: true,
-      INVALID_CONFIGURATION: true,
-      INVALID_PAYMENT: true,
-      LIMIT_EXCEEDED: true,
-      FUNDING_FAILED: true,
-      NO_ROUTE: true,
-      INSUFFICIENT_FUNDS: true,
-      RECOVERY_REQUIRED: true,
-      STORE_FAILED: true,
+  it("covers every machine-fetch error class", () => {
+    const names: Record<Errors.ErrorType["name"], true> = {
+      "MachineFetch.DisposedError": true,
+      "Errors.InvalidConfigurationError": true,
+      "Policy.InvalidPaymentError": true,
+      "Policy.LimitExceededError": true,
+      "Funder.FundingError": true,
+      "Funder.NoRouteError": true,
+      "Funder.InsufficientFundsError": true,
+      "Funder.FundingRecoveryError": true,
+      "Errors.OperationStoreError": true,
     };
-    expect(rows.map((row) => row.code).sort()).toEqual(Object.keys(codes).sort());
+    expect(rows.map((row) => row.name).sort()).toEqual(Object.keys(names).sort());
+    for (const row of rows) expect(row.error.name).toBe(row.name);
   });
 
-  it.each(rows)("maps $code to $expected.code", ({ error, expected, cta, message }) => {
+  it.each(rows)("maps $name to $expected.code", ({ error, expected, cta, message }) => {
     const mapped = fundingError(error, context);
     expect(mapped).toMatchObject({ ...expected, ...(message ? { message } : {}) });
     if (cta) {
@@ -120,7 +112,7 @@ describe("machine-fetch error mapping", () => {
 
   it("refuses a payment in a token without a limit without the max-spend rerun", () => {
     const mapped = fundingError(
-      new PaymentPolicyError("Payment asset has no maxPayment limit", { code: "LIMIT_EXCEEDED" }),
+      new Policy.LimitExceededError("Payment asset has no maxPayment limit"),
       {
         ...context,
         requirement: { ...requirement, asset: "0x20c000000000000000000000000000000000beef" },

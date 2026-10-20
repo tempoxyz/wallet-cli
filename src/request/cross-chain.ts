@@ -1,12 +1,7 @@
-import { FundingError } from "machine-fetch";
-import { crossChainFund } from "machine-fetch/funders/cross-chain";
-import type {
-  CrossChainFunder,
-  CrossChainOperation,
-  CrossChainRoute,
-  EvmAccount,
-} from "machine-fetch/interfaces/evm";
-import { fileStore } from "machine-fetch/stores/file";
+import { Funder } from "machine-fetch";
+import { type CrossChain, CrossChainFunder } from "machine-fetch/cross-chain";
+import type { Evm } from "machine-fetch/evm";
+import { FileStore } from "machine-fetch/stores/file";
 import { type Address, erc20Abi, formatUnits, type Hex, parseUnits } from "viem";
 import { getTransactionReceipt, sendTransactionSync } from "viem/actions";
 
@@ -77,16 +72,16 @@ export function fundingAccounts(
   destination: Destination,
   payer: Address,
 ) {
-  const from: EvmAccount = {
-    account: source,
+  const from: Evm.TokenAccount = {
+    owner: source,
     asset,
     chainId: tempoChainId,
     currency: "USD",
     decimals: 6,
     network: caip2(tempoChainId) as `eip155:${number}`,
   };
-  const to: EvmAccount = {
-    account: payer,
+  const to: Evm.TokenAccount = {
+    owner: payer,
     asset: destination.usdc.address,
     chainId: destination.chainId,
     currency: "USD",
@@ -115,23 +110,23 @@ export function fundingRoutes(options: {
   stderr?: Pick<NodeJS.WriteStream, "write"> | undefined;
   payer?: Address | undefined;
   symbol?: string | undefined;
-}): CrossChainRoute[] {
+}): CrossChain.Route[] {
   const { network, asset, destination } = options;
   const symbol = options.symbol ?? tokenSymbol(asset, network.chainId) ?? asset;
   const write = (text: string) => options.stderr?.write(text);
   const send = async (calls: readonly { to: Address; data: Hex }[]) => {
-    if (!options.signer) throw new FundingError("Reconciliation never sends funding");
+    if (!options.signer) throw new Funder.FundingError("Reconciliation never sends funding");
     return options.signer.sendCalls(calls, asset);
   };
-  const routes: CrossChainRoute[] = [];
+  const routes: CrossChain.Route[] = [];
   // Both routes refuse a quote the source account cannot cover, before anything is signed.
   const sourceClient = createTempoPublicClient(network.chainId);
-  const balance = (request: { from: { account: Address; asset: Address } }) =>
+  const balance = (request: { from: { owner: Address; asset: Address } }) =>
     sourceClient.readContract({
       address: request.from.asset,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [request.from.account],
+      args: [request.from.owner],
     });
   const url = relayUrl(network);
   if (url) {
@@ -200,7 +195,7 @@ export function fundingRoutes(options: {
 }
 
 /** The route `operation` was submitted through, rebuilt without a signer, for reconciliation. */
-export function operationRoute(operation: CrossChainOperation, network: Network) {
+export function operationRoute(operation: CrossChain.Operation, network: Network) {
   const destination = destinationFor(network.chainId, operation.request.to.chainId);
   if (!destination) return undefined;
   return fundingRoutes({
@@ -248,7 +243,7 @@ export async function crossChainFunders(options: {
   maxSpend?: bigint | undefined;
   stderr?: Pick<NodeJS.WriteStream, "write"> | undefined;
   identity: Awaited<ReturnType<typeof resolvePaymentIdentity>>;
-}): Promise<{ funders: CrossChainFunder[]; sources: Address[] }> {
+}): Promise<{ funders: CrossChainFunder.CrossChainFunder[]; sources: Address[] }> {
   const { network, destination, identity } = options;
   const source = identity.address as Address;
   const client = identity.getClient({ chainId: network.chainId });
@@ -263,7 +258,7 @@ export async function crossChainFunders(options: {
         } as never,
       );
       const { status, transactionHash } = receipt as { status: string; transactionHash: Hex };
-      if (status !== "success") throw new FundingError("Funding transaction reverted");
+      if (status !== "success") throw new Funder.FundingError("Funding transaction reverted");
       return transactionHash;
     },
   };
@@ -299,7 +294,7 @@ export async function crossChainFunders(options: {
       destination,
       options.payer,
     );
-    return crossChainFund({
+    return CrossChainFunder.create({
       from,
       to,
       routes: fundingRoutes({
@@ -312,8 +307,8 @@ export async function crossChainFunders(options: {
         payer: options.payer,
         symbol,
       }),
-      operations: fileStore(operationsDirectory()),
-      balance: (account) => destinationBalance(destination, account.account),
+      operations: FileStore.create(operationsDirectory()),
+      balance: (account: Evm.TokenAccount) => destinationBalance(destination, account.owner),
       pollIntervalMs: 500,
     });
   });
@@ -356,7 +351,7 @@ export async function crossChainFunding(
     source,
     url: request.url,
   });
-  const store = fileStore(operationsDirectory());
+  const store = FileStore.create(operationsDirectory());
   /**
    * Forgets the attempt when funding failed before anything moved: no operation was claimed for
    * it, so there is nothing to reconcile, and keeping it would only clutter `funding list`. An
@@ -409,7 +404,7 @@ export async function crossChainFunding(
  * one never claimed moved nothing, and one still in flight stops this payment.
  */
 async function reconcileEarlier(attempt: AttemptRecord, network: Network) {
-  const store = fileStore(operationsDirectory());
+  const store = FileStore.create(operationsDirectory());
   for (const earlier of await listAttempts()) {
     if (
       earlier.attemptId === attempt.attemptId ||
@@ -437,7 +432,7 @@ async function reconcileEarlier(attempt: AttemptRecord, network: Network) {
  * delivered, and may since have paid), `refunded`, or `open` (pending, needing action, or
  * unreadable).
  */
-export async function settledOutcome(route: CrossChainRoute, operation: CrossChainOperation) {
+export async function settledOutcome(route: CrossChain.Route, operation: CrossChain.Operation) {
   try {
     const { status } = await route.status(operation, { signal: AbortSignal.timeout(10_000) });
     return status === "completed" || status === "refunded" ? status : ("open" as const);

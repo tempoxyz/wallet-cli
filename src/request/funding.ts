@@ -1,8 +1,7 @@
-import type { PaymentRequirement } from "machine-fetch/interfaces";
-import { mppxRequirement } from "machine-fetch/adapters/mppx";
+import type { Funder, Payment } from "machine-fetch";
+import { MppxFetch } from "machine-fetch/mppx";
 import type { Challenge } from "mppx";
 
-import type { Funder } from "machine-fetch/interfaces";
 import { type Address, erc20Abi, formatUnits } from "viem";
 import { Actions } from "viem/tempo";
 
@@ -35,7 +34,10 @@ export type ChargePayer = {
  * The funders a charge may use, cheapest first (D4). `--funding off` and MACH settlement, which
  * must never spend stablecoins (see `machChargeParameters`), use none.
  */
-export function chargeFunders(options: RequestOptions, payer: ChargePayer): Funder<unknown>[] {
+export function chargeFunders(
+  options: RequestOptions,
+  payer: ChargePayer,
+): Funder.Funder<unknown>[] {
   if (fundingSetting(options.funding).value === "off") return [];
   if (isMachPaymentToken(options.paymentToken)) return [];
   const network = requestNetwork(options);
@@ -63,7 +65,7 @@ export function chargeFunders(options: RequestOptions, payer: ChargePayer): Fund
           network,
         });
       },
-    }) as Funder<unknown>,
+    }) as Funder.Funder<unknown>,
   ];
 }
 
@@ -127,9 +129,9 @@ function chargeFunding(challenge: Challenge.Challenge, options: RequestOptions) 
     ...chargePolicy(challenge, { network, maxSpend: spendCap(options) }),
     maxSlippageBps: parseMaxSlippageBps(options.maxSlippageBps),
   };
-  let requirement: PaymentRequirement | undefined;
+  let requirement: Payment.Requirement | undefined;
   try {
-    requirement = mppxRequirement(challenge);
+    requirement = MppxFetch.requirement(challenge);
   } catch {
     // planCharge reports the malformed challenge.
   }

@@ -17,4 +17,3 @@ export declare function withTimeout<value>(run: (signal: AbortSignal) => Promise
     /** Maps the outer abort reason to the rejection value. Defaults to the reason itself. */
     abortError?(reason: unknown): unknown;
 }>): Promise<value>;
-//# sourceMappingURL=time.d.ts.map

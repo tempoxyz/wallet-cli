@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { link, open, readFile, unlink } from 'node:fs/promises';
+import { link, open, readdir, readFile, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { OperationStoreError } from '../core/errors.js';
-import { checkReference, checkRelease, deserialize, guardStore, releasedReference, serialize, } from './serialization.js';
+import { checkReference, checkRelease, deserialize, guardStore, recordId, releasedReference, serialize, } from './serialization.js';
+/** Generation-0 record files, one per operation ID ever claimed. */
+const firstGeneration = /^([\da-f]{64})\.json$/;
 /**
  * Creates a persistent store in a private directory on a local POSIX filesystem supporting hard links.
  *
@@ -15,8 +17,14 @@ import { checkReference, checkRelease, deserialize, guardStore, releasedReferenc
  */
 export function fileStore(directory) {
     const root = resolve(directory);
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    const path = (id, generation, suffix) => join(root, `${createHash('sha256').update(id).digest('hex')}${generation ? `.${generation}` : ''}.${suffix}`);
+    try {
+        mkdirSync(root, { recursive: true, mode: 0o700 });
+    }
+    catch (cause) {
+        throw new OperationStoreError('Cannot create the operation store directory', { cause });
+    }
+    const hash = (id) => createHash('sha256').update(id).digest('hex');
+    const path = (id, generation, suffix) => join(root, `${hash(id)}${generation ? `.${generation}` : ''}.${suffix}`);
     /** The newest generation for an ID, with its raw record and reference file. */
     const latest = async (id) => {
         let found;
@@ -51,6 +59,23 @@ export function fileStore(directory) {
         : await read(path(id, generation, 'reference'));
     return guardStore({
         get: async (id) => (await live(id))?.operation,
+        async list() {
+            const operations = [];
+            for (const name of await readdir(root)) {
+                const digest = firstGeneration.exec(name)?.[1];
+                if (!digest)
+                    continue;
+                // Records are never deleted, so a listed generation-0 file is always readable.
+                const id = recordId(String(await readFile(join(root, name))));
+                // A file named for another ID is corrupt; never report it under the wrong identity.
+                if (hash(id) !== digest)
+                    throw new OperationStoreError('Invalid operation record');
+                const current = await live(id);
+                if (current)
+                    operations.push(current.operation);
+            }
+            return operations;
+        },
         claim(operation) {
             // Snapshot before any read, so later caller mutations cannot reach the saved record.
             const id = operation.id;
@@ -132,4 +157,3 @@ async function publish(directory, destination, value) {
         await unlink(temporary);
     }
 }
-//# sourceMappingURL=file.js.map

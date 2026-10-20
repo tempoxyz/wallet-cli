@@ -1,5 +1,5 @@
 import { failureCause, settleConcurrent } from '../core/concurrent.js';
-import { FundingError, NoRouteError, PaymentPolicyError } from '../core/errors.js';
+import { FundingError, InvalidConfigurationError, NoRouteError } from '../core/errors.js';
 import { immutableSnapshot } from '../core/immutable.js';
 import { addSlippage, resolvePolicy } from '../core/policy.js';
 import { acquiredReceipt, availableReceipt } from '../core/receipt.js';
@@ -11,15 +11,15 @@ const defaultTimeoutMs = 10_000;
 const defaultPollIntervalMs = 1_000;
 /**
  * Creates a funder that obtains an exact payment shortfall through trusted cross-chain routes.
- * Payment funding uses the request's attempt ID as its durable operation ID.
+ * Payment funding uses the request's operation ID as its durable operation ID.
  */
-export function crossChainFund(options) {
+export function crossChainFunder(options) {
     const settings = settingsOf(options);
     const { from, to } = settings;
     const fund = async (requirement, policy, operationId, outerSignal) => {
         outerSignal.throwIfAborted();
         if (!matchesDestination(requirement, to))
-            throw configuration('Cross-chain destination does not match the selected payment');
+            throw new InvalidConfigurationError('Cross-chain destination does not match the selected payment');
         if (policy.sameCurrencyOnly && from.currency.toUpperCase() !== to.currency.toUpperCase())
             throw new NoRouteError('Cross-chain source and destination currencies do not match');
         assertOperationId(operationId);
@@ -48,7 +48,7 @@ export function crossChainFund(options) {
         enforcesFundingSpend: true,
         async recover(operationId, recovery = {}) {
             assertOperationId(operationId);
-            const { deadlineSeconds } = resolvePolicy(recovery.deadlineSeconds === undefined ? {} : { deadlineSeconds: recovery.deadlineSeconds });
+            const { deadlineSeconds } = resolvePolicy({ deadlineSeconds: recovery.deadlineSeconds });
             return beforeDeadline(nowSeconds() + deadlineSeconds, operationId, recovery.signal, async (signal) => {
                 const operation = await lookup(settings, operationId, signal);
                 if (!operation)
@@ -62,14 +62,12 @@ export function crossChainFund(options) {
                 typeof target !== 'bigint' ||
                 minimum < 0n ||
                 target < minimum)
-                throw configuration('Invalid balance replenishment settings');
+                throw new InvalidConfigurationError('Invalid balance replenishment settings');
             assertOperationId(operationId);
             // Replenishment is not a payment, so a payment ceiling here would be silently meaningless.
-            if (Object.hasOwn(topUp.policy ?? {}, 'maxPayment'))
-                throw new PaymentPolicyError('ensureBalance policy cannot include maxPayment', {
-                    code: 'INVALID_CONFIGURATION',
-                });
-            const policy = resolvePolicy(topUp.policy);
+            if (Object.hasOwn(topUp, 'maxPayment'))
+                throw new InvalidConfigurationError('ensureBalance cannot include maxPayment');
+            const policy = resolvePolicy(topUp);
             const signal = topUp.signal ?? neverAborted;
             signal.throwIfAborted();
             // An existing operation must be reconciled even if an unrelated deposit raised the balance.
@@ -98,9 +96,9 @@ export function crossChainFund(options) {
         },
         async prepare(requirement, context) {
             // Funds delivered to an account that will not sign the payment cannot pay for it.
-            if (!isPayer(context.payer, to.account))
-                throw configuration('Cross-chain destination account is not the payer');
-            return fund(requirement, context.policy, context.attemptId, context.signal);
+            if (!isPayer(context.payer, to.owner))
+                throw new InvalidConfigurationError('Cross-chain destination account is not the payer');
+            return fund(requirement, context.policy, context.operationId, context.signal);
         },
     });
 }
@@ -141,7 +139,7 @@ async function acquire(settings, attempt) {
         deadline: attempt.deadline,
         from,
         maxSlippageBps: policy.maxSlippageBps,
-        id: operationId,
+        operationId,
         signal,
         to,
     });
@@ -270,7 +268,7 @@ function requirementKeyOf(requirement) {
 }
 function assertOperationId(operationId) {
     if (typeof operationId !== 'string' || !operationId.trim())
-        throw configuration('Cross-chain operation ID must be a non-empty string');
+        throw new InvalidConfigurationError('Cross-chain operation ID must be a non-empty string');
 }
 function settingsOf(options) {
     const { operations: store, routes } = options;
@@ -278,32 +276,34 @@ function settingsOf(options) {
         typeof store.get !== 'function' ||
         typeof store.claim !== 'function' ||
         typeof store.setReference !== 'function')
-        throw configuration('A durable operation store is required');
-    if (typeof options.balance !== 'function')
-        throw configuration('A destination balance reader is required');
+        throw new InvalidConfigurationError('A durable operation store is required');
     if (options.pollIntervalMs !== undefined && !isPositive(options.pollIntervalMs))
-        throw configuration('pollIntervalMs must be positive');
+        throw new InvalidConfigurationError('pollIntervalMs must be positive');
     if (!Array.isArray(routes) || routes.length === 0)
-        throw configuration('At least one trusted cross-chain route is required');
+        throw new InvalidConfigurationError('At least one trusted cross-chain route is required');
     assertQuoteOptions(options);
     const names = new Set();
     for (const route of routes) {
         if (!isRecord(route) || typeof route.name !== 'string' || !route.name.trim())
-            throw configuration('Cross-chain route name must be a non-empty string');
+            throw new InvalidConfigurationError('Cross-chain route name must be a non-empty string');
         if (names.has(route.name))
-            throw configuration(`Duplicate cross-chain route: ${route.name}`);
+            throw new InvalidConfigurationError(`Duplicate cross-chain route: ${route.name}`);
         if (typeof route.quote !== 'function' ||
             typeof route.submit !== 'function' ||
             typeof route.status !== 'function')
-            throw configuration(`Cross-chain route ${route.name} must implement quote, submit, and status`);
+            throw new InvalidConfigurationError(`Cross-chain route ${route.name} must implement quote, submit, and status`);
         names.add(route.name);
     }
+    const reader = routes.find((route) => typeof route.balance === 'function');
+    const balance = options.balance ?? reader?.balance.bind(reader);
+    if (typeof balance !== 'function')
+        throw new InvalidConfigurationError('A destination balance reader is required');
     return Object.freeze({
         from: accountSnapshot(options.from),
         to: accountSnapshot(options.to),
         routes: Object.freeze(routes.map(routeSnapshot)),
         store,
-        balance: options.balance,
+        balance,
         concurrency: options.concurrency ?? defaultConcurrency,
         timeoutMs: options.timeoutMs ?? defaultTimeoutMs,
         pollIntervalMs: options.pollIntervalMs ?? defaultPollIntervalMs,
@@ -311,15 +311,15 @@ function settingsOf(options) {
 }
 function accountSnapshot(account) {
     if (!Number.isSafeInteger(account?.chainId) || account.chainId <= 0)
-        throw configuration('Funding account chainId must be a positive safe integer');
+        throw new InvalidConfigurationError('Funding account chainId must be a positive safe integer');
     if (account.network !== `eip155:${account.chainId}`)
-        throw configuration('Funding account network must match chainId');
-    if (!isEvmAddress(account.account) || !isEvmAddress(account.asset))
-        throw configuration('Funding account and asset must be EVM addresses');
+        throw new InvalidConfigurationError('Funding account network must match chainId');
+    if (!isEvmAddress(account.owner) || !isEvmAddress(account.asset))
+        throw new InvalidConfigurationError('Funding account and asset must be EVM addresses');
     if (typeof account.currency !== 'string' || !account.currency.trim())
-        throw configuration('Funding account currency must be a non-empty string');
+        throw new InvalidConfigurationError('Funding account currency must be a non-empty string');
     if (!isTokenDecimals(account.decimals))
-        throw configuration('Funding account decimals must be an integer from 0 to 255');
+        throw new InvalidConfigurationError('Funding account decimals must be an integer from 0 to 255');
     return Object.freeze({ ...account });
 }
 function routeSnapshot(route) {
@@ -332,11 +332,11 @@ function routeSnapshot(route) {
 }
 function assertOperation(operation, requirementKey, { from, to }) {
     const sameAccount = (account, expected) => assetKey(account) === assetKey(expected) &&
-        account.account.toLowerCase() === expected.account.toLowerCase();
+        account.owner.toLowerCase() === expected.owner.toLowerCase();
     if (operation.requirementKey !== requirementKey ||
         !sameAccount(operation.request.from, from) ||
         !sameAccount(operation.request.to, to))
-        throw configuration('Operation ID belongs to a different funding intent');
+        throw new InvalidConfigurationError('Operation ID belongs to a different funding intent');
 }
 function validGuarantees(quote, request, route, limits) {
     const { amountOut, minAmountOut, maxAmountIn, fees } = quote;
@@ -389,7 +389,3 @@ async function readBalance(read, account) {
 function isText(value) {
     return typeof value === 'string' && value !== '';
 }
-function configuration(message) {
-    return new FundingError(message, { code: 'INVALID_CONFIGURATION' });
-}
-//# sourceMappingURL=cross-chain.js.map

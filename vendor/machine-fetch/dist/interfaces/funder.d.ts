@@ -1,6 +1,5 @@
-import type { MaybePromise } from './common.js';
 import type { PaymentContext, PaymentRequirement } from './payment.js';
-import type { ResolvedPaymentPolicy } from './policy.js';
+import type { PaymentPolicy } from './policy.js';
 /** Evidence that the payment asset was already held. */
 export type AvailableReceipt = Readonly<{
     status: 'available';
@@ -22,7 +21,7 @@ export type AcquiredReceipt = Readonly<{
         /** Quoted input that selected the route, in atomic units. */
         quotedAmount: bigint;
         /** Actual input reported by the route or provider; absent when only the quote is known. */
-        amount?: bigint;
+        amount?: bigint | undefined;
     }>;
     /** Payment asset acquired; `amount` is the acquired shortfall in atomic units. */
     output: Readonly<{
@@ -31,7 +30,7 @@ export type AcquiredReceipt = Readonly<{
         amount: bigint;
     }>;
     /** Source-specific transaction or completion reference. */
-    reference?: string;
+    reference?: string | undefined;
 }>;
 /** Evidence that a payment asset was already available or acquired. */
 export type FundingReceipt = AvailableReceipt | AcquiredReceipt;
@@ -40,14 +39,21 @@ export type FundingReceipt = AvailableReceipt | AcquiredReceipt;
  * the protocol adapter; its type is fixed by the adapter's {@link PaymentClient} parameter.
  */
 export type PaymentPreparation<context = never> = Readonly<{
-    context?: context;
+    context?: context | undefined;
     /** Optional funding evidence; does not establish final payment settlement. */
-    funding?: FundingReceipt;
+    funding?: FundingReceipt | undefined;
 }>;
 /** Context available while a funder prepares funds. */
 export type FundContext = PaymentContext & Readonly<{
-    /** Validated funding controls that custom funders are responsible for enforcing. */
-    policy: ResolvedPaymentPolicy;
+    /**
+     * Validated policy, with the funding defaults applied, that custom funders are responsible for
+     * enforcing.
+     */
+    policy: PaymentPolicy & Readonly<{
+        sameCurrencyOnly: boolean;
+        maxSlippageBps: number;
+        deadlineSeconds: number;
+    }>;
 }>;
 /**
  * Resolves payment metadata and makes the requested asset available. `context` is the credential
@@ -57,17 +63,17 @@ export type Funder<context = never> = Readonly<{
     /** Stable funder name used for identification and observability. */
     name: string;
     /** Declares that preparation enforces every configured `maxFundingSpend` ceiling. */
-    enforcesFundingSpend?: boolean;
+    enforcesFundingSpend?: boolean | undefined;
     /**
      * Return undefined to decline, or enrich missing metadata while preserving the selected payment.
      * Funders are tried in order; omitting resolve makes this funder a catch-all.
      */
-    resolve?(requirement: PaymentRequirement): MaybePromise<PaymentRequirement | undefined>;
+    resolve?: ((requirement: PaymentRequirement) => PaymentRequirement | undefined | Promise<PaymentRequirement | undefined>) | undefined;
     /**
      * Called only for the first matching funder, after policy validation.
      * Ensure the requested balance or return adapter context; rejection aborts credential creation.
      */
-    prepare(requirement: PaymentRequirement, context: FundContext): MaybePromise<PaymentPreparation<context> | undefined>;
+    prepare(requirement: PaymentRequirement, context: FundContext): PaymentPreparation<context> | undefined | Promise<PaymentPreparation<context> | undefined>;
 }>;
 /**
  * A selected payment after metadata resolution and policy validation. Only plans returned by
@@ -75,8 +81,7 @@ export type Funder<context = never> = Readonly<{
  */
 export type PaymentPlan<context = never> = Readonly<{
     requirement: PaymentRequirement;
-    policy: ResolvedPaymentPolicy;
+    policy: FundContext['policy'];
     /** The first matching funder; absent when the payment proceeds directly. */
-    funder?: Funder<context>;
+    funder?: Funder<context> | undefined;
 }>;
-//# sourceMappingURL=funder.d.ts.map

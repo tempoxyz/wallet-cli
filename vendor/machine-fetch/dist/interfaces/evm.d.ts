@@ -1,6 +1,5 @@
 import type { Account, Address, Chain, Client, Transport } from 'viem';
 import type { Token } from 'viem/tokens';
-import type { MaybePromise } from './common.js';
 /** Viem client shape accepted by EVM funders and routes. */
 export type EvmClient = Client<Transport, Chain | undefined, Account | undefined>;
 /** Chain-specific token metadata resolved from a Viem token definition. */
@@ -16,7 +15,7 @@ export type EvmQuote = Readonly<{
     /** Quoted input in atomic units of tokenIn. */
     amountIn: bigint;
     /** Unix timestamp in seconds after which the quote is invalid. */
-    expiresAt?: number;
+    expiresAt?: number | undefined;
     /** Opaque route-owned quote data; execution must independently validate it. */
     data?: unknown;
 }>;
@@ -24,8 +23,8 @@ export type EvmQuote = Readonly<{
 export type EvmQuoteRequest = Readonly<{
     /** Payer whose funds the route may spend. */
     account: Address;
-    /** Attempt of the paid request being funded; a stable idempotency key for one acquisition. */
-    attemptId: string;
+    /** Operation ID of the paid request being funded; a stable idempotency key for one acquisition. */
+    operationId: string;
     /** Exact shortfall to acquire in atomic units of tokenOut. */
     amountOut: bigint;
     chainId: number;
@@ -48,16 +47,19 @@ export type EvmExecuteRequest = EvmQuoteRequest & Readonly<{
 export type EvmRoute = Readonly<{
     name: string;
     /** Omission requires execution to enforce maxAmountIn; provider-managed is estimate-only. */
-    executionMode?: 'bounded' | 'provider-managed';
-    quote(request: EvmQuoteRequest): MaybePromise<EvmQuote | undefined>;
+    executionMode?: 'bounded' | 'provider-managed' | undefined;
+    quote(request: EvmQuoteRequest): EvmQuote | undefined | Promise<EvmQuote | undefined>;
     /** Report `amountIn` when actual spend is known; receipts otherwise carry only the quote. */
-    execute(request: EvmExecuteRequest): MaybePromise<Readonly<{
-        amountIn?: bigint;
-        reference?: string;
+    execute(request: EvmExecuteRequest): Readonly<{
+        amountIn?: bigint | undefined;
+        reference?: string | undefined;
+    }> | undefined | Promise<Readonly<{
+        amountIn?: bigint | undefined;
+        reference?: string | undefined;
     }> | undefined>;
 }>;
 /** Options for the Viem-backed EVM funder. */
-export type EvmFundOptions = Readonly<{
+export type EvmFunderOptions = Readonly<{
     /** Trusted metadata for payment assets the server may request. */
     outputs: readonly Token[];
     /** Trusted funding assets the account may spend. */
@@ -65,19 +67,18 @@ export type EvmFundOptions = Readonly<{
     /** Caller-trusted exact-output integrations; never populate from server metadata. */
     routes: readonly EvmRoute[];
     /** Resolve a client for the requested chain; undefined means unavailable. */
-    client(chainId: number): MaybePromise<EvmClient | undefined>;
-    /** Payer address override; defaults to the resolved client account. */
-    account?: Address;
+    client(chainId: number): EvmClient | undefined | Promise<EvmClient | undefined>;
+    /** Payer address override. @default the resolved client's account */
+    account?: Address | undefined;
     /** Maximum simultaneous route quote calls. @default 4 */
-    concurrency?: number;
+    concurrency?: number | undefined;
     /** Maximum time allowed for one route quote. @default 10000 */
-    timeoutMs?: number;
+    timeoutMs?: number | undefined;
     /** Override ERC-20 balanceOf reads; return atomic units for the requested token. */
-    balance?(parameters: Readonly<{
+    balance?: ((parameters: Readonly<{
         client: EvmClient;
         account: Address;
         token: EvmToken;
-    }>): MaybePromise<bigint>;
+    }>) => bigint | Promise<bigint>) | undefined;
 }>;
-export type { BoundedCrossChainQuote, CrossChainFee, CrossChainFunder, CrossChainFundOptions, CrossChainOperation, CrossChainOperationStore, CrossChainQuote, CrossChainQuoteBase, CrossChainRequest, CrossChainRoute, CrossChainStatus, EnsureBalanceOptions, EstimatedCrossChainQuote, EvmAccount, } from './cross-chain.js';
-//# sourceMappingURL=evm.d.ts.map
+export type { BoundedCrossChainQuote, CrossChainFee, CrossChainFunder, CrossChainFunderOptions, CrossChainOperation, CrossChainOperationStore, CrossChainQuote, CrossChainQuoteBase, CrossChainRequest, CrossChainRoute, CrossChainStatus, EnsureBalanceOptions, EstimatedCrossChainQuote, EvmTokenAccount, } from './cross-chain.js';

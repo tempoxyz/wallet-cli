@@ -1,13 +1,6 @@
 import { Errors } from "incur";
-import { FundingRecoveryError, MachineFetchError, planPayment } from "machine-fetch";
-import { extension, mppxRequirement } from "machine-fetch/adapters/mppx";
-import type {
-  AssetAmount,
-  Funder,
-  PaymentPlan,
-  PaymentPolicy,
-  PaymentRequirement,
-} from "machine-fetch/interfaces";
+import { Errors as MachineFetchErrors, Funder, Payment, Policy } from "machine-fetch";
+import { MppxFetch } from "machine-fetch/mppx";
 import type { Challenge } from "mppx";
 import { formatUnits, parseUnits } from "viem";
 
@@ -57,7 +50,7 @@ function cheapest<type extends { required: bigint }>(found: readonly type[]): ty
 
 /**
  * Payment funding through machine-fetch: every charge credential is created only after
- * `planPayment` has checked it against policy, and only with the context its funder prepared.
+ * `Payment.plan` has checked it against policy, and only with the context its funder prepared.
  */
 
 /** What a payment may spend, from `--max-spend`. */
@@ -77,13 +70,13 @@ export type SpendLimits = {
 export function chargePolicy(
   challenge: Pick<Challenge.Challenge, "intent" | "request">,
   limits: SpendLimits,
-): PaymentPolicy {
+): Policy.Policy {
   if (challenge.intent === "subscription" || challenge.request.amount === "0") return {};
   return { maxPayment: maxPaymentAssets(limits) };
 }
 
 /** `maxSpend` of each USD token the CLI trusts on `limits.network`, as machine-fetch asset limits. */
-export function maxPaymentAssets(limits: SpendLimits): AssetAmount[] {
+export function maxPaymentAssets(limits: SpendLimits): Policy.AssetAmount[] {
   const amount = parseUnits(limits.maxSpend, 6);
   const network = caip2(limits.network.chainId);
   return tempoUsdTokens(limits.network.chainId).map((asset) => ({ network, asset, amount }));
@@ -94,12 +87,12 @@ export function caip2(chainId: number) {
 }
 
 export type FundingOptions = {
-  policy: PaymentPolicy;
-  funders?: readonly Funder<unknown>[] | undefined;
+  policy: Policy.Policy;
+  funders?: readonly Funder.Funder<unknown>[] | undefined;
   /** Context the method already supplies; funder context is merged over it. */
   credentialContext?: unknown;
   /** Persisted by the caller before funding, so interrupted funding can be reconciled. */
-  attemptId?: string | undefined;
+  operationId?: string | undefined;
   /** The account that signs the credential; funders refuse to fund any other. */
   payer?: string | undefined;
   signal?: AbortSignal | undefined;
@@ -109,28 +102,31 @@ export type FundingOptions = {
 export async function planCharge(
   challenge: Challenge.Challenge,
   options: Pick<FundingOptions, "policy" | "funders">,
-): Promise<PaymentPlan<unknown>> {
-  return planPayment(mppxRequirement(challenge), {
-    policy: options.policy,
+): Promise<Payment.Plan<unknown>> {
+  return Payment.plan(MppxFetch.requirement(challenge), {
+    ...options.policy,
     funders: options.funders ?? [],
   });
 }
 
 /**
  * Plans the charge, then has its funder (if any) prepare it, through machine-fetch's Mppx
- * extension: requirement, policy, funding, and credential context in one call.
+ * extension: requirement, policy, funding, and credential context in one call. The extension's
+ * own Tempo auto-swap is off: the CLI's Tempo funder swaps only from inputs the access key may
+ * spend, and `--funding off` must never swap.
  */
 export async function planAndFund(challenge: Challenge.Challenge, options: FundingOptions) {
   const plan = await planCharge(challenge, options);
-  const prepared = await extension({
-    policy: options.policy,
+  const prepared = await MppxFetch.extension({
+    ...options.policy,
     funders: options.funders ?? [],
+    autoSwap: false,
   }).preparePayment({
     challenge,
     ...(options.credentialContext === undefined
       ? {}
       : { credentialContext: options.credentialContext }),
-    ...(options.attemptId === undefined ? {} : { attemptId: options.attemptId }),
+    ...(options.operationId === undefined ? {} : { operationId: options.operationId }),
     ...(options.payer === undefined ? {} : { payer: options.payer }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
@@ -141,9 +137,9 @@ export async function planAndFund(challenge: Challenge.Challenge, options: Fundi
 export type FundingErrorContext = {
   network: Network;
   /** The policy the payment was planned under. */
-  policy: PaymentPolicy;
+  policy: Policy.Policy;
   /** The requirement the failure is about, when known; names the token in messages. */
-  requirement?: PaymentRequirement | undefined;
+  requirement?: Payment.Requirement | undefined;
   /** Raised for an amount over `--max-spend` in a capped token, with the rerun `cta`. */
   maxSpendExceeded(required: bigint): Errors.IncurError;
 };
@@ -154,70 +150,64 @@ export type FundingErrorContext = {
  * the same.
  */
 export function fundingError(error: unknown, context: FundingErrorContext): unknown {
-  if (!(error instanceof MachineFetchError)) return error;
-  const message = sanitizeText(error.message);
-  switch (error.code) {
-    case "LIMIT_EXCEEDED":
-      return limitError(message, context);
-    case "NO_ROUTE": {
-      // A route refused by the cap could run if it were raised: report the cheapest such route.
-      // Only when every route fell short of the wallet's balance is it a funding shortfall.
-      const symbol = (asset: string | undefined) =>
-        (asset && tokenSymbol(asset, context.network.chainId)) || "of the source token";
-      const limit = cheapest(causes(error).filter((cause) => cause instanceof FundingLimitError));
-      if (limit)
-        return walletError({
-          code: "E_LIMIT_EXCEEDED",
-          message: `Cross-chain funding needs up to ${formatUnits(limit.required, 6)} ${symbol(limit.asset)}, the bridge's fee and gas included, above --max-funding-spend. Review it, then rerun with --max-funding-spend ${formatUnits(limit.required, 6)}; nothing was sent.`,
-        });
-      const short = cheapest(causes(error).filter((cause) => cause instanceof SourceBalanceError));
-      if (short) {
-        const command = continuationCommand(["wallet", "fund"], context.network);
-        return new CtaError(
-          commandError(
-            "E_INSUFFICIENT_FUNDS",
-            `Cross-chain funding needs ${formatUnits(short.required, 6)} ${symbol(short.asset)}, the bridge's fee included, and the wallet holds ${formatUnits(short.held, 6)}; nothing was sent. Add funds with '${command}', then retry.`,
-            command,
-          ),
-        );
-      }
-      const reasons = routeReasons(error);
-      return paymentError(reasons.length > 0 ? `${message}: ${reasons.join("; ")}` : message);
-    }
-    case "INVALID_PAYMENT":
-    case "FUNDING_FAILED":
-      return paymentError(message);
-    case "INSUFFICIENT_FUNDS": {
+  if (!(error instanceof MachineFetchErrors.BaseError)) return error;
+  // The one-line summary: machine-fetch's full message adds a hint and a docs link.
+  const message = sanitizeText(error.shortMessage);
+  if (error instanceof Policy.LimitExceededError) return limitError(message, context);
+  if (error instanceof Funder.NoRouteError) {
+    // A route refused by the cap could run if it were raised: report the cheapest such route.
+    // Only when every route fell short of the wallet's balance is it a funding shortfall.
+    const symbol = (asset: string | undefined) =>
+      (asset && tokenSymbol(asset, context.network.chainId)) || "of the source token";
+    const limit = cheapest(causes(error).filter((cause) => cause instanceof FundingLimitError));
+    if (limit)
+      return walletError({
+        code: "E_LIMIT_EXCEEDED",
+        message: `Cross-chain funding needs up to ${formatUnits(limit.required, 6)} ${symbol(limit.asset)}, the bridge's fee and gas included, above --max-funding-spend. Review it, then rerun with --max-funding-spend ${formatUnits(limit.required, 6)}; nothing was sent.`,
+      });
+    const short = cheapest(causes(error).filter((cause) => cause instanceof SourceBalanceError));
+    if (short) {
       const command = continuationCommand(["wallet", "fund"], context.network);
       return new CtaError(
         commandError(
           "E_INSUFFICIENT_FUNDS",
-          `${message}. Add funds with '${command}', then retry.`,
+          `Cross-chain funding needs ${formatUnits(short.required, 6)} ${symbol(short.asset)}, the bridge's fee included, and the wallet holds ${formatUnits(short.held, 6)}; nothing was sent. Add funds with '${command}', then retry.`,
           command,
         ),
       );
     }
-    case "RECOVERY_REQUIRED": {
-      if (!(error instanceof FundingRecoveryError))
-        return walletError({ code: "E_PAYMENT_OUTCOME_UNKNOWN", message });
-      const operation = escapeInvisible(error.operationId);
-      const command = continuationCommand(
-        ["wallet", "funding", "recover", error.operationId],
-        context.network,
-      );
-      return new CtaError(
-        commandError(
-          "E_PAYMENT_OUTCOME_UNKNOWN",
-          `${message}. Funding operation ${operation} may have moved funds; do not pay again until '${command}' reconciles it.`,
-          command,
-        ),
-      );
-    }
-    case "STORE_FAILED":
-    case "INVALID_CONFIGURATION":
-    case "DISPOSED":
-      return walletError({ code: "E_RUNTIME", message, cause: error });
+    const reasons = routeReasons(error);
+    return paymentError(reasons.length > 0 ? `${message}: ${reasons.join("; ")}` : message);
   }
+  if (error instanceof Funder.InsufficientFundsError) {
+    const command = continuationCommand(["wallet", "fund"], context.network);
+    return new CtaError(
+      commandError(
+        "E_INSUFFICIENT_FUNDS",
+        `${message}. Add funds with '${command}', then retry.`,
+        command,
+      ),
+    );
+  }
+  if (error instanceof Funder.FundingRecoveryError) {
+    const operation = escapeInvisible(error.operationId);
+    const command = continuationCommand(
+      ["wallet", "funding", "recover", error.operationId],
+      context.network,
+    );
+    return new CtaError(
+      commandError(
+        "E_PAYMENT_OUTCOME_UNKNOWN",
+        `${message}. Funding operation ${operation} may have moved funds; do not pay again until '${command}' reconciles it.`,
+        command,
+      ),
+    );
+  }
+  // Checked after its subclasses above: a plain funding failure moved nothing.
+  if (error instanceof Policy.InvalidPaymentError || error instanceof Funder.FundingError)
+    return paymentError(message);
+  // Invalid configuration, a store failure, or a disposed wrapper: the CLI's own fault.
+  return walletError({ code: "E_RUNTIME", message, cause: error });
 }
 
 /**

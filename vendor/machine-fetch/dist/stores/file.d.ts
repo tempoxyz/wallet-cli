@@ -9,4 +9,3 @@ import type { CrossChainOperationStore } from '../interfaces/cross-chain.js';
  * stores written by, and workers running, earlier versions contend for the same claims.
  */
 export declare function fileStore(directory: string): CrossChainOperationStore;
-//# sourceMappingURL=file.d.ts.map

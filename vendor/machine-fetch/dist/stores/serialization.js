@@ -20,9 +20,22 @@ export function serialize(operation) {
 }
 /** Corrupt, incompatible, or incomplete records fail closed instead of appearing absent. */
 export function deserialize(serialized, id) {
-    let record;
+    const record = parse(serialized);
+    if (!isRecord(record) || record.version !== 1 || !isOperation(record.operation, id))
+        throw new OperationStoreError('Invalid operation record');
+    return record.operation;
+}
+/** The operation ID a record claims to hold; {@link deserialize} still validates the record. */
+export function recordId(serialized) {
+    const record = parse(serialized);
+    const id = isRecord(record) && isRecord(record.operation) ? record.operation.id : undefined;
+    if (!isText(id))
+        throw new OperationStoreError('Invalid operation record');
+    return id;
+}
+function parse(serialized) {
     try {
-        record = JSON.parse(serialized, (_key, value) => {
+        return JSON.parse(serialized, (_key, value) => {
             if (typeof value !== 'string')
                 return value;
             if (value.startsWith(`${prefix}string:`))
@@ -35,9 +48,6 @@ export function deserialize(serialized, id) {
     catch (cause) {
         throw new OperationStoreError('Invalid operation record', { cause });
     }
-    if (!isRecord(record) || record.version !== 1 || !isOperation(record.operation, id))
-        throw new OperationStoreError('Invalid operation record');
-    return record.operation;
 }
 /** References are immutable once attached, including when writes race or are retried. */
 export function checkReference(operation, reference) {
@@ -71,6 +81,7 @@ export function guardStore(store) {
     };
     return Object.freeze({
         get: guarded(store.get),
+        list: guarded(store.list),
         claim: guarded(store.claim),
         setReference: guarded(store.setReference),
         release: guarded(store.release),
@@ -89,7 +100,7 @@ function isOperation(value, id) {
 }
 function isRequest(value, id) {
     return (isRecord(value) &&
-        value.id === id &&
+        value.operationId === id &&
         typeof value.amountOut === 'bigint' &&
         Number.isSafeInteger(value.deadline) &&
         Number.isInteger(value.maxSlippageBps) &&
@@ -98,8 +109,8 @@ function isRequest(value, id) {
 }
 function isAccount(value) {
     return (isRecord(value) &&
-        typeof value.account === 'string' &&
-        isEvmAddress(value.account) &&
+        typeof value.owner === 'string' &&
+        isEvmAddress(value.owner) &&
         typeof value.asset === 'string' &&
         isEvmAddress(value.asset) &&
         Number.isSafeInteger(value.chainId) &&
@@ -132,4 +143,3 @@ function isReference(value) {
 function isText(value) {
     return typeof value === 'string' && value !== '';
 }
-//# sourceMappingURL=serialization.js.map

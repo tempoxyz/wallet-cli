@@ -31,4 +31,3 @@ function isPlainData(value) {
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
 }
-//# sourceMappingURL=immutable.js.map

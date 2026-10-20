@@ -1,4 +1,4 @@
-import { PaymentPolicyError } from '../core/errors.js';
+import { type PaymentPolicyError } from '../core/errors.js';
 import type { PaymentRequirement } from '../interfaces/payment.js';
 /** Fields shared by official and Mppx-translated x402 payment requirements. */
 type X402Selection = Readonly<{
@@ -21,4 +21,3 @@ export declare function parseNetwork(network: string): string;
 /** A malformed or unsupported server challenge. */
 export declare function invalidPayment(message: string, cause?: unknown): PaymentPolicyError;
 export {};
-//# sourceMappingURL=shared.d.ts.map

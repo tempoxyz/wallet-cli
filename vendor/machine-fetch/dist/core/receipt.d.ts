@@ -17,4 +17,3 @@ export declare function acquiredReceipt(acquisition: Readonly<{
     }>;
     reference?: string | undefined;
 }>): AcquiredReceipt;
-//# sourceMappingURL=receipt.d.ts.map

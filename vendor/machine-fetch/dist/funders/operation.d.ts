@@ -25,4 +25,3 @@ export declare function recoveryError(operationId: string, reference: string | u
     cause?: unknown;
     message?: string;
 }>): FundingRecoveryError;
-//# sourceMappingURL=operation.d.ts.map

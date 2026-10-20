@@ -1,14 +1,14 @@
-import { FundingError, FundingRecoveryError } from '../core/errors.js';
+import { FundingError, FundingRecoveryError, InvalidConfigurationError } from '../core/errors.js';
 import { nowSeconds, sleep, untilDeadline } from '../core/time.js';
 import { isEvmAddress, isPositive, isRecord } from '../core/validate.js';
 import { evmRoute } from '../funders/evm.js';
 /**
  * Creates an estimate-only, exact-output EVM route executed as a Privy wallet action. The request's
- * `attemptId` is Privy's idempotency key, so retrying an attempt resumes its action rather than
+ * `operationId` is Privy's idempotency key, so retrying an operation resumes its action rather than
  * swapping again. Once Privy execution may have started, failures are `FundingRecoveryError`s for
- * the attempt, with the wallet-action ID as `reference` when it is known.
+ * the operation, with the wallet-action ID as `reference` when it is known.
  */
-export function privySwap(options) {
+export function privyEvmRoute(options) {
     const configured = validateOptions(options);
     return evmRoute({
         name: 'privy',
@@ -29,7 +29,7 @@ export function privySwap(options) {
             assertWallet(request.account, configured.wallet.address);
             const parameters = withAuthorization(configured.authorizationContext, {
                 ...sameChainSwapParameters(request),
-                idempotency_key: idempotencyKey(request.attemptId),
+                idempotency_key: idempotencyKey(request.operationId),
             });
             const swaps = configured.client.wallets().swaps();
             assertSubmittable(request);
@@ -41,7 +41,7 @@ export function privySwap(options) {
                 actionId = action.id;
             }
             catch (cause) {
-                throw new FundingRecoveryError(request.attemptId, { cause });
+                throw new FundingRecoveryError(request.operationId, { cause });
             }
             try {
                 const completed = await waitForAction(configured, actionId, request.deadline, request.signal);
@@ -49,7 +49,7 @@ export function privySwap(options) {
                 return Object.freeze({ amountIn: amounts.amountIn, reference: actionId });
             }
             catch (cause) {
-                throw new FundingRecoveryError(request.attemptId, { cause, reference: actionId });
+                throw new FundingRecoveryError(request.operationId, { cause, reference: actionId });
             }
         },
     });
@@ -59,13 +59,13 @@ export function privySwap(options) {
  * request ID is Privy's idempotency key, and every accepted wallet action, even a failed one, is
  * returned for persistence so its status is reconciled rather than resubmitted.
  */
-export function privyRoute(options) {
+export function privyCrossChainRoute(options) {
     const configured = validateOptions(options);
     return Object.freeze({
         name: 'privy',
         executionMode: 'provider-managed',
         async quote(request) {
-            assertWallet(request.from.account, configured.wallet.address);
+            assertWallet(request.from.owner, configured.wallet.address);
             const response = await configured.client
                 .wallets()
                 .swaps()
@@ -76,14 +76,14 @@ export function privyRoute(options) {
                 amountOut: quote.amountOut,
                 minAmountOut: quote.minAmountOut,
                 expiresAt: Math.min(quote.expiresAt ?? request.deadline, request.deadline),
-                reference: request.id,
+                reference: request.operationId,
             });
         },
         async submit({ request }) {
-            assertWallet(request.from.account, configured.wallet.address);
+            assertWallet(request.from.owner, configured.wallet.address);
             const parameters = withAuthorization(configured.authorizationContext, {
                 ...swapParameters(request),
-                idempotency_key: idempotencyKey(request.id),
+                idempotency_key: idempotencyKey(request.operationId),
             });
             const swaps = configured.client.wallets().swaps();
             assertSubmittable(request);
@@ -114,17 +114,17 @@ export function privyRoute(options) {
 }
 function validateOptions(value) {
     if (typeof value.wallet.id !== 'string' || !value.wallet.id.trim())
-        throw configuration('Privy wallet ID is required');
+        throw new InvalidConfigurationError('Privy wallet ID is required');
     if (!isEvmAddress(value.wallet.address))
-        throw configuration('Privy wallet address must be an EVM address');
+        throw new InvalidConfigurationError('Privy wallet address must be an EVM address');
     if (value.pollIntervalMs !== undefined && !isPositive(value.pollIntervalMs))
-        throw configuration('pollIntervalMs must be positive');
+        throw new InvalidConfigurationError('pollIntervalMs must be positive');
     return Object.freeze({ ...value, wallet: Object.freeze({ ...value.wallet }) });
 }
 /** An empty key would let Privy treat a retry as a new swap. */
 function idempotencyKey(id) {
     if (typeof id !== 'string' || !id.trim())
-        throw configuration('Privy idempotency key must be a non-empty string');
+        throw new InvalidConfigurationError('Privy idempotency key must be a non-empty string');
     return id;
 }
 /**
@@ -170,7 +170,7 @@ function swapParameters(request) {
         destination: {
             asset_address: request.to.asset,
             caip2: request.to.network,
-            destination_address: request.to.account,
+            destination_address: request.to.owner,
         },
         slippage_bps: request.maxSlippageBps,
     };
@@ -260,9 +260,6 @@ function parseAmount(value, label) {
         throw new FundingError(`Privy ${label} must be positive`);
     return amount;
 }
-function configuration(message) {
-    return new FundingError(message, { code: 'INVALID_CONFIGURATION' });
-}
 function parseAction(value) {
     if (!isRecord(value))
         throw new FundingError('Invalid Privy wallet action');
@@ -276,4 +273,3 @@ function sameDestinationNetwork(actual, terms) {
         ? actual === undefined || actual === terms.toNetwork
         : actual === terms.toNetwork;
 }
-//# sourceMappingURL=privy.js.map

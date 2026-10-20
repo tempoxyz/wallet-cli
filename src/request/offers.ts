@@ -1,5 +1,5 @@
-import { mppxRequirement } from "machine-fetch/adapters/mppx";
-import type { PaymentRequirement } from "machine-fetch/interfaces";
+import type { Payment } from "machine-fetch";
+import { MppxFetch } from "machine-fetch/mppx";
 import { Challenge } from "mppx";
 import { Transport } from "mppx/client";
 import { Header as X402Header, Types as X402 } from "mppx/x402";
@@ -20,7 +20,7 @@ export type EvmOffer = {
   /** The offer as Mppx parses it; x402 offers are Mppx's synthesized challenges. */
   challenge: Challenge.Challenge;
   destination: Destination;
-  requirement: PaymentRequirement;
+  requirement: Payment.Requirement;
   /** A 402 response carrying exactly this offer, for credential creation. */
   response: Response;
 };
@@ -40,9 +40,9 @@ export function evmOffers(response: Response, options: RequestOptions) {
     if (challenge.method !== X402.paymentMethod || challenge.intent !== "charge") continue;
     const kind = challenge.id.startsWith(X402.syntheticChallengeIdPrefix) ? "x402" : "mpp";
     const refuse = (reason: string) => refused.push(`${kind} offer: ${reason}`);
-    let requirement: PaymentRequirement;
+    let requirement: Payment.Requirement;
     try {
-      requirement = mppxRequirement(challenge);
+      requirement = MppxFetch.requirement(challenge);
     } catch (error) {
       refuse(error instanceof Error ? error.message : "malformed");
       continue;

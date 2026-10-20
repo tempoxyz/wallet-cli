@@ -1,3 +1,4 @@
+import type { FundContext } from './funder.js';
 /** A human-readable payment ceiling. */
 export type Money = Readonly<{
     /** Non-negative base-10 decimal string, without exponent notation. */
@@ -15,22 +16,21 @@ export type AssetAmount = Readonly<{
 /** Funding controls shared by payment funding and explicit balance replenishment. */
 export type FundingPolicy = Readonly<{
     /** Per-funding-operation ceilings, including gas; every debited asset needs a limit. */
-    maxFundingSpend?: readonly AssetAmount[];
+    maxFundingSpend?: readonly AssetAmount[] | undefined;
     /** Restricts funding to matching reference currencies. Custom funders must enforce it. @default true */
-    sameCurrencyOnly?: boolean;
+    sameCurrencyOnly?: boolean | undefined;
     /** Maximum funding slippage, an integer from 0 to 10000 basis points. @default 100 */
-    maxSlippageBps?: number;
+    maxSlippageBps?: number | undefined;
     /** Funding deadline, an integer from 1 to 86400 seconds; not an HTTP/RPC timeout. @default 30 */
-    deadlineSeconds?: number;
+    deadlineSeconds?: number | undefined;
 }>;
-/** Safety policy applied before any payment credential is created. */
+/** Local limits applied before funding and signing; `maxPayment` is unset by default. */
 export type PaymentPolicy = FundingPolicy & Readonly<{
     /**
      * Per-payment ceiling; unset means no ceiling. A display amount rejects payments without
      * matching currency and decimals; asset amounts reject payments in any unlisted asset.
      */
-    maxPayment?: Money | readonly AssetAmount[];
+    maxPayment?: Money | readonly AssetAmount[] | undefined;
 }>;
 /** Fully resolved policy passed to funders; funding controls carry their defaults. */
-export type ResolvedPaymentPolicy = Pick<PaymentPolicy, 'maxPayment' | 'maxFundingSpend'> & Required<Pick<PaymentPolicy, 'sameCurrencyOnly' | 'maxSlippageBps' | 'deadlineSeconds'>>;
-//# sourceMappingURL=policy.d.ts.map
+export type ResolvedPaymentPolicy = FundContext['policy'];

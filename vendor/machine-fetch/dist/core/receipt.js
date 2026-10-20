@@ -18,4 +18,3 @@ export function acquiredReceipt(acquisition) {
         ...(acquisition.reference ? { reference: acquisition.reference } : {}),
     });
 }
-//# sourceMappingURL=receipt.js.map

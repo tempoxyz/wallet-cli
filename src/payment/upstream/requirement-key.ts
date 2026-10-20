@@ -1,13 +1,13 @@
 /**
  * [MF-14] `requirementKey(requirement)`: machine-fetch's identity for "the same payment", which it
- * keeps internal (`requirementKeyOf` in src/funders/cross-chain.ts). The CLI persists attempt IDs
+ * still keeps internal (`requirementKeyOf` in src/funders/cross-chain.ts, unchanged in 0.3's API rework). The CLI persists attempt IDs
  * between runs and must reuse one only for the payment machine-fetch would also call the same, so
  * this copies its encoding exactly. Delete once machine-fetch exports it.
  */
-import type { PaymentRequirement } from "machine-fetch/interfaces";
+import type { Payment } from "machine-fetch";
 
 /** Encodes payment terms unambiguously; network and resource values themselves contain colons. */
-export function requirementKey(requirement: PaymentRequirement): string {
+export function requirementKey(requirement: Payment.Requirement): string {
   const { network } = requirement;
   return JSON.stringify([
     requirement.protocol,

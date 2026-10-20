@@ -14,8 +14,8 @@ export declare function assetKey(asset: Readonly<{
     network: string;
     asset: string;
 }>): string;
-/** Rejects attempt IDs that cannot identify a request. */
-export declare function assertAttemptId(attemptId: unknown): asserts attemptId is string;
+/** Rejects operation IDs that cannot identify a request. */
+export declare function assertOperationId(operationId: unknown): asserts operationId is string;
 /** Rejects a payer that cannot identify a signing account. */
 export declare function assertPayer(payer: unknown): asserts payer is string;
 /** Whether an optional payer is `account`; EVM addresses compare case-insensitively. */
@@ -29,4 +29,3 @@ export declare function assertQuoteOptions(options: Readonly<{
 }>): void;
 /** Whether a value is a finite number greater than zero. */
 export declare function isPositive(value: number): boolean;
-//# sourceMappingURL=validate.d.ts.map

@@ -1,21 +1,17 @@
-import { InsufficientFundsError } from "machine-fetch";
-import { tempoDex, type TempoDexContext } from "machine-fetch/funders/tempo";
-import type { Funder, PaymentRequirement } from "machine-fetch/interfaces";
-import { type Address, decodeFunctionData, erc20Abi } from "viem";
+import { Funder, type Payment } from "machine-fetch";
+import { type Address, decodeFunctionData, erc20Abi, getAddress } from "viem";
 import { Addresses, Transaction as TempoTransaction } from "viem/tempo";
 
 import { tempoFundingInputs, tempoUsdTokens } from "../shared/chains.js";
 import { stringValue } from "../shared/utils.js";
 
-/** Mppx Tempo charge context: `tempoDex`'s, with the swap's inputs as an allowlist. */
-export type TempoFundingContext =
-  | {
-      autoSwap: Exclude<TempoDexContext["autoSwap"], false> & { fallback: false };
-    }
-  | TempoDexContext;
+/** Mppx Tempo charge auto-swap context: the swap's inputs, as an allowlist, and its slippage. */
+export type TempoFundingContext = {
+  autoSwap: false | { tokenIn: readonly Address[]; slippage: number; fallback?: false };
+};
 
 /** What a swap is about to spend: its first input the payer holds enough of, and at most how much. */
-export type SwapInput = { token: Address; maxAmount: bigint; requirement: PaymentRequirement };
+export type SwapInput = { token: Address; maxAmount: bigint; requirement: Payment.Requirement };
 
 export type TempoFundingOptions = {
   chainId: number;
@@ -43,14 +39,14 @@ export type TempoFundingOptions = {
  * and the input Mppx tries first goes to `beforeSwap`. A swap of USD stablecoins is estimated at
  * parity plus slippage.
  */
-export function tempoFunding(options: TempoFundingOptions): Funder<TempoFundingContext> {
+export function tempoFunding(options: TempoFundingOptions): Funder.Funder<TempoFundingContext> {
   const { chainId } = options;
   const inputs = tempoFundingInputs(chainId);
-  const dex = tempoDex({ chainId, preferredInputs: inputs, outputs: tempoUsdTokens(chainId) });
+  const dex = tempoDex(chainId, inputs, tempoUsdTokens(chainId));
   return Object.freeze({
     name: dex.name,
-    resolve: (requirement: PaymentRequirement) => dex.resolve?.(requirement),
-    async prepare(requirement, context) {
+    resolve: (requirement: Payment.Requirement) => dex.resolve(requirement),
+    async prepare(requirement: Payment.Requirement, context: Funder.Context) {
       // A zero-amount proof moves nothing, so there is nothing to fund.
       if (requirement.amount === 0n) return undefined;
       const asset = requirement.asset as Address;
@@ -88,7 +84,7 @@ export function tempoFunding(options: TempoFundingOptions): Funder<TempoFundingC
         });
       }
       if (unspendable) await options.beforeSwap?.(unspendable);
-      throw new InsufficientFundsError(
+      throw new Funder.InsufficientFundsError(
         `The wallet holds neither ${requirement.amount} of ${asset} (atomic units) nor enough of ${autoSwap.tokenIn.join(", ")} to swap for it`,
       );
     },
@@ -120,4 +116,52 @@ export function signedSwap(payload: Record<string, unknown>) {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The Tempo DEX funder machine-fetch 0.3 shipped as `tempoDex` and has since folded into its Mppx
+ * client's own auto-swap, which this CLI turns off (see `planAndFund`): it resolves a Tempo payment
+ * in a listed USD TIP-20 (six decimals), and prepares Mppx auto-swap context from the configured
+ * inputs other than the requested token, with `maxSlippageBps` as Mppx's percent. With
+ * `sameCurrencyOnly`, only inputs in the requested token's currency qualify; every listed token is
+ * USD, so all do. With none eligible, swapping is disabled for the payment.
+ */
+function tempoDex(chainId: number, inputs: readonly Address[], outputs: readonly Address[]) {
+  const network = `eip155:${chainId}`;
+  const listed = (asset: string) =>
+    outputs.find((token) => token.toLowerCase() === asset.toLowerCase());
+  return {
+    name: "tempo-dex",
+    resolve(requirement: Payment.Requirement): Payment.Requirement | undefined {
+      const token = listed(requirement.asset);
+      if (
+        requirement.protocol !== "mpp" ||
+        requirement.method !== "tempo" ||
+        requirement.network !== network ||
+        !token
+      )
+        return undefined;
+      return Object.freeze({ ...requirement, asset: token, currency: "USD", decimals: 6 });
+    },
+    prepare(
+      requirement: Payment.Requirement,
+      { policy, signal }: Funder.Context,
+    ): Payment.Preparation<TempoFundingContext> {
+      signal.throwIfAborted();
+      const requested = listed(requirement.asset);
+      const tokenIn = inputs
+        .map((token) => getAddress(token))
+        .filter((token) => token.toLowerCase() !== requested?.toLowerCase());
+      if (tokenIn.length === 0)
+        return Object.freeze({ context: Object.freeze({ autoSwap: false }) });
+      return Object.freeze({
+        context: Object.freeze({
+          autoSwap: Object.freeze({
+            tokenIn: Object.freeze(tokenIn),
+            slippage: policy.maxSlippageBps / 100,
+          }),
+        }),
+      });
+    },
+  };
 }

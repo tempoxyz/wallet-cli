@@ -8,4 +8,3 @@ export declare function settleConcurrent<input, output>(values: readonly input[]
 }>>;
 /** Preserves a sole failure as an error cause, or aggregates several. */
 export declare function failureCause(failures: readonly unknown[], message: string): unknown;
-//# sourceMappingURL=concurrent.d.ts.map

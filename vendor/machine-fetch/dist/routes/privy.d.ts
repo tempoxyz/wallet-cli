@@ -15,7 +15,10 @@ export type PrivyClient = Readonly<{
         }>;
     }>;
 }>;
-/** Privy request authorization material passed directly to the SDK. */
+/**
+ * Privy request authorization material passed directly to the SDK. Like the other request types
+ * here, it mirrors the SDK's shape exactly, so optional fields do not accept `undefined`.
+ */
 export type PrivyAuthorizationContext = Readonly<{
     authorization_private_keys?: string[];
     user_jwts?: string[];
@@ -48,7 +51,7 @@ export type PrivyQuoteResponse = Readonly<{
     input_amount: string;
     est_output_amount: string;
     minimum_output_amount: string;
-    expires_at?: number;
+    expires_at?: number | undefined;
 }>;
 /** Privy wallet-action fields used for reconciliation and actual-spend reporting. */
 export type PrivyAction = Readonly<{
@@ -73,21 +76,20 @@ export type PrivyRouteOptions = Readonly<{
     client: PrivyClient;
     wallet: PrivyWallet;
     /** Privy signer authorization; retained privately and never copied into quotes or receipts. */
-    authorizationContext?: PrivyAuthorizationContext;
+    authorizationContext?: PrivyAuthorizationContext | undefined;
     /** Status polling interval for same-chain swaps. @default 1000 */
-    pollIntervalMs?: number;
+    pollIntervalMs?: number | undefined;
 }>;
 /**
  * Creates an estimate-only, exact-output EVM route executed as a Privy wallet action. The request's
- * `attemptId` is Privy's idempotency key, so retrying an attempt resumes its action rather than
+ * `operationId` is Privy's idempotency key, so retrying an operation resumes its action rather than
  * swapping again. Once Privy execution may have started, failures are `FundingRecoveryError`s for
- * the attempt, with the wallet-action ID as `reference` when it is known.
+ * the operation, with the wallet-action ID as `reference` when it is known.
  */
-export declare function privySwap(options: PrivyRouteOptions): EvmRoute;
+export declare function privyEvmRoute(options: PrivyRouteOptions): EvmRoute;
 /**
  * Creates a resumable, estimate-only Privy route for cross-network exact-output funding. The
  * request ID is Privy's idempotency key, and every accepted wallet action, even a failed one, is
  * returned for persistence so its status is reconciled rather than resubmitted.
  */
-export declare function privyRoute(options: PrivyRouteOptions): CrossChainRoute<EstimatedCrossChainQuote>;
-//# sourceMappingURL=privy.d.ts.map
+export declare function privyCrossChainRoute(options: PrivyRouteOptions): CrossChainRoute<EstimatedCrossChainQuote>;

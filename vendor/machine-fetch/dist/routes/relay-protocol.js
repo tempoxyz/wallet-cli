@@ -1,6 +1,7 @@
-import { FundingError } from '../core/errors.js';
+import { FundingError, InvalidConfigurationError } from '../core/errors.js';
 import { immutableSnapshot } from '../core/immutable.js';
 import { isRecord } from '../core/validate.js';
+import { clientsOf, relayChains, viemBalance, viemGuarantees, viemStatus, viemSubmit, } from './relay-viem.js';
 const stepShape = {
     id: 'string',
     kind: 'string',
@@ -10,21 +11,40 @@ const stepShape = {
         {
             status: 'string',
             check: { endpoint: 'string', method: 'string' },
-            data: { chainId: 'number', data: 'string', from: 'string', to: 'string', value: 'string' },
+            data: {
+                chainId: 'number',
+                data: 'string',
+                from: 'string',
+                gas: 'string',
+                to: 'string',
+                value: 'string',
+            },
         },
     ],
 };
-/** Creates a resumable Relay route with application-supplied signing and status lookup. */
-export function relayProtocol(options) {
-    if (typeof options.guarantees !== 'function' ||
-        typeof options.submit !== 'function' ||
-        typeof options.status !== 'function')
-        throw new FundingError('Relay Protocol guarantees, submit, and status callbacks are required', {
-            code: 'INVALID_CONFIGURATION',
-        });
-    const guarantees = options.guarantees.bind(options);
-    const submit = options.submit.bind(options);
-    const quoteOptions = Object.freeze({ ...options });
+/**
+ * Creates a resumable Relay route. Callbacks default to Viem implementations over `clients`; a
+ * route with clients also reads balances for `CrossChainFunder.create`.
+ */
+export function relayProtocolRoute(options) {
+    for (const callback of [options.guarantees, options.submit, options.status])
+        if (callback !== undefined && typeof callback !== 'function')
+            throw new InvalidConfigurationError('Relay Protocol callbacks must be functions');
+    if (options.clients === undefined && (!options.guarantees || !options.submit))
+        throw new InvalidConfigurationError('Relay Protocol needs Viem clients, or guarantees and submit callbacks');
+    const clients = clientsOf(options.clients ?? {});
+    const fetch = options.fetch ?? globalThis.fetch;
+    const url = (options.url ?? 'https://api.relay.link').replace(/\/$/, '');
+    const viem = Object.freeze({
+        clients,
+        chains: relayChains(fetch, url),
+        fetch,
+        url,
+        useDepositAddress: options.useDepositAddress === true,
+    });
+    const guarantees = options.guarantees?.bind(options) ?? viemGuarantees.bind(undefined, viem);
+    const submit = options.submit?.bind(options) ?? viemSubmit.bind(undefined, viem);
+    const quoteOptions = Object.freeze({ ...options, fetch, url });
     return Object.freeze({
         name: options.name ?? 'relay-protocol',
         executionMode: 'bounded',
@@ -49,13 +69,14 @@ export function relayProtocol(options) {
                 throw new FundingError('Relay Protocol quote exceeds its maximum input');
             return submit({ quote: parsed.quote, limits, request });
         },
-        status: options.status.bind(options),
+        status: options.status?.bind(options) ?? viemStatus.bind(undefined, viem),
+        ...(options.clients === undefined
+            ? {}
+            : { balance: (account) => viemBalance(clients, account) }),
     });
 }
 async function fetchRelayQuote(options, request) {
-    const fetchQuote = options.fetch ?? globalThis.fetch;
-    const url = (options.url ?? 'https://api.relay.link').replace(/\/$/, '');
-    const response = await fetchQuote(`${url}/quote/v2`, {
+    const response = await options.fetch(`${options.url}/quote/v2`, {
         body: JSON.stringify({
             amount: request.amountOut.toString(),
             destinationChainId: request.to.chainId,
@@ -65,11 +86,11 @@ async function fetchRelayQuote(options, request) {
             ...(options.useDepositAddress ? { useDepositAddress: true, strict: true } : {}),
             originChainId: request.from.chainId,
             originCurrency: request.from.asset,
-            recipient: request.to.account,
-            refundTo: request.from.account,
+            recipient: request.to.owner,
+            refundTo: request.from.owner,
             slippageTolerance: request.maxSlippageBps.toString(),
             tradeType: 'EXACT_OUTPUT',
-            user: request.from.account,
+            user: request.from.owner,
         }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
@@ -106,9 +127,9 @@ function parseQuote(value, request) {
     if (output.currency.chainId !== request.to.chainId ||
         !sameAddress(output.currency.address, request.to.asset))
         throw new FundingError('Relay Protocol quote changed the destination asset');
-    if (!sameAddress(sender, request.from.account))
+    if (!sameAddress(sender, request.from.owner))
         throw new FundingError('Relay Protocol quote changed the source account');
-    if (!sameAddress(recipient, request.to.account))
+    if (!sameAddress(recipient, request.to.owner))
         throw new FundingError('Relay Protocol quote changed the destination account');
     if (output.amount !== request.amountOut.toString())
         throw new FundingError('Relay Protocol quote changed the exact output amount');
@@ -159,4 +180,3 @@ function isList(shape) {
 function sameAddress(value, expected) {
     return typeof value === 'string' && value.toLowerCase() === expected.toLowerCase();
 }
-//# sourceMappingURL=relay-protocol.js.map

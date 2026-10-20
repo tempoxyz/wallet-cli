@@ -73,4 +73,3 @@ async function releaseUnsubmitted(operation, store, failure) {
     }
     throw failure.reason;
 }
-//# sourceMappingURL=operation.js.map

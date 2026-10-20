@@ -1,4 +1,4 @@
-import type { CrossChainRequest } from "machine-fetch/interfaces/evm";
+import type { CrossChain } from "machine-fetch/cross-chain";
 import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress, type Hex, pad } from "viem";
 import { describe, expect, it } from "vitest";
 
@@ -17,11 +17,11 @@ const wallet = "0x00000000000000000000000000000000000000a1";
 const payer = "0x00000000000000000000000000000000000000b2";
 const hash = `0x${"12".repeat(32)}` as Hex;
 
-const request: CrossChainRequest = {
+const request: CrossChain.Request = {
   amountOut: 1_000_000n,
   deadline: Math.floor(Date.now() / 1000) + 30,
   from: {
-    account: wallet,
+    owner: wallet,
     asset: usdce,
     chainId: 4217,
     currency: "USD",
@@ -29,10 +29,10 @@ const request: CrossChainRequest = {
     network: "eip155:4217",
   },
   maxSlippageBps: 50,
-  id: "attempt-1",
+  operationId: "attempt-1",
   signal: new AbortController().signal,
   to: {
-    account: payer,
+    owner: payer,
     asset: usdc,
     chainId: 8453,
     currency: "USD",
@@ -128,7 +128,7 @@ describe("Stargate route quotes", () => {
     });
   });
 
-  it.each<[string, Partial<CrossChainRequest> | ((r: CrossChainRequest) => CrossChainRequest)]>([
+  it.each<[string, Partial<CrossChain.Request> | ((r: CrossChain.Request) => CrossChain.Request)]>([
     ["another source token", (r) => ({ ...r, from: { ...r.from, asset: usdc } })],
     ["an unconfigured destination", (r) => ({ ...r, to: { ...r.to, chainId: 10 } })],
     ["another destination token", (r) => ({ ...r, to: { ...r.to, asset: usdce } })],
@@ -229,7 +229,7 @@ describe("Stargate route submission", () => {
 describe("Stargate route status", () => {
   const operation = (reference?: string) =>
     ({
-      id: "attempt-1",
+      operationId: "attempt-1",
       route: "stargate",
       reference,
       quote: { reference: "stargate:attempt-1" },

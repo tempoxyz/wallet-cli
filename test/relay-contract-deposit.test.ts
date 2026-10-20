@@ -1,6 +1,6 @@
-import { NoRouteError } from "machine-fetch";
-import type { CrossChainRequest } from "machine-fetch/interfaces/evm";
-import type { RelayApiQuote } from "machine-fetch/routes/relay-protocol";
+import { Funder } from "machine-fetch";
+import type { CrossChain } from "machine-fetch/cross-chain";
+import type { RelayProtocolRoute } from "machine-fetch/relay";
 import { encodeFunctionData, erc20Abi, type Hex } from "viem";
 import { describe, expect, it } from "vitest";
 
@@ -23,11 +23,11 @@ const other = "0x00000000000000000000000000000000000000d3";
 const requestId = `0x${"ab".repeat(32)}`;
 const orderId = `0x${"cd".repeat(32)}` as Hex;
 
-const request: CrossChainRequest = {
+const request: CrossChain.Request = {
   amountOut: 100_000n,
   deadline: Math.floor(Date.now() / 1000) + 30,
   from: {
-    account: wallet,
+    owner: wallet,
     asset: ousd,
     chainId: 4217,
     currency: "USD",
@@ -35,10 +35,10 @@ const request: CrossChainRequest = {
     network: "eip155:4217",
   },
   maxSlippageBps: 50,
-  id: "attempt-1",
+  operationId: "attempt-1",
   signal: new AbortController().signal,
   to: {
-    account: payer,
+    owner: payer,
     asset: usdc,
     chainId: 8453,
     currency: "USD",
@@ -64,7 +64,9 @@ const depositErc20 = (depositor: string, token: string, amount: bigint, id: Hex)
 const tx = (to: string, data: string) => ({ chainId: 4217, from: wallet, to, value: "0", data });
 
 /** A contract-deposit Relay quote for `request`, shaped like Relay's live Tempo quotes. */
-function quote(change: (quote: Record<string, any>) => void = () => undefined): RelayApiQuote {
+function quote(
+  change: (quote: Record<string, any>) => void = () => undefined,
+): RelayProtocolRoute.ApiQuote {
   const value: Record<string, any> = {
     details: {
       sender: wallet,
@@ -94,7 +96,7 @@ function quote(change: (quote: Record<string, any>) => void = () => undefined): 
     ],
   };
   change(value);
-  return value as RelayApiQuote;
+  return value as RelayProtocolRoute.ApiQuote;
 }
 
 describe("Relay contract-deposit validation", () => {
@@ -239,7 +241,7 @@ describe("Relay route in contract-deposit mode", () => {
   });
 
   it("explains why routes declined when none can fund the payment", () => {
-    const error = new NoRouteError("No trusted cross-chain route can fund the payment", {
+    const error = new Funder.NoRouteError("No trusted cross-chain route can fund the payment", {
       cause: new AggregateError([
         new Error("Relay quote rejected: it approves a spender other than Relay's depository"),
         new Error("Stargate cannot bridge this amount right now"),
@@ -259,7 +261,7 @@ describe("Relay route in contract-deposit mode", () => {
   });
 
   it("names the source token when funding would exceed --max-funding-spend", () => {
-    const error = new NoRouteError("No trusted cross-chain route can fund the payment", {
+    const error = new Funder.NoRouteError("No trusted cross-chain route can fund the payment", {
       cause: new AggregateError([new FundingLimitError(51_303n, 0n, ousd)]),
     });
     expect(
@@ -296,7 +298,7 @@ describe("Relay route in contract-deposit mode", () => {
     ["Relay first", [51_303n, 288_431n]],
     ["Stargate first", [288_431n, 51_303n]],
   ])("reports the cheapest route over the cap whichever refused first (%s)", (_name, amounts) => {
-    const error = new NoRouteError("No trusted cross-chain route can fund the payment", {
+    const error = new Funder.NoRouteError("No trusted cross-chain route can fund the payment", {
       cause: new AggregateError(amounts.map((amount) => new FundingLimitError(amount, 0n, ousd))),
     });
     expect(report(error)).toMatchObject({
@@ -306,7 +308,7 @@ describe("Relay route in contract-deposit mode", () => {
   });
 
   it("reports a source shortfall as insufficient funds with what the wallet holds", () => {
-    const error = new NoRouteError("No trusted cross-chain route can fund the payment", {
+    const error = new Funder.NoRouteError("No trusted cross-chain route can fund the payment", {
       cause: new AggregateError([
         new SourceBalanceError(268_432n, 14_030n, ousd),
         new SourceBalanceError(31_305n, 14_030n, ousd),
@@ -321,7 +323,7 @@ describe("Relay route in contract-deposit mode", () => {
   });
 
   it("prefers the cap over a shortfall when some route only exceeded the cap", () => {
-    const error = new NoRouteError("No trusted cross-chain route can fund the payment", {
+    const error = new Funder.NoRouteError("No trusted cross-chain route can fund the payment", {
       cause: new AggregateError([
         new SourceBalanceError(268_432n, 100_000n, ousd),
         new FundingLimitError(51_303n, 0n, ousd),

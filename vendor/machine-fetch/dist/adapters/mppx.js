@@ -1,20 +1,29 @@
 import { Mppx } from 'mppx/client';
 import { Types as X402 } from 'mppx/x402';
-import { MachineFetchError } from '../core/errors.js';
+import { InvalidConfigurationError } from '../core/errors.js';
 import { immutableSnapshot } from '../core/immutable.js';
 import { machineFetch } from '../core/machine-fetch.js';
 import { createBeforePayment } from '../core/prepare.js';
 import { neverAborted } from '../core/time.js';
-import { assertAttemptId, assertPayer, isRecord } from '../core/validate.js';
+import { assertOperationId, assertPayer, isPayer, isRecord } from '../core/validate.js';
+import { autoSwapDisabled, tempoFunder } from '../funders/tempo.js';
 import { invalidPayment, parseAtomicAmount, parseNetwork, x402PaymentRequirement, } from './shared.js';
-/** Creates a paid Fetch function from Mppx methods and machine-fetch policy. */
+/** Creates a paid Fetch function from Mppx methods plus machine-fetch funders and policy. */
 export function mppxFetch(options) {
-    const { funders, onEvent, policy, ...mppx } = options;
+    const { deadlineSeconds, funders, maxFundingSpend, maxPayment, maxSlippageBps, onFundingComplete, onPaymentFailed, onPaymentReady, onPaymentRequired, payer, sameCurrencyOnly, ...mppx } = options;
     return machineFetch({
         client: createMppxPayment(mppx),
+        deadlineSeconds,
         funders,
-        onEvent,
-        policy,
+        maxFundingSpend,
+        maxPayment,
+        maxSlippageBps,
+        onFundingComplete,
+        onPaymentFailed,
+        onPaymentReady,
+        onPaymentRequired,
+        payer,
+        sameCurrencyOnly,
     });
 }
 /**
@@ -34,11 +43,16 @@ export function fromMppx(client, options = {}) {
 }
 /**
  * Creates an Mppx CLI extension backed by machine-fetch policy and funders. Each payment uses the
- * host's attempt ID, or a random one, and the host's signal, when it supplies one.
+ * host's operation ID, or a random one, and the host's signal, when it supplies one.
  */
-export function extension(options = {}) {
-    const { compose, ...machineFetchOptions } = options;
-    const beforePayment = createBeforePayment(machineFetchOptions);
+export function mppxExtension(options = {}) {
+    const { autoSwap, compose, payer: configuredPayer, ...machineFetchOptions } = options;
+    if (configuredPayer !== undefined)
+        assertPayer(configuredPayer);
+    const beforePayment = createBeforePayment({
+        ...machineFetchOptions,
+        funders: [...(machineFetchOptions.funders ?? []), tempoFunder(autoSwap)],
+    });
     const combine = (current, prepared) => {
         if (current === undefined)
             return prepared;
@@ -48,31 +62,36 @@ export function extension(options = {}) {
             return compose(current, prepared);
         if (isRecord(current) && isRecord(prepared))
             return Object.freeze({ ...current, ...prepared });
-        throw new MachineFetchError('Cannot combine non-object Mppx credential contexts. Provide compose.', { code: 'INVALID_CONFIGURATION' });
+        throw new InvalidConfigurationError('Cannot combine non-object Mppx credential contexts. Provide compose.', {});
     };
     return Object.freeze({
-        async preparePayment({ attemptId = crypto.randomUUID(), challenge, credentialContext, payer, signal, }) {
-            assertAttemptId(attemptId);
-            if (payer !== undefined)
-                assertPayer(payer);
+        async preparePayment({ operationId = crypto.randomUUID(), challenge, credentialContext, payer: requestPayer, signal, }) {
+            assertOperationId(operationId);
+            if (requestPayer !== undefined)
+                assertPayer(requestPayer);
+            if (configuredPayer !== undefined && !isPayer(requestPayer, configuredPayer))
+                throw new InvalidConfigurationError('Payment payer differs from the configured payer');
+            const payer = requestPayer ?? configuredPayer;
             const prepared = await beforePayment(mppxRequirement(challenge), Object.freeze({
-                attemptId,
+                operationId,
                 signal: signal ?? neverAborted,
                 // Stryker disable next-line ConditionalExpression: funding drops an explicit undefined payer exactly like an omitted one
                 ...(payer === undefined ? {} : { payer }),
             }));
             const funding = prepared?.funding ? { funding: immutableSnapshot(prepared.funding) } : {};
-            if (!prepared || !Object.hasOwn(prepared, 'context'))
+            const source = prepared && Object.hasOwn(prepared, 'context') ? prepared : unprepared(challenge);
+            if (!source)
                 return prepared?.funding ? Object.freeze(funding) : undefined;
             return Object.freeze({
-                credentialContext: combine(credentialContext, prepared.context),
+                credentialContext: combine(credentialContext, source.context),
                 ...funding,
             });
         },
     });
 }
-function createMppxPayment(config) {
+function createMppxPayment({ autoSwap, ...config }) {
     return Object.freeze({
+        funders: Object.freeze([tempoFunder(autoSwap)]),
         bind({ beforePayment }) {
             const raw = Mppx.create({ ...config, polyfill: false }).rawFetch;
             return Object.freeze({
@@ -89,7 +108,7 @@ function createMppxPayment(config) {
                             const prepared = await beforePayment(mppxRequirement(challenge), context);
                             // Observers and other callbacks may cancel after the hook settles; never sign then.
                             context.signal.throwIfAborted();
-                            return createCredential(prepared?.context);
+                            return createCredential((prepared?.context ?? unprepared(challenge)?.context));
                         },
                     }).fetch(input, init);
                 },
@@ -97,6 +116,13 @@ function createMppxPayment(config) {
             });
         },
     });
+}
+/**
+ * Context for a payment no funder prepared. Mppx's Tempo auto-swap then stays off, so it never runs
+ * with the method's own settings outside machine-fetch policy, such as for an unknown token.
+ */
+function unprepared(challenge) {
+    return challenge.method === 'tempo' ? autoSwapDisabled : undefined;
 }
 /** Converts an MPP or Mppx-translated x402 challenge to the common model. */
 export function mppxRequirement(challenge) {
@@ -170,4 +196,3 @@ function recordField(value, key) {
     const field = value[key];
     return isRecord(field) ? field : undefined;
 }
-//# sourceMappingURL=mppx.js.map

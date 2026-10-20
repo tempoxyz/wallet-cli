@@ -1,4 +1,4 @@
-import { PaymentPolicyError } from '../core/errors.js';
+import { InvalidPaymentError } from '../core/errors.js';
 import { isEvmNetwork } from '../core/validate.js';
 /** Converts a selected x402 requirement to the common model, identically for every adapter. */
 export function x402PaymentRequirement(selection, resource, x402Version) {
@@ -31,6 +31,5 @@ export function parseNetwork(network) {
 }
 /** A malformed or unsupported server challenge. */
 export function invalidPayment(message, cause) {
-    return new PaymentPolicyError(message, { cause, code: 'INVALID_PAYMENT' });
+    return new InvalidPaymentError(message, { cause });
 }
-//# sourceMappingURL=shared.js.map

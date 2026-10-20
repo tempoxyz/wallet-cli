@@ -1,4 +1,4 @@
-import { PaymentPolicyError } from './errors.js';
+import { InvalidConfigurationError, InvalidPaymentError, LimitExceededError } from './errors.js';
 import { immutableSnapshot } from './immutable.js';
 import { assetKey, isRecord, isTokenDecimals } from './validate.js';
 const defaults = {
@@ -10,25 +10,37 @@ const defaults = {
 const maxDeadlineSeconds = 86_400;
 /** Bounds human-readable policy input before decimal expansion. */
 const maxDecimalAmountLength = 1_024;
-/** Resolves defaults and validates a policy once at construction time. */
-export function resolvePolicy(policy = {}) {
-    const resolved = immutableSnapshot({ ...defaults, ...policy });
+/**
+ * Resolves defaults and validates the policy fields of flat options once at construction time.
+ * Only policy fields are read, so options may carry funders, observers, or adapter settings.
+ */
+export function resolvePolicy(options = {}) {
+    // Not a spread over defaults: an explicit `undefined` keeps the default, while `null` from an
+    // untyped caller still fails validation below.
+    const pick = (key) => options[key] === undefined ? defaults[key] : options[key];
+    const { maxPayment, maxFundingSpend } = options;
+    const resolved = immutableSnapshot({
+        ...(maxPayment === undefined ? {} : { maxPayment }),
+        ...(maxFundingSpend === undefined ? {} : { maxFundingSpend }),
+        sameCurrencyOnly: pick('sameCurrencyOnly'),
+        maxSlippageBps: pick('maxSlippageBps'),
+        deadlineSeconds: pick('deadlineSeconds'),
+    });
     if (!Number.isInteger(resolved.maxSlippageBps) ||
         resolved.maxSlippageBps < 0 ||
         resolved.maxSlippageBps > 10_000)
-        throw configuration('maxSlippageBps must be an integer from 0 to 10000');
+        throw new InvalidConfigurationError('maxSlippageBps must be an integer from 0 to 10000');
     if (!Number.isInteger(resolved.deadlineSeconds) ||
         resolved.deadlineSeconds <= 0 ||
         resolved.deadlineSeconds > maxDeadlineSeconds)
-        throw configuration(`deadlineSeconds must be an integer from 1 to ${maxDeadlineSeconds}`);
+        throw new InvalidConfigurationError(`deadlineSeconds must be an integer from 1 to ${maxDeadlineSeconds}`);
     if (typeof resolved.sameCurrencyOnly !== 'boolean')
-        throw configuration('sameCurrencyOnly must be a boolean');
-    const { maxPayment } = resolved;
-    if (maxPayment !== undefined)
-        if (isAssetLimits(maxPayment))
-            assertAssetLimits(maxPayment, 'maxPayment');
+        throw new InvalidConfigurationError('sameCurrencyOnly must be a boolean');
+    if (resolved.maxPayment !== undefined)
+        if (isAssetLimits(resolved.maxPayment))
+            assertAssetLimits(resolved.maxPayment, 'maxPayment');
         else
-            assertMoney(maxPayment);
+            assertMoney(resolved.maxPayment);
     if (resolved.maxFundingSpend)
         assertAssetLimits(resolved.maxFundingSpend, 'maxFundingSpend');
     return resolved;
@@ -40,9 +52,9 @@ export function resolvePolicy(policy = {}) {
  */
 export function assertRequirement(requirement, policy, trustedMetadata) {
     if (requirement.amount < 0n)
-        throw invalidPayment('Payment amount cannot be negative');
+        throw new InvalidPaymentError('Payment amount cannot be negative');
     if (requirement.decimals !== undefined && !isTokenDecimals(requirement.decimals))
-        throw invalidPayment('Payment decimals must be an integer from 0 to 255');
+        throw new InvalidPaymentError('Payment decimals must be an integer from 0 to 255');
     const { maxPayment } = policy;
     if (maxPayment === undefined)
         return;
@@ -50,19 +62,19 @@ export function assertRequirement(requirement, policy, trustedMetadata) {
         const key = assetKey(requirement);
         const limit = maxPayment.find((limit) => assetKey(limit) === key);
         if (!limit)
-            throw limitExceeded('Payment asset has no maxPayment limit');
+            throw new LimitExceededError('Payment asset has no maxPayment limit');
         if (requirement.amount > limit.amount)
-            throw limitExceeded('Payment exceeds maxPayment');
+            throw new LimitExceededError('Payment exceeds maxPayment');
         return;
     }
     if (!trustedMetadata)
-        throw invalidPayment('A currency maxPayment requires metadata from a matching funder');
+        throw new InvalidPaymentError('A currency maxPayment requires metadata from a matching funder');
     if (requirement.currency?.toUpperCase() !== maxPayment.currency.toUpperCase())
-        throw invalidPayment('Payment currency cannot be compared with maxPayment');
+        throw new InvalidPaymentError('Payment currency cannot be compared with maxPayment');
     if (requirement.decimals === undefined)
-        throw invalidPayment('Payment decimals are required to enforce maxPayment');
+        throw new InvalidPaymentError('Payment decimals are required to enforce maxPayment');
     if (requirement.amount > parseUnits(maxPayment.amount, requirement.decimals))
-        throw limitExceeded('Payment exceeds maxPayment');
+        throw new LimitExceededError('Payment exceeds maxPayment');
 }
 /**
  * Parses a non-negative base-10 decimal without floating-point arithmetic. Precision beyond
@@ -72,7 +84,7 @@ export function parseUnits(value, decimals) {
     const match = decimalPattern.exec(value);
     const fraction = match[2] ?? '';
     if (fraction.length > decimals)
-        throw invalidPayment('maxPayment has more decimal places than the payment asset');
+        throw new InvalidPaymentError('maxPayment has more decimal places than the payment asset');
     return BigInt(`${match[1]}${fraction.padEnd(decimals, '0')}`);
 }
 /** Maximum input for a quoted amount under a slippage bound, rounded up. */
@@ -86,11 +98,11 @@ function isAssetLimits(limit) {
 function assertMoney(money) {
     const { amount, currency } = (money ?? {});
     if (typeof currency !== 'string' || !currency.trim())
-        throw configuration('maxPayment currency must be a non-empty string');
+        throw new InvalidConfigurationError('maxPayment currency must be a non-empty string');
     if (typeof amount !== 'string' ||
         amount.length > maxDecimalAmountLength ||
         !decimalPattern.test(amount))
-        throw configuration('maxPayment amount must be a non-negative decimal string');
+        throw new InvalidConfigurationError('maxPayment amount must be a non-negative decimal string');
 }
 function assertAssetLimits(limits, name) {
     const keys = new Set();
@@ -102,20 +114,10 @@ function assertAssetLimits(limits, name) {
             !limit.asset.trim() ||
             typeof limit.amount !== 'bigint' ||
             limit.amount < 0n)
-            throw configuration(`Invalid ${name} limit`);
+            throw new InvalidConfigurationError(`Invalid ${name} limit`);
         const key = assetKey(limit);
         if (keys.has(key))
-            throw configuration(`Duplicate ${name} limit`);
+            throw new InvalidConfigurationError(`Duplicate ${name} limit`);
         keys.add(key);
     }
 }
-function configuration(message) {
-    return new PaymentPolicyError(message, { code: 'INVALID_CONFIGURATION' });
-}
-function invalidPayment(message) {
-    return new PaymentPolicyError(message, { code: 'INVALID_PAYMENT' });
-}
-function limitExceeded(message) {
-    return new PaymentPolicyError(message, { code: 'LIMIT_EXCEEDED' });
-}
-//# sourceMappingURL=policy.js.map

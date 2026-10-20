@@ -1,5 +1,5 @@
 import { wrapFetchWithPayment } from '@x402/fetch';
-import { MachineFetchError } from '../core/errors.js';
+import { DisposedError, InvalidConfigurationError } from '../core/errors.js';
 import { machineFetch } from '../core/machine-fetch.js';
 import { invalidPayment, x402PaymentRequirement } from './shared.js';
 const states = new WeakMap();
@@ -19,9 +19,7 @@ export function fromX402(client, options = {}) {
     return {
         bind({ beforePayment }) {
             if (state.binding)
-                throw new MachineFetchError('This x402 client is already bound to machine-fetch', {
-                    code: 'INVALID_CONFIGURATION',
-                });
+                throw new InvalidConfigurationError('This x402 client is already bound to machine-fetch');
             const binding = Object.freeze({ beforePayment });
             state.binding = binding;
             return {
@@ -101,9 +99,7 @@ function getState(client) {
             const creation = state.creation;
             if (creation?.paymentRequired !== upstream.paymentRequired) {
                 if (state.binding || creation)
-                    throw new MachineFetchError('A bound x402 client creates payments only through its fetch', {
-                        code: 'INVALID_CONFIGURATION',
-                    });
+                    throw new InvalidConfigurationError('A bound x402 client creates payments only through its fetch', {});
                 return;
             }
             if (creation.binding !== state.binding)
@@ -114,9 +110,7 @@ function getState(client) {
             if (creation.binding !== state.binding)
                 throw disposed();
             if (prepared?.context !== undefined)
-                throw new MachineFetchError('x402 funders cannot provide credential context', {
-                    code: 'INVALID_CONFIGURATION',
-                });
+                throw new InvalidConfigurationError('x402 funders cannot provide credential context');
         }
         catch (cause) {
             // This hook runs outside upstream credential recovery, so rejection cannot be bypassed.
@@ -126,6 +120,5 @@ function getState(client) {
     return state;
 }
 function disposed() {
-    return new MachineFetchError('x402 payment client binding was disposed', { code: 'DISPOSED' });
+    return new DisposedError('x402 payment client binding was disposed');
 }
-//# sourceMappingURL=x402.js.map

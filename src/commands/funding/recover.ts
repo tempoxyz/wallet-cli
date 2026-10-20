@@ -1,5 +1,5 @@
 import type { z } from "incur";
-import type { CrossChainOperation } from "machine-fetch/interfaces/evm";
+import type { CrossChain } from "machine-fetch/cross-chain";
 
 import { nonDestructive } from "../../cli/command.js";
 import { loadAttempt, removeAttempt } from "../../payment/attempts.js";
@@ -65,7 +65,7 @@ export async function recoverFunding(id: string, networkFlag: string | undefined
     await removeAttempt(id);
     return { ...fields, status: "not_started" as const, reference: null };
   }
-  const route = operationRoute(operation as CrossChainOperation, network);
+  const route = operationRoute(operation as CrossChain.Operation, network);
   if (!route)
     throw walletError({
       code: "E_USAGE",
@@ -74,7 +74,7 @@ export async function recoverFunding(id: string, networkFlag: string | undefined
   const reference = operation.reference ?? operation.quote.reference;
   const result = await Promise.resolve()
     .then(() =>
-      route.status(operation as CrossChainOperation, {
+      route.status(operation as CrossChain.Operation, {
         signal: AbortSignal.timeout(15_000),
       }),
     )

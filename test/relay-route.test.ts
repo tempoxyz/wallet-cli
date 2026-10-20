@@ -1,6 +1,6 @@
-import { NoRouteError } from "machine-fetch";
-import type { CrossChainRequest } from "machine-fetch/interfaces/evm";
-import type { RelayApiQuote } from "machine-fetch/routes/relay-protocol";
+import { Funder } from "machine-fetch";
+import type { CrossChain } from "machine-fetch/cross-chain";
+import type { RelayProtocolRoute } from "machine-fetch/relay";
 import { encodeFunctionData, erc20Abi } from "viem";
 import { describe, expect, it } from "vitest";
 
@@ -20,11 +20,11 @@ const payer = "0x00000000000000000000000000000000000000b2";
 const deposit = "0x00000000000000000000000000000000000000d3";
 const requestId = `0x${"ab".repeat(32)}`;
 
-const request: CrossChainRequest = {
+const request: CrossChain.Request = {
   amountOut: 100_000n,
   deadline: Math.floor(Date.now() / 1000) + 30,
   from: {
-    account: wallet,
+    owner: wallet,
     asset: ousd,
     chainId: 4217,
     currency: "USD",
@@ -32,10 +32,10 @@ const request: CrossChainRequest = {
     network: "eip155:4217",
   },
   maxSlippageBps: 50,
-  id: "attempt-1",
+  operationId: "attempt-1",
   signal: new AbortController().signal,
   to: {
-    account: payer,
+    owner: payer,
     asset: usdc,
     chainId: 8453,
     currency: "USD",
@@ -52,7 +52,9 @@ const transfer = (to: string, amount: bigint) =>
   });
 
 /** A Relay quote for `request`, with `change` applied. */
-function quote(change: (quote: Record<string, any>) => void = () => undefined): RelayApiQuote {
+function quote(
+  change: (quote: Record<string, any>) => void = () => undefined,
+): RelayProtocolRoute.ApiQuote {
   const value: Record<string, any> = {
     details: {
       sender: wallet,
@@ -82,7 +84,7 @@ function quote(change: (quote: Record<string, any>) => void = () => undefined): 
     ],
   };
   change(value);
-  return value as RelayApiQuote;
+  return value as RelayProtocolRoute.ApiQuote;
 }
 
 describe("Relay deposit validation", () => {
@@ -208,7 +210,7 @@ describe("Relay deposit route", () => {
   });
 
   it("maps a funding ceiling refusal among route failures to E_LIMIT_EXCEEDED", () => {
-    const error = new NoRouteError("No trusted cross-chain route can fund the payment", {
+    const error = new Funder.NoRouteError("No trusted cross-chain route can fund the payment", {
       cause: new AggregateError([
         new Error("other"),
         new RelayFundingLimitError(121_300n, 100_000n),

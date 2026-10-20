@@ -1,5 +1,5 @@
-import type { CrossChainOperation } from "machine-fetch/interfaces/evm";
-import { fileStore } from "machine-fetch/stores/file";
+import type { CrossChain } from "machine-fetch/cross-chain";
+import { FileStore } from "machine-fetch/stores/file";
 import { formatUnits } from "viem";
 
 import { type AttemptRecord, listAttempts, operationsDirectory } from "../../payment/attempts.js";
@@ -7,11 +7,11 @@ import { formatUnixTimestamp } from "../../shared/utils.js";
 
 /** The operation store funding writes, read without creating anything else. */
 export function operationStore() {
-  return fileStore(operationsDirectory());
+  return FileStore.create(operationsDirectory());
 }
 
 /** A saved attempt with its operation, as `funding list` reports it. */
-export function fundingItem(attempt: AttemptRecord, operation: CrossChainOperation | undefined) {
+export function fundingItem(attempt: AttemptRecord, operation: CrossChain.Operation | undefined) {
   const quote = operation?.quote as { maxAmountIn?: unknown } | undefined;
   return {
     id: attempt.attemptId,
