@@ -23,6 +23,12 @@ export type TempoFundingOptions = {
   balance(token: Address): Promise<bigint>;
   /** Runs before a swap is offered to the payment; throw to refuse it before signing. */
   beforeSwap?(input: SwapInput): void | Promise<void>;
+  /**
+   * Whether the payer's signer may spend `maxAmount` of `token`, such as within an access key's
+   * limits. An input it may not spend is skipped for the next; when the payer holds enough only of
+   * inputs it may not spend, the first of them goes to `beforeSwap`, which names the fix.
+   */
+  canSpend?(input: SwapInput): Promise<boolean>;
 };
 
 /**
@@ -63,16 +69,25 @@ export function tempoFunding(options: TempoFundingOptions): Funder<TempoFundingC
       const autoSwap = prepared?.context?.autoSwap;
       if (!autoSwap) return prepared;
       const maxAmount = withSlippage(requirement.amount, context.policy.maxSlippageBps);
+      let unspendable: SwapInput | undefined;
       for (const token of autoSwap.tokenIn) {
         const balance = await options.balance(token).catch(() => undefined);
         if (typeof balance !== "bigint" || balance < maxAmount) continue;
-        await options.beforeSwap?.({ token, maxAmount, requirement });
+        const input = { token, maxAmount, requirement };
+        if (options.canSpend && !(await options.canSpend(input))) {
+          unspendable ??= input;
+          continue;
+        }
+        await options.beforeSwap?.(input);
+        // Only the chosen input: Mppx would otherwise try any listed token it holds enough of,
+        // including one the signer may not spend.
         return Object.freeze({
           context: Object.freeze({
-            autoSwap: Object.freeze({ ...autoSwap, fallback: false as const }),
+            autoSwap: Object.freeze({ ...autoSwap, tokenIn: [token], fallback: false as const }),
           }),
         });
       }
+      if (unspendable) await options.beforeSwap?.(unspendable);
       throw new InsufficientFundsError(
         `The wallet holds neither ${requirement.amount} of ${asset} (atomic units) nor enough of ${autoSwap.tokenIn.join(", ")} to swap for it`,
       );

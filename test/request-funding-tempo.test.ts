@@ -155,16 +155,43 @@ describe("Tempo DEX funding", () => {
       const [context] = credentialContexts as {
         autoSwap: { tokenIn: string[]; slippage: number };
       }[];
-      expect(context!.autoSwap.tokenIn[0]!.toLowerCase()).toBe(ousd);
-      expect(context!.autoSwap.tokenIn.map((token) => token.toLowerCase())).toEqual([
-        ousd,
-        pathUsd,
-      ]);
+      // Only the chosen input, so Mppx cannot swap from another token the key may not spend.
+      expect(context!.autoSwap.tokenIn.map((token) => token.toLowerCase())).toEqual([ousd]);
       expect(context!.autoSwap.slippage).toBe(slippage);
       // Only the configured inputs: Mppx appends no fallback tokens.
       expect(context!.autoSwap).toMatchObject({ fallback: false });
     },
   );
+
+  it("refuses before signing, naming pathUSD, when the key can spend no held input", async () => {
+    // The key lists OUSD and USDC.e only; the wallet holds only pathUSD, which it may not spend.
+    await wallet();
+    balances.set(usdcE, 0n).set(ousd, 0n).set(pathUsd, 5_000_000n);
+    const paid = await service(usdcE);
+
+    await expect(run([], paid.url)).rejects.toMatchObject({
+      code: "E_LIMIT_EXCEEDED",
+      message: expect.stringContaining("cannot spend 0.01005 pathUSD"),
+    });
+    expect(paid.paid()).toBe(0);
+    expect(credentialContexts).toEqual([]);
+  });
+
+  it("skips an input the key may not spend for the next one it may", async () => {
+    // OUSD is held but unlisted for this key; pathUSD is listed.
+    await wallet([
+      { token: usdcE, limit: "100000000#__bigint" },
+      { token: pathUsd, limit: "100000000#__bigint" },
+    ]);
+    balances.set(usdcE, 0n).set(ousd, 5_000_000n).set(pathUsd, 5_000_000n);
+    const paid = await service(usdcE);
+
+    await run([], paid.url);
+
+    expect(paid.paid()).toBe(1);
+    const [context] = credentialContexts as { autoSwap: { tokenIn: string[] } }[];
+    expect(context!.autoSwap.tokenIn.map((token) => token.toLowerCase())).toEqual([pathUsd]);
+  });
 
   it("pays from a held token without a swap", async () => {
     await wallet();

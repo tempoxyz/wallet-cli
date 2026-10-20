@@ -4,6 +4,7 @@ import type { Challenge } from "mppx";
 
 import type { Funder } from "machine-fetch/interfaces";
 import { type Address, erc20Abi, formatUnits } from "viem";
+import { Actions } from "viem/tempo";
 
 import {
   chargePolicy,
@@ -43,10 +44,16 @@ export function chargeFunders(options: RequestOptions, payer: ChargePayer): Fund
     tempoFunding({
       chainId: network.chainId,
       balance: (token) => tokenBalance(network.chainId, token, payer.address as Address),
-      // The access key's own limit refuses the swap's spend inside signing; name the fix first.
-      beforeSwap: ({ token, maxAmount }) => {
+      // The access key's own limit refuses the swap's spend inside signing: skip inputs it may
+      // not spend, and when none it may spend is held, name the fix before signing.
+      canSpend: async ({ token, maxAmount }) => {
+        if (!key) return true;
+        const limit = await accessKeySpendLimit(key, token);
+        return limit === null || limit >= maxAmount;
+      },
+      beforeSwap: async ({ token, maxAmount }) => {
         if (!key) return;
-        const limit = storedAccessKeyLimit(key, token);
+        const limit = await accessKeySpendLimit(key, token);
         if (limit === null || limit >= maxAmount) return;
         throw accessKeyLimitError({
           key: key.address,
@@ -58,6 +65,33 @@ export function chargeFunders(options: RequestOptions, payer: ChargePayer): Fund
       },
     }) as Funder<unknown>,
   ];
+}
+
+/**
+ * How much of `token` the access key may spend: its stored limit when the store records one (or
+ * records its limits exactly), else what the chain enforces. A key the chain holds with a limited
+ * spend policy may spend only its remaining limit, zero for a token it lists none for; an
+ * unpublished key will be published with its signed limits, under which an unlisted token is zero.
+ * `null` when it is unrestricted or cannot be read.
+ */
+async function accessKeySpendLimit(key: WalletState["accessKeys"][number], token: Address) {
+  const stored = storedAccessKeyLimit(key, token);
+  if (stored !== null) return stored;
+  const limited = (key.limits?.length ?? 0) > 0;
+  const client = createTempoPublicClient(key.chainId);
+  const account = key.access as Address;
+  const accessKey = key.address as Address;
+  const metadata = await Actions.accessKey
+    .getMetadata(client, { account, accessKey })
+    .catch(() => undefined);
+  const published =
+    metadata && !metadata.isRevoked && metadata.address.toLowerCase() === accessKey.toLowerCase();
+  if (!published) return limited ? 0n : null;
+  if (metadata.spendPolicy !== "limited") return null;
+  return Actions.accessKey.getRemainingLimit(client, { account, accessKey, token }).then(
+    (result) => result.remaining,
+    () => null,
+  );
 }
 
 function tokenBalance(chainId: number, token: Address, owner: Address) {
