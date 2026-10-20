@@ -170,6 +170,11 @@ function parseAccessKeyScopes(value: unknown) {
   return { value: scopes, valid: scopes.length === value.length };
 }
 
+/**
+ * Saves `state` as the store's `tempo-cli.store` item. Every other item in the file, such as the
+ * remote payers (`tempo-cli.remotePayers`), is kept as it is: the file is shared, and the accounts
+ * SDK likewise rewrites only the item it sets.
+ */
 export async function saveWalletState(state: WalletState) {
   const path = walletStorePath();
   await ensurePrivateWalletDirectory(path);
@@ -177,6 +182,7 @@ export async function saveWalletState(state: WalletState) {
     path,
     JSON.stringify(
       {
+        ...(await otherStoreItems(path)),
         "tempo-cli.store": {
           state: {
             // Account key material is never loaded, so a key type would describe a key not saved.
@@ -192,6 +198,27 @@ export async function saveWalletState(state: WalletState) {
       2,
     ),
   );
+}
+
+/** The store file's items other than `tempo-cli.store`, kept verbatim; none when unreadable. */
+async function otherStoreItems(path: string): Promise<Record<string, unknown>> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw error;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    // An unparseable store has no items left to keep; the SDK's own read reports it.
+    return {};
+  }
+  if (!isRecord(value)) return {};
+  const { "tempo-cli.store": _store, ...others } = value;
+  return others;
 }
 
 /**
