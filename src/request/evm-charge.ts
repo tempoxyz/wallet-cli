@@ -160,6 +160,6 @@ async function assertFunded(offer: EvmOffer, payer: EvmPayer, options: RequestOp
   const needed = formatUnits(requirement.amount, destination.usdc.decimals);
   throw walletError({
     code: "E_INSUFFICIENT_FUNDS",
-    message: `The ${payer.wallet ? "remote payer" : "payer"} ${payer.address} holds ${held} USDC on ${destination.name}, below the ${needed} USDC this payment needs. Send USDC on ${destination.name} to ${payer.address}, then retry${relayUrl(requestNetwork(options)) ? ", or rerun with --funding auto to bridge it from OUSD" : ""}.`,
+    message: `The ${payer.wallet ? "remote payer" : "payer"} ${payer.address} holds ${held} USDC on ${destination.name}, below the ${needed} USDC this payment needs. Send USDC on ${destination.name} to ${payer.address}, then retry${relayUrl(requestNetwork(options)) ? ", or rerun with --funding auto to bridge it from the Tempo wallet" : ""}.`,
   });
 }

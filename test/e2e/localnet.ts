@@ -25,6 +25,19 @@ const localToken = JSON.parse(
   readFileSync(new URL("./contracts/LocalToken.json", import.meta.url), "utf8"),
 ) as { abi: Abi; bytecode: Hex };
 const mintAbi = parseAbi(["function mint(address to,uint256 value)"]);
+const localBridges = JSON.parse(
+  readFileSync(new URL("./contracts/LocalBridges.json", import.meta.url), "utf8"),
+) as {
+  contracts: Record<
+    "LocalDepository" | "LocalFeeWrapper" | "LocalStargate",
+    { abi: Abi; bytecode: Hex }
+  >;
+};
+
+/** The local Stargate's fee: 1 basis point of the amount, plus 0.001 of LayerZero messaging fee. */
+export const localStargateFee = { bps: 1n, native: 1_000n };
+/** The LayerZero endpoint ID the local Stargate uses for the EVM chain. */
+export const localEndpointId = 40_338;
 
 /** Anvil's first dev account: it issues every local token and holds the relay's inventory. */
 export const maker = mnemonicToAccount(
@@ -43,6 +56,11 @@ export type Localnet = {
   usdc: Address;
   /** EIP-3009 USDC on the stand-in for Base. */
   evmUsdc: Address;
+  /** Stand-in for Relay's v2 depository on the Tempo chain. */
+  depository: Address;
+  /** Stand-in for Stargate's OFT for `usdc` on the Tempo chain, and its LZD fee wrapper. */
+  stargate: Address;
+  feeWrapper: Address;
 };
 
 /** Starts fresh containers with random loopback ports; `close` removes them. */
@@ -194,7 +212,28 @@ export async function provision(nodes: { tempoUrl: string; evmUrl: string }): Pr
       args: [maker.address, 1_000_000_000_000n],
     }),
   );
-  return { ...base, ousd, usdc, evmUsdc };
+  const deploy = async (name: keyof typeof localBridges.contracts, args: unknown[] = []) => {
+    const { abi, bytecode } = localBridges.contracts[name];
+    const hash = await tempo.deployContract({
+      abi,
+      bytecode,
+      args,
+      feeToken: Addresses.pathUsd,
+    } as never);
+    const receipt = await tempo.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success" || !receipt.contractAddress)
+      throw new Error(`Local ${name} deployment failed`);
+    return receipt.contractAddress;
+  };
+  const depository = await deploy("LocalDepository");
+  const feeWrapper = await deploy("LocalFeeWrapper");
+  const stargate = await deploy("LocalStargate", [
+    usdc,
+    feeWrapper,
+    localStargateFee.bps,
+    localStargateFee.native,
+  ]);
+  return { ...base, ousd, usdc, evmUsdc, depository, stargate, feeWrapper };
 }
 
 async function confirmed(client: ReturnType<typeof evmClient>, hash: Hex) {

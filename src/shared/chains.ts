@@ -39,6 +39,19 @@ const devChainsSchema = z.object({
         usdTokens: z.array(address).default([]),
         fundingInputs: z.array(address).optional(),
         destinations: z.array(devDestinationSchema).default([]),
+        /** Tokens cross-chain funding may bridge from, most preferred first. */
+        crossChainSources: z.array(address).optional(),
+        /** Relay's depository for contract deposits. */
+        relayDepository: address.optional(),
+        /** A Stargate OFT for one source token, and the LayerZero endpoint ID per destination. */
+        stargate: z
+          .object({
+            oft: address,
+            token: address,
+            feeWrapper: address,
+            endpointIds: z.record(chainIdKey, z.number().int().positive()),
+          })
+          .optional(),
       }),
     )
     .default({}),
@@ -105,6 +118,56 @@ export function tempoFundingInputs(chainId: number): Address[] {
     getAddress(usdce(chainId).address),
     getAddress(pathusd(chainId).address),
   ];
+}
+
+const mainnetUsdce = getAddress(usdce(mainnet).address);
+
+/**
+ * The Tempo tokens cross-chain funding may bridge from on `chainId`, most preferred first: USDC.e,
+ * which both Relay and Stargate take, then OUSD, which Relay takes. Or the `TEMPO_DEV_CHAINS`
+ * sources. Empty where no bridge routes from the chain.
+ */
+export function crossChainSources(chainId: number): Address[] {
+  const dev = devChains().tempo[String(chainId)]?.crossChainSources;
+  if (dev) return dev;
+  return chainId === mainnet ? [mainnetUsdce, getAddress(ousd.addresses[mainnet])] : [];
+}
+
+/**
+ * Relay's v2 depository on Tempo chain `chainId`, which contract deposits approve and pay into.
+ * Pinned, never taken from a quote: Relay lists it for Tempo mainnet in its chains API
+ * (`protocol.v2.depository`), and the live probe checks the two agree.
+ */
+export function relayDepository(chainId: number): Address | undefined {
+  const dev = devChains().tempo[String(chainId)]?.relayDepository;
+  if (dev) return dev;
+  return chainId === mainnet ? getAddress("0x4cD00E387622C35bDDB9b4c962C136462338BC31") : undefined;
+}
+
+/** A Stargate OFT on a Tempo chain: the token it bridges and its LayerZero fee wrapper. */
+export type StargateConfig = {
+  oft: Address;
+  token: Address;
+  /** LZEndpointDollar: wraps the token into the LayerZero messaging-fee token. */
+  feeWrapper: Address;
+  /** LayerZero endpoint ID of each destination chain, by chain ID. */
+  endpointIds: Record<string, number>;
+};
+
+/**
+ * The Stargate OFT for USDC.e on Tempo chain `chainId`, from Tempo's bridging guide, or the
+ * `TEMPO_DEV_CHAINS` entry. Stargate burns USDC.e on Tempo and releases native USDC.
+ */
+export function stargateConfig(chainId: number): StargateConfig | undefined {
+  const dev = devChains().tempo[String(chainId)]?.stargate;
+  if (dev) return dev;
+  if (chainId !== mainnet) return undefined;
+  return {
+    oft: getAddress("0x8c76e2F6C5ceDA9AA7772e7efF30280226c44392"),
+    token: mainnetUsdce,
+    feeWrapper: getAddress("0x0cEb237E109eE22374a567c6b09F373C73FA4cBb"),
+    endpointIds: { "8453": 30184 },
+  };
 }
 
 /**

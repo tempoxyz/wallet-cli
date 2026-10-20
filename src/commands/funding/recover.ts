@@ -1,11 +1,9 @@
 import type { z } from "incur";
-import { FundingError } from "machine-fetch";
-import type { BoundedCrossChainQuote, CrossChainOperation } from "machine-fetch/interfaces/evm";
+import type { CrossChainOperation } from "machine-fetch/interfaces/evm";
 
 import { nonDestructive } from "../../cli/command.js";
 import { loadAttempt, removeAttempt } from "../../payment/attempts.js";
-import { relayDepositRoute } from "../../payment/upstream/relay-route.js";
-import { relayUrl } from "../../request/cross-chain.js";
+import { operationRoute } from "../../request/cross-chain.js";
 import {
   fundingRecoverArgs,
   fundingRecoverOptions,
@@ -67,30 +65,23 @@ export async function recoverFunding(id: string, networkFlag: string | undefined
     await removeAttempt(id);
     return { ...fields, status: "not_started" as const, reference: null };
   }
-  const url = relayUrl(network);
-  if (!url)
+  const route = operationRoute(operation as CrossChainOperation, network);
+  if (!route)
     throw walletError({
       code: "E_USAGE",
       message: `Funding operation ${escapeInvisible(id)} used a route that is unavailable on ${network.name}.`,
     });
-  const route = relayDepositRoute({
-    url,
-    maxGas: 0n,
-    transfer: async () => {
-      throw new FundingError("Recovery never sends a deposit");
-    },
-  });
   const reference = operation.reference ?? operation.quote.reference;
   const result = await Promise.resolve()
     .then(() =>
-      route.status(operation as CrossChainOperation<BoundedCrossChainQuote>, {
+      route.status(operation as CrossChainOperation, {
         signal: AbortSignal.timeout(15_000),
       }),
     )
     .catch(() => {
       throw walletError({
         code: "E_NETWORK",
-        message: `Relay did not report funding operation ${escapeInvisible(id)}; retry shortly.`,
+        message: `${route.name === "stargate" ? "LayerZero Scan" : "Relay"} did not report funding operation ${escapeInvisible(id)}; retry shortly.`,
         retryable: true,
       });
     });

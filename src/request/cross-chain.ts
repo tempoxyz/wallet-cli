@@ -7,8 +7,8 @@ import type {
   EvmAccount,
 } from "machine-fetch/interfaces/evm";
 import { fileStore } from "machine-fetch/stores/file";
-import { type Address, formatUnits, parseUnits } from "viem";
-import { Actions } from "viem/tempo";
+import { type Address, erc20Abi, formatUnits, type Hex, parseUnits } from "viem";
+import { getTransactionReceipt, sendTransactionSync } from "viem/actions";
 
 import { CtaError } from "../cli/incur-compat.js";
 import {
@@ -22,10 +22,19 @@ import {
 import { caip2 } from "../payment/funding.js";
 import { requirementKey } from "../payment/upstream/requirement-key.js";
 import { relayDepositRoute } from "../payment/upstream/relay-route.js";
-import { type Destination, destinationBalance, tempoFundingInputs } from "../shared/chains.js";
+import { stargateRoute } from "../payment/upstream/stargate-route.js";
+import {
+  crossChainSources,
+  type Destination,
+  destination as destinationFor,
+  destinationBalance,
+  relayDepository,
+  stargateConfig,
+} from "../shared/chains.js";
 import { commandError, paymentError } from "../shared/errors.js";
-import type { Network } from "../shared/network.js";
+import { createTempoPublicClient, type Network } from "../shared/network.js";
 import { continuationCommand } from "../shared/next.js";
+import { tokenSymbol } from "../shared/tokens.js";
 import type { FetchPlan } from "./fetch.js";
 import { fundingSetting } from "./funding-mode.js";
 import { requestNetwork, resolvePaymentIdentity } from "./identity.js";
@@ -33,12 +42,12 @@ import type { EvmOffer } from "./offers.js";
 import type { RequestOptions } from "./options.js";
 import { spendCap } from "./spend.js";
 
-/** Most the Tempo-side deposit transfer's fee may cost, in OUSD: 0.02. */
+/** Most a bridge's Tempo-side transaction fee may cost, in the source token: 0.02. */
 export const maxDepositGas = 20_000n;
 
 /**
- * The cap on one cross-chain funding operation's OUSD spend, transfer and gas together:
- * `--max-funding-spend`, else `--max-spend` plus 5% and 0.10 for Relay's fee and gas.
+ * The cap on one cross-chain funding operation's source-token spend, bridge fees and gas included:
+ * `--max-funding-spend`, else `--max-spend` plus 5% and 0.10.
  */
 export function maxFundingSpend(options: RequestOptions) {
   if (options.maxFundingSpend !== undefined) return parseUnits(options.maxFundingSpend, 6);
@@ -60,13 +69,17 @@ export function relayUrl(network: Network) {
   return network.name === "mainnet" ? "https://api.relay.link" : undefined;
 }
 
-/** The Tempo-side and destination-side accounts of funding from `source` to `payer`. */
-function accounts(tempoChainId: number, source: Address, destination: Destination, payer: Address) {
-  const ousd = tempoFundingInputs(tempoChainId)[0];
-  if (!ousd) throw paymentError(`Cross-chain funding has no source token on chain ${tempoChainId}`);
+/** The Tempo-side account funding spends `asset` from, and the payer's USDC on `destination`. */
+export function fundingAccounts(
+  tempoChainId: number,
+  source: Address,
+  asset: Address,
+  destination: Destination,
+  payer: Address,
+) {
   const from: EvmAccount = {
     account: source,
-    asset: ousd,
+    asset,
     chainId: tempoChainId,
     currency: "USD",
     decimals: 6,
@@ -83,77 +96,224 @@ function accounts(tempoChainId: number, source: Address, destination: Destinatio
   return { from, to };
 }
 
+type Signer = {
+  sendCalls(calls: readonly { to: Address; data: Hex }[], feeToken: Address): Promise<Hex>;
+};
+
 /**
- * The cross-chain funder for one destination (D4): exact-output funding of OUSD on Tempo to USDC at
- * the payer through Relay deposit addresses, with operations in the file store. `transfer` signs
- * the deposit with the Tempo payer (the access key, so its OUSD limit bounds every deposit).
+ * The bridges that fund `asset` on Tempo into USDC on `destination`, by route name: Relay (a
+ * contract deposit into its pinned depository where one is configured, else a strict deposit
+ * address) for any source token, and Stargate for the token its OFT bridges. With no `signer`
+ * (reconciliation) the routes can quote and report status but never send.
  */
-export async function crossChainFunder(options: {
+export function fundingRoutes(options: {
+  network: Network;
+  asset: Address;
+  destination: Destination;
+  signer?: Signer | undefined;
+  maxSpend?: bigint | undefined;
+  stderr?: Pick<NodeJS.WriteStream, "write"> | undefined;
+  payer?: Address | undefined;
+  symbol?: string | undefined;
+}): CrossChainRoute[] {
+  const { network, asset, destination } = options;
+  const symbol = options.symbol ?? tokenSymbol(asset, network.chainId) ?? asset;
+  const write = (text: string) => options.stderr?.write(text);
+  const send = async (calls: readonly { to: Address; data: Hex }[]) => {
+    if (!options.signer) throw new FundingError("Reconciliation never sends funding");
+    return options.signer.sendCalls(calls, asset);
+  };
+  const routes: CrossChainRoute[] = [];
+  const url = relayUrl(network);
+  if (url) {
+    let waiting = false;
+    routes.push(
+      relayDepositRoute({
+        url,
+        depository: relayDepository(network.chainId),
+        maxGas: maxDepositGas,
+        maxSpend: options.maxSpend,
+        async execute(deposit) {
+          await send(deposit.calls);
+        },
+        onProgress(event) {
+          if (event.type === "submitted")
+            write(
+              `Bridging ${formatUnits(event.deposit.amount, 6)} ${symbol} to ${options.payer ?? "the payer"} on ${destination.name} via Relay (request ${event.deposit.requestId})\n`,
+            );
+          else if (!waiting) {
+            waiting = true;
+            write(`Waiting for Relay to deliver (request ${event.requestId})…\n`);
+          }
+        },
+      }),
+    );
+  }
+  const stargate = stargateConfig(network.chainId);
+  if (
+    stargate &&
+    stargate.token.toLowerCase() === asset.toLowerCase() &&
+    stargate.endpointIds[String(destination.chainId)]
+  ) {
+    const client = createTempoPublicClient(network.chainId);
+    let waiting = false;
+    routes.push(
+      stargateRoute({
+        ...stargate,
+        destinationToken: (chainId) => destinationFor(network.chainId, chainId)?.usdc.address,
+        client: client as never,
+        maxGas: maxDepositGas,
+        maxSpend: options.maxSpend,
+        ...(process.env.TEMPO_LAYERZERO_SCAN_URL
+          ? { scanUrl: process.env.TEMPO_LAYERZERO_SCAN_URL }
+          : {}),
+        execute: send,
+        async reverted(hash) {
+          const receipt = await getTransactionReceipt(client, { hash }).catch(() => undefined);
+          return receipt ? receipt.status === "reverted" : undefined;
+        },
+        onProgress(event) {
+          if (event.type === "submitted")
+            write(
+              `Bridging ${formatUnits(event.amount, 6)} ${symbol} (plus ${formatUnits(event.fee, 6)} LayerZero fee) to ${options.payer ?? "the payer"} on ${destination.name} via Stargate (tx ${event.hash})\n`,
+            );
+          else if (!waiting) {
+            waiting = true;
+            write(`Waiting for Stargate to deliver (tx ${event.hash})…\n`);
+          }
+        },
+      }),
+    );
+  }
+  return routes;
+}
+
+/** The route `operation` was submitted through, rebuilt without a signer, for reconciliation. */
+export function operationRoute(operation: CrossChainOperation, network: Network) {
+  const destination = destinationFor(network.chainId, operation.request.to.chainId);
+  if (!destination) return undefined;
+  return fundingRoutes({
+    network,
+    asset: operation.request.from.asset as Address,
+    destination,
+  }).find((route) => route.name === operation.route);
+}
+
+/**
+ * `source`'s balance of each cross-chain source token on Tempo, unreadable as zero, with the
+ * token's listed symbol, else its on-chain `symbol()`, else its address.
+ */
+async function sourceBalances(network: Network, source: Address) {
+  const client = createTempoPublicClient(network.chainId);
+  return Promise.all(
+    crossChainSources(network.chainId).map(async (asset) => ({
+      asset,
+      balance: await client
+        .readContract({ address: asset, abi: erc20Abi, functionName: "balanceOf", args: [source] })
+        .catch(() => 0n),
+      symbol:
+        tokenSymbol(asset, network.chainId) ??
+        (await client
+          .readContract({ address: asset, abi: erc20Abi, functionName: "symbol" })
+          .then((value) => (/^[\w.$-]{1,16}$/.test(value) ? value : asset))
+          .catch(() => asset)),
+    })),
+  );
+}
+
+/**
+ * The cross-chain funders for one destination (D4), one per source token the Tempo account holds
+ * enough of to plausibly cover `needed`, in preference order. machine-fetch quotes every route of
+ * the first funder and executes the cheapest; operations persist in the file store. Funding signs
+ * with the Tempo payer (the access key, so its token limits bound every bridge).
+ */
+export async function crossChainFunders(options: {
   network: Network;
   destination: Destination;
   payer: Address;
+  needed: bigint;
+  /** The source token of a saved operation this attempt resumes: it must fund from that token. */
+  resumeAsset?: Address | undefined;
   maxSpend?: bigint | undefined;
   stderr?: Pick<NodeJS.WriteStream, "write"> | undefined;
-  requestOptions: RequestOptions;
-}): Promise<{ funder: CrossChainFunder; route: CrossChainRoute; source: Address }> {
-  const { network, destination } = options;
-  const url = relayUrl(network);
-  if (!url)
-    throw paymentError(
-      `Cross-chain funding is unavailable on ${network.name}: Relay has no route from it. Pay with USDC the payer already holds on ${destination.name}, or use mainnet.`,
-    );
-  const identity = await resolvePaymentIdentity(options.requestOptions);
+  identity: Awaited<ReturnType<typeof resolvePaymentIdentity>>;
+}): Promise<{ funders: CrossChainFunder[]; sources: Address[] }> {
+  const { network, destination, identity } = options;
   const source = identity.address as Address;
-  const { from, to } = accounts(network.chainId, source, destination, options.payer);
   const client = identity.getClient({ chainId: network.chainId });
-  const write = (text: string) => options.stderr?.write(text);
-  let waiting = false;
-  const route = relayDepositRoute({
-    url,
-    maxGas: maxDepositGas,
-    maxSpend: options.maxSpend,
-    async transfer(deposit) {
-      const { receipt } = await Actions.token.transferSync(
+  const signer: Signer = {
+    async sendCalls(calls, feeToken) {
+      const receipt = await sendTransactionSync(
         client as never,
         {
-          token: deposit.token,
-          to: deposit.depositAddress,
-          amount: deposit.amount,
-          feeToken: deposit.token,
+          account: (client as { account?: unknown }).account,
+          calls: calls.map((call) => ({ to: call.to, data: call.data })),
+          feeToken,
         } as never,
       );
-      if (receipt.status !== "success") throw new FundingError("Relay deposit transfer reverted");
+      const { status, transactionHash } = receipt as { status: string; transactionHash: Hex };
+      if (status !== "success") throw new FundingError("Funding transaction reverted");
+      return transactionHash;
     },
-    onProgress(event) {
-      if (event.type === "submitted")
-        write(
-          `Bridging ${formatUnits(event.deposit.amount, 6)} OUSD to ${options.payer} on ${destination.name} via Relay (request ${event.deposit.requestId})\n`,
-        );
-      else if (!waiting) {
-        waiting = true;
-        write(`Waiting for Relay to deliver (request ${event.requestId})…\n`);
-      }
-    },
-  });
-  return {
-    source,
-    route,
-    funder: crossChainFund({
+  };
+  const balances = await sourceBalances(network, source);
+  // A resumed operation reconciles from the token it was submitted in, whatever it holds now; when
+  // the payer already holds the USDC nothing is bridged and any source will do; otherwise only
+  // sources covering a rough lower bound on any route's input (the output plus 1%) are tried.
+  const resume = options.resumeAsset?.toLowerCase();
+  const floor = options.needed + options.needed / 100n;
+  const usable = resume
+    ? balances.filter((entry) => entry.asset.toLowerCase() === resume)
+    : options.needed === 0n
+      ? balances
+      : balances.filter((entry) => entry.balance >= floor);
+  if (usable.length === 0) {
+    const held = balances
+      .map((entry) => `${formatUnits(entry.balance, 6)} ${entry.symbol}`)
+      .join(", ");
+    const command = continuationCommand(["wallet", "fund"], network);
+    throw new CtaError(
+      commandError(
+        "E_INSUFFICIENT_FUNDS",
+        `Bridging ${formatUnits(options.needed, 6)} USDC to ${destination.name} needs more than the wallet holds (${held || "no bridgeable tokens"}). Add funds with '${command}', then retry.`,
+        command,
+      ),
+    );
+  }
+  const funders = usable.map(({ asset, symbol }) => {
+    const { from, to } = fundingAccounts(
+      network.chainId,
+      source,
+      asset,
+      destination,
+      options.payer,
+    );
+    return crossChainFund({
       from,
       to,
-      routes: [route],
+      routes: fundingRoutes({
+        network,
+        asset,
+        destination,
+        signer,
+        maxSpend: options.maxSpend,
+        stderr: options.stderr,
+        payer: options.payer,
+        symbol,
+      }),
       operations: fileStore(operationsDirectory()),
       balance: (account) => destinationBalance(destination, account.account),
       pollIntervalMs: 500,
-    }),
-  };
+    });
+  });
+  return { funders, sources: usable.map((entry) => entry.asset) };
 }
 
 /**
  * Funding for paying `offer` from `payer` across chains (Phase 4), or `undefined` when it is not
  * enabled. The attempt is saved before anything moves; a rerun of the same request reuses it.
  * Before a new attempt, earlier attempts to the same destination and payer are reconciled, so a
- * slow relay never causes a second bridge.
+ * slow bridge never causes a second one.
  */
 export async function crossChainFunding(
   offer: EvmOffer,
@@ -164,15 +324,13 @@ export async function crossChainFunding(
 ) {
   if (!crossChainEnabled(options)) return undefined;
   const network = requestNetwork(options);
+  if (!relayUrl(network) && !stargateConfig(network.chainId))
+    throw paymentError(
+      `Cross-chain funding is unavailable on ${network.name}: no bridge routes from it. Pay with USDC the payer already holds on ${offer.destination.name}, or use mainnet.`,
+    );
   const limit = maxFundingSpend(options);
-  const { funder, route, source } = await crossChainFunder({
-    network,
-    destination: offer.destination,
-    payer,
-    maxSpend: limit,
-    stderr,
-    requestOptions: options,
-  });
+  const identity = await resolvePaymentIdentity(options);
+  const source = identity.address as Address;
   const attempt = await claimAttempt({
     fingerprint: requestFingerprint({
       method: request.init.method ?? "GET",
@@ -187,17 +345,30 @@ export async function crossChainFunding(
     source,
     url: request.url,
   });
-  if (!attempt.reused) await reconcileEarlier(attempt, route, network);
+  const resumed = attempt.reused
+    ? await fileStore(operationsDirectory()).get(attempt.attemptId)
+    : undefined;
+  const held = await destinationBalance(offer.destination, payer).catch(() => 0n);
+  const needed = offer.requirement.amount > held ? offer.requirement.amount - held : 0n;
+  const { funders, sources } = await crossChainFunders({
+    network,
+    destination: offer.destination,
+    payer,
+    needed,
+    resumeAsset: resumed?.request.from.asset as Address | undefined,
+    maxSpend: limit,
+    stderr,
+    identity,
+  });
+  if (!attempt.reused) await reconcileEarlier(attempt, network);
   return {
-    funders: [funder],
+    funders,
     attemptId: attempt.attemptId,
-    maxFundingSpend: [
-      {
-        network: caip2(network.chainId),
-        asset: tempoFundingInputs(network.chainId)[0]!,
-        amount: limit,
-      },
-    ],
+    maxFundingSpend: sources.map((asset) => ({
+      network: caip2(network.chainId),
+      asset,
+      amount: limit,
+    })),
     /** Forget the attempt once its funds were paid with. */
     settled: () => removeAttempt(attempt.attemptId),
   };
@@ -208,7 +379,7 @@ export async function crossChainFunding(
  * completed or refunded operation is forgotten (its USDC, if any, now counts toward the payment),
  * one never claimed moved nothing, and one still in flight stops this payment.
  */
-async function reconcileEarlier(attempt: AttemptRecord, route: CrossChainRoute, network: Network) {
+async function reconcileEarlier(attempt: AttemptRecord, network: Network) {
   const store = fileStore(operationsDirectory());
   for (const earlier of await listAttempts()) {
     if (
@@ -222,7 +393,8 @@ async function reconcileEarlier(attempt: AttemptRecord, route: CrossChainRoute, 
       await removeAttempt(earlier.attemptId);
       continue;
     }
-    const outcome = await settledOutcome(route, operation);
+    const route = operationRoute(operation, network);
+    const outcome = route ? await settledOutcome(route, operation) : "open";
     if (outcome === "completed" || outcome === "refunded") {
       await removeAttempt(earlier.attemptId);
       continue;

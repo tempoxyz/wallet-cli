@@ -4,16 +4,20 @@ import { afterEach, beforeEach, describe, expect, inject, test } from "vitest";
 import { cliEnv, runCli, startCli } from "./cli.js";
 import { evmBalance, evmClient, tempoBalance } from "./localnet.js";
 import { type HostileQuote, type StandInRelay, standInRelay } from "./relay.js";
+import { type StandInStargate, standInStargate } from "./stargate.js";
 import { evmServer, type LocalServer, serve } from "./servers.js";
 import { type LocalWallet, localWallet } from "./wallet.js";
 
 const net = inject("localnet");
 const cleanup: (() => Promise<void>)[] = [];
 let relay: StandInRelay;
+let stargate: StandInStargate;
 
 beforeEach(async () => {
   relay = await standInRelay(net);
   cleanup.push(() => relay.close());
+  stargate = await standInStargate(net);
+  cleanup.push(() => stargate.close());
 });
 
 afterEach(async () => {
@@ -39,7 +43,12 @@ async function x402Endpoint() {
 }
 
 function env(wallet: LocalWallet, extra: Record<string, string> = {}) {
-  return cliEnv(net, wallet, { TEMPO_FUNDING: "auto", TEMPO_RELAY_URL: relay.url, ...extra });
+  return cliEnv(net, wallet, {
+    TEMPO_FUNDING: "auto",
+    TEMPO_RELAY_URL: relay.url,
+    TEMPO_LAYERZERO_SCAN_URL: stargate.url,
+    ...extra,
+  });
 }
 
 const output = (run: { stdout: string; stderr: string }) => run.stdout + run.stderr;
@@ -78,7 +87,8 @@ describe("cross-chain funding", () => {
     "amount-above-bound",
     "expired",
     "non-canonical-amount",
-    "wrong-deposit-recipient",
+    "wrong-spender",
+    "wrong-order",
   ])("rejects a %s quote before signing anything", async (mode) => {
     const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
     const endpoint = await x402Endpoint();
@@ -173,5 +183,93 @@ describe("cross-chain funding", () => {
     );
     expect(unknown.code).toBe(2);
     expect(output(unknown)).toContain("E_NOT_FOUND");
+  });
+
+  test("bridges USDC through Stargate when it quotes below Relay, in one Tempo transaction", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.usdc, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint();
+
+    const result = await runCli("request", [endpoint.url], env(wallet));
+
+    expect(result).toMatchObject({
+      code: 0,
+      stdout: expect.stringContaining("paid on the EVM chain"),
+    });
+    // Relay was quoted too (0.1013), but Stargate's 0.10001 plus 0.001 fee is less.
+    expect(relay.quotes).toHaveLength(1);
+    expect(relay.deposited).toHaveLength(0);
+    expect(result.stderr).toMatch(
+      /^Bridging 0\.10001 USDC \(plus 0\.001 LayerZero fee\) to 0x[0-9a-fA-F]{40} on local-evm via Stargate \(tx 0x[0-9a-f]{64}\)$/m,
+    );
+    expect(stargate.sent).toHaveLength(1);
+    expect(await evmBalance(net, net.evmUsdc, endpoint.seller)).toBe(100_000n);
+    const spent = 1_000_000n - (await tempoBalance(net, net.usdc, wallet.address));
+    expect(spent).toBeGreaterThanOrEqual(101_010n);
+    expect(spent).toBeLessThan(101_010n + 20_000n);
+  });
+
+  test("bridges from OUSD through Relay when the wallet's USDC cannot cover it", async () => {
+    const wallet = await localWallet(net, {
+      funds: [
+        { token: net.usdc, limit: 50_000n },
+        { token: net.ousd, limit: 1_000_000n },
+      ],
+    });
+    const endpoint = await x402Endpoint();
+
+    const result = await runCli("request", [endpoint.url], env(wallet));
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toMatch(
+      /^Bridging 0\.1013 OUSD to 0x[0-9a-fA-F]{40} on local-evm via Relay/m,
+    );
+    expect(stargate.sent).toHaveLength(0);
+    expect(await tempoBalance(net, net.usdc, wallet.address)).toBe(50_000n);
+  });
+
+  test("refuses before quoting when no source token covers the shortfall", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 50_000n }] });
+    const endpoint = await x402Endpoint();
+
+    const result = await runCli("request", [endpoint.url], env(wallet));
+
+    expect(result.code).toBe(4);
+    expect(output(result)).toContain("E_INSUFFICIENT_FUNDS");
+    expect(output(result)).toContain("0.05 OUSD");
+    expect(relay.quotes).toHaveLength(0);
+  });
+
+  test("recovers a Stargate bridge after the CLI is killed, without bridging again", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.usdc, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint();
+    stargate.hold(true);
+
+    const first = startCli("request", [endpoint.url], env(wallet));
+    await stargate.waitForSends(1);
+    first.child.kill("SIGKILL");
+    expect((await first.done).signal).toBe("SIGKILL");
+
+    const listed = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    const [operation] = (
+      JSON.parse(listed.stdout) as { operations: { id: string; route: string | null }[] }
+    ).operations;
+    expect(operation).toMatchObject({ route: "stargate" });
+    const pending = await runCli(
+      "wallet",
+      ["funding", "recover", operation!.id, "--format", "json"],
+      env(wallet),
+    );
+    expect(JSON.parse(pending.stdout)).toMatchObject({ id: operation!.id, status: "pending" });
+    stargate.hold(false);
+
+    const rerun = await runCli("request", [endpoint.url], env(wallet));
+
+    expect(rerun).toMatchObject({
+      code: 0,
+      stdout: expect.stringContaining("paid on the EVM chain"),
+    });
+    expect(rerun.stderr).not.toContain("Bridging");
+    expect(stargate.sent).toHaveLength(1);
+    expect(await evmBalance(net, net.evmUsdc, endpoint.seller)).toBe(100_000n);
   });
 });

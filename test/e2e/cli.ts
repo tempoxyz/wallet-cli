@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 
 import { inject } from "vitest";
 
-import type { Localnet } from "./localnet.js";
+import { type Localnet, localEndpointId } from "./localnet.js";
 import type { LocalWallet } from "./wallet.js";
 
 export type CliRun = {
@@ -35,6 +35,15 @@ export function devChains(net: Localnet) {
       [net.tempoChainId]: {
         usdTokens: [net.ousd, net.usdc],
         fundingInputs: [net.ousd],
+        // As on mainnet: USDC first (Relay and Stargate take it), then OUSD (Relay takes it).
+        crossChainSources: [net.usdc, net.ousd],
+        relayDepository: net.depository,
+        stargate: {
+          oft: net.stargate,
+          token: net.usdc,
+          feeWrapper: net.feeWrapper,
+          endpointIds: { [net.evmChainId]: localEndpointId },
+        },
         destinations: [
           {
             chainId: net.evmChainId,

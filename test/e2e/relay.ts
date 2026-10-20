@@ -2,14 +2,30 @@ import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { type Address, encodeFunctionData, erc20Abi, getAddress, type Hex } from "viem";
+import {
+  type Address,
+  encodeFunctionData,
+  erc20Abi,
+  getAddress,
+  type Hex,
+  parseAbi,
+  parseAbiItem,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { evmClient, type Localnet, tempoBalance } from "./localnet.js";
+import { evmClient, type Localnet, tempoBalance, tempoClient } from "./localnet.js";
 
 // Adapted from machine-fetch test/e2e/relay.ts (its inventory relay), behind Relay's HTTP API so
-// the CLI's Relay route runs for real: it takes OUSD on the Tempo chain at a single-use deposit
-// address and releases USDC from inventory on the EVM chain.
+// the CLI's Relay route runs for real: it takes the source token on the Tempo chain, through a
+// contract deposit into the local depository (as Relay quotes Tempo) or at a single-use deposit
+// address, and releases USDC from inventory on the EVM chain.
+
+const depositoryAbi = parseAbi([
+  "function depositErc20(address depositor, address token, uint256 amount, bytes32 id)",
+]);
+const depositEvent = parseAbiItem(
+  "event RelayErc20Deposit(address token, uint256 amount, address depositor, bytes32 id)",
+);
 
 /** Quote tampering that a safe client must refuse before it signs anything. */
 export type HostileQuote =
@@ -20,10 +36,13 @@ export type HostileQuote =
   | "amount-above-bound"
   | "expired"
   | "non-canonical-amount"
-  | "wrong-deposit-recipient";
+  | "wrong-spender"
+  | "wrong-order";
 
 type Intent = {
   requestId: Hex;
+  /** The contract deposit's order ID, or none for a deposit-address quote. */
+  orderId?: Hex;
   depositAddress: Address;
   originToken: Address;
   amountIn: bigint;
@@ -54,11 +73,17 @@ export async function standInRelay(net: Localnet) {
     const amountOut = BigInt(String(body.amount));
     const amountIn = amountOut + (amountOut * feeBps) / 10_000n + flatFee;
     const requestId = `0x${randomBytes(32).toString("hex")}` as Hex;
-    const depositAddress = privateKeyToAccount(`0x${randomBytes(32).toString("hex")}`).address;
+    const contract = body.useDepositAddress !== true;
+    const orderId = contract ? (`0x${randomBytes(32).toString("hex")}` as Hex) : undefined;
+    const depositAddress = contract
+      ? net.depository
+      : privateKeyToAccount(`0x${randomBytes(32).toString("hex")}`).address;
     const originToken = getAddress(String(body.originCurrency));
     const recipient = getAddress(String(body.recipient));
+    const user = String(body.user);
     intents.set(requestId, {
       requestId,
+      ...(orderId ? { orderId } : {}),
       depositAddress,
       originToken,
       amountIn,
@@ -67,20 +92,35 @@ export async function standInRelay(net: Localnet) {
       amountOut,
       status: "waiting",
     });
-    const deposit = {
+    const tx = (to: string, data: Hex) => ({
       chainId: Number(body.originChainId),
-      from: String(body.user),
-      to: originToken as string,
+      from: user,
+      to,
       value: "0",
-      data: encodeFunctionData({
-        abi: erc20Abi,
-        functionName: "transfer",
-        args: [depositAddress, amountIn],
-      }) as string,
-    };
+      data: data as string,
+    });
+    const approve = (spender: Address, amount: bigint) =>
+      encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, amount] });
+    const depositCall = (amount: bigint, id: Hex) =>
+      encodeFunctionData({
+        abi: depositoryAbi,
+        functionName: "depositErc20",
+        args: [user as Address, originToken, amount, id],
+      });
+    const approveTx = tx(originToken, approve(net.depository, amountIn));
+    const depositTx = contract
+      ? tx(net.depository, depositCall(amountIn, orderId!))
+      : tx(
+          originToken,
+          encodeFunctionData({
+            abi: erc20Abi,
+            functionName: "transfer",
+            args: [depositAddress, amountIn],
+          }),
+        );
     const details = {
       operation: "bridge",
-      sender: String(body.user),
+      sender: user,
       recipient: recipient as string,
       currencyIn: {
         amount: amountIn.toString(),
@@ -94,40 +134,59 @@ export async function standInRelay(net: Localnet) {
         },
       },
     };
-    const steps: Record<string, unknown>[] = [
-      {
-        id: "deposit",
-        kind: "transaction",
-        requestId,
-        depositAddress,
-        items: [{ status: "incomplete", data: deposit }],
-      },
-    ];
+    const steps: Record<string, unknown>[] = contract
+      ? [
+          {
+            id: "approve",
+            kind: "transaction",
+            requestId,
+            items: [{ status: "incomplete", data: approveTx }],
+          },
+          {
+            id: "deposit",
+            kind: "transaction",
+            requestId,
+            items: [{ status: "incomplete", data: depositTx }],
+          },
+        ]
+      : [
+          {
+            id: "deposit",
+            kind: "transaction",
+            requestId,
+            depositAddress,
+            items: [{ status: "incomplete", data: depositTx }],
+          },
+        ];
     let expiresAt = Math.floor(Date.now() / 1000) + quoteTtlSeconds;
+    const stranger = privateKeyToAccount(`0x${"22".repeat(32)}`).address;
     switch (hostile) {
       case "wrong-destination-recipient":
         details.recipient = privateKeyToAccount(`0x${"11".repeat(32)}`).address;
         break;
       case "wrong-chain":
-        deposit.chainId = 4217;
+        depositTx.chainId = 4217;
         break;
       case "extra-step":
         steps.push({
-          id: "approve",
+          id: "extra",
           kind: "transaction",
           requestId,
-          items: [{ status: "incomplete", data: { ...deposit } }],
+          items: [{ status: "incomplete", data: { ...depositTx } }],
         });
         break;
       case "arbitrary-contract":
-        deposit.to = "0x000000000000000000000000000000000000dEaD";
+        depositTx.to = "0x000000000000000000000000000000000000dEaD";
         break;
       case "amount-above-bound":
-        deposit.data = encodeFunctionData({
-          abi: erc20Abi,
-          functionName: "transfer",
-          args: [depositAddress, amountIn * 2n],
-        });
+        approveTx.data = approve(net.depository, amountIn * 2n);
+        depositTx.data = contract
+          ? depositCall(amountIn * 2n, orderId!)
+          : encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "transfer",
+              args: [depositAddress, amountIn * 2n],
+            });
         break;
       case "expired":
         expiresAt = Math.floor(Date.now() / 1000) - 10;
@@ -135,21 +194,45 @@ export async function standInRelay(net: Localnet) {
       case "non-canonical-amount":
         details.currencyIn.amount = `0${amountIn}`;
         break;
-      case "wrong-deposit-recipient":
-        deposit.data = encodeFunctionData({
-          abi: erc20Abi,
-          functionName: "transfer",
-          args: [privateKeyToAccount(`0x${"22".repeat(32)}`).address, amountIn],
-        });
+      case "wrong-spender":
+        approveTx.data = approve(stranger, amountIn);
+        break;
+      case "wrong-order":
+        depositTx.data = depositCall(amountIn, `0x${"33".repeat(32)}`);
         break;
     }
-    return { details, steps, expiresAt, fees: {} };
+    return {
+      details,
+      steps,
+      expiresAt,
+      fees: {},
+      ...(orderId
+        ? { protocol: { v2: { orderId, chainId: "tempo", depository: net.depository } } }
+        : {}),
+    };
   };
 
+  const tempo = tempoClient(net);
+  /** Whether the depository has received `intent`'s deposit, for its order and in full. */
+  const depositedByContract = async (intent: Intent) => {
+    const logs = await tempo.getLogs({
+      address: net.depository,
+      event: depositEvent,
+      fromBlock: 0n,
+    });
+    return logs.some(
+      (log) =>
+        log.args.id?.toLowerCase() === intent.orderId?.toLowerCase() &&
+        log.args.token?.toLowerCase() === intent.originToken.toLowerCase() &&
+        (log.args.amount ?? 0n) >= intent.amountIn,
+    );
+  };
   const settle = async (intent: Intent) => {
     if (intent.status !== "waiting") return;
-    if ((await tempoBalance(net, intent.originToken, intent.depositAddress)) < intent.amountIn)
-      return;
+    const arrived = intent.orderId
+      ? await depositedByContract(intent)
+      : (await tempoBalance(net, intent.originToken, intent.depositAddress)) >= intent.amountIn;
+    if (!arrived) return;
     intent.status = "pending";
     deposited.push(intent.requestId);
     for (const wake of depositWaiters.splice(0)) wake();

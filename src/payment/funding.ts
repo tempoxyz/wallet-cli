@@ -17,7 +17,34 @@ import { tempoUsdTokens } from "../shared/chains.js";
 import type { Network } from "../shared/network.js";
 import { continuationCommand } from "../shared/next.js";
 import { escapeInvisible, sanitizeText } from "../shared/utils.js";
-import { RelayFundingLimitError } from "./upstream/relay-route.js";
+import { FundingLimitError } from "./upstream/funding-limit.js";
+
+/** Every error among `error`'s causes, breadth first, including an AggregateError's errors. */
+function causes(error: unknown): Error[] {
+  const seen = new Set<unknown>();
+  const queue = [error];
+  const found: Error[] = [];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!(current instanceof Error) || seen.has(current)) continue;
+    seen.add(current);
+    found.push(current);
+    queue.push(current.cause, ...(current instanceof AggregateError ? current.errors : []));
+  }
+  return found;
+}
+
+/**
+ * Why each route declined, for a no-route error: the leaf causes' messages, sanitized, deduplicated
+ * and bounded, since they quote provider responses.
+ */
+function routeReasons(error: unknown) {
+  const leaves = causes(error)
+    .slice(1)
+    .filter((cause) => !(cause instanceof AggregateError) && cause.message)
+    .map((cause) => sanitizeText(cause.message).slice(0, 160));
+  return [...new Set(leaves)].slice(0, 3);
+}
 
 /** The first error of `type` among `error`'s causes, including an AggregateError's errors. */
 function findCause<type extends Error>(
@@ -141,13 +168,14 @@ export function fundingError(error: unknown, context: FundingErrorContext): unkn
     case "LIMIT_EXCEEDED":
       return limitError(message, context);
     case "NO_ROUTE": {
-      const limit = findCause(error, RelayFundingLimitError);
+      const limit = findCause(error, FundingLimitError);
       if (limit)
         return walletError({
           code: "E_LIMIT_EXCEEDED",
-          message: `Cross-chain funding needs up to ${formatUnits(limit.required, 6)} OUSD, Relay's fee and gas included, above --max-funding-spend. Review it, then rerun with --max-funding-spend ${formatUnits(limit.required, 6)}; nothing was sent.`,
+          message: `Cross-chain funding needs up to ${formatUnits(limit.required, 6)} of the source token, the bridge's fee and gas included, above --max-funding-spend. Review it, then rerun with --max-funding-spend ${formatUnits(limit.required, 6)}; nothing was sent.`,
         });
-      return paymentError(message);
+      const reasons = routeReasons(error);
+      return paymentError(reasons.length > 0 ? `${message}: ${reasons.join("; ")}` : message);
     }
     case "INVALID_PAYMENT":
     case "FUNDING_FAILED":

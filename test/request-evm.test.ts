@@ -278,7 +278,7 @@ describe("EVM offers", () => {
 
     await expect(run([], endpoint.url)).rejects.toMatchObject({
       code: "E_INSUFFICIENT_FUNDS",
-      message: `The remote payer ${payer} holds 0.04 USDC on base, below the 0.1 USDC this payment needs. Send USDC on base to ${payer}, then retry, or rerun with --funding auto to bridge it from OUSD.`,
+      message: `The remote payer ${payer} holds 0.04 USDC on base, below the 0.1 USDC this payment needs. Send USDC on base to ${payer}, then retry, or rerun with --funding auto to bridge it from the Tempo wallet.`,
     });
     expect(endpoint.paid).toEqual([]);
   });
@@ -363,6 +363,14 @@ describe("offer ranking", () => {
   it("ignores EVM offers with --funding off", async () => {
     fund(baseUsdc, await remotePayerAddress(), 1_000_000n);
     expect(await quote(["--funding", "off"])).toMatchObject({ method: "tempo" });
+  });
+
+  it("pays the named EVM chain with --funding off and --payment-network, never the Tempo offer", async () => {
+    fund(tempoUsdc, walletState().accounts[0]!.address, 1_000_000n);
+    expect(await quote(["--funding", "off", "--payment-network", "base"])).toMatchObject({
+      method: "x402",
+      chain_id: 8453,
+    });
   });
 
   it("names a missing --payment-network offer", async () => {

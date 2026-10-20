@@ -90,8 +90,8 @@ describe("Relay deposit validation", () => {
     expect(relayDeposit(quote(), request)).toEqual({
       requestId,
       token: ousd,
-      depositAddress: deposit,
       amount: 101_300n,
+      calls: [{ to: ousd, data: transfer(deposit, 101_300n) }],
     });
   });
 
@@ -156,7 +156,7 @@ describe("Relay deposit route", () => {
       fetch,
       maxGas: 20_000n,
       maxSpend: options.maxSpend,
-      transfer: async () => undefined,
+      execute: async () => undefined,
     });
   }
 
