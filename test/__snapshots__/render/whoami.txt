@@ -12,6 +12,7 @@ Balance
 
 Balances
   Token        Balance      Verified  Access key limit
+  0x20c0…c032  10 MACH      yes       -
   0x20c0…74be  1.5 OUSD     yes       -
   0x20c0…8b50  5.89 USDC.e  yes       100 USDC.e
 

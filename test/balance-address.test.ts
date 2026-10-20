@@ -32,6 +32,7 @@ vi.mock("viem/tempo", async (importOriginal) => {
 import { balanceHandler } from "../src/commands/balance.js";
 import { balanceOutput } from "../src/schemas/balance.js";
 import { moderatoToken, usdcToken } from "../src/shared/constants.js";
+import { machToken } from "../src/shared/mach.js";
 import { parseNetwork } from "../src/shared/network.js";
 import { cliBundle } from "./cli-bundle.js";
 import {
@@ -51,6 +52,7 @@ import {
 } from "./helpers.js";
 
 const wallet = testWallet.toLowerCase();
+const mach = machToken(4217).toLowerCase();
 const mainnet = { chain_id: 4217, network: "tempo" };
 const testnet = { chain_id: 42431, network: "tempo-moderato" };
 
@@ -91,12 +93,17 @@ describe("tempo wallet balance", () => {
       expected: {
         ...mainnet,
         balances: [
+          listed(mach, "MACH", "0"),
           listed(ousdToken, "OUSD", "1.5"),
           { token: unlistedToken, symbol: "NEW", decimals: 18, balance: "2.5", verified: false },
           listed(usdcToken, "USDC.e", "0"),
         ],
       },
-      requests: [`assets 4217 ${wallet}`, `balanceOf ${usdcToken} ${wallet}`],
+      requests: [
+        `assets 4217 ${wallet}`,
+        `balanceOf ${usdcToken} ${wallet}`,
+        `balanceOf ${mach} ${wallet}`,
+      ],
     },
     {
       name: "testnet: the wallet app's tokens, then pathUSD read on chain",
@@ -117,11 +124,16 @@ describe("tempo wallet balance", () => {
       expected: {
         ...testnet,
         balances: [
+          listed(mach, "MACH", "0"),
           listed(testnetUsdc, "USDC.e", "3.25"),
           listed(moderatoToken, "pathUSD", "1000004.996912"),
         ],
       },
-      requests: [`assets 42431 ${wallet}`, `balanceOf ${moderatoToken} ${wallet}`],
+      requests: [
+        `assets 42431 ${wallet}`,
+        `balanceOf ${moderatoToken} ${wallet}`,
+        `balanceOf ${mach} ${wallet}`,
+      ],
     },
     {
       name: "testnet by --network over a mainnet login",
@@ -129,8 +141,15 @@ describe("tempo wallet balance", () => {
       argv: ["--network", "testnet"],
       onChain: { [moderatoToken]: 2_000_000n },
       assets: {},
-      expected: { ...testnet, balances: [listed(moderatoToken, "pathUSD", "2")] },
-      requests: [`assets 42431 ${wallet}`, `balanceOf ${moderatoToken} ${wallet}`],
+      expected: {
+        ...testnet,
+        balances: [listed(mach, "MACH", "0"), listed(moderatoToken, "pathUSD", "2")],
+      },
+      requests: [
+        `assets 42431 ${wallet}`,
+        `balanceOf ${moderatoToken} ${wallet}`,
+        `balanceOf ${mach} ${wallet}`,
+      ],
     },
     {
       name: "the wallet app's balance of the default token over the chain's",
@@ -142,8 +161,15 @@ describe("tempo wallet balance", () => {
           { address: usdcToken, balance: "7000000", decimals: 6, symbol: "USDC.e", verified: true },
         ],
       },
-      expected: { ...mainnet, balances: [listed(usdcToken, "USDC.e", "7")] },
-      requests: [`assets 4217 ${wallet}`, `balanceOf ${usdcToken} ${wallet}`],
+      expected: {
+        ...mainnet,
+        balances: [listed(mach, "MACH", "0"), listed(usdcToken, "USDC.e", "7")],
+      },
+      requests: [
+        `assets 4217 ${wallet}`,
+        `balanceOf ${usdcToken} ${wallet}`,
+        `balanceOf ${mach} ${wallet}`,
+      ],
     },
     {
       name: "the wallet app's balance of the default token when the chain cannot be read",
@@ -157,7 +183,23 @@ describe("tempo wallet balance", () => {
       },
       failRpc: true,
       expected: { ...mainnet, balances: [listed(usdcToken, "USDC.e", "7")] },
-      requests: [`assets 4217 ${wallet}`, "POST / eth_call"],
+      requests: [`assets 4217 ${wallet}`, "POST / eth_call", "POST / eth_call"],
+    },
+    {
+      name: "MACH-only wallet when the asset API omits MACH",
+      state: walletState(),
+      argv: [],
+      onChain: { [mach]: 10_000_000n },
+      assets: {},
+      expected: {
+        ...mainnet,
+        balances: [listed(mach, "MACH", "10"), listed(usdcToken, "USDC.e", "0")],
+      },
+      requests: [
+        `assets 4217 ${wallet}`,
+        `balanceOf ${usdcToken} ${wallet}`,
+        `balanceOf ${mach} ${wallet}`,
+      ],
     },
     {
       name: "--token by symbol, read on chain only",
@@ -450,7 +492,10 @@ describe("balance and address", () => {
       {
         ...row,
         argv: ["balance"],
-        expected: { wallet, balances: [listed(usdcToken, "USDC.e", "1")] },
+        expected: {
+          wallet,
+          balances: [listed(mach, "MACH", "0"), listed(usdcToken, "USDC.e", "1")],
+        },
       },
       { ...row, argv: ["address"], expected: { address: wallet } },
     ]),

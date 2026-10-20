@@ -39,19 +39,25 @@ export async function paymentQuote(
   const chainId = normalizedChallengeChainId(getRecord(challenge.request.methodDetails), options);
   const amount = challengeAmount(challenge);
   const token = stringValue(challenge.request.currency);
-  // MACH settles in the offered currency but debits MACH from the wallet.
-  const debited = isMachPaymentToken(options.paymentToken)
-    ? machineTokenDeployments[chainId as keyof typeof machineTokenDeployments]?.token
-    : token;
+  const details = getRecord(challenge.request.methodDetails);
+  // The SDK attempts MACH before the advertised token for eligible charges. A quote shows both
+  // balances; balance alone cannot prove the route's liquidity, permissions, or simulation.
+  const mach =
+    challenge.intent === "charge" &&
+    details.machineTokenEnabled === true &&
+    !(Array.isArray(details.splits) && details.splits.length > 0)
+      ? machineTokenDeployments[chainId as keyof typeof machineTokenDeployments]?.token
+      : undefined;
   const wallet = signer ? undefined : await walletIdentity(options).catch(() => undefined);
   const fix =
     wallet && "code" in wallet ? walletFix(wallet.code, requestNetwork(options)) : undefined;
   const payer = privateKeyIdentity(options) ?? (wallet && !("code" in wallet) ? wallet : undefined);
-  const [metadata, balance, plan] = await Promise.all([
+  const [metadata, balance, machBalance, plan] = await Promise.all([
     tokenMetadata(token.toLowerCase() as Address, chainId, (address) =>
       readTokenMetadata(address, chainId, dryRunRpc),
     ).catch(() => undefined),
-    payer && debited ? dryRunBalance(payer.address, debited, chainId) : null,
+    payer ? dryRunBalance(payer.address, token, chainId) : null,
+    payer && mach ? dryRunBalance(payer.address, mach, chainId) : null,
     challenge.intent === "session" && payer
       ? planSessionPayment(sessionDetails(challenge, requestUrl, options), payer, options, {
           dryRun: true,
@@ -63,11 +69,10 @@ export async function paymentQuote(
         })
       : undefined,
   ]);
-  // MACH is listed, so its decimals need no read.
-  const debitedToken =
-    debited === token ? metadata : debited === undefined ? undefined : knownToken(debited, chainId);
-  const decimals = debitedToken?.decimals;
-  const limit = storedAccessKeyLimit(payer && "key" in payer ? payer.key : undefined, debited);
+  const decimals = metadata?.decimals;
+  const key = payer && "key" in payer ? payer.key : undefined;
+  const limit = storedAccessKeyLimit(key, token);
+  const machLimit = storedAccessKeyLimit(key, mach);
   // No cap bounds a subscription: an explicit one refuses it before this, and the default skips it.
   const cap = challenge.intent === "subscription" ? undefined : spendCap(options);
   const spend = challenge.intent === "session" ? plan?.signedCumulative : amount;
@@ -88,6 +93,15 @@ export async function paymentQuote(
     balance: balance === null || decimals === undefined ? null : formatUnits(balance, decimals),
     access_key_limit:
       limit === null || decimals === undefined ? null : formatUnits(limit, decimals),
+    mach: mach
+      ? {
+          token: mach.toLowerCase(),
+          symbol: "MACH",
+          balance: machBalance === null ? null : formatUnits(machBalance, 6),
+          access_key_limit: machLimit === null ? null : formatUnits(machLimit, 6),
+          mode: isMachPaymentToken(options.paymentToken) ? "required" : "preferred",
+        }
+      : null,
     machine_token_enabled: getRecord(challenge.request.methodDetails).machineTokenEnabled === true,
     payment_token: options.paymentToken ?? null,
     ...networkFields(chainId),
