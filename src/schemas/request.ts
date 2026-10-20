@@ -39,14 +39,9 @@ export const requestDryRunOutput = z.union([
         symbol: z.literal("MACH"),
         balance: z.string().nullable().describe("Payer's MACH balance; null when unknown"),
         access_key_limit: z.string().nullable().describe("Active access key's stored MACH limit"),
-        mode: z
-          .enum(["preferred", "required"])
-          .describe(
-            "Preferred attempts MACH settlement first, then falls back to the advertised currency; required forbids that fallback. Balance alone does not guarantee settlement.",
-          ),
       })
       .nullable()
-      .describe("MACH balance and preference for eligible charges; null for other payment offers"),
+      .describe("MACH balance for eligible charges; null for other payment offers"),
     machine_token_enabled: z.boolean(),
     payment_token: z.string().nullable(),
     ...networkOutputShape,

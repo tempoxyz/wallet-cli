@@ -17,7 +17,6 @@ import {
   storedAccessKeyLimit,
   walletIdentity,
 } from "./identity.js";
-import { isMachPaymentToken } from "./mach.js";
 import type { RequestOptions } from "./options.js";
 import { dryRunRpc, planSessionPayment } from "./session.js";
 import { formatTokenAmount, spendCap } from "./spend.js";
@@ -99,7 +98,6 @@ export async function paymentQuote(
           symbol: "MACH",
           balance: machBalance === null ? null : formatUnits(machBalance, 6),
           access_key_limit: machLimit === null ? null : formatUnits(machLimit, 6),
-          mode: isMachPaymentToken(options.paymentToken) ? "required" : "preferred",
         }
       : null,
     machine_token_enabled: getRecord(challenge.request.methodDetails).machineTokenEnabled === true,

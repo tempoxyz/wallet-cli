@@ -43,7 +43,7 @@ export default {
  * read on chain. Otherwise MACH and each token the wallet app reports, plus the network's default
  * token read on chain. MACH and the default token are listed even at zero. The default-token read
  * fails the command only when its token would be missing: the app's balance takes precedence for
- * that token, while MACH prefers the chain. Session deposits are held in escrow, so the locked
+ * tokens it reports. Session deposits are held in escrow, so the locked
  * and pending-refund amounts are `whoami`'s to report.
  */
 export async function balanceHandler(

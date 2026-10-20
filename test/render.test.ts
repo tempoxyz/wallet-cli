@@ -122,13 +122,6 @@ const results: { name: string; schema: z.ZodType; data: unknown; cta?: Cta }[] =
       wallet,
       ...mainnet,
       balances: [
-        {
-          token: "0x20c000000000000000000000f37de3740adec032",
-          symbol: "MACH",
-          decimals: 6,
-          balance: "10",
-          verified: true,
-        },
         { token: ousd, symbol: "OUSD", decimals: 6, balance: "1.5", verified: true },
         {
           token: "0x20c000000000000000000000000000000000beef",
@@ -157,14 +150,6 @@ const results: { name: string; schema: z.ZodType; data: unknown; cta?: Cta }[] =
         symbol: "USDC.e",
       },
       balances: [
-        {
-          token: "0x20c000000000000000000000f37de3740adec032",
-          symbol: "MACH",
-          decimals: 6,
-          balance: "10",
-          verified: true,
-          access_key_limit: null,
-        },
         {
           token: ousd,
           symbol: "OUSD",

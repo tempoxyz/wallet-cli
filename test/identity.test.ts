@@ -681,9 +681,9 @@ describe("identity commands", () => {
     const result = await whoamiHandler({});
 
     expect("balances" in result ? result.balances : null).toMatchObject([
-      zeroMach,
       { token: ousdToken, symbol: "OUSD" },
       { token: unlistedToken, symbol: "NEW" },
+      zeroMach,
       { token: usdcToken, symbol: "USDC.e" },
     ]);
     expect(mocks.getMetadata).not.toHaveBeenCalled();
@@ -755,7 +755,6 @@ describe("identity commands", () => {
       { signal: expect.any(AbortSignal) },
     );
     expect("balances" in result ? result.balances : null).toEqual([
-      zeroMach,
       {
         token: usdc.toLowerCase(),
         symbol: "USDC.e",
@@ -772,6 +771,7 @@ describe("identity commands", () => {
         verified: true,
         access_key_limit: null,
       },
+      zeroMach,
     ]);
   });
 
@@ -801,7 +801,7 @@ describe("identity commands", () => {
   it.each([
     { name: "asset API unavailable", api: undefined, chain: 10_000_000n, expected: "10" },
     { name: "asset API omits zero MACH", api: undefined, chain: 0n, expected: "0" },
-    { name: "stale API MACH", api: "5000000", chain: 10_000_000n, expected: "10" },
+    { name: "API takes precedence", api: "5000000", chain: 10_000_000n, expected: "5" },
     { name: "RPC unavailable but API has MACH", api: "4000000", chain: null, expected: "4" },
     { name: "both sources unavailable", api: undefined, chain: null, expected: null },
   ])("whoami handles MACH when $name", async ({ api, chain, expected }) => {
@@ -828,7 +828,6 @@ describe("identity commands", () => {
     if (expected === null) expect(held).toEqual([]);
     else {
       expect(held).toEqual([{ ...zeroMach, balance: expected }]);
-      expect(output.balances[0]).toEqual(held[0]);
     }
     expect(output.balances).toEqual(
       expect.arrayContaining([

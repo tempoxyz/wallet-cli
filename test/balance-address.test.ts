@@ -93,9 +93,9 @@ describe("tempo wallet balance", () => {
       expected: {
         ...mainnet,
         balances: [
-          listed(mach, "MACH", "0"),
           listed(ousdToken, "OUSD", "1.5"),
           { token: unlistedToken, symbol: "NEW", decimals: 18, balance: "2.5", verified: false },
+          listed(mach, "MACH", "0"),
           listed(usdcToken, "USDC.e", "0"),
         ],
       },
@@ -124,8 +124,8 @@ describe("tempo wallet balance", () => {
       expected: {
         ...testnet,
         balances: [
-          listed(mach, "MACH", "0"),
           listed(testnetUsdc, "USDC.e", "3.25"),
+          listed(mach, "MACH", "0"),
           listed(moderatoToken, "pathUSD", "1000004.996912"),
         ],
       },
@@ -163,7 +163,7 @@ describe("tempo wallet balance", () => {
       },
       expected: {
         ...mainnet,
-        balances: [listed(mach, "MACH", "0"), listed(usdcToken, "USDC.e", "7")],
+        balances: [listed(usdcToken, "USDC.e", "7"), listed(mach, "MACH", "0")],
       },
       requests: [
         `assets 4217 ${wallet}`,

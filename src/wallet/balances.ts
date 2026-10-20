@@ -18,9 +18,8 @@ export type WalletAsset = {
 };
 
 /**
- * MACH first, including zero, followed by the wallet app's nonzero assets. MACH is read directly
- * on chain so an unavailable asset API cannot hide it. A failed MACH read keeps the app's balance
- * when available, never inventing zero. Other tokens keep the app's sanitized metadata.
+ * The wallet app's nonzero assets, with MACH read on chain as a fallback, including zero.
+ * Like the default currency, an asset the app reports takes precedence over its on-chain read.
  */
 export async function fetchWalletAssets(options: {
   chain: number;
@@ -39,16 +38,9 @@ export async function fetchWalletAssets(options: {
         })
       : null,
   ]);
-  const held =
-    mach && balance
-      ? { ...mach, balance: balance.raw, verified: true }
-      : assets.find((asset) => asset.address.toLowerCase() === mach?.address);
-  return held
-    ? [
-        held,
-        ...assets.filter((asset) => asset.address.toLowerCase() !== held.address.toLowerCase()),
-      ]
-    : assets;
+  if (mach && balance && !assets.some((asset) => asset.address.toLowerCase() === mach.address))
+    assets.push({ ...mach, balance: balance.raw, verified: true });
+  return assets;
 }
 
 /** Nonzero balances from the wallet app; empty when its response is unavailable or malformed. */

@@ -4,7 +4,6 @@ Network   tempo
 
 Balances
   Token        Balance   Verified
-  0x20c0…c032  10 MACH   yes
   0x20c0…74be  1.5 OUSD  yes
   0x20c0…beef  2.5       no
   0x20c0…8b50  0 USDC.e  yes
