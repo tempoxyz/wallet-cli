@@ -345,25 +345,43 @@ export async function crossChainFunding(
     source,
     url: request.url,
   });
-  const resumed = attempt.reused
-    ? await fileStore(operationsDirectory()).get(attempt.attemptId)
-    : undefined;
+  const store = fileStore(operationsDirectory());
+  /**
+   * Forgets the attempt when funding failed before anything moved: no operation was claimed for
+   * it, so there is nothing to reconcile, and keeping it would only clutter `funding list`. An
+   * attempt with an operation is always kept for recovery.
+   */
+  const abandon = async () => {
+    const operation = await Promise.resolve()
+      .then(() => store.get(attempt.attemptId))
+      .catch(() => "unknown" as const);
+    if (operation === undefined) await removeAttempt(attempt.attemptId);
+  };
+  const resumed = attempt.reused ? await store.get(attempt.attemptId) : undefined;
   const held = await destinationBalance(offer.destination, payer).catch(() => 0n);
   const needed = offer.requirement.amount > held ? offer.requirement.amount - held : 0n;
-  const { funders, sources } = await crossChainFunders({
-    network,
-    destination: offer.destination,
-    payer,
-    needed,
-    resumeAsset: resumed?.request.from.asset as Address | undefined,
-    maxSpend: limit,
-    stderr,
-    identity,
-  });
-  if (!attempt.reused) await reconcileEarlier(attempt, network);
+  let prepared: Awaited<ReturnType<typeof crossChainFunders>>;
+  try {
+    prepared = await crossChainFunders({
+      network,
+      destination: offer.destination,
+      payer,
+      needed,
+      resumeAsset: resumed?.request.from.asset as Address | undefined,
+      maxSpend: limit,
+      stderr,
+      identity,
+    });
+    if (!attempt.reused) await reconcileEarlier(attempt, network);
+  } catch (error) {
+    await abandon().catch(() => undefined);
+    throw error;
+  }
+  const { funders, sources } = prepared;
   return {
     funders,
     attemptId: attempt.attemptId,
+    abandon,
     maxFundingSpend: sources.map((asset) => ({
       network: caip2(network.chainId),
       asset,

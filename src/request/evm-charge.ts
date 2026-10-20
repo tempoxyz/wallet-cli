@@ -87,6 +87,7 @@ export async function payEvmAndRetry(
       attemptId: funding?.attemptId,
     });
   } catch (error) {
+    await funding?.abandon().catch(() => undefined);
     throw report(error);
   }
   if (!funding) await assertFunded(offer, payer, options);

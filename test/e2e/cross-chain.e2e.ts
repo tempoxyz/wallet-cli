@@ -119,6 +119,9 @@ describe("cross-chain funding", () => {
     expect(output(result)).toContain("--max-funding-spend 0.1213");
     expect(relay.deposited).toHaveLength(0);
     expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
+    // Nothing moved, so nothing is left to recover.
+    const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
   });
 
   test("recovers after the CLI is killed mid-bridge without bridging again", async () => {
@@ -237,6 +240,8 @@ describe("cross-chain funding", () => {
     expect(output(result)).toContain("E_INSUFFICIENT_FUNDS");
     expect(output(result)).toContain("0.05 OUSD");
     expect(relay.quotes).toHaveLength(0);
+    const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
   });
 
   test("recovers a Stargate bridge after the CLI is killed, without bridging again", async () => {
