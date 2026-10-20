@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -160,6 +160,7 @@ describe("updateDocs", () => {
 
   it("reports stale files in check mode without writing them, and generate makes them current", async () => {
     root = await mkdtemp(join(tmpdir(), "wallet-cli-docs-"));
+    await mkdir(join(root, "docs"));
     const stale = Object.fromEntries(
       Object.entries(docBlocks).map(([file, names]) => [
         file,
@@ -174,8 +175,8 @@ describe("updateDocs", () => {
 
     expect(updateDocs(root, { check: false })).toEqual(files);
     expect(updateDocs(root, { check: true })).toEqual([]);
-    const readme = await readFile(join(root, "README.md"), "utf8");
-    expect(readme).toContain(`${start("commands")}\n\n${renderBlocks().commands}\n\n`);
-    expect(readme).not.toContain("- stale");
+    const reference = await readFile(join(root, "docs/commands.md"), "utf8");
+    expect(reference).toContain(`${start("commands")}\n\n${renderBlocks().commands}\n\n`);
+    expect(reference).not.toContain("- stale");
   });
 });

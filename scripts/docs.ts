@@ -1,5 +1,5 @@
 /**
- * Generates the blocks of README.md and SKILL.md that list every command or MCP tool, from the
+ * Generates the command reference and SKILL.md MCP tool table from the
  * command modules that `src/cli/commands.ts` lists. A block is the text between
  * `<!-- generated:<name> start -->` and `<!-- generated:<name> end -->`; everything outside the
  * markers is written by hand.
@@ -33,7 +33,7 @@ import {
 
 /** The blocks each file holds, by path from the repository root. */
 export const docBlocks: Record<string, readonly string[]> = {
-  "README.md": ["commands", "mcp-tools"],
+  "docs/commands.md": ["commands"],
   "SKILL.md": ["mcp-tools"],
 };
 
