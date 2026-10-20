@@ -67,7 +67,7 @@ describe("cross-chain funding", () => {
     expect(result.stderr).toMatch(
       /^Bridging 0\.1013 OUSD to 0x[0-9a-fA-F]{40} on local-evm via Relay \(request 0x[0-9a-f]{64}\)$/m,
     );
-    expect(result.stderr).toMatch(/^Paid 0\.1 USDC$/m);
+    expect(result.stderr).toMatch(/^Paid 0\.1 USDC · tx 0x[0-9a-f]{64}$/m);
     expect(relay.deposited).toHaveLength(1);
     expect(await evmBalance(net, net.evmUsdc, endpoint.seller)).toBe(100_000n);
     // One deposit of the quoted input, plus the deposit's fee in OUSD.
@@ -75,6 +75,24 @@ describe("cross-chain funding", () => {
     expect(spent).toBeGreaterThanOrEqual(101_300n);
     expect(spent).toBeLessThan(101_300n + 20_000n);
     // The payment used the funding, so nothing is left to recover.
+    const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
+  });
+
+  test("waits for the destination balance when the relay reports success before delivering", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint();
+    relay.lagDelivery(3_000);
+
+    const result = await runCli("request", [endpoint.url], env(wallet));
+
+    expect(result).toMatchObject({
+      code: 0,
+      stdout: expect.stringContaining("paid on the EVM chain"),
+    });
+    expect(result.stderr).toMatch(/^Paid 0\.1 USDC · tx 0x[0-9a-f]{64}$/m);
+    expect(relay.deposited).toHaveLength(1);
+    expect(await evmBalance(net, net.evmUsdc, endpoint.seller)).toBe(100_000n);
     const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
     expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
   });

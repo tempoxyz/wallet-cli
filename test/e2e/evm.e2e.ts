@@ -59,8 +59,11 @@ describe("EVM offers", () => {
     expect(paid).toMatchObject({
       code: 0,
       stdout: expect.stringContaining("paid on the EVM chain"),
-      stderr: "Paid 0.1 USDC\n",
+      stderr: expect.stringMatching(/^Paid 0\.1 USDC · tx 0x[0-9a-f]{64}\n$/),
     });
+    // The receipt names the server's settlement transaction, from its payment-response.
+    const settlement = paid.stderr.match(/0x[0-9a-f]{64}/)![0] as `0x${string}`;
+    expect((await chain.getTransactionReceipt({ hash: settlement })).status).toBe("success");
     expect(await evmBalance(net, net.evmUsdc, account.address)).toBe(100_000n);
     expect(await evmBalance(net, net.evmUsdc, payer!)).toBe(0n);
   });

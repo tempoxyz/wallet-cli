@@ -65,6 +65,7 @@ export async function standInRelay(net: Localnet) {
   let hostile: HostileQuote | undefined;
   let holdRelease = false;
   let refund = false;
+  let deliveryLag = 0;
   const deposited: Hex[] = [];
   const depositWaiters: (() => void)[] = [];
   const inventory = evmClient(net);
@@ -243,6 +244,11 @@ export async function standInRelay(net: Localnet) {
       intent.status = "refund";
       return;
     }
+    // Relay can report success before the destination chain's RPC shows the transfer.
+    if (deliveryLag > 0) {
+      intent.status = "success";
+      await new Promise((resolve) => setTimeout(resolve, deliveryLag));
+    }
     const hash = await inventory.writeContract({
       address: net.evmUsdc,
       abi: erc20Abi,
@@ -250,7 +256,7 @@ export async function standInRelay(net: Localnet) {
       args: [intent.recipient, intent.amountOut],
     });
     const receipt = await inventory.waitForTransactionReceipt({ hash });
-    intent.status = receipt.status === "success" ? "success" : "refund";
+    if (deliveryLag === 0) intent.status = receipt.status === "success" ? "success" : "refund";
   };
   let polling = true;
   const poll = (async () => {
@@ -301,6 +307,10 @@ export async function standInRelay(net: Localnet) {
     /** Holds deposits pending instead of releasing them, until called with false. */
     hold(value: boolean) {
       holdRelease = value;
+    },
+    /** Reports each release as a success `ms` before the destination transfer lands. */
+    lagDelivery(ms: number) {
+      deliveryLag = ms;
     },
     /** Refunds deposits instead of releasing them. */
     refund(value: boolean) {
