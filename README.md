@@ -17,6 +17,8 @@
 
 A command-line wallet and HTTP client for [Tempo](https://tempo.xyz). `tempo wallet` manages your wallet, keys, tokens, and payment sessions. `tempo request` makes HTTP requests and handles [MPP](https://mpp.dev) payment challenges.
 
+Use this CLI for terminal and script workflows. For payment handling inside an application, use an MPP SDK such as [mpp-rs](https://github.com/tempoxyz/mpp-rs), [mpp-go](https://github.com/tempoxyz/mpp-go), or [pympp](https://github.com/tempoxyz/pympp).
+
 [Wallet](https://wallet.tempo.xyz) · [CLI docs](https://tempo.xyz/developers/docs/cli) · [Command reference](docs/commands.md) · [Usage guide](docs/usage.md)
 
 ## Install
@@ -55,7 +57,7 @@ To add funds, run `tempo wallet fund`. It opens the wallet app and returns a lin
 
 Use `tempo wallet <command> --help` or `tempo request --help` for options. The [command reference](docs/commands.md) lists every wallet command; the [usage guide](docs/usage.md) covers remote login, transfers, payment choices, sessions, MACH, and legacy credits.
 
-Preview a send or swap with `--dry-run`. Interactive commands ask before submitting; scripted sends, swaps, session closes, key revocations, and configuration changes require `--yes`. Use a fresh `--idempotency-key` for each intended send or swap and reuse it on retries. If a payment or transaction reports `E_PAYMENT_OUTCOME_UNKNOWN`, check its status before trying again.
+Preview a send or swap with `--dry-run`. Interactive sends ask for confirmation; every submitted swap needs `--yes`. Scripted sends, session closes, key revocations, and configuration changes also require `--yes`. Use a fresh `--idempotency-key` for each intended send or swap and reuse it on retries. If a payment or transaction reports `E_PAYMENT_OUTCOME_UNKNOWN`, check its status before trying again.
 
 ## Payments
 
