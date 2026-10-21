@@ -98,8 +98,13 @@ jobs:
         run: pnpm test:types
 
   tests:
-    name: Tests
+    name: Tests (${{ matrix.shard }}/5)
     runs-on: ubuntu-latest
+    strategy:
+      # Let every shard finish so one run reports all failing tests, as the single job did.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
     permissions:
       contents: read
       id-token: write
@@ -124,4 +129,4 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run tests
-        run: pnpm test
+        run: pnpm test --shard=${{ matrix.shard }}/5
