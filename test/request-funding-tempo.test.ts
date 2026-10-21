@@ -171,7 +171,7 @@ describe("Tempo DEX funding", () => {
 
     await expect(run([], paid.url)).rejects.toMatchObject({
       code: "E_LIMIT_EXCEEDED",
-      message: expect.stringContaining("cannot spend 0.01005 pathUSD"),
+      message: expect.stringContaining("short of the 0.0201 pathUSD a DEX swap needs"),
     });
     expect(paid.paid()).toBe(0);
     expect(credentialContexts).toEqual([]);
@@ -241,12 +241,30 @@ describe("Tempo DEX funding", () => {
 
     const error = await run([], paid.url).catch((value: unknown) => value);
 
-    const command = `tempo wallet keys update ${testAccessKey} --token ${ousd} --limit 0.01005 --network mainnet`;
+    const command = `tempo wallet keys update ${testAccessKey} --token ${ousd} --limit 0.0201 --network mainnet`;
     expect(error).toBeInstanceOf(CtaError);
     expect(error).toMatchObject({
       code: "E_LIMIT_EXCEEDED",
-      message: `The access key cannot spend 0.01005 OUSD. Ask the wallet owner to run '${command}', then retry.`,
+      message: `The access key has 0.001 OUSD left of its spending limit, short of the 0.0201 OUSD a DEX swap needs (its approve and the DEX's pull each count), so nothing was sent. Ask the wallet owner to run '${command}', then retry.`,
       payload: { cta: { commands: [{ command }] } },
+    });
+    expect(credentialContexts).toEqual([]);
+  });
+
+  it("counts a DEX swap twice against the key: a limit covering the input once is refused", async () => {
+    // 0.015 covers the 0.01005 input once, but the approve and the DEX's pull both count.
+    await wallet([
+      { token: usdcE, limit: "100000000#__bigint" },
+      { token: ousd, limit: "15000#__bigint" },
+    ]);
+    balances.set(usdcE, 0n).set(ousd, 5_000_000n);
+    const paid = await service(usdcE);
+
+    await expect(run([], paid.url)).rejects.toMatchObject({
+      code: "E_LIMIT_EXCEEDED",
+      message: expect.stringContaining(
+        "The access key has 0.015 OUSD left of its spending limit, short of the 0.0201 OUSD a DEX swap needs",
+      ),
     });
     expect(credentialContexts).toEqual([]);
   });

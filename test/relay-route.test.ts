@@ -214,6 +214,21 @@ describe("Relay deposit route", () => {
     ).resolves.toEqual({ status: "completed", destinationTxs: [filled] });
   });
 
+  it("names Relay when it cannot be reached", async () => {
+    const operation = { id: "attempt-1", quote: { reference: requestId } } as never;
+    const down = relayDepositRoute({
+      url: "http://relay.test",
+      fetch: (async () => {
+        throw new TypeError("fetch failed", { cause: new Error("connect ECONNREFUSED") });
+      }) as never,
+      maxGas: 20_000n,
+      execute: async () => undefined,
+    } as never);
+    await expect(down.status(operation, { signal: new AbortController().signal })).rejects.toThrow(
+      "Relay is unreachable (fetch failed: connect ECONNREFUSED)",
+    );
+  });
+
   it("rejects a malformed status", async () => {
     const operation = { id: "attempt-1", quote: { reference: requestId } } as never;
     await expect(

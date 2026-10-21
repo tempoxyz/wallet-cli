@@ -282,7 +282,7 @@ describe("swapTokens", () => {
       limits: [{ token: usdc, limit: "100000000#__bigint" }],
       args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
       options: {},
-      limit: "10",
+      limit: "20",
       remaining: "0",
       label: "pathUSD",
     },
@@ -291,7 +291,7 @@ describe("swapTokens", () => {
       limits: [{ token: moderatoToken, limit: "10000000#__bigint" }],
       args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
       options: { "exact-out": true },
-      limit: "10.1505",
+      limit: "20.301",
       remaining: "10",
       label: "pathUSD",
     },
@@ -318,7 +318,7 @@ describe("swapTokens", () => {
         code: "E_LIMIT_EXCEEDED",
         exitCode: 4,
         retryable: false,
-        message: `The access key has ${remaining} ${label} left of its spending limit, short of ${limit}, so nothing was sent: sending would need the wallet app to approve it instead. Ask the wallet owner to run '${command}', then retry.`,
+        message: `The access key has ${remaining} ${label} left of its spending limit, short of the ${limit} ${label} a DEX swap needs (its approve and the DEX's pull each count), so nothing was sent: sending would need the wallet app to approve it instead. Ask the wallet owner to run '${command}', then retry.`,
         payload: { cta: { commands: [{ command }] } },
       });
       expect(runtime.submit).not.toHaveBeenCalled();
@@ -353,7 +353,7 @@ describe("swapTokens", () => {
     expect(error).toMatchObject({
       code: "E_LIMIT_EXCEEDED",
       message: expect.stringContaining(
-        "The access key has 0.087 pathUSD left of its spending limit, short of 0.111101, so nothing was sent",
+        "The access key has 0.087 pathUSD left of its spending limit, short of the 0.222202 pathUSD a DEX swap needs",
       ),
     });
     expect(runtime.getAccessKeyLimit).toHaveBeenCalledWith(
@@ -814,7 +814,9 @@ describe("swapTokens", () => {
         token_in: unlistedToken,
         token_in_symbol: null,
         requires_access_key_update: true,
-        instruction: expect.stringContaining(`cannot spend 10 ${unlistedToken}.`),
+        instruction: expect.stringContaining(
+          `cannot spend the 20 ${unlistedToken} this swap needs`,
+        ),
       });
       expect(quoteMoved).toMatchObject({
         message: expect.stringContaining(`now returns 9.8 ${unlistedToken}, below`),

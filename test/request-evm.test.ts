@@ -337,6 +337,23 @@ describe("EVM offers", () => {
     expect(endpoint.paid).toEqual([]);
   });
 
+  it("pays an x402-only charge with --funding off from USDC the payer already holds", async () => {
+    const payer = await remotePayerAddress();
+    const endpoint = await service({ x402: [x402Accept()] });
+
+    // Without a Tempo offer, --funding off still pays on Base, but never bridges.
+    await expect(run(["--funding", "off"], endpoint.url)).rejects.toMatchObject({
+      code: "E_INSUFFICIENT_FUNDS",
+      message: expect.stringContaining(`The remote payer ${payer} holds 0 USDC on base`),
+    });
+    expect(endpoint.paid).toEqual([]);
+    fund(baseUsdc, payer, 100_000n);
+    await expect(run(["--funding", "off"], endpoint.url)).resolves.toMatchObject({
+      stdout: "paid",
+    });
+    expect(endpoint.paid).toHaveLength(1);
+  });
+
   it("refuses an EVM charge over --max-spend before signing", async () => {
     const payer = await remotePayerAddress();
     fund(baseUsdc, payer, 10_000_000n);

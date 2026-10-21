@@ -1,8 +1,9 @@
-import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { afterEach, beforeEach, describe, expect, inject, test } from "vitest";
-
 import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+
+import { erc20Abi } from "viem";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { afterEach, beforeEach, describe, expect, inject, test } from "vitest";
 
 import { cliEnv, runCli, startCli } from "./cli.js";
 import { evmBalance, evmClient, tempoBalance } from "./localnet.js";
@@ -400,4 +401,84 @@ describe("cross-chain funding", () => {
     const after = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
     expect(JSON.parse(after.stdout)).toMatchObject({ total: 0 });
   });
+
+  test("bridges only what the payer lacks when it already holds part of the price", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint();
+    const payer = await payerOf(wallet, endpoint.url);
+    const chain = evmClient(net);
+    await chain.waitForTransactionReceipt({
+      hash: await chain.writeContract({
+        address: net.evmUsdc,
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [payer, 40_000n],
+      }),
+    });
+
+    const result = await runCli("request", [endpoint.url], env(wallet));
+
+    expect(result).toMatchObject({
+      code: 0,
+      stdout: expect.stringContaining("paid on the EVM chain"),
+    });
+    expect(relay.quotes).toHaveLength(1);
+    expect(relay.quotes[0]).toMatchObject({ amount: "60000" });
+    expect(await evmBalance(net, net.evmUsdc, payer)).toBe(0n);
+    expect(await evmBalance(net, net.evmUsdc, endpoint.seller)).toBe(100_000n);
+  });
+
+  test("names why each route declined when none can fund the payment", async () => {
+    // Relay is unreachable, and Stargate bridges only USDC, which the wallet does not hold.
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint();
+
+    const result = await runCli(
+      "request",
+      [endpoint.url],
+      env(wallet, { TEMPO_RELAY_URL: "http://127.0.0.1:9" }),
+    );
+
+    expect(result.code).not.toBe(0);
+    expect(output(result)).toContain("E_PAYMENT");
+    expect(output(result)).toContain("Relay is unreachable (fetch failed");
+    expect(stargate.sent).toHaveLength(0);
+    expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
+    const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
+  });
+
+  test.each(["off", "tempo"])("never bridges with --funding %s", async (funding) => {
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint();
+
+    const result = await runCli("request", ["--funding", funding, endpoint.url], env(wallet));
+
+    expect(result.code).toBe(4);
+    expect(output(result)).toContain("E_INSUFFICIENT_FUNDS");
+    expect(relay.quotes).toHaveLength(0);
+    expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
+  });
+
+  test("previews a bridged payment with --dry-run without moving anything", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint();
+
+    const result = await runCli("request", ["--dry-run", endpoint.url], env(wallet));
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ amount: "0.1", symbol: "USDC" });
+    expect(relay.deposited).toHaveLength(0);
+    expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
+    const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
+  });
 });
+
+/** The wallet's remote payer, which a first attempt without funding creates and names. */
+async function payerOf(wallet: LocalWallet, url: string) {
+  const unfunded = await runCli("request", ["--funding", "off", url], env(wallet));
+  const payer = /remote payer (0x[0-9a-fA-F]{40})/.exec(output(unfunded))?.[1];
+  expect(payer).toBeDefined();
+  return payer as `0x${string}`;
+}

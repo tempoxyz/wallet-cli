@@ -20,9 +20,9 @@ export type Selection = { kind: "tempo" } | { kind: "evm"; offer: EvmOffer };
  * token the wallet holds; (2) a Tempo offer a Tempo DEX swap can fund; (3) an EVM offer the payer
  * already holds the USDC for; (4) an EVM offer funding must bridge to (with `--funding auto`).
  * Otherwise the Tempo offer, which reports why it cannot be paid. `--payment-network` overrides
- * the ranking. `--funding off` ignores EVM offers, as before funding existed, unless
- * `--payment-network` names an EVM chain: then that offer is paid only from USDC the payer already
- * holds there, never bridged. Ranking without quotes is a heuristic ([MF-4]); balances are read
+ * the ranking. `--funding off` prefers the Tempo offer, as before funding existed, and pays an EVM
+ * offer only when `--payment-network` names its chain or the server offers nothing on Tempo; it is
+ * then paid only from USDC the payer already holds there, never bridged. Ranking without quotes is a heuristic ([MF-4]); balances are read
  * only when both kinds are offered.
  */
 export async function selectPayment(
@@ -32,9 +32,13 @@ export async function selectPayment(
 ): Promise<Selection> {
   const mode = fundingSetting(options.funding).value;
   const forced = options.paymentNetwork?.toLowerCase();
-  if (forced === "tempo" || (mode === "off" && !forced)) return { kind: "tempo" };
+  if (forced === "tempo") return { kind: "tempo" };
   const { offers, refused } = evmOffers(response, options);
   const tempo = offersTempo(response);
+  if (mode === "off" && !forced) {
+    if (tempo || offers.length === 0) return { kind: "tempo" };
+    return { kind: "evm", offer: (await fundedOffer(offers, options)) ?? offers[0]! };
+  }
   const why = refused.length > 0 ? ` (${refused.map(escapeInvisible).join("; ")})` : "";
   if (forced) {
     const offer = offers.find((candidate) => candidate.destination.name === forced);

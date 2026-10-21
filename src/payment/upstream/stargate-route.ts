@@ -14,7 +14,7 @@ import { Funder } from "machine-fetch";
 import type { CrossChain } from "machine-fetch/cross-chain";
 import { type Address, encodeFunctionData, erc20Abi, type Hex, pad, parseAbi } from "viem";
 
-import { type DeliveredStatus, transactionHashes } from "./delivery.js";
+import { type DeliveredStatus, namedFetch, transactionHashes } from "./delivery.js";
 import { FundingLimitError, SourceBalanceError } from "./funding-limit.js";
 
 export const stargateAbi = parseAbi([
@@ -115,7 +115,7 @@ export function stargateRoute(
 ): CrossChain.Route<CrossChain.BoundedQuote> {
   const name = options.name ?? "stargate";
   const scanUrl = (options.scanUrl ?? "https://scan.layerzero-api.com").replace(/\/$/, "");
-  const fetchJson = options.fetch ?? globalThis.fetch;
+  const fetchJson = namedFetch("LayerZero Scan", options.fetch ?? globalThis.fetch);
   const ttl = options.quoteTtlSeconds ?? 30;
 
   const sendParam = (request: CrossChain.Request, dstEid: number, amountLD: bigint) => ({

@@ -26,7 +26,7 @@ import {
   parseAbi,
 } from "viem";
 
-import { type DeliveredStatus, transactionHashes } from "./delivery.js";
+import { type DeliveredStatus, namedFetch, transactionHashes } from "./delivery.js";
 import { FundingLimitError, SourceBalanceError } from "./funding-limit.js";
 
 /** Relay's v2 depository entry point for ERC-20 (TIP-20) deposits. */
@@ -102,7 +102,7 @@ export function relayDepositRoute(
   options: RelayDepositRouteOptions,
 ): CrossChain.Route<CrossChain.BoundedQuote> {
   const url = (options.url ?? "https://api.relay.link").replace(/\/$/, "");
-  const fetchJson = options.fetch ?? globalThis.fetch;
+  const fetchJson = namedFetch("Relay", options.fetch ?? globalThis.fetch);
   const ttl = options.quoteTtlSeconds ?? 60;
   const validate = (quote: RelayProtocolRoute.ApiQuote, request: CrossChain.Request) =>
     options.depository

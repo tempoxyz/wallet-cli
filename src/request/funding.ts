@@ -15,7 +15,7 @@ import { tempoFunding } from "../payment/tempo-funding.js";
 import { createTempoPublicClient } from "../shared/network.js";
 import { knownToken } from "../shared/tokens.js";
 import { getRecord } from "../shared/utils.js";
-import { accessKeyLimitError } from "../wallet/access-key.js";
+import { accessKeyLimitError, dexSwapSpend } from "../wallet/access-key.js";
 import type { WalletState } from "../wallet/store.js";
 import { fundingSetting, parseMaxSlippageBps } from "./funding-mode.js";
 import { accessKeySpendLimit, requestNetwork } from "./identity.js";
@@ -46,21 +46,24 @@ export function chargeFunders(
       chainId: network.chainId,
       balance: (token) => tokenBalance(network.chainId, token, payer.address as Address),
       // The access key's own limit refuses the swap's spend inside signing: skip inputs it may
-      // not spend, and when none it may spend is held, name the fix before signing.
+      // not spend, and when none it may spend is held, name the fix before signing. The swap's
+      // approve and the DEX's pull both count against the limit.
       canSpend: async ({ token, maxAmount }) => {
         if (!key) return true;
         const limit = await accessKeySpendLimit(key, token);
-        return limit === null || limit >= maxAmount;
+        return limit === null || limit >= dexSwapSpend(maxAmount);
       },
       beforeSwap: async ({ token, maxAmount }) => {
         if (!key) return;
         const limit = await accessKeySpendLimit(key, token);
-        if (limit === null || limit >= maxAmount) return;
+        if (limit === null || limit >= dexSwapSpend(maxAmount)) return;
         throw accessKeyLimitError({
           key: key.address,
           token: token.toLowerCase(),
           label: knownToken(token, network.chainId)?.symbol ?? token,
-          amount: formatUnits(maxAmount, 6),
+          amount: formatUnits(dexSwapSpend(maxAmount), 6),
+          remaining: formatUnits(limit, 6),
+          swap: true,
           network,
         });
       },

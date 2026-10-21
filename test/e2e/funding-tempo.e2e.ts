@@ -65,4 +65,94 @@ describe("Tempo DEX funding", () => {
     expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
     expect(await tempoBalance(net, net.usdc, recipient)).toBe(0n);
   });
+
+  test("refuses before signing when nothing the wallet holds can buy the charge", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 5_000n }] });
+    const recipient = privateKeyToAccount(generatePrivateKey()).address;
+    const server = await started(
+      await serve(mppServer(net, { currency: net.usdc, recipient, amount: "0.01" })),
+    );
+
+    const result = await runCli("request", [`${server.origin}/paid`], cliEnv(net, wallet));
+
+    expect(result.code).toBe(4);
+    expect(result.stdout + result.stderr).toContain("E_INSUFFICIENT_FUNDS");
+    expect(result.stdout + result.stderr).toContain("tempo wallet fund");
+    expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(5_000n);
+    expect(await tempoBalance(net, net.usdc, recipient)).toBe(0n);
+  });
+
+  test("refuses a charge above --max-spend before signing, naming the cap it needs", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
+    const recipient = privateKeyToAccount(generatePrivateKey()).address;
+    const server = await started(
+      await serve(mppServer(net, { currency: net.usdc, recipient, amount: "0.01" })),
+    );
+
+    const result = await runCli(
+      "request",
+      ["--max-spend", "0.005", `${server.origin}/paid`],
+      cliEnv(net, wallet),
+    );
+
+    expect(result.code).toBe(4);
+    expect(result.stdout + result.stderr).toContain("E_LIMIT_EXCEEDED");
+    expect(result.stdout + result.stderr).toContain("--max-spend 0.01");
+    expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
+  });
+
+  test("wallet swap checks the key's remaining limit on chain, not the stored grant", async () => {
+    const wallet = await localWallet(net, {
+      funds: [{ token: net.ousd, limit: 1_000_000n }],
+      limits: [
+        { token: net.usdc, limit: 100_000_000n },
+        { token: net.ousd, limit: 30_000n },
+        { token: "0x20c0000000000000000000000000000000000000", limit: 1_000_000n },
+      ],
+    });
+    const recipient = privateKeyToAccount(generatePrivateKey()).address;
+    const server = await started(
+      await serve(mppServer(net, { currency: net.usdc, recipient, amount: "0.01" })),
+    );
+    // Spends about 0.01 OUSD of the key's 0.03 through a DEX swap, and publishes the key.
+    const paid = await runCli("request", [`${server.origin}/paid`], cliEnv(net, wallet));
+    expect(paid.code).toBe(0);
+
+    // 0.025 fits the stored 0.03, but not what is left of it.
+    const swap = await runCli(
+      "wallet",
+      ["swap", "0.025", net.ousd, net.usdc, "--yes", "--format", "json"],
+      cliEnv(net, wallet),
+    );
+
+    expect(swap.code).toBe(4);
+    expect(swap.stdout + swap.stderr).toMatch(
+      /The access key has 0\.00995 OUSD left of its spending limit, short of the 0\.05 OUSD a DEX swap needs/,
+    );
+    expect(swap.stdout + swap.stderr).toContain("tempo wallet keys update");
+  });
+
+  test("refuses before signing when the key's limit covers a DEX swap's input only once", async () => {
+    // The approve and the DEX's pull both count: 0.015 OUSD covers 0.01005 once, and the swap
+    // would revert in simulation.
+    const wallet = await localWallet(net, {
+      funds: [{ token: net.ousd, limit: 1_000_000n }],
+      limits: [
+        { token: net.usdc, limit: 100_000_000n },
+        { token: net.ousd, limit: 15_000n },
+        { token: "0x20c0000000000000000000000000000000000000", limit: 1_000_000n },
+      ],
+    });
+    const recipient = privateKeyToAccount(generatePrivateKey()).address;
+    const server = await started(
+      await serve(mppServer(net, { currency: net.usdc, recipient, amount: "0.01" })),
+    );
+
+    const result = await runCli("request", [`${server.origin}/paid`], cliEnv(net, wallet));
+
+    expect(result.code).toBe(4);
+    expect(result.stdout + result.stderr).toContain("E_LIMIT_EXCEEDED");
+    expect(result.stdout + result.stderr).toContain("--limit 0.0201");
+    expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
+  });
 });
