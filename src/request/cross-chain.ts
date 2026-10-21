@@ -15,7 +15,7 @@ import {
   requestFingerprint,
 } from "../payment/attempts.js";
 import { caip2 } from "../payment/funding.js";
-import type { DeliveredStatus } from "../payment/upstream/delivery.js";
+import { type DeliveredStatus, transactionHashes } from "../payment/upstream/delivery.js";
 import { requirementKey } from "../payment/upstream/requirement-key.js";
 import { relayDepositRoute } from "../payment/upstream/relay-route.js";
 import { stargateRoute } from "../payment/upstream/stargate-route.js";
@@ -273,7 +273,7 @@ export function confirmedDelivery(
         seen(held.block);
         return result;
       }
-      for (const hash of result.destinationTxs ?? []) {
+      for (const hash of transactionHashes(result.destinationTxs)) {
         const delivered = await read.delivery(hash, to.owner).catch(() => undefined);
         if (delivered && delivered.amount >= amountOut) {
           seen(delivered.block);

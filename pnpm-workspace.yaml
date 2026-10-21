@@ -16,7 +16,7 @@ trustPolicy: no-downgrade
 minimumReleaseAgeExclude:
   - accounts@0.21.0
   - incur@0.7.1
-  - machine-fetch@0.3.1
+  - machine-fetch@0.3.2
   - mppx@0.13.6
   - viem@2.57.1
 

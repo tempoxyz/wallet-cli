@@ -1,16 +1,13 @@
 /**
- * [MF-23] A route's status with the destination transactions that delivered a completed
- * operation, when the provider names them. machine-fetch's `CrossChainStatus` has no field for
- * them, and the destination balance alone cannot confirm a delivery a payment already spent.
+ * A route's status, with `destinationTxs`: the destination transactions the provider names for a
+ * completed operation. The destination balance alone cannot confirm a delivery a payment already
+ * spent; machine-fetch's `CrossChainStatus` carries the field since 0.3.2 (MF-23).
  */
 import { Funder } from "machine-fetch";
 import type { CrossChain } from "machine-fetch/cross-chain";
 import type { Hex } from "viem";
 
-export type DeliveredStatus = CrossChain.Status & {
-  /** Destination-chain transactions the provider reports delivering the operation. */
-  destinationTxs?: readonly Hex[] | undefined;
-};
+export type DeliveredStatus = CrossChain.Status;
 
 /** The 32-byte hex transaction hashes in `value`, ignoring anything else. */
 export function transactionHashes(value: unknown): Hex[] {
