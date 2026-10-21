@@ -99,8 +99,17 @@ export function mppServer(
  */
 export function evmServer(
   net: Localnet,
-  options: { account: PrivateKeyAccount; amount?: string; x402Only?: boolean },
+  options: {
+    account: PrivateKeyAccount;
+    amount?: string;
+    x402Only?: boolean;
+    /** Answers this many paid requests with HTTP 500 before settling anything. */
+    rejectPaid?: number;
+    /** Runs after a payment settles and before the response is sent. */
+    afterSettle?: () => Promise<void>;
+  },
 ) {
+  let rejections = options.rejectPaid ?? 0;
   const wallet = evmClient(net, options.account);
   const method = evm.charge({
     currency: net.evmUsdc,
@@ -137,6 +146,12 @@ export function evmServer(
   return async (request: Request) => {
     if (new URL(request.url).pathname !== "/paid")
       return new Response("Not found", { status: 404 });
+    const credential =
+      request.headers.has("payment-signature") || request.headers.has("authorization");
+    if (credential && rejections > 0) {
+      rejections -= 1;
+      return new Response("upstream failed", { status: 500 });
+    }
     const result = await paid(request);
     if (result.status === 402) {
       if (!options.x402Only) return result.challenge;
@@ -144,6 +159,7 @@ export function evmServer(
       headers.delete("www-authenticate");
       return new Response(result.challenge.body, { status: 402, headers });
     }
+    await options.afterSettle?.();
     return result.withReceipt(Response.json({ data: "paid on the EVM chain" }));
   };
 }

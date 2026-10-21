@@ -2,8 +2,8 @@ import { Funder } from "machine-fetch";
 import { type CrossChain, CrossChainFunder } from "machine-fetch/cross-chain";
 import type { Evm } from "machine-fetch/evm";
 import { FileStore } from "machine-fetch/stores/file";
-import { type Address, erc20Abi, formatUnits, type Hex, parseUnits } from "viem";
-import { getTransactionReceipt, sendTransactionSync } from "viem/actions";
+import { type Address, erc20Abi, formatUnits, type Hex, parseAbiItem, parseUnits } from "viem";
+import { getBlockNumber, getLogs, getTransactionReceipt, sendTransactionSync } from "viem/actions";
 
 import { CtaError } from "../cli/incur-compat.js";
 import {
@@ -97,6 +97,11 @@ type Signer = {
   sendCalls(calls: readonly { to: Address; data: Hex }[], feeToken: Address): Promise<Hex>;
 };
 
+/** Stargate's OFT event for a send, by the account that sent it. */
+const oftSentEvent = parseAbiItem(
+  "event OFTSent(bytes32 indexed guid, uint32 dstEid, address indexed fromAddress, uint256 amountSentLD, uint256 amountReceivedLD)",
+);
+
 /**
  * The bridges that fund `asset` on Tempo into USDC on `destination`, by route name: Relay (a
  * contract deposit into its pinned depository where one is configured, else a strict deposit
@@ -184,6 +189,22 @@ export function fundingRoutes(options: {
         async reverted(hash) {
           const receipt = await getTransactionReceipt(client, { hash }).catch(() => undefined);
           return receipt ? receipt.status === "reverted" : undefined;
+        },
+        blockNumber: () => getBlockNumber(client),
+        async findSent({ owner, dstEid, amountLD, fromBlock }) {
+          const logs = await getLogs(client, {
+            address: stargate.oft,
+            event: oftSentEvent,
+            args: { fromAddress: owner },
+            fromBlock,
+          });
+          return [
+            ...new Set(
+              logs
+                .filter((log) => log.args.dstEid === dstEid && log.args.amountSentLD === amountLD)
+                .map((log) => log.transactionHash),
+            ),
+          ];
         },
         onProgress(event) {
           if (event.type === "submitted")

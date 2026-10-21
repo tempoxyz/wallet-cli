@@ -61,6 +61,11 @@ contract LocalStargate {
     uint256 public immutable nativeFee;
 
     event Sent(uint32 dstEid, bytes32 to, uint256 amountLD, uint256 amountReceivedLD);
+    // What Stargate's OFT emits, which recovery searches when a send's hash was never recorded.
+    event OFTSent(
+        bytes32 indexed guid, uint32 dstEid, address indexed fromAddress, uint256 amountSentLD, uint256 amountReceivedLD
+    );
+    uint256 private sends;
 
     constructor(address token_, address feeWrapper_, uint256 feeBps_, uint256 nativeFee_) {
         token = token_; feeWrapper = feeWrapper_; feeBps = feeBps_; nativeFee = nativeFee_;
@@ -89,5 +94,6 @@ contract LocalStargate {
         uint256 amount = received(p.amountLD);
         require(amount >= p.minAmountLD, "slippage");
         emit Sent(p.dstEid, p.to, p.amountLD, amount);
+        emit OFTSent(keccak256(abi.encode(address(this), ++sends)), p.dstEid, msg.sender, p.amountLD, amount);
     }
 }

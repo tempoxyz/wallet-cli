@@ -1,6 +1,9 @@
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, inject, test } from "vitest";
 
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+
 import { cliEnv, runCli, startCli } from "./cli.js";
 import { evmBalance, evmClient, tempoBalance } from "./localnet.js";
 import { type HostileQuote, type StandInRelay, standInRelay } from "./relay.js";
@@ -30,14 +33,16 @@ async function started(server: LocalServer) {
 }
 
 /** An x402 endpoint on the local EVM chain, priced at 0.10 USDC, whose seller settles itself. */
-async function x402Endpoint() {
+async function x402Endpoint(
+  options: Pick<Parameters<typeof evmServer>[1], "rejectPaid" | "afterSettle"> = {},
+) {
   const account = privateKeyToAccount(generatePrivateKey());
   const chain = evmClient(net);
   await chain.waitForTransactionReceipt({
     hash: await chain.sendTransaction({ to: account.address, value: 10n ** 18n }),
   });
   const server = await started(
-    await serve(evmServer(net, { account, amount: "0.10", x402Only: true })),
+    await serve(evmServer(net, { account, amount: "0.10", x402Only: true, ...options })),
   );
   return { url: `${server.origin}/paid`, seller: account.address };
 }
@@ -313,5 +318,86 @@ describe("cross-chain funding", () => {
     expect(rerun.stderr).not.toContain("Bridging");
     expect(stargate.sent).toHaveLength(1);
     expect(await evmBalance(net, net.evmUsdc, endpoint.seller)).toBe(100_000n);
+  });
+
+  test("finds a Stargate send whose hash was never recorded, instead of asking for a human", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.usdc, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint();
+    stargate.hold(true);
+
+    const first = startCli("request", [endpoint.url], env(wallet));
+    await stargate.waitForSends(1);
+    first.child.kill("SIGKILL");
+    await first.done;
+    // A kill between broadcasting and recording leaves the operation without its hash.
+    const operations = join(wallet.home, ".tempo", "wallet", "funding", "operations");
+    for (const name of await readdir(operations))
+      if (name.endsWith(".reference")) await rm(join(operations, name));
+
+    const listed = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    const [operation] = (JSON.parse(listed.stdout) as { operations: { id: string }[] }).operations;
+    const recover = () =>
+      runCli("wallet", ["funding", "recover", operation!.id, "--format", "json"], env(wallet));
+    expect(JSON.parse((await recover()).stdout)).toMatchObject({ status: "pending" });
+    stargate.hold(false);
+    await expect
+      .poll(async () => JSON.parse((await recover()).stdout).status, { timeout: 20_000 })
+      .toBe("completed");
+
+    const rerun = await runCli("request", [endpoint.url], env(wallet));
+    expect(rerun).toMatchObject({
+      code: 0,
+      stdout: expect.stringContaining("paid on the EVM chain"),
+    });
+    expect(stargate.sent).toHaveLength(1);
+  });
+
+  test("keeps a delivery the server refused to be paid with for the next request", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint({ rejectPaid: 1 });
+
+    const refused = await runCli("request", [endpoint.url], env(wallet));
+    expect(refused.code).not.toBe(0);
+    expect(relay.deposited).toHaveLength(1);
+    const payer = relay.intent(relay.deposited[0]!)!.recipient;
+    expect(await evmBalance(net, net.evmUsdc, payer)).toBe(100_000n);
+
+    const rerun = await runCli("request", [endpoint.url], env(wallet));
+    expect(rerun).toMatchObject({
+      code: 0,
+      stdout: expect.stringContaining("paid on the EVM chain"),
+    });
+    expect(rerun.stderr).not.toContain("Bridging");
+    expect(relay.deposited).toHaveLength(1);
+    expect(await evmBalance(net, net.evmUsdc, endpoint.seller)).toBe(100_000n);
+  });
+
+  test("recovers a bridge whose delivery a killed run already paid with", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
+    let settled!: () => void;
+    const paid = new Promise<void>((resolve) => (settled = resolve));
+    const endpoint = await x402Endpoint({
+      // Hold the response, so the CLI is killed after paying but before recording it.
+      afterSettle: () => (settled(), new Promise(() => {})),
+    });
+
+    const first = startCli("request", [endpoint.url], env(wallet));
+    await paid;
+    first.child.kill("SIGKILL");
+    await first.done;
+    expect(await evmBalance(net, net.evmUsdc, endpoint.seller)).toBe(100_000n);
+
+    const listed = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    const [operation] = (JSON.parse(listed.stdout) as { operations: { id: string }[] }).operations;
+    expect(operation).toBeDefined();
+    // The payer's balance is spent, so only the fill transaction shows the delivery.
+    const recovered = await runCli(
+      "wallet",
+      ["funding", "recover", operation!.id, "--format", "json"],
+      env(wallet),
+    );
+    expect(JSON.parse(recovered.stdout)).toMatchObject({ status: "completed" });
+    const after = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    expect(JSON.parse(after.stdout)).toMatchObject({ total: 0 });
   });
 });

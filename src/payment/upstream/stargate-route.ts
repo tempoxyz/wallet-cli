@@ -71,6 +71,19 @@ export type StargateRouteOptions = {
   execute(calls: readonly { to: Address; data: Hex }[], request: CrossChain.Request): Promise<Hex>;
   /** Whether the source transaction `hash` reverted, so nothing moved; `undefined` if unknown. */
   reverted?(hash: Hex): Promise<boolean | undefined>;
+  /** The source chain's latest block number, saved with each quote to bound `findSent`. */
+  blockNumber?(): Promise<bigint>;
+  /**
+   * The transactions from block `fromBlock` on in which `owner` sent exactly `amountLD` through
+   * the OFT to `dstEid` (its `OFTSent` events). Recovery uses it when a run was killed after
+   * broadcasting a send but before recording its hash.
+   */
+  findSent?(search: {
+    owner: Address;
+    dstEid: number;
+    amountLD: bigint;
+    fromBlock: bigint;
+  }): Promise<readonly Hex[]>;
   onProgress?(
     event:
       | { type: "submitted"; hash: Hex; amount: bigint; fee: bigint; request: CrossChain.Request }
@@ -79,7 +92,13 @@ export type StargateRouteOptions = {
 };
 
 /** Quote data saved with an operation, so submission and recovery reuse the checked values. */
-type StargateQuoteData = { dstEid: number; amountLD: bigint; nativeFee: bigint };
+type StargateQuoteData = {
+  dstEid: number;
+  amountLD: bigint;
+  nativeFee: bigint;
+  /** The source chain's block when quoted: no send for this operation is older. */
+  fromBlock?: bigint | undefined;
+};
 
 const scanStatuses: Record<string, "pending" | "completed" | "actionRequired"> = {
   INFLIGHT: "pending",
@@ -121,6 +140,22 @@ export function stargateRoute(
     if (!delivered || delivered.toLowerCase() !== request.to.asset.toLowerCase())
       throw fail("Stargate does not deliver the requested token");
     return dstEid;
+  };
+
+  /**
+   * The one send an operation without a recorded hash made: a run killed between broadcasting and
+   * recording leaves that window. None, several, or an unbounded search is left for a human.
+   */
+  const unrecordedSend = async (operation: CrossChain.Operation) => {
+    const data = operation.quote.data as StargateQuoteData | undefined;
+    if (!options.findSent || typeof data?.fromBlock !== "bigint") return undefined;
+    const found = await options.findSent({
+      owner: operation.request.from.owner,
+      dstEid: data.dstEid,
+      amountLD: data.amountLD,
+      fromBlock: data.fromBlock,
+    });
+    return found.length === 1 ? found[0] : undefined;
   };
 
   return {
@@ -169,7 +204,8 @@ export function stargateRoute(
       const required = amountLD + nativeFee + options.maxGas;
       if (options.maxSpend !== undefined && required > options.maxSpend)
         throw new FundingLimitError(required, options.maxSpend, request.from.asset);
-      const data: StargateQuoteData = { dstEid, amountLD, nativeFee };
+      const fromBlock = await options.blockNumber?.().catch(() => undefined);
+      const data: StargateQuoteData = { dstEid, amountLD, nativeFee, fromBlock };
       // The messaging fee is debited in the same token, so it is part of the input: machine-fetch
       // ranks routes by `amountIn` alone ([MF-22]), and this keeps Stargate's flat fee in the
       // comparison with Relay.
@@ -263,7 +299,7 @@ export function stargateRoute(
       return { reference: hash };
     },
     async status(operation, { signal }): Promise<DeliveredStatus> {
-      const hash = operation.reference;
+      const hash = operation.reference ?? (await unrecordedSend(operation));
       // Without the transaction hash there is nothing to look up: reconcile by hand.
       if (!hash || !/^0x[\da-fA-F]{64}$/.test(hash)) return { status: "actionRequired" };
       if ((await options.reverted?.(hash as Hex)) === true) return { status: "refunded" };

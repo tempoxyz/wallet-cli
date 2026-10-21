@@ -289,6 +289,61 @@ describe("Stargate route status", () => {
     });
   });
 
+  describe("a send whose hash was never recorded", () => {
+    // A run killed after broadcasting but before recording the hash leaves only the quote.
+    const unrecorded = (data: Record<string, unknown>) =>
+      ({
+        operationId: "attempt-1",
+        route: "stargate",
+        quote: { reference: "stargate:attempt-1", data },
+        request,
+      }) as never;
+    const data = { dstEid: 30184, amountLD: 1_000_100n, nativeFee: 258_429n, fromBlock: 900n };
+
+    it("records the source block with each quote", async () => {
+      const quoted = await route({ blockNumber: async () => 900n }).stargate.quote(request);
+      expect(quoted.data).toMatchObject({ fromBlock: 900n });
+    });
+
+    it("finds the one send of exactly that amount from the quote's block on, then tracks it", async () => {
+      const searches: unknown[] = [];
+      const { stargate } = route({
+        findSent: async (search) => (searches.push(search), [hash]),
+        scan: (url) =>
+          url.endsWith(hash)
+            ? Response.json({ data: [{ status: { name: "INFLIGHT" } }] })
+            : new Response("", { status: 404 }),
+      });
+
+      await expect(stargate.status(unrecorded(data), { signal })).resolves.toEqual({
+        status: "pending",
+      });
+      expect(searches).toEqual([
+        { owner: wallet, dstEid: 30184, amountLD: 1_000_100n, fromBlock: 900n },
+      ]);
+    });
+
+    it.each([
+      ["no send", []],
+      ["two matching sends", [hash, `0x${"34".repeat(32)}`]],
+    ] as const)("leaves %s to a human", async (_name, found) => {
+      const { stargate } = route({ findSent: async () => found });
+      await expect(stargate.status(unrecorded(data), { signal })).resolves.toEqual({
+        status: "actionRequired",
+      });
+    });
+
+    it("does not search without the quote's block, which bounds the search", async () => {
+      let searched = false;
+      const { stargate } = route({ findSent: async () => ((searched = true), [hash]) });
+      const { fromBlock: _, ...older } = data;
+      await expect(stargate.status(unrecorded(older), { signal })).resolves.toEqual({
+        status: "actionRequired",
+      });
+      expect(searched).toBe(false);
+    });
+  });
+
   it("rejects a malformed LayerZero response", async () => {
     const { stargate } = route({
       scan: () => Response.json({ data: [{ status: { name: "?" } }] }),
