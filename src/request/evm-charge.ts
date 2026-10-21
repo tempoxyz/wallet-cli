@@ -26,13 +26,6 @@ import { fetchPaidRequest, paymentReceipts } from "./paid.js";
 import { MaxSpendExceededError, spendCap } from "./spend.js";
 
 /**
- * How long one cross-chain funding may take, quote to confirmed delivery: machine-fetch's 30 s
- * default is shorter than a bridge. Relay deliveries took ~10-20 s and Stargate's LayerZero
- * delivery ~25 s on mainnet, before the destination RPC shows the balance.
- */
-export const crossChainDeadlineSeconds = 300;
-
-/**
  * The account that pays EVM offers: a `--private-key` / `TEMPO_PRIVATE_KEY` signer, which is an
  * EOA on every chain, else the logged-in wallet's remote payer, created on first use.
  */
@@ -82,12 +75,9 @@ export async function payEvmAndRetry(
   const payer = await evmPayer(options);
   const funding = await crossChainFunding(offer, payer.address, request, options, stderr);
   const funders = funding?.funders ?? [];
-  if (funding)
-    policy = {
-      ...policy,
-      maxFundingSpend: funding.maxFundingSpend,
-      deadlineSeconds: crossChainDeadlineSeconds,
-    };
+  // The policy leaves `deadlineSeconds` unset, so each funder applies its own default: 300 s for
+  // a bridge, which outlasts machine-fetch's 30 s payment default.
+  if (funding) policy = { ...policy, maxFundingSpend: funding.maxFundingSpend };
   let prepared;
   try {
     // The attempt ID was saved before this; the payer travels with it, so funding refuses to

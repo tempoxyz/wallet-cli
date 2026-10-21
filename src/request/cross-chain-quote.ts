@@ -1,9 +1,10 @@
 import { Errors as MachineFetchErrors } from "machine-fetch";
-import type { CrossChain } from "machine-fetch/cross-chain";
+import { type CrossChain, CrossChainFunder } from "machine-fetch/cross-chain";
+import { MemoryStore } from "machine-fetch/stores/memory";
 import { type Address, formatUnits } from "viem";
 
 import { SourceBalanceError } from "../payment/upstream/funding-limit.js";
-import { type Destination, stargateConfig } from "../shared/chains.js";
+import { type Destination, destinationBalance, stargateConfig } from "../shared/chains.js";
 import { sanitizeText } from "../shared/utils.js";
 import {
   bridgeableSources,
@@ -14,7 +15,6 @@ import {
   sourceBalances,
 } from "./cross-chain.js";
 import type { RequestDryRunOutput } from "./dry-run.js";
-import { crossChainDeadlineSeconds } from "./evm-charge.js";
 import { parseMaxSlippageBps } from "./funding-mode.js";
 import { requestNetwork } from "./identity.js";
 import type { RequestOptions } from "./options.js";
@@ -166,11 +166,19 @@ export async function crossChainFundingQuote(options: {
   const { asset, symbol } = usable;
   const { from, to } = fundingAccounts(network.chainId, source, asset, destination, payer);
   const routes = fundingRoutes({ network, asset, destination, payer, symbol });
+  // The deadline the funder gives a bridge (always set), which bounds each quote's expiry.
+  const { defaultDeadlineSeconds } = CrossChainFunder.create({
+    from,
+    to,
+    routes,
+    operations: MemoryStore.create(),
+    balance: (account) => destinationBalance(destination, account.owner),
+  });
   const { answers, chosen } = await quoteRoutes(
     routes,
     {
       amountOut: shortfall,
-      deadline: Math.floor(Date.now() / 1000) + crossChainDeadlineSeconds,
+      deadline: Math.floor(Date.now() / 1000) + defaultDeadlineSeconds!,
       from,
       to,
       maxSlippageBps: parseMaxSlippageBps(options.request.maxSlippageBps),

@@ -2,7 +2,6 @@ import type { CrossChain } from "machine-fetch/cross-chain";
 import { describe, expect, it } from "vitest";
 
 import { confirmedDelivery } from "../src/request/cross-chain.js";
-import { crossChainDeadlineSeconds } from "../src/request/evm-charge.js";
 
 const payer = "0x00000000000000000000000000000000000000b2";
 const signal = new AbortController().signal;
@@ -177,10 +176,5 @@ describe("confirmed cross-chain delivery", () => {
     );
     await pending.status(operation, { signal });
     expect(floor.block).toBe(45n);
-  });
-
-  it("gives cross-chain funding minutes, not machine-fetch's 30-second default", () => {
-    // LayerZero delivered a Stargate send in 23 s live; Relay's fill plus Base's RPC lag adds up.
-    expect(crossChainDeadlineSeconds).toBeGreaterThanOrEqual(120);
   });
 });
