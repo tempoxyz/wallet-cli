@@ -89,6 +89,7 @@ const quote = {
   decimals: 6,
   balance: null,
   access_key_limit: null,
+  mach: null,
   machine_token_enabled: false,
   payment_token: null,
   chain_id: 4217,
@@ -224,8 +225,16 @@ async function listen(server: ReturnType<typeof createServer>) {
 }
 
 /** Answers balance and v2 channel reads, recording every JSON-RPC method it is sent. */
-async function rpcFixture(options: { balance: Read; channels: Read; closed: string[] }) {
+async function rpcFixture(options: {
+  balance: Read;
+  channels: Read;
+  closed: string[];
+  tokenBalances?: Record<string, bigint>;
+  machRead?: Read;
+  rpcChain?: number | "error";
+}) {
   const methods: string[] = [];
+  const balanceTokens: string[] = [];
   const url = await listen(
     createServer(async (req, res) => {
       const chunks: Buffer[] = [];
@@ -244,11 +253,16 @@ async function rpcFixture(options: { balance: Read; channels: Read; closed: stri
             ...(result ? { result } : { error: { code: -32000, message: "unavailable" } }),
           }),
         );
-      // The RPC is on mainnet, so a session read passes the TEMPO_RPC_URL check.
-      if (call.method === "eth_chainId") return reply("0x1079");
+      if (call.method === "eth_chainId")
+        return reply(
+          options.rpcChain === "error" ? undefined : `0x${(options.rpcChain ?? 4217).toString(16)}`,
+        );
       const { to, data } = call.params[0];
+      if (data.startsWith(balanceOf)) balanceTokens.push(to.toLowerCase());
       const read = data.startsWith(balanceOf)
-        ? options.balance
+        ? to.toLowerCase() === machToken
+          ? (options.machRead ?? options.balance)
+          : options.balance
         : data.startsWith(getChannelState)
           ? options.channels
           : "error";
@@ -259,7 +273,8 @@ async function rpcFixture(options: { balance: Read; channels: Read; closed: stri
           encodeFunctionResult({
             abi: erc20Abi,
             functionName: "balanceOf",
-            result: balances[to.toLowerCase()] ?? 5_000_000n,
+            result:
+              options.tokenBalances?.[to.toLowerCase()] ?? balances[to.toLowerCase()] ?? 5_000_000n,
           }),
         );
       reply(
@@ -275,7 +290,7 @@ async function rpcFixture(options: { balance: Read; channels: Read; closed: stri
       );
     }),
   );
-  return { methods, url };
+  return { methods, balanceTokens, url };
 }
 
 /** Answers every request with `challenge`, counting any that carry a credential. */
@@ -343,6 +358,10 @@ it.each<{
   stored?: Partial<PersistedSessionRecord>[];
   closed?: string[];
   balance?: Read;
+  tokenBalances?: Record<string, bigint>;
+  machRead?: Read;
+  rpcChain?: number | "error";
+  balanceTokens?: string[];
   channels?: Read;
   wallet?: boolean;
   key?: Partial<WalletState["accessKeys"][number]>;
@@ -449,15 +468,117 @@ it.each<{
     expected: reused,
   },
   {
+    name: "a zero-amount proof without MACH settlement or a MACH balance read",
+    challenge: offer("charge", {
+      amount: "0",
+      methodDetails: { chainId: 4217, machineTokenEnabled: true },
+    }),
+    balanceTokens: [usdc.toLowerCase()],
+    expected: { amount: "0", raw_amount: "0", machine_token_enabled: true, mach: null },
+  },
+  ...([42431, "error"] as const).map((rpcChain) => ({
+    name: `unknown balances when the RPC chain is ${rpcChain}`,
+    challenge: offer("charge", { methodDetails: { chainId: 4217, machineTokenEnabled: true } }),
+    rpcChain,
+    expected: {
+      balance: null,
+      machine_token_enabled: true,
+      mach: { token: machToken, symbol: "MACH", balance: null, access_key_limit: null },
+    },
+  })),
+  {
     name: "a MACH charge against the MACH balance",
     challenge: offer("charge", { methodDetails: { chainId: 4217, machineTokenEnabled: true } }),
     args: ["--mach"],
     expected: {
       machine_token_enabled: true,
       payment_token: "MACH",
-      balance: "7",
-      access_key_limit: null,
+      mach: {
+        token: machToken,
+        symbol: "MACH",
+        balance: "7",
+        access_key_limit: null,
+      },
     },
+  },
+  ...[[], ["--payment-token", "USDC.e"]].map((args) => ({
+    name: `MACH balance with zero stablecoins (${args.join(" ") || "default"})`,
+    challenge: offer("charge", { methodDetails: { chainId: 4217, machineTokenEnabled: true } }),
+    args,
+    tokenBalances: { [usdc.toLowerCase()]: 0n, [machToken]: 10_000_000n },
+    expected: {
+      balance: "0",
+      payment_token: args.length ? usdc.toLowerCase() : null,
+      machine_token_enabled: true,
+      mach: {
+        token: machToken,
+        symbol: "MACH",
+        balance: "10",
+        access_key_limit: null,
+      },
+    },
+  })),
+  {
+    name: "an automatic MACH offer with insufficient MACH still shows the stablecoin balance",
+    challenge: offer("charge", { methodDetails: { chainId: 4217, machineTokenEnabled: true } }),
+    tokenBalances: { [machToken]: 1n },
+    expected: {
+      machine_token_enabled: true,
+      mach: {
+        token: machToken,
+        symbol: "MACH",
+        balance: "0.000001",
+        access_key_limit: null,
+      },
+    },
+  },
+  {
+    name: "an unreadable MACH balance is unknown rather than zero",
+    challenge: offer("charge", { methodDetails: { chainId: 4217, machineTokenEnabled: true } }),
+    machRead: "error",
+    expected: {
+      machine_token_enabled: true,
+      mach: {
+        token: machToken,
+        symbol: "MACH",
+        balance: null,
+        access_key_limit: null,
+      },
+    },
+  },
+  {
+    name: "separate MACH and settlement access-key limits",
+    challenge: offer("charge", { methodDetails: { chainId: 4217, machineTokenEnabled: true } }),
+    args: ["--mach"],
+    key: { permissionSemantics: 1, limits: [{ token: usdc, limit: "100000000#__bigint" }] },
+    expected: {
+      machine_token_enabled: true,
+      payment_token: "MACH",
+      mach: {
+        token: machToken,
+        symbol: "MACH",
+        balance: "7",
+        access_key_limit: "0",
+      },
+    },
+  },
+  {
+    name: "a split charge does not imply MACH can pay",
+    challenge: offer("charge", {
+      methodDetails: {
+        chainId: 4217,
+        machineTokenEnabled: true,
+        splits: [{ amount: "1", recipient }],
+      },
+    }),
+    expected: { machine_token_enabled: true, mach: null },
+  },
+  {
+    name: "a session does not imply MACH charge settlement",
+    challenge: offer("session", {
+      methodDetails: { chainId: 4217, sessionProtocol: "v2", machineTokenEnabled: true },
+    }),
+    expected: { ...opened, machine_token_enabled: true, mach: null },
   },
   {
     name: "a private-key payer without an access key limit",
@@ -552,6 +673,9 @@ it.each<{
     balance: row.balance ?? "ok",
     channels: row.channels ?? "ok",
     closed: row.closed ?? [],
+    ...(row.tokenBalances ? { tokenBalances: row.tokenBalances } : {}),
+    ...(row.machRead ? { machRead: row.machRead } : {}),
+    ...(row.rpcChain ? { rpcChain: row.rpcChain } : {}),
   });
   const service = await paymentService(row.challenge);
   vi.stubEnv("TEMPO_MAX_SPEND", row.env?.TEMPO_MAX_SPEND ?? "");
@@ -574,6 +698,9 @@ it.each<{
   expect(requestDryRunOutput.parse(output)).toEqual(output);
   expect(create).not.toHaveBeenCalled();
   expect(service.authorized()).toBe(0);
+  if (row.balanceTokens) expect(rpc.balanceTokens).toEqual(row.balanceTokens);
+  if (row.challenge.intent === "charge" && row.wallet !== false)
+    expect(rpc.methods.filter((method) => method === "eth_chainId")).toHaveLength(1);
   expect(rpc.methods.filter((method) => method !== "eth_call" && method !== "eth_chainId")).toEqual(
     [],
   );

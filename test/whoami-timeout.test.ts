@@ -61,8 +61,8 @@ it.each(["rpc", "assets", "asset body"] as const)(
         },
       );
       const output = JSON.parse(stdout);
-      // The balance, the access key, and the override's chain are each read once, without retries.
-      expect(rpcCalls).toBe(3);
+      // Both balances, the access key, and the override's chain are read once, without retries.
+      expect(rpcCalls).toBe(4);
       expect(assetCalls).toBe(1);
       if (stalled === "rpc") {
         expect(output).toMatchObject({
@@ -73,7 +73,10 @@ it.each(["rpc", "assets", "asset body"] as const)(
         expect(output).toMatchObject({
           ready: true,
           balance: { available: "5" },
-          balances: [{ balance: "5" }],
+          balances: [
+            { symbol: "MACH", balance: "5" },
+            { symbol: "USDC.e", balance: "5" },
+          ],
         });
       }
     } finally {

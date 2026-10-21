@@ -79,6 +79,15 @@ import {
 /** cbBTC is a 6-decimal TIP-20 token on Tempo, as viem lists it and as it reports on chain. */
 const cbBtcToken = "0x20c000000000000000000000c412ec89d0c08be5";
 
+const zeroMach = {
+  token: machToken(4217).toLowerCase(),
+  symbol: "MACH",
+  decimals: 6,
+  balance: "0",
+  verified: true,
+  access_key_limit: null,
+};
+
 afterEach(() => {
   vi.useRealTimers();
   mocks.readContract.mockReset();
@@ -501,7 +510,7 @@ describe("identity commands", () => {
       const shown = { symbol, token: token.toLowerCase() };
       expect(whoamiOutput.options[1].parse(whoami)).toMatchObject({
         balance: { symbol },
-        balances: [shown],
+        balances: expect.arrayContaining([expect.objectContaining(shown)]),
         key: { ...shown, spending_limits: [shown] },
       });
       expect(keysOutput.parse(keys).keys).toMatchObject([{ ...shown, spending_limits: [shown] }]);
@@ -643,7 +652,7 @@ describe("identity commands", () => {
       const shown = { symbol: null, token: unlistedToken };
       expect(whoami).toMatchObject({
         balance: { symbol: null },
-        balances: [shown],
+        balances: expect.arrayContaining([expect.objectContaining(shown)]),
         key: { ...shown, spending_limits: [shown] },
       });
       expect(keys.keys).toMatchObject([{ ...shown, spending_limits: [shown] }]);
@@ -674,6 +683,7 @@ describe("identity commands", () => {
     expect("balances" in result ? result.balances : null).toMatchObject([
       { token: ousdToken, symbol: "OUSD" },
       { token: unlistedToken, symbol: "NEW" },
+      zeroMach,
       { token: usdcToken, symbol: "USDC.e" },
     ]);
     expect(mocks.getMetadata).not.toHaveBeenCalled();
@@ -761,6 +771,7 @@ describe("identity commands", () => {
         verified: true,
         access_key_limit: null,
       },
+      zeroMach,
     ]);
   });
 
@@ -775,7 +786,7 @@ describe("identity commands", () => {
       accessKeys: walletState().accessKeys,
     });
     try {
-      expect(mocks.readContract).toHaveBeenCalledOnce();
+      expect(mocks.readContract).toHaveBeenCalledTimes(2);
       expect(mocks.fetch).toHaveBeenCalledOnce();
     } finally {
       balance.resolve(5_000_000n);
@@ -783,8 +794,46 @@ describe("identity commands", () => {
     expect(await output).toMatchObject({
       ready: true,
       balance: { available: "5" },
-      balances: [{ token: usdc.toLowerCase(), balance: "5" }],
+      balances: [zeroMach, { token: usdc.toLowerCase(), balance: "5" }],
     });
+  });
+
+  it.each([
+    { name: "asset API unavailable", api: undefined, chain: 10_000_000n, expected: "10" },
+    { name: "asset API omits zero MACH", api: undefined, chain: 0n, expected: "0" },
+    { name: "API takes precedence", api: "5000000", chain: 10_000_000n, expected: "5" },
+    { name: "RPC unavailable but API has MACH", api: "4000000", chain: null, expected: "4" },
+    { name: "both sources unavailable", api: undefined, chain: null, expected: null },
+  ])("whoami handles MACH when $name", async ({ api, chain, expected }) => {
+    await useTempHome();
+    await writeWalletState(walletState());
+    const token = machToken(4217).toLowerCase();
+    mocks.readContract.mockImplementation(async (...args: unknown[]) => {
+      const call = args[0] as { address?: string };
+      if (call.address?.toLowerCase() !== token) return 0n;
+      if (chain === null) throw new Error("MACH read unavailable");
+      return chain;
+    });
+    if (api)
+      mocks.fetch.mockResolvedValue(
+        Response.json([
+          { address: token, balance: api, decimals: 6, symbol: "MACH", verified: true },
+        ]),
+      );
+    else mocks.fetch.mockRejectedValue(new Error("assets unavailable"));
+
+    const output = await whoamiHandler({});
+    if (!("balances" in output)) throw new Error("Expected wallet balances");
+    const held = output.balances.filter((asset) => asset.token === token);
+    if (expected === null) expect(held).toEqual([]);
+    else {
+      expect(held).toEqual([{ ...zeroMach, balance: expected }]);
+    }
+    expect(output.balances).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ token: usdc.toLowerCase(), balance: "0" }),
+      ]),
+    );
   });
 
   it("whoami preserves the payment-token balance when asset discovery fails", async () => {
@@ -796,6 +845,7 @@ describe("identity commands", () => {
     const result = await whoamiHandler({});
 
     expect("balances" in result ? result.balances : null).toEqual([
+      zeroMach,
       {
         token: usdc.toLowerCase(),
         symbol: "USDC.e",
@@ -836,6 +886,7 @@ describe("identity commands", () => {
       });
 
       expect(whoami.balances).toEqual([
+        zeroMach,
         expect.objectContaining({ token: token.toLowerCase(), symbol, verified }),
       ]);
     },

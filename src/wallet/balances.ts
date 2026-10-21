@@ -1,9 +1,9 @@
 import { formatUnits, isAddress } from "viem";
 
 import { appUrl } from "../shared/network.js";
-import { tickerSymbol, tokenSymbol } from "../shared/tokens.js";
+import { knownTokens, tickerSymbol, tokenSymbol } from "../shared/tokens.js";
 import { getArray, getRecord } from "../shared/utils.js";
-import { statusQueryTimeout } from "./key-output.js";
+import { rpcChainCheck, statusQueryTimeout, tokenBalance } from "./key-output.js";
 
 /**
  * A token balance in base units. Only a token a list vouches for is `verified`; an unverified
@@ -18,18 +18,36 @@ export type WalletAsset = {
 };
 
 /**
- * The nonzero token balances the wallet app reports for `walletAddress` on `chain`, each with its
- * listed symbol, else its own sanitized when it is a plain ticker. Empty when the app is
- * unreachable or its answer is malformed.
+ * The wallet app's nonzero assets, with MACH read on chain as a fallback, including zero.
+ * Like the default currency, an asset the app reports takes precedence over its on-chain read.
  */
 export async function fetchWalletAssets(options: {
   chain: number;
   walletAddress: string | null;
+  servesChain?: (chain: number) => Promise<boolean>;
 }): Promise<WalletAsset[]> {
   if (!options.walletAddress) return [];
+  const mach = knownTokens(options.chain).find((token) => token.symbol === "MACH");
+  const [assets, balance] = await Promise.all([
+    fetchAppAssets(options.chain, options.walletAddress),
+    mach
+      ? tokenBalance({
+          ...options,
+          token: mach.address,
+          servesChain: options.servesChain ?? rpcChainCheck(),
+        })
+      : null,
+  ]);
+  if (mach && balance && !assets.some((asset) => asset.address.toLowerCase() === mach.address))
+    assets.push({ ...mach, balance: balance.raw, verified: true });
+  return assets;
+}
+
+/** Nonzero balances from the wallet app; empty when its response is unavailable or malformed. */
+async function fetchAppAssets(chain: number, walletAddress: string): Promise<WalletAsset[]> {
   const url = new URL("/api/assets", appUrl);
-  url.searchParams.set("address", options.walletAddress);
-  url.searchParams.set("chainId", String(options.chain));
+  url.searchParams.set("address", walletAddress);
+  url.searchParams.set("chainId", String(chain));
   url.searchParams.set("fresh", "true");
 
   try {
@@ -55,7 +73,7 @@ export async function fetchWalletAssets(options: {
           address: asset.address,
           balance: BigInt(asset.balance),
           decimals: asset.decimals,
-          symbol: tokenSymbol(asset.address, options.chain) ?? tickerSymbol(asset.symbol),
+          symbol: tokenSymbol(asset.address, chain) ?? tickerSymbol(asset.symbol),
           verified: asset.verified === true,
         },
       ];
