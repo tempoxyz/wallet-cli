@@ -5,7 +5,8 @@ import { erc20Abi } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, inject, test } from "vitest";
 
-import { cliEnv, runCli, startCli } from "./cli.js";
+import { cliEnv, devChains, runCli, startCli } from "./cli.js";
+import { laggingRpc } from "./lagging-rpc.js";
 import { evmBalance, evmClient, tempoBalance } from "./localnet.js";
 import { type HostileQuote, type StandInRelay, standInRelay } from "./relay.js";
 import { type StandInStargate, standInStargate } from "./stargate.js";
@@ -83,6 +84,29 @@ describe("cross-chain funding", () => {
     // The payment used the funding, so nothing is left to recover.
     const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
     expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
+  });
+
+  test("pays when the destination RPC serves the delivery's receipt before its state", async () => {
+    // Like mainnet.base.org with Flashblocks: the fill's receipt arrives before "latest" shows it.
+    const rpc = await laggingRpc(net.evmUrl);
+    cleanup.push(() => rpc.close());
+    const chains = devChains(net);
+    chains.tempo[net.tempoChainId]!.destinations[0]!.rpcUrl = rpc.url;
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint();
+
+    const result = await runCli(
+      "request",
+      [endpoint.url],
+      env(wallet, { TEMPO_DEV_CHAINS: JSON.stringify(chains) }),
+    );
+
+    expect(result).toMatchObject({
+      code: 0,
+      stdout: expect.stringContaining("paid on the EVM chain"),
+    });
+    expect(relay.deposited).toHaveLength(1);
+    expect(await evmBalance(net, net.evmUsdc, endpoint.seller)).toBe(100_000n);
   });
 
   test("waits for the destination balance when the relay reports success before delivering", async () => {

@@ -24,6 +24,7 @@ import {
   type Destination,
   destination as destinationFor,
   destinationBalance,
+  destinationBalanceAt,
   destinationDelivery,
   relayDepository,
   stargateConfig,
@@ -122,6 +123,8 @@ export function fundingRoutes(options: {
    * @default the operation's own exact output, for reconciliation without the payment
    */
   target?: bigint | undefined;
+  /** Where the routes record the block that showed a delivery; see `DeliveryFloor`. */
+  floor?: DeliveryFloor | undefined;
 }): CrossChain.Route[] {
   const { network, asset, destination } = options;
   const symbol = options.symbol ?? tokenSymbol(asset, network.chainId) ?? asset;
@@ -223,8 +226,9 @@ export function fundingRoutes(options: {
     confirmedDelivery(
       route,
       {
-        balance: (owner) => destinationBalance(destination, owner),
+        balance: (owner) => destinationBalanceAt(destination, owner),
         delivery: (hash, owner) => destinationDelivery(destination, hash, owner),
+        floor: options.floor,
       },
       options.target,
     ),
@@ -247,11 +251,17 @@ export function fundingRoutes(options: {
 export function confirmedDelivery(
   route: CrossChain.Route,
   read: {
-    balance: (owner: Address) => Promise<bigint>;
-    delivery: (hash: Hex, owner: Address) => Promise<bigint>;
+    balance: (owner: Address) => Promise<{ balance: bigint; block: bigint }>;
+    delivery: (hash: Hex, owner: Address) => Promise<{ amount: bigint; block: bigint }>;
+    /** Records the destination block that showed the delivery, for later balance reads. */
+    floor?: DeliveryFloor | undefined;
   },
   target: bigint | undefined,
 ): CrossChain.Route {
+  const seen = (block: bigint) => {
+    if (read.floor && (read.floor.block === undefined || block > read.floor.block))
+      read.floor.block = block;
+  };
   return {
     ...route,
     async status(operation, context) {
@@ -259,15 +269,28 @@ export function confirmedDelivery(
       if (result.status !== "completed") return result;
       const { amountOut, to } = operation.request;
       const held = await read.balance(to.owner).catch(() => undefined);
-      if (held !== undefined && held >= (target ?? amountOut)) return result;
+      if (held !== undefined && held.balance >= (target ?? amountOut)) {
+        seen(held.block);
+        return result;
+      }
       for (const hash of result.destinationTxs ?? []) {
-        const delivered = await read.delivery(hash, to.owner).catch(() => 0n);
-        if (delivered >= amountOut) return result;
+        const delivered = await read.delivery(hash, to.owner).catch(() => undefined);
+        if (delivered && delivered.amount >= amountOut) {
+          seen(delivered.block);
+          return result;
+        }
       }
       return { status: "pending" };
     },
   };
 }
+
+/**
+ * The destination block from which a confirmed delivery is visible. machine-fetch reads the
+ * balance once more after a route completes; reading no earlier than this block keeps a
+ * load-balanced RPC from answering that read from a node that has not seen the delivery.
+ */
+export type DeliveryFloor = { block?: bigint | undefined };
 
 /** The route `operation` was submitted through, rebuilt without a signer, for reconciliation. */
 export function operationRoute(operation: CrossChain.Operation, network: Network) {
@@ -364,6 +387,7 @@ export async function crossChainFunders(options: {
     );
   }
   const funders = usable.map(({ asset, symbol }) => {
+    const deliveryFloor: DeliveryFloor = {};
     const { from, to } = fundingAccounts(
       network.chainId,
       source,
@@ -384,9 +408,11 @@ export async function crossChainFunders(options: {
         payer: options.payer,
         symbol,
         target: options.target,
+        floor: deliveryFloor,
       }),
       operations: FileStore.create(operationsDirectory()),
-      balance: (account: Evm.TokenAccount) => destinationBalance(destination, account.owner),
+      balance: (account: Evm.TokenAccount) =>
+        destinationBalance(destination, account.owner, deliveryFloor.block),
       pollIntervalMs: 500,
     });
   });

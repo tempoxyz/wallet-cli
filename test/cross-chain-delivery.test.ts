@@ -14,7 +14,8 @@ const operation = {
 } as unknown as CrossChain.Operation;
 
 const delivery = `0x${"de".repeat(32)}` as const;
-const noDelivery = async () => 0n;
+const noDelivery = async () => ({ amount: 0n, block: 0n });
+const at = (balance: bigint, block = 1n) => ({ balance, block });
 
 function route(
   status: CrossChain.Status["status"],
@@ -36,7 +37,10 @@ describe("confirmed cross-chain delivery", () => {
     const owners: string[] = [];
     const confirmed = confirmedDelivery(
       route("completed"),
-      { balance: async (owner) => (owners.push(owner), balances.shift()!), delivery: noDelivery },
+      {
+        balance: async (owner) => (owners.push(owner), at(balances.shift()!)),
+        delivery: noDelivery,
+      },
       10_000n,
     );
 
@@ -52,7 +56,7 @@ describe("confirmed cross-chain delivery", () => {
     const confirmed = (held: bigint) =>
       confirmedDelivery(
         route("completed"),
-        { balance: async () => held, delivery: noDelivery },
+        { balance: async () => at(held), delivery: noDelivery },
         undefined,
       );
 
@@ -85,7 +89,10 @@ describe("confirmed cross-chain delivery", () => {
       let reads = 0;
       const confirmed = confirmedDelivery(
         route(status),
-        { balance: async () => (reads++, 0n), delivery: async () => (reads++, 0n) },
+        {
+          balance: async () => (reads++, at(0n)),
+          delivery: async () => (reads++, { amount: 0n, block: 0n }),
+        },
         10_000n,
       );
 
@@ -101,11 +108,11 @@ describe("confirmed cross-chain delivery", () => {
       confirmedDelivery(
         route("completed", [delivery]),
         {
-          balance: async () => 0n,
+          balance: async () => at(0n),
           delivery: async (hash, owner) => {
             reads.push([hash, owner]);
             if (delivered instanceof Error) throw delivered;
-            return delivered;
+            return { amount: delivered, block: 7n };
           },
         },
         undefined,
@@ -128,7 +135,10 @@ describe("confirmed cross-chain delivery", () => {
     let reads = 0;
     const confirmed = confirmedDelivery(
       route("pending", [delivery]),
-      { balance: async () => 0n, delivery: async () => (reads++, 10_000n) },
+      {
+        balance: async () => at(0n),
+        delivery: async () => (reads++, { amount: 10_000n, block: 7n }),
+      },
       10_000n,
     );
 
@@ -136,6 +146,37 @@ describe("confirmed cross-chain delivery", () => {
       status: "pending",
     });
     expect(reads).toBe(0);
+  });
+
+  it("records the block that showed the delivery, so later balance reads start there", async () => {
+    const floor: { block?: bigint } = {};
+    const byBalance = confirmedDelivery(
+      route("completed"),
+      { balance: async () => at(10_000n, 41n), delivery: noDelivery, floor },
+      10_000n,
+    );
+    await byBalance.status(operation, { signal });
+    expect(floor.block).toBe(41n);
+
+    const byFill = confirmedDelivery(
+      route("completed", [delivery]),
+      {
+        balance: async () => at(0n, 50n),
+        delivery: async () => ({ amount: 6_000n, block: 45n }),
+        floor,
+      },
+      undefined,
+    );
+    await byFill.status(operation, { signal });
+    expect(floor.block).toBe(45n);
+    // A pending status records nothing.
+    const pending = confirmedDelivery(
+      route("pending"),
+      { balance: async () => at(10_000n, 99n), delivery: noDelivery, floor },
+      10_000n,
+    );
+    await pending.status(operation, { signal });
+    expect(floor.block).toBe(45n);
   });
 
   it("gives cross-chain funding minutes, not machine-fetch's 30-second default", () => {
