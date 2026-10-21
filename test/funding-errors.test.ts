@@ -68,6 +68,29 @@ const rows: Row[] = [
     cta: "tempo wallet funding recover attempt-1 --network mainnet",
   },
   {
+    name: "Funder.FundingLimitError",
+    error: new Funder.FundingLimitError({
+      network: "eip155:4217",
+      asset: "0x20c000000000000000000000b9537d11c60e8b50",
+      required: 51_355n,
+      limit: 0n,
+    }),
+    expected: { code: "E_LIMIT_EXCEEDED", exitCode: 4, retryable: false },
+    message: expect.stringContaining("rerun with --max-funding-spend 0.051355") as never,
+  },
+  {
+    name: "Funder.SourceBalanceError",
+    error: new Funder.SourceBalanceError({
+      network: "eip155:4217",
+      asset: "0x20c000000000000000000000b9537d11c60e8b50",
+      required: 1_269_134n,
+      held: 47_740n,
+    }),
+    expected: { code: "E_INSUFFICIENT_FUNDS", exitCode: 4, retryable: false },
+    message: expect.stringContaining("needs 1.269134 USDC.e") as never,
+    cta: "tempo wallet fund --network mainnet",
+  },
+  {
     name: "Errors.OperationStoreError",
     error: new Errors.OperationStoreError("disk full"),
     expected: { code: "E_RUNTIME", exitCode: 1, retryable: false },
@@ -95,6 +118,8 @@ describe("machine-fetch error mapping", () => {
       "Funder.NoRouteError": true,
       "Funder.InsufficientFundsError": true,
       "Funder.FundingRecoveryError": true,
+      "Funder.FundingLimitError": true,
+      "Funder.SourceBalanceError": true,
       "Errors.OperationStoreError": true,
     };
     expect(rows.map((row) => row.name).sort()).toEqual(Object.keys(names).sort());

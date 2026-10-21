@@ -2,7 +2,6 @@ import { Funder } from "machine-fetch";
 import type { CrossChain } from "machine-fetch/cross-chain";
 import { describe, expect, it } from "vitest";
 
-import { SourceBalanceError } from "../src/payment/upstream/funding-limit.js";
 import { quoteCost, quoteRoutes } from "../src/request/cross-chain-quote.js";
 
 const ousd = "0x20c0000000000000000000006a37DA5C996874BE";
@@ -145,7 +144,15 @@ describe("quoteRoutes", () => {
   it("names why each route declined", async () => {
     const { chosen, answers } = await quoteRoutes(
       [
-        route("relay", new SourceBalanceError(101_300n, 50_000n, ousd)),
+        route(
+          "relay",
+          new Funder.SourceBalanceError({
+            network: "eip155:4217",
+            asset: ousd,
+            required: 101_300n,
+            held: 50_000n,
+          }),
+        ),
         route(
           "stargate",
           new Funder.FundingError("Stargate route declined: \u001b[31mno\u001b[0m"),

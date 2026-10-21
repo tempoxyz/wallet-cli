@@ -11,7 +11,6 @@ import { tokenSymbol } from "../shared/tokens.js";
 import type { Network } from "../shared/network.js";
 import { continuationCommand } from "../shared/next.js";
 import { escapeInvisible, sanitizeText } from "../shared/utils.js";
-import { FundingLimitError, SourceBalanceError } from "./upstream/funding-limit.js";
 
 /** Every error among `error`'s causes, breadth first, including an AggregateError's errors. */
 function causes(error: unknown): Error[] {
@@ -38,14 +37,6 @@ function routeReasons(error: unknown) {
     .filter((cause) => !(cause instanceof AggregateError) && cause.message)
     .map((cause) => sanitizeText(cause.message).slice(0, 160));
   return [...new Set(leaves)].slice(0, 3);
-}
-
-/** The cause needing the least, among route refusals that each report what they need. */
-function cheapest<type extends { required: bigint }>(found: readonly type[]): type | undefined {
-  return found.reduce<type | undefined>(
-    (best, candidate) => (!best || candidate.required < best.required ? candidate : best),
-    undefined,
-  );
 }
 
 /**
@@ -154,18 +145,22 @@ export function fundingError(error: unknown, context: FundingErrorContext): unkn
   // The one-line summary: machine-fetch's full message adds a hint and a docs link.
   const message = sanitizeText(error.shortMessage);
   if (error instanceof Policy.LimitExceededError) return limitError(message, context);
-  if (error instanceof Funder.NoRouteError) {
+  if (
+    error instanceof Funder.NoRouteError ||
+    error instanceof Funder.FundingLimitError ||
+    error instanceof Funder.SourceBalanceError
+  ) {
     // A route refused by the cap could run if it were raised: report the cheapest such route.
     // Only when every route fell short of the wallet's balance is it a funding shortfall.
     const symbol = (asset: string | undefined) =>
       (asset && tokenSymbol(asset, context.network.chainId)) || "of the source token";
-    const limit = cheapest(causes(error).filter((cause) => cause instanceof FundingLimitError));
+    const limit = Funder.cheapestRefusal(error, Funder.FundingLimitError);
     if (limit)
       return walletError({
         code: "E_LIMIT_EXCEEDED",
         message: `Cross-chain funding needs up to ${formatUnits(limit.required, 6)} ${symbol(limit.asset)}, the bridge's fee and gas included, above --max-funding-spend. Review it, then rerun with --max-funding-spend ${formatUnits(limit.required, 6)}; nothing was sent.`,
       });
-    const short = cheapest(causes(error).filter((cause) => cause instanceof SourceBalanceError));
+    const short = Funder.cheapestRefusal(error, Funder.SourceBalanceError);
     if (short) {
       const command = continuationCommand(["wallet", "fund"], context.network);
       return new CtaError(
