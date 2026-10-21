@@ -402,6 +402,29 @@ describe("cross-chain funding", () => {
     expect(JSON.parse(after.stdout)).toMatchObject({ total: 0 });
   });
 
+  test("leaves a send LayerZero reports failed for a human, never bridging again", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.usdc, limit: 1_000_000n }] });
+    const endpoint = await x402Endpoint();
+    stargate.fail(true);
+
+    const result = await runCli("request", [endpoint.url], env(wallet));
+
+    expect(result.code).not.toBe(0);
+    expect(output(result)).toContain("E_PAYMENT_OUTCOME_UNKNOWN");
+    expect(stargate.sent).toHaveLength(1);
+    const listed = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
+    const [operation] = (JSON.parse(listed.stdout) as { operations: { id: string }[] }).operations;
+    const recovered = await runCli(
+      "wallet",
+      ["funding", "recover", operation!.id, "--format", "json"],
+      env(wallet),
+    );
+    expect(JSON.parse(recovered.stdout)).toMatchObject({ status: "action_required" });
+    const rerun = await runCli("request", [endpoint.url], env(wallet));
+    expect(rerun.code).not.toBe(0);
+    expect(stargate.sent).toHaveLength(1);
+  });
+
   test("bridges only what the payer lacks when it already holds part of the price", async () => {
     const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
     const endpoint = await x402Endpoint();

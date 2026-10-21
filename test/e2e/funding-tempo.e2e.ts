@@ -155,4 +155,37 @@ describe("Tempo DEX funding", () => {
     expect(result.stdout + result.stderr).toContain("--limit 0.0201");
     expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
   });
+
+  test("refuses a charge in a token the CLI does not list, which no cap can bound", async () => {
+    const wallet = await localWallet(net, { funds: [{ token: net.ousd, limit: 1_000_000n }] });
+    const recipient = privateKeyToAccount(generatePrivateKey()).address;
+    const unlisted = "0x20c000000000000000000000000000000000dead";
+    const server = await started(
+      await serve(mppServer(net, { currency: unlisted, recipient, amount: "0.01" })),
+    );
+
+    const result = await runCli("request", [`${server.origin}/paid`], cliEnv(net, wallet));
+
+    expect(result.code).toBe(4);
+    expect(result.stdout + result.stderr).toContain("E_LIMIT_EXCEEDED");
+    expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
+  });
+
+  test("refuses to pay with an expired access key, naming the refresh", async () => {
+    const wallet = await localWallet(net, {
+      funds: [{ token: net.usdc, limit: 1_000_000n }],
+      expiry: Math.floor(Date.now() / 1000) - 60,
+    });
+    const recipient = privateKeyToAccount(generatePrivateKey()).address;
+    const server = await started(
+      await serve(mppServer(net, { currency: net.usdc, recipient, amount: "0.01" })),
+    );
+
+    const result = await runCli("request", [`${server.origin}/paid`], cliEnv(net, wallet));
+
+    expect(result.code).toBe(4);
+    expect(result.stdout + result.stderr).toMatch(/E_KEY_EXPIRED|E_AUTH_REFRESH_REQUIRED/);
+    expect(result.stdout + result.stderr).toContain("tempo wallet refresh");
+    expect(await tempoBalance(net, net.usdc, recipient)).toBe(0n);
+  });
 });

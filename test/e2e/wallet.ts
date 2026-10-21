@@ -26,7 +26,13 @@ export type LocalWallet = {
  */
 export async function localWallet(
   net: Localnet,
-  options: { funds?: KeyLimit[]; limits?: KeyLimit[]; feeBalance?: bigint } = {},
+  options: {
+    funds?: KeyLimit[];
+    limits?: KeyLimit[];
+    feeBalance?: bigint;
+    /** When the access key expires, in Unix seconds. @default a day from now */
+    expiry?: number;
+  } = {},
 ): Promise<LocalWallet> {
   const rootKey = generatePrivateKey();
   const accessKeyPrivate = generatePrivateKey();
@@ -57,7 +63,7 @@ export async function localWallet(
     feeToken: Addresses.pathUsd,
   });
 
-  const expiry = Math.floor(Date.now() / 1000) + 86_400;
+  const expiry = options.expiry ?? Math.floor(Date.now() / 1000) + 86_400;
   const keyAuthorization = await TempoAccount.fromSecp256k1(rootKey).signKeyAuthorization(
     { address: accessKey, type: "secp256k1" },
     { chainId: BigInt(net.tempoChainId), expiry, limits },

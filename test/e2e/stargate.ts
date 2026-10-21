@@ -22,6 +22,7 @@ export async function standInStargate(net: Localnet) {
   const sent: Hex[] = [];
   const sentWaiters: (() => void)[] = [];
   let holdDelivery = false;
+  let failDelivery = false;
   const tempo = tempoClient(net);
   const inventory = evmClient(net);
   // Earlier tests share the chain: only sends from this stand-in's lifetime are its own.
@@ -43,6 +44,10 @@ export async function standInStargate(net: Localnet) {
   };
   const deliver = async (message: Message) => {
     if (message.status !== "INFLIGHT" || holdDelivery) return;
+    if (failDelivery) {
+      message.status = "FAILED";
+      return;
+    }
     const hash = await inventory.writeContract({
       address: net.evmUsdc,
       abi: erc20Abi,
@@ -81,6 +86,10 @@ export async function standInStargate(net: Localnet) {
     /** Holds sends in flight instead of delivering them, until called with false. */
     hold(value: boolean) {
       holdDelivery = value;
+    },
+    /** Reports sends as FAILED on LayerZero instead of delivering them. */
+    fail(value: boolean) {
+      failDelivery = value;
     },
     /** Resolves once `count` sends have been seen. */
     async waitForSends(count: number) {
