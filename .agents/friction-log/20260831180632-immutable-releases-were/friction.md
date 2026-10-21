@@ -1,6 +1,6 @@
 ---
-title: 'Immutable releases were published before assets were uploaded'
-severity: 'blocker'
+title: "Immutable releases were published before assets were uploaded"
+severity: "blocker"
 ---
 
 ## Expected Behavior
