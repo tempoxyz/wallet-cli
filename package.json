@@ -53,8 +53,9 @@
     "frog": "1.1.0",
     "tsx": "4.23.13",
     "typescript": "7.0.2",
-    "vitest": "5.0.0",
-    "vp": "npm:vite-plus@0.1.24"
+    "vite": "8.1.6",
+    "vitest": "5.0.3",
+    "vp": "npm:vite-plus@1.1.0"
   },
   "packageManager": "pnpm@11.0.8"
 }
