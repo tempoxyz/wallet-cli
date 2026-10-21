@@ -41,6 +41,8 @@ tempo request https://example.mpp.tempo.xyz/v1/resource
 
 `login` opens a device-code approval in the wallet app. Replace the example URL with a service endpoint. `request --dry-run` probes the endpoint and previews a payment without paying; a non-GET probe may still have server-side effects.
 
+`balance` and `whoami` include MACH alongside the default currency, including zero balances. For an eligible charge, `request --dry-run` shows MACH under `mach`, separately from the advertised currency's balance and access-key limit.
+
 To add funds, run `tempo wallet fund`. It opens the wallet app and returns a link; it does not wait for or confirm a deposit. Check `tempo wallet balance` after funding. To receive a transfer, run `tempo wallet address`.
 
 ## Common commands

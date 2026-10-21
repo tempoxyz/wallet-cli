@@ -26,13 +26,22 @@ export const requestDryRunOutput = z.union([
     token: z.string(),
     symbol: z.string().nullable().describe("Listed symbol; null for a token viem does not list"),
     decimals: z.number().nullable(),
-    balance: z.string().nullable().describe("Payer's balance of the token the payment debits"),
+    balance: z.string().nullable().describe("Payer's balance of the advertised settlement token"),
     access_key_limit: z
       .string()
       .nullable()
       .describe(
-        "Active access key's stored limit for the token the payment debits; 0 when exact stored limits leave it out",
+        "Active access key's stored limit for the advertised settlement token; 0 when exact stored limits leave it out",
       ),
+    mach: z
+      .object({
+        token: z.string(),
+        symbol: z.literal("MACH"),
+        balance: z.string().nullable().describe("Payer's MACH balance; null when unknown"),
+        access_key_limit: z.string().nullable().describe("Active access key's stored MACH limit"),
+      })
+      .nullable()
+      .describe("MACH balance for eligible charges; null for other payment offers"),
     machine_token_enabled: z.boolean(),
     payment_token: z.string().nullable(),
     ...networkOutputShape,

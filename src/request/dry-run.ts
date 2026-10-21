@@ -1,14 +1,15 @@
 import { Errors, type z } from "incur";
 import type { Challenge } from "mppx";
 import { machineTokenDeployments } from "mppx/tempo";
-import { erc20Abi, formatUnits, parseUnits, type Address } from "viem";
+import { formatUnits, parseUnits, type Address } from "viem";
 
 import type { requestDryRunOutput } from "../schemas/request.js";
-import { createTempoPublicClient, networkFields } from "../shared/network.js";
+import { networkFields } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
 import { walletFix } from "../shared/require-wallet.js";
 import { knownToken, readTokenMetadata, tokenMetadata } from "../shared/tokens.js";
 import { getRecord, stringValue } from "../shared/utils.js";
+import { rpcChainCheck, tokenBalance } from "../wallet/key-output.js";
 import { challengeAmount, normalizedChallengeChainId, sessionDetails } from "./challenge.js";
 import {
   privateKeyIdentity,
@@ -17,7 +18,6 @@ import {
   storedAccessKeyLimit,
   walletIdentity,
 } from "./identity.js";
-import { isMachPaymentToken } from "./mach.js";
 import type { RequestOptions } from "./options.js";
 import { dryRunRpc, planSessionPayment } from "./session.js";
 import { formatTokenAmount, spendCap } from "./spend.js";
@@ -39,19 +39,36 @@ export async function paymentQuote(
   const chainId = normalizedChallengeChainId(getRecord(challenge.request.methodDetails), options);
   const amount = challengeAmount(challenge);
   const token = stringValue(challenge.request.currency);
-  // MACH settles in the offered currency but debits MACH from the wallet.
-  const debited = isMachPaymentToken(options.paymentToken)
-    ? machineTokenDeployments[chainId as keyof typeof machineTokenDeployments]?.token
-    : token;
+  const details = getRecord(challenge.request.methodDetails);
+  // The SDK attempts MACH before the advertised token for eligible charges. A quote shows both
+  // balances; balance alone cannot prove the route's liquidity, permissions, or simulation.
+  const mach =
+    challenge.intent === "charge" &&
+    amount > 0n &&
+    details.machineTokenEnabled === true &&
+    !(Array.isArray(details.splits) && details.splits.length > 0)
+      ? machineTokenDeployments[chainId as keyof typeof machineTokenDeployments]?.token
+      : undefined;
   const wallet = signer ? undefined : await walletIdentity(options).catch(() => undefined);
   const fix =
     wallet && "code" in wallet ? walletFix(wallet.code, requestNetwork(options)) : undefined;
   const payer = privateKeyIdentity(options) ?? (wallet && !("code" in wallet) ? wallet : undefined);
-  const [metadata, balance, plan] = await Promise.all([
+  const servesChain = rpcChainCheck();
+  const balanceOf = async (token: string) =>
+    (
+      await tokenBalance({
+        chain: chainId,
+        token,
+        walletAddress: payer?.address ?? null,
+        servesChain,
+      })
+    )?.raw ?? null;
+  const [metadata, balance, machBalance, plan] = await Promise.all([
     tokenMetadata(token.toLowerCase() as Address, chainId, (address) =>
       readTokenMetadata(address, chainId, dryRunRpc),
     ).catch(() => undefined),
-    payer && debited ? dryRunBalance(payer.address, debited, chainId) : null,
+    balanceOf(token),
+    mach ? balanceOf(mach) : null,
     challenge.intent === "session" && payer
       ? planSessionPayment(sessionDetails(challenge, requestUrl, options), payer, options, {
           dryRun: true,
@@ -63,11 +80,10 @@ export async function paymentQuote(
         })
       : undefined,
   ]);
-  // MACH is listed, so its decimals need no read.
-  const debitedToken =
-    debited === token ? metadata : debited === undefined ? undefined : knownToken(debited, chainId);
-  const decimals = debitedToken?.decimals;
-  const limit = storedAccessKeyLimit(payer && "key" in payer ? payer.key : undefined, debited);
+  const decimals = metadata?.decimals;
+  const key = payer && "key" in payer ? payer.key : undefined;
+  const limit = storedAccessKeyLimit(key, token);
+  const machLimit = storedAccessKeyLimit(key, mach);
   // No cap bounds a subscription: an explicit one refuses it before this, and the default skips it.
   const cap = challenge.intent === "subscription" ? undefined : spendCap(options);
   const spend = challenge.intent === "session" ? plan?.signedCumulative : amount;
@@ -88,6 +104,14 @@ export async function paymentQuote(
     balance: balance === null || decimals === undefined ? null : formatUnits(balance, decimals),
     access_key_limit:
       limit === null || decimals === undefined ? null : formatUnits(limit, decimals),
+    mach: mach
+      ? {
+          token: mach.toLowerCase(),
+          symbol: "MACH",
+          balance: machBalance === null ? null : formatUnits(machBalance, 6),
+          access_key_limit: machLimit === null ? null : formatUnits(machLimit, 6),
+        }
+      : null,
     machine_token_enabled: getRecord(challenge.request.methodDetails).machineTokenEnabled === true,
     payment_token: options.paymentToken ?? null,
     ...networkFields(chainId),
@@ -104,16 +128,4 @@ export async function paymentQuote(
         )
       : {}),
   };
-}
-
-/** The payer's raw balance of `token`, or `null` when the read fails. */
-function dryRunBalance(payer: string, token: string, chainId: number) {
-  return createTempoPublicClient(chainId, dryRunRpc)
-    .readContract({
-      address: token as Address,
-      abi: erc20Abi,
-      functionName: "balanceOf",
-      args: [payer as Address],
-    })
-    .catch(() => null);
 }

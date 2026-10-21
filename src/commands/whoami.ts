@@ -130,6 +130,7 @@ export async function currentWhoamiOutput(options: {
     fetchWalletAssets({
       chain: options.chain,
       walletAddress: options.walletAddress,
+      servesChain,
     }),
     sessionStats({ token, walletAddress: options.walletAddress }),
     tokenDetails(key ? keyTokens(key) : [{ chain: options.chain, token, read: true }], servesChain),

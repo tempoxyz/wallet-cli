@@ -458,6 +458,13 @@ describe("MCP tools", () => {
         network: "tempo",
         balances: [
           {
+            token: "0x20c000000000000000000000f37de3740adec032",
+            symbol: "MACH",
+            decimals: 6,
+            balance: "1000000",
+            verified: true,
+          },
+          {
             token: usdc.toLowerCase(),
             symbol: "USDC.e",
             decimals: 6,
@@ -469,6 +476,7 @@ describe("MCP tools", () => {
       // The balance counts once the RPC reports mainnet.
       requests: [
         `GET /api/assets?address=${testWallet}&chainId=4217&fresh=true`,
+        "eth_call",
         "eth_call",
         "eth_chainId",
       ],

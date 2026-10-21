@@ -955,7 +955,7 @@ describe("precedence", () => {
         (await balanceHandler(await readyWallet("testnet", false), {})).balances.map(
           ({ balance }) => balance,
         ),
-      expected: ["7"],
+      expected: ["7", "7"],
     },
   ])(
     "$command reads no balance through a saved rpc-url on another chain",
