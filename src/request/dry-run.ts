@@ -1,14 +1,15 @@
 import { Errors, type z } from "incur";
 import type { Challenge } from "mppx";
 import { machineTokenDeployments } from "mppx/tempo";
-import { erc20Abi, formatUnits, parseUnits, type Address } from "viem";
+import { formatUnits, parseUnits, type Address } from "viem";
 
 import type { requestDryRunOutput } from "../schemas/request.js";
-import { createTempoPublicClient, networkFields } from "../shared/network.js";
+import { networkFields } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
 import { walletFix } from "../shared/require-wallet.js";
 import { knownToken, readTokenMetadata, tokenMetadata } from "../shared/tokens.js";
 import { getRecord, stringValue } from "../shared/utils.js";
+import { rpcChainCheck, tokenBalance } from "../wallet/key-output.js";
 import { challengeAmount, normalizedChallengeChainId, sessionDetails } from "./challenge.js";
 import {
   privateKeyIdentity,
@@ -43,6 +44,7 @@ export async function paymentQuote(
   // balances; balance alone cannot prove the route's liquidity, permissions, or simulation.
   const mach =
     challenge.intent === "charge" &&
+    amount > 0n &&
     details.machineTokenEnabled === true &&
     !(Array.isArray(details.splits) && details.splits.length > 0)
       ? machineTokenDeployments[chainId as keyof typeof machineTokenDeployments]?.token
@@ -51,12 +53,22 @@ export async function paymentQuote(
   const fix =
     wallet && "code" in wallet ? walletFix(wallet.code, requestNetwork(options)) : undefined;
   const payer = privateKeyIdentity(options) ?? (wallet && !("code" in wallet) ? wallet : undefined);
+  const servesChain = rpcChainCheck();
+  const balanceOf = async (token: string) =>
+    (
+      await tokenBalance({
+        chain: chainId,
+        token,
+        walletAddress: payer?.address ?? null,
+        servesChain,
+      })
+    )?.raw ?? null;
   const [metadata, balance, machBalance, plan] = await Promise.all([
     tokenMetadata(token.toLowerCase() as Address, chainId, (address) =>
       readTokenMetadata(address, chainId, dryRunRpc),
     ).catch(() => undefined),
-    payer ? dryRunBalance(payer.address, token, chainId) : null,
-    payer && mach ? dryRunBalance(payer.address, mach, chainId) : null,
+    balanceOf(token),
+    mach ? balanceOf(mach) : null,
     challenge.intent === "session" && payer
       ? planSessionPayment(sessionDetails(challenge, requestUrl, options), payer, options, {
           dryRun: true,
@@ -116,16 +128,4 @@ export async function paymentQuote(
         )
       : {}),
   };
-}
-
-/** The payer's raw balance of `token`, or `null` when the read fails. */
-function dryRunBalance(payer: string, token: string, chainId: number) {
-  return createTempoPublicClient(chainId, dryRunRpc)
-    .readContract({
-      address: token as Address,
-      abi: erc20Abi,
-      functionName: "balanceOf",
-      args: [payer as Address],
-    })
-    .catch(() => null);
 }

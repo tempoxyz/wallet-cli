@@ -236,9 +236,9 @@ it("dry-run decodes and validates a quote without signing", async () => {
   });
   const rejected = await server.run("--dry-run", "--max-spend", "0.001");
   expect(rejected.code).not.toBe(0);
-  // The quote reads the payer's balance; the rejected offer fails before any read.
-  expect(server.counts()).toEqual({ requests: 2, authenticated: 0, rpc: 1 });
-  expect(server.rpc).toEqual(["eth_call"]);
+  // The quote reads the payer's balance and checks its chain; rejection happens before any read.
+  expect(server.counts()).toEqual({ requests: 2, authenticated: 0, rpc: 2 });
+  expect(server.rpc).toEqual(expect.arrayContaining(["eth_call", "eth_chainId"]));
 });
 
 it("rejects capped recurring subscriptions before RPC or authorization", async () => {
@@ -258,8 +258,8 @@ it("authenticates a zero-amount charge without a recipient or RPC access", async
     balance: null,
     within_budget: true,
   });
-  // Only the quote reads the RPC, for the payer's balance.
-  expect(server.counts()).toEqual({ requests: 1, authenticated: 0, rpc: 1 });
+  // Only the quote reads the RPC, for the payer's balance and its chain.
+  expect(server.counts()).toEqual({ requests: 1, authenticated: 0, rpc: 2 });
 
   const result = await server.run("--max-spend", "0");
   expect(result.code).toBe(0);
@@ -267,7 +267,7 @@ it("authenticates a zero-amount charge without a recipient or RPC access", async
     type: "proof",
     signature: expect.stringMatching(/^0x[0-9a-f]+$/i),
   });
-  expect(server.counts()).toEqual({ requests: 3, authenticated: 1, rpc: 1 });
+  expect(server.counts()).toEqual({ requests: 3, authenticated: 1, rpc: 2 });
 });
 
 it.each([
@@ -354,8 +354,8 @@ it.each([
     expect(server.counts()).toEqual({
       requests: outcome === "paid" ? 2 : 1,
       authenticated: outcome === "paid" ? 1 : 0,
-      // A quote reads the payer's balance.
-      rpc: outcome === "quoted" ? 1 : 0,
+      // A quote reads the payer's balance and checks its chain.
+      rpc: outcome === "quoted" ? 2 : 0,
     });
   },
 );

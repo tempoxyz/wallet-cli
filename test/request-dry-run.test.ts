@@ -231,8 +231,10 @@ async function rpcFixture(options: {
   closed: string[];
   tokenBalances?: Record<string, bigint>;
   machRead?: Read;
+  rpcChain?: number | "error";
 }) {
   const methods: string[] = [];
+  const balanceTokens: string[] = [];
   const url = await listen(
     createServer(async (req, res) => {
       const chunks: Buffer[] = [];
@@ -251,9 +253,12 @@ async function rpcFixture(options: {
             ...(result ? { result } : { error: { code: -32000, message: "unavailable" } }),
           }),
         );
-      // The RPC is on mainnet, so a session read passes the TEMPO_RPC_URL check.
-      if (call.method === "eth_chainId") return reply("0x1079");
+      if (call.method === "eth_chainId")
+        return reply(
+          options.rpcChain === "error" ? undefined : `0x${(options.rpcChain ?? 4217).toString(16)}`,
+        );
       const { to, data } = call.params[0];
+      if (data.startsWith(balanceOf)) balanceTokens.push(to.toLowerCase());
       const read = data.startsWith(balanceOf)
         ? to.toLowerCase() === machToken
           ? (options.machRead ?? options.balance)
@@ -285,7 +290,7 @@ async function rpcFixture(options: {
       );
     }),
   );
-  return { methods, url };
+  return { methods, balanceTokens, url };
 }
 
 /** Answers every request with `challenge`, counting any that carry a credential. */
@@ -355,6 +360,8 @@ it.each<{
   balance?: Read;
   tokenBalances?: Record<string, bigint>;
   machRead?: Read;
+  rpcChain?: number | "error";
+  balanceTokens?: string[];
   channels?: Read;
   wallet?: boolean;
   key?: Partial<WalletState["accessKeys"][number]>;
@@ -460,6 +467,25 @@ it.each<{
     stored: [{}, { channel_id: newerChannel, descriptor_json: undefined, last_used_at: 2 }],
     expected: reused,
   },
+  {
+    name: "a zero-amount proof without MACH settlement or a MACH balance read",
+    challenge: offer("charge", {
+      amount: "0",
+      methodDetails: { chainId: 4217, machineTokenEnabled: true },
+    }),
+    balanceTokens: [usdc.toLowerCase()],
+    expected: { amount: "0", raw_amount: "0", machine_token_enabled: true, mach: null },
+  },
+  ...([42431, "error"] as const).map((rpcChain) => ({
+    name: `unknown balances when the RPC chain is ${rpcChain}`,
+    challenge: offer("charge", { methodDetails: { chainId: 4217, machineTokenEnabled: true } }),
+    rpcChain,
+    expected: {
+      balance: null,
+      machine_token_enabled: true,
+      mach: { token: machToken, symbol: "MACH", balance: null, access_key_limit: null },
+    },
+  })),
   {
     name: "a MACH charge against the MACH balance",
     challenge: offer("charge", { methodDetails: { chainId: 4217, machineTokenEnabled: true } }),
@@ -649,6 +675,7 @@ it.each<{
     closed: row.closed ?? [],
     ...(row.tokenBalances ? { tokenBalances: row.tokenBalances } : {}),
     ...(row.machRead ? { machRead: row.machRead } : {}),
+    ...(row.rpcChain ? { rpcChain: row.rpcChain } : {}),
   });
   const service = await paymentService(row.challenge);
   vi.stubEnv("TEMPO_MAX_SPEND", row.env?.TEMPO_MAX_SPEND ?? "");
@@ -671,6 +698,9 @@ it.each<{
   expect(requestDryRunOutput.parse(output)).toEqual(output);
   expect(create).not.toHaveBeenCalled();
   expect(service.authorized()).toBe(0);
+  if (row.balanceTokens) expect(rpc.balanceTokens).toEqual(row.balanceTokens);
+  if (row.challenge.intent === "charge" && row.wallet !== false)
+    expect(rpc.methods.filter((method) => method === "eth_chainId")).toHaveLength(1);
   expect(rpc.methods.filter((method) => method !== "eth_call" && method !== "eth_chainId")).toEqual(
     [],
   );
