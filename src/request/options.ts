@@ -23,7 +23,7 @@ export type RequestOptions = {
   mach?: boolean | undefined;
   /** `--funding`; resolved with `fundingSetting`. */
   funding?: string | undefined;
-  /** `--max-funding-spend` in OUSD units; `maxFundingSpend` derives it from the cap when unset. */
+  /** `--max-funding-spend` in units of the source token (USDC.e or OUSD); `maxFundingSpend` derives it from the cap when unset. */
   maxFundingSpend?: string | undefined;
   /** `--payment-network`: `tempo`, or a destination name such as `base`, to pay on; else ranked. */
   paymentNetwork?: string | undefined;

@@ -56,15 +56,13 @@ export async function laggingRpc(upstream: string, lagMs = 1_500) {
       method: string;
       params?: unknown[];
     };
-    response
-      .writeHead(200, { "content-type": "application/json" })
-      .end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: body.id,
-          ...(await answer(body.method, body.params ?? [])),
-        }),
-      );
+    response.writeHead(200, { "content-type": "application/json" }).end(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: body.id,
+        ...(await answer(body.method, body.params ?? [])),
+      }),
+    );
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   return {

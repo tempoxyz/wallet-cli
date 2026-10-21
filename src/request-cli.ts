@@ -19,7 +19,7 @@ const fundingHelp = `Acquire a payment token the wallet does not hold: tempo swa
 const paymentNetworkHelp =
   "Pay on this network when the server offers several: tempo, or an EVM chain such as base (default: ranked by what the wallet holds)";
 const maxFundingSpendHelp =
-  "Cap on the OUSD one cross-chain funding may spend, Relay fee and gas included (default: max spend plus 5% and 0.10)";
+  "Cap on the source token (USDC.e or OUSD) one cross-chain funding may spend, bridge fee and gas included (default: max spend plus 5% and 0.10)";
 const maxSlippageHelp = `Maximum funding slippage in basis points (default ${defaultMaxSlippageBps})`;
 
 const args = z.object({
