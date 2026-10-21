@@ -86,7 +86,11 @@ afterEach(async () => {
 });
 
 /** A 402 service charging `amount` of `currency` on mainnet; `paid` counts paid requests. */
-async function service(currency: string, amount = "10000") {
+async function service(
+  currency: string,
+  amount = "10000",
+  methodDetails: Record<string, unknown> = {},
+) {
   const header = Challenge.serialize(
     Challenge.from({
       id: "funding",
@@ -97,7 +101,7 @@ async function service(currency: string, amount = "10000") {
         amount,
         currency,
         recipient: "0x0000000000000000000000000000000000000001",
-        methodDetails: { chainId: 4217 },
+        methodDetails: { chainId: 4217, ...methodDetails },
       },
     }),
   );
@@ -203,6 +207,33 @@ describe("Tempo DEX funding", () => {
     expect(paid.paid()).toBe(1);
     // No swap, stated explicitly so a method-level auto-swap cannot apply either.
     expect(credentialContexts).toEqual([{ autoSwap: false }]);
+  });
+
+  it("leaves a machine-enabled charge to MACH when the wallet holds enough of it", async () => {
+    // The SDK pays with MACH first, so swapping OUSD for the advertised token would be wasted, and
+    // refusing for lack of stablecoins would block a payable charge.
+    const mach = "0x20c000000000000000000000f37de3740adec032";
+    await wallet();
+    balances.set(usdcE, 0n).set(ousd, 5_000_000n).set(mach, 1_000_000n);
+    const paid = await service(usdcE, "10000", { machineTokenEnabled: true });
+
+    await run([], paid.url);
+
+    expect(paid.paid()).toBe(1);
+    expect(credentialContexts).toEqual([{ autoSwap: false }]);
+  });
+
+  it("still funds a machine-enabled charge when MACH does not cover it", async () => {
+    const mach = "0x20c000000000000000000000f37de3740adec032";
+    await wallet();
+    balances.set(usdcE, 0n).set(ousd, 5_000_000n).set(mach, 9_999n);
+    const paid = await service(usdcE, "10000", { machineTokenEnabled: true });
+
+    await run([], paid.url);
+
+    expect(paid.paid()).toBe(1);
+    expect(credentialContexts).toHaveLength(1);
+    expect(credentialContexts[0]).not.toEqual({ autoSwap: false });
   });
 
   it.each([

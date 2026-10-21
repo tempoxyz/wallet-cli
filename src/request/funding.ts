@@ -17,9 +17,10 @@ import { knownToken } from "../shared/tokens.js";
 import { getRecord } from "../shared/utils.js";
 import { accessKeyLimitError, dexSwapSpend } from "../wallet/access-key.js";
 import type { WalletState } from "../wallet/store.js";
+import { challengeAmount } from "./challenge.js";
 import { fundingSetting, parseMaxSlippageBps } from "./funding-mode.js";
 import { accessKeySpendLimit, requestNetwork } from "./identity.js";
-import { isMachPaymentToken } from "./mach.js";
+import { isMachPaymentToken, machCandidate } from "./mach.js";
 import type { RequestOptions } from "./options.js";
 import { MaxSpendExceededError, spendCap } from "./spend.js";
 
@@ -147,6 +148,16 @@ export async function checkCharge(offer: Challenge.Challenge, options: RequestOp
   }
 }
 
+/** Whether `payer` holds enough of the MACH the SDK tries first for `challenge`. */
+async function machCovers(challenge: Challenge.Challenge, options: RequestOptions, payer: string) {
+  const { chainId } = requestNetwork(options);
+  const amount = challengeAmount(challenge);
+  const mach = machCandidate(challenge, chainId, amount);
+  if (!mach) return false;
+  const held = await tokenBalance(chainId, mach, payer as Address).catch(() => 0n);
+  return held >= amount;
+}
+
 /** Plans and prepares a charge for `payer`; no credential is created without it. */
 export async function prepareCharge(
   offer: Challenge.Challenge,
@@ -156,11 +167,16 @@ export async function prepareCharge(
 ) {
   const challenge = planned(offer, options);
   const { policy, report } = chargeFunding(challenge, options);
+  // The SDK pays a machine-enabled charge with MACH first; while MACH covers it, swapping
+  // stablecoins for the advertised token would spend them for nothing, or refuse a payable charge.
+  const funders = (await machCovers(challenge, options, payer.address))
+    ? []
+    : chargeFunders(options, payer);
   try {
     return await planAndFund(challenge, {
       ...funding,
       policy,
-      funders: chargeFunders(options, payer),
+      funders,
       payer: payer.address,
     });
   } catch (error) {

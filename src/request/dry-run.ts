@@ -125,7 +125,10 @@ export async function paymentQuote(
     signer: signer
       ? { address: signer.account.address.toLowerCase(), source: signer.source }
       : { address: null, source: "wallet" },
-    ...(funder && balance !== null && balance < amount
+    ...(funder &&
+    balance !== null &&
+    balance < amount &&
+    !(mach && machBalance !== null && machBalance >= amount)
       ? {
           funding: {
             route: funder,
