@@ -26,8 +26,8 @@ importers:
         specifier: 0.7.1
         version: 0.7.1(patch_hash=ce9f4f28b7cb426f7ad6048b002752028a94ba5d9f22643b1fb0b254ffb2dcc1)
       machine-fetch:
-        specifier: 0.3.2
-        version: 0.3.2(mppx@0.13.6(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)))(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
+        specifier: 0.4.0
+        version: 0.4.0(mppx@0.13.6(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)))(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
       mppx:
         specifier: 0.13.6
         version: 0.13.6(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
@@ -1719,8 +1719,8 @@ packages:
     resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
     hasBin: true
 
-  machine-fetch@0.3.2:
-    resolution: {integrity: sha512-AXJt3lDeGCKQb5jtrW3QVwlU/ulyVpBRIUPZyVbiSazNvIBuDYqVI5ygbCoWCxi6PqAqVaAje8+k8VxR23tgew==}
+  machine-fetch@0.4.0:
+    resolution: {integrity: sha512-n/lPOC4r2EggavKfai2WOCoFVDNdmY7vHn8wQBrjj8txUudS8LuULFRNvtJzCzAkpLGmS5zwIcjB6aYz22yBkQ==}
     engines: {node: '>=22'}
     peerDependencies:
       '@x402/core': '>=2.25.0 <3'
@@ -3534,7 +3534,7 @@ snapshots:
 
   lz-string@1.5.0: {}
 
-  machine-fetch@0.3.2(mppx@0.13.6(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)))(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)):
+  machine-fetch@0.4.0(mppx@0.13.6(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)))(viem@2.57.1(typescript@7.0.2)(zod@4.4.3)):
     dependencies:
       mppx: 0.13.6(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.4.3))
       viem: 2.57.1(typescript@7.0.2)(zod@4.4.3)
