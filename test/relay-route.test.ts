@@ -146,12 +146,14 @@ describe("Relay deposit validation", () => {
 
 describe("Relay deposit route", () => {
   /** A route whose Relay API answers with `body` for quotes and `status` for status lookups. */
-  function route(options: { body?: unknown; status?: unknown; maxSpend?: bigint } = {}) {
+  function route(
+    options: { body?: unknown; status?: unknown; txHashes?: unknown; maxSpend?: bigint } = {},
+  ) {
     const fetch = (async (url: string) => {
       if (url.endsWith("/quote/v2")) return Response.json(options.body ?? quote());
       return options.status === 404
         ? new Response("", { status: 404 })
-        : Response.json({ status: options.status });
+        : Response.json({ status: options.status, txHashes: options.txHashes });
     }) as typeof globalThis.fetch;
     return relayDepositRoute({
       url: "http://relay.test",
@@ -199,7 +201,17 @@ describe("Relay deposit route", () => {
     const operation = { id: "attempt-1", quote: { reference: requestId } } as never;
     await expect(
       route({ status: relay }).status(operation, { signal: new AbortController().signal }),
-    ).resolves.toEqual({ status });
+    ).resolves.toEqual({ status, ...(status === "completed" ? { destinationTxs: [] } : {}) });
+  });
+
+  it("names the destination transactions Relay reports filling the request", async () => {
+    const operation = { id: "attempt-1", quote: { reference: requestId } } as never;
+    const filled = `0x${"de".repeat(32)}`;
+    await expect(
+      route({ status: "success", txHashes: [filled, "0x12", 7] }).status(operation, {
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toEqual({ status: "completed", destinationTxs: [filled] });
   });
 
   it("rejects a malformed status", async () => {

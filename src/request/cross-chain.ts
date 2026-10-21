@@ -15,6 +15,7 @@ import {
   requestFingerprint,
 } from "../payment/attempts.js";
 import { caip2 } from "../payment/funding.js";
+import type { DeliveredStatus } from "../payment/upstream/delivery.js";
 import { requirementKey } from "../payment/upstream/requirement-key.js";
 import { relayDepositRoute } from "../payment/upstream/relay-route.js";
 import { stargateRoute } from "../payment/upstream/stargate-route.js";
@@ -23,6 +24,7 @@ import {
   type Destination,
   destination as destinationFor,
   destinationBalance,
+  destinationDelivery,
   relayDepository,
   stargateConfig,
 } from "../shared/chains.js";
@@ -197,30 +199,51 @@ export function fundingRoutes(options: {
     );
   }
   return routes.map((route) =>
-    confirmedDelivery(route, (owner) => destinationBalance(destination, owner), options.target),
+    confirmedDelivery(
+      route,
+      {
+        balance: (owner) => destinationBalance(destination, owner),
+        delivery: (hash, owner) => destinationDelivery(destination, hash, owner),
+      },
+      options.target,
+    ),
   );
 }
 
 /**
- * `route` whose `completed` status also requires the destination balance to show the delivery:
- * until it does, the operation is still `pending`, so machine-fetch keeps polling within its
+ * `route` whose `completed` status also requires the delivery to be visible on the destination
+ * chain: until it is, the operation is still `pending`, so machine-fetch keeps polling within its
  * deadline. A provider can report success before the destination chain's RPC reflects the
  * transfer, and machine-fetch verifies the balance only once, which then reported a delivered
  * bridge as an unknown outcome.
+ *
+ * The delivery is visible when the payer's balance covers `target`, or, failing that, when a
+ * destination transaction the provider names transferred at least the operation's output to the
+ * payer. The second covers a delivery a payment already spent: a run killed after paying but
+ * before recording it leaves the operation for `funding recover`, with nothing left to see in the
+ * balance.
  */
 export function confirmedDelivery(
   route: CrossChain.Route,
-  balance: (owner: Address) => Promise<bigint>,
+  read: {
+    balance: (owner: Address) => Promise<bigint>;
+    delivery: (hash: Hex, owner: Address) => Promise<bigint>;
+  },
   target: bigint | undefined,
 ): CrossChain.Route {
   return {
     ...route,
     async status(operation, context) {
-      const result = await route.status(operation, context);
+      const result: DeliveredStatus = await route.status(operation, context);
       if (result.status !== "completed") return result;
-      const expected = target ?? operation.request.amountOut;
-      const held = await balance(operation.request.to.owner).catch(() => undefined);
-      return held !== undefined && held >= expected ? result : { status: "pending" };
+      const { amountOut, to } = operation.request;
+      const held = await read.balance(to.owner).catch(() => undefined);
+      if (held !== undefined && held >= (target ?? amountOut)) return result;
+      for (const hash of result.destinationTxs ?? []) {
+        const delivered = await read.delivery(hash, to.owner).catch(() => 0n);
+        if (delivered >= amountOut) return result;
+      }
+      return { status: "pending" };
     },
   };
 }

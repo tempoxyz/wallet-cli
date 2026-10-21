@@ -245,7 +245,24 @@ describe("Stargate route status", () => {
     ["PAYLOAD_STORED", "actionRequired"],
   ])("maps LayerZero status %s to %s", async (name, status) => {
     const { stargate } = route({ scan: () => Response.json({ data: [{ status: { name } }] }) });
-    await expect(stargate.status(operation(hash), { signal })).resolves.toEqual({ status });
+    await expect(stargate.status(operation(hash), { signal })).resolves.toEqual({
+      status,
+      ...(status === "completed" ? { destinationTxs: [] } : {}),
+    });
+  });
+
+  it("names the destination transaction LayerZero reports delivering the message", async () => {
+    const delivered = `0x${"de".repeat(32)}`;
+    const { stargate } = route({
+      scan: () =>
+        Response.json({
+          data: [{ status: { name: "DELIVERED" }, destination: { tx: { txHash: delivered } } }],
+        }),
+    });
+    await expect(stargate.status(operation(hash), { signal })).resolves.toEqual({
+      status: "completed",
+      destinationTxs: [delivered],
+    });
   });
 
   it("treats a message LayerZero has not indexed yet as pending", async () => {

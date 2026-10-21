@@ -26,6 +26,7 @@ import {
   parseAbi,
 } from "viem";
 
+import { type DeliveredStatus, transactionHashes } from "./delivery.js";
 import { FundingLimitError, SourceBalanceError } from "./funding-limit.js";
 
 /** Relay's v2 depository entry point for ERC-20 (TIP-20) deposits. */
@@ -149,7 +150,7 @@ export function relayDepositRoute(
       options.onProgress?.({ type: "submitted", deposit, request });
       return { reference: deposit.requestId };
     },
-    async status(operation, { signal }) {
+    async status(operation, { signal }): Promise<DeliveredStatus> {
       const requestId = operation.reference ?? operation.quote.reference;
       const response = await fetchJson(
         `${url}/intents/status/v3?requestId=${encodeURIComponent(requestId)}`,
@@ -158,11 +159,15 @@ export function relayDepositRoute(
       if (response.status === 404) return { status: "pending" };
       if (!response.ok)
         throw new Funder.FundingError(`Relay status request failed with HTTP ${response.status}`);
-      const body = (await response.json().catch(() => ({}))) as { status?: unknown };
+      const body = (await response.json().catch(() => ({}))) as {
+        status?: unknown;
+        txHashes?: unknown;
+      };
       const status = typeof body.status === "string" ? relayStatuses[body.status] : undefined;
       if (!status) throw new Funder.FundingError("Relay status response is malformed");
       if (status === "pending") options.onProgress?.({ type: "pending", requestId });
-      return { status };
+      if (status !== "completed") return { status };
+      return { status, destinationTxs: transactionHashes(body.txHashes) };
     },
   });
 }

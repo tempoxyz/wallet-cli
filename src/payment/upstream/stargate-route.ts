@@ -14,6 +14,7 @@ import { Funder } from "machine-fetch";
 import type { CrossChain } from "machine-fetch/cross-chain";
 import { type Address, encodeFunctionData, erc20Abi, type Hex, pad, parseAbi } from "viem";
 
+import { type DeliveredStatus, transactionHashes } from "./delivery.js";
 import { FundingLimitError, SourceBalanceError } from "./funding-limit.js";
 
 export const stargateAbi = parseAbi([
@@ -261,7 +262,7 @@ export function stargateRoute(
       options.onProgress?.({ type: "submitted", hash, amount: amountLD, fee: nativeFee, request });
       return { reference: hash };
     },
-    async status(operation, { signal }) {
+    async status(operation, { signal }): Promise<DeliveredStatus> {
       const hash = operation.reference;
       // Without the transaction hash there is nothing to look up: reconcile by hand.
       if (!hash || !/^0x[\da-fA-F]{64}$/.test(hash)) return { status: "actionRequired" };
@@ -271,14 +272,15 @@ export function stargateRoute(
       if (!response.ok)
         throw new Funder.FundingError(`LayerZero Scan request failed with HTTP ${response.status}`);
       const body = (await response.json().catch(() => ({}))) as {
-        data?: { status?: { name?: unknown } }[];
+        data?: { status?: { name?: unknown }; destination?: { tx?: { txHash?: unknown } } }[];
       };
       const first = body.data?.[0]?.status?.name;
       if (body.data?.length === 0) return { status: "pending" };
       const status = typeof first === "string" ? scanStatuses[first] : undefined;
       if (!status) throw new Funder.FundingError("LayerZero Scan response is malformed");
       if (status === "pending") options.onProgress?.({ type: "pending", hash: hash as Hex });
-      return { status };
+      if (status !== "completed") return { status };
+      return { status, destinationTxs: transactionHashes(body.data?.[0]?.destination?.tx?.txHash) };
     },
   };
 }

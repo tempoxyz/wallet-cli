@@ -1,5 +1,14 @@
 import { z } from "incur";
-import { createPublicClient, erc20Abi, getAddress, http, isAddress, type Address } from "viem";
+import {
+  createPublicClient,
+  erc20Abi,
+  getAddress,
+  type Hex,
+  http,
+  isAddress,
+  parseEventLogs,
+  type Address,
+} from "viem";
 import { ousd, pathusd, tokens, usdc, usdce } from "viem/tokens";
 
 import { usageError } from "./errors.js";
@@ -238,6 +247,25 @@ function destinationRpcUrl(entry: Omit<Destination, "rpcUrl">) {
   if (entry.chainId === base.chainId && process.env.TEMPO_BASE_RPC_URL)
     return process.env.TEMPO_BASE_RPC_URL;
   return entry.chainId === base.chainId ? "https://mainnet.base.org" : "https://sepolia.base.org";
+}
+
+/**
+ * How much USDC transaction `hash` on `destination` transferred to `owner`, in atomic units: `0n`
+ * for a reverted or unrelated transaction. Rejects when the receipt cannot be read, for example
+ * before the destination RPC has the transaction.
+ */
+export async function destinationDelivery(destination: Destination, hash: Hex, owner: Address) {
+  const receipt = await createPublicClient({
+    transport: http(destination.rpcUrl, { retryCount: 1 }),
+  }).getTransactionReceipt({ hash });
+  if (receipt.status !== "success") return 0n;
+  return parseEventLogs({ abi: erc20Abi, eventName: "Transfer", logs: receipt.logs })
+    .filter(
+      (log) =>
+        log.address.toLowerCase() === destination.usdc.address.toLowerCase() &&
+        log.args.to.toLowerCase() === owner.toLowerCase(),
+    )
+    .reduce((sum, log) => sum + log.args.value, 0n);
 }
 
 /** `owner`'s USDC balance on `destination`, in atomic units; rejects when it cannot be read. */

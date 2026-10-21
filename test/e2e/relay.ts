@@ -50,6 +50,8 @@ type Intent = {
   destinationToken: Address;
   amountOut: bigint;
   status: "waiting" | "pending" | "success" | "refund";
+  /** The destination transfer that filled it. */
+  fill?: Hex;
 };
 
 /** Relay's fee on the stand-in: 0.3% of the output plus 0.001 of the origin token. */
@@ -255,6 +257,7 @@ export async function standInRelay(net: Localnet) {
       functionName: "transfer",
       args: [intent.recipient, intent.amountOut],
     });
+    intent.fill = hash;
     const receipt = await inventory.waitForTransactionReceipt({ hash });
     if (deliveryLag === 0) intent.status = receipt.status === "success" ? "success" : "refund";
   };
@@ -284,7 +287,9 @@ export async function standInRelay(net: Localnet) {
         if (!intent) return json(404, { message: "Unknown request" });
         return json(200, {
           status: intent.status,
-          ...(intent.status === "success" ? { inTxHashes: [], txHashes: [] } : {}),
+          ...(intent.status === "success"
+            ? { inTxHashes: [], txHashes: intent.fill ? [intent.fill] : [] }
+            : {}),
         });
       }
       return json(404, { message: "Not found" });
