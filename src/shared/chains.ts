@@ -11,7 +11,7 @@ import {
 } from "viem";
 import { ousd, pathusd, tokens, usdc, usdce } from "viem/tokens";
 
-import { networkError, usageError } from "./errors.js";
+import { usageError } from "./errors.js";
 
 /**
  * The chains and tokens funding and payment policy trust. Server-supplied fields never add to
@@ -254,79 +254,28 @@ function destinationClient(destination: Destination) {
 }
 
 /**
- * How much USDC transaction `hash` on `destination` transferred to `owner`, in atomic units, and
- * the block that holds it: `0n` for a reverted or unrelated transaction. Rejects when the receipt
- * cannot be read, for example before the destination RPC has the transaction.
+ * How much USDC transaction `hash` on `destination` transferred to `owner`, in atomic units: `0n`
+ * for a reverted or unrelated transaction. Rejects when the receipt cannot be read, for example
+ * before the destination RPC has the transaction.
  */
 export async function destinationDelivery(destination: Destination, hash: Hex, owner: Address) {
   const receipt = await destinationClient(destination).getTransactionReceipt({ hash });
-  const block = receipt.blockNumber;
-  if (receipt.status !== "success") return { amount: 0n, block };
-  const amount = parseEventLogs({ abi: erc20Abi, eventName: "Transfer", logs: receipt.logs })
+  if (receipt.status !== "success") return 0n;
+  return parseEventLogs({ abi: erc20Abi, eventName: "Transfer", logs: receipt.logs })
     .filter(
       (log) =>
         log.address.toLowerCase() === destination.usdc.address.toLowerCase() &&
         log.args.to.toLowerCase() === owner.toLowerCase(),
     )
     .reduce((sum, log) => sum + log.args.value, 0n);
-  return { amount, block };
 }
 
-/**
- * `owner`'s USDC balance on `destination`, in atomic units, read at the latest block or, with
- * `minBlock`, no earlier than it; rejects when it cannot be read.
- */
-export async function destinationBalance(
-  destination: Destination,
-  owner: Address,
-  minBlock?: bigint,
-) {
-  if (minBlock !== undefined)
-    return (await destinationBalanceAt(destination, owner, minBlock)).balance;
+/** `owner`'s USDC balance on `destination`, in atomic units; rejects when it cannot be read. */
+export function destinationBalance(destination: Destination, owner: Address) {
   return destinationClient(destination).readContract({
     address: destination.usdc.address,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [owner],
   });
-}
-
-/**
- * `owner`'s USDC balance on `destination` and the block it was read at, no earlier than
- * `minBlock`. A load-balanced RPC such as mainnet.base.org can answer one request from a node
- * that has a block and the next from one that does not yet; reading at a known block keeps a
- * delivery seen once from disappearing on the next read. Waits up to `waitMs` for the RPC to
- * reach `minBlock`, then rejects.
- */
-export async function destinationBalanceAt(
-  destination: Destination,
-  owner: Address,
-  minBlock?: bigint,
-  waitMs = 20_000,
-) {
-  const client = destinationClient(destination);
-  const deadline = Date.now() + waitMs;
-  for (;;) {
-    try {
-      const block = await client.getBlockNumber({ cacheTime: 0 });
-      if (minBlock === undefined || block >= minBlock) {
-        const balance = await client.readContract({
-          address: destination.usdc.address,
-          abi: erc20Abi,
-          functionName: "balanceOf",
-          args: [owner],
-          blockNumber: block,
-        });
-        return { balance, block };
-      }
-    } catch (error) {
-      // A node behind the one that reported the block cannot read at it yet.
-      if (minBlock === undefined || Date.now() >= deadline) throw error;
-    }
-    if (Date.now() >= deadline)
-      throw networkError(`The ${destination.name} RPC has not reached block ${minBlock}`, {
-        retryable: true,
-      });
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
 }

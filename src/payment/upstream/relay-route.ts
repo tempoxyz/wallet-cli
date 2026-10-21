@@ -26,7 +26,7 @@ import {
   parseAbi,
 } from "viem";
 
-import { type DeliveredStatus, namedFetch, transactionHashes } from "./delivery.js";
+import { namedFetch, transactionHashes } from "./delivery.js";
 import { FundingLimitError, SourceBalanceError } from "./funding-limit.js";
 
 /** Relay's v2 depository entry point for ERC-20 (TIP-20) deposits. */
@@ -150,7 +150,7 @@ export function relayDepositRoute(
       options.onProgress?.({ type: "submitted", deposit, request });
       return { reference: deposit.requestId };
     },
-    async status(operation, { signal }): Promise<DeliveredStatus> {
+    async status(operation, { signal }): Promise<CrossChain.Status> {
       const requestId = operation.reference ?? operation.quote.reference;
       const response = await fetchJson(
         `${url}/intents/status/v3?requestId=${encodeURIComponent(requestId)}`,

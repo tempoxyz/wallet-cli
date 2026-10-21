@@ -1,180 +1,203 @@
-import type { CrossChain } from "machine-fetch/cross-chain";
-import { describe, expect, it } from "vitest";
+import { Payment } from "machine-fetch";
+import { type CrossChain, CrossChainFunder } from "machine-fetch/cross-chain";
+import { FileStore } from "machine-fetch/stores/file";
+import { MemoryStore } from "machine-fetch/stores/memory";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { confirmedDelivery } from "../src/request/cross-chain.js";
+import { operationsDirectory } from "../src/payment/attempts.js";
+import { deliveryReaders, fundingAccounts, operationStatus } from "../src/request/cross-chain.js";
+import type { Destination } from "../src/shared/chains.js";
+import { useTempHome } from "./helpers.js";
+
+const chains = vi.hoisted(() => ({
+  balances: [] as (bigint | Error)[],
+  deliveries: new Map<string, bigint | Error>(),
+  reads: [] as string[],
+}));
+
+vi.mock("../src/shared/chains.js", async (original) => ({
+  ...(await original<typeof import("../src/shared/chains.js")>()),
+  async destinationBalance(_destination: unknown, owner: string) {
+    chains.reads.push(`balance ${owner}`);
+    const next = chains.balances.length > 1 ? chains.balances.shift()! : chains.balances[0]!;
+    if (next instanceof Error) throw next;
+    return next;
+  },
+  async destinationDelivery(_destination: unknown, hash: string, owner: string) {
+    chains.reads.push(`delivery ${hash} ${owner}`);
+    const delivered = chains.deliveries.get(hash) ?? new Error("receipt not found");
+    if (delivered instanceof Error) throw delivered;
+    return delivered;
+  },
+}));
 
 const payer = "0x00000000000000000000000000000000000000b2";
-const signal = new AbortController().signal;
-const operation = {
-  operationId: "attempt-1",
-  route: "relay",
-  reference: `0x${"12".repeat(32)}`,
-  request: { amountOut: 6_000n, to: { owner: payer } },
-} as unknown as CrossChain.Operation;
+const source = "0x00000000000000000000000000000000000000a1";
+const asset = "0x20c0000000000000000000000000000000000000";
+const fill = `0x${"de".repeat(32)}`;
+const destination: Destination = {
+  chainId: 8453,
+  name: "base",
+  network: "eip155:8453",
+  usdc: {
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    decimals: 6,
+    name: "USD Coin",
+    version: "2",
+  },
+  rpcUrl: "http://127.0.0.1:1",
+};
+const accounts = fundingAccounts(4217, source, asset, destination, payer);
 
-const delivery = `0x${"de".repeat(32)}` as const;
-const noDelivery = async () => ({ amount: 0n, block: 0n });
-const at = (balance: bigint, block = 1n) => ({ balance, block });
+beforeEach(() => {
+  chains.balances = [];
+  chains.deliveries.clear();
+  chains.reads = [];
+});
 
-function route(
-  status: CrossChain.Status["status"],
-  destinationTxs?: readonly `0x${string}`[],
-): CrossChain.Route {
+/** A route that quotes exactly, submits, and then reports `statuses` in turn, the last one after. */
+function route(...statuses: CrossChain.Status[]): CrossChain.Route & { polls: () => number } {
+  let polls = 0;
   return {
     name: "relay",
-    quote: async () => {
-      throw new Error("unused");
-    },
-    submit: async () => ({ reference: "unused" }),
-    status: async () => ({ status, ...(destinationTxs ? { destinationTxs } : {}) }),
-  } as unknown as CrossChain.Route;
+    quote: (request: CrossChain.Request) => ({
+      amountIn: request.amountOut,
+      maxAmountIn: request.amountOut,
+      amountOut: request.amountOut,
+      minAmountOut: request.amountOut,
+      expiresAt: request.deadline,
+      reference: `relay:${request.operationId}`,
+      fees: [],
+    }),
+    submit: () => ({ reference: `0x${"12".repeat(32)}` }),
+    status: () => statuses[Math.min(polls++, statuses.length - 1)]!,
+    polls: () => polls,
+  };
 }
 
-describe("confirmed cross-chain delivery", () => {
-  it("keeps a completed bridge pending until the destination balance shows the delivery", async () => {
-    const balances = [0n, 9_999n, 10_000n];
-    const owners: string[] = [];
-    const confirmed = confirmedDelivery(
-      route("completed"),
+describe("payment funding confirms a delivery on the destination chain", () => {
+  /** Funds a 10_000 payment through `bridge` with the CLI's readers, as `crossChainFunders` does. */
+  async function pay(bridge: CrossChain.Route, deadlineSeconds?: number) {
+    const funder = CrossChainFunder.create({
+      ...accounts,
+      routes: [bridge],
+      operations: MemoryStore.create(),
+      ...deliveryReaders(destination),
+      pollIntervalMs: 10,
+    });
+    const plan = await Payment.plan(
       {
-        balance: async (owner) => (owners.push(owner), at(balances.shift()!)),
-        delivery: noDelivery,
+        protocol: "x402",
+        method: "exact",
+        intent: "charge",
+        network: destination.network,
+        asset: destination.usdc.address,
+        amount: 10_000n,
       },
-      10_000n,
+      { funders: [funder], ...(deadlineSeconds ? { deadlineSeconds } : {}) },
     );
+    return Payment.fund(plan, { operationId: "attempt-1", payer });
+  }
 
-    const seen = [];
-    for (let poll = 0; poll < 3; poll += 1)
-      seen.push((await confirmed.status(operation, { signal })).status);
+  it("waits for the balance when the bridge reports success before the RPC shows it", async () => {
+    // Before funding, then while Base's load-balanced RPC lags behind the provider.
+    chains.balances = [0n, 0n, 9_999n, 10_000n];
 
-    expect(seen).toEqual(["pending", "pending", "completed"]);
-    expect(owners).toEqual([payer, payer, payer]);
+    const prepared = await pay(route({ status: "completed" }));
+
+    expect(prepared?.funding).toMatchObject({ status: "acquired" });
+    expect(chains.reads).toEqual(Array(4).fill(`balance ${payer}`));
   });
 
-  it("defaults the target to the operation's exact output, for reconciliation", async () => {
-    const confirmed = (held: bigint) =>
-      confirmedDelivery(
-        route("completed"),
-        { balance: async () => at(held), delivery: noDelivery },
-        undefined,
-      );
+  it("retries a balance read a lagging node rejects", async () => {
+    chains.balances = [0n, new Error("header not found"), 10_000n];
 
-    await expect(confirmed(5_999n).status(operation, { signal })).resolves.toEqual({
-      status: "pending",
-    });
-    await expect(confirmed(6_000n).status(operation, { signal })).resolves.toEqual({
-      status: "completed",
-    });
+    const prepared = await pay(route({ status: "completed" }));
+
+    expect(prepared?.funding).toMatchObject({ status: "acquired" });
   });
 
-  it("treats an unreadable balance as not yet delivered", async () => {
-    const confirmed = confirmedDelivery(
-      route("completed"),
-      {
-        balance: async () => {
-          throw new Error("rpc down");
-        },
-        delivery: noDelivery,
-      },
-      10_000n,
-    );
+  it("does not pay from a destination transaction alone: the balance must cover the payment", async () => {
+    chains.balances = [0n];
+    chains.deliveries.set(fill, 10_000n);
 
-    await expect(confirmed.status(operation, { signal })).resolves.toEqual({ status: "pending" });
+    await expect(pay(route({ status: "completed", destinationTxs: [fill] }), 1)).rejects.toThrow(
+      /delivered, but the destination balance did not cover the payment/,
+    );
+  });
+});
+
+describe("reconciliation confirms a completed operation on the destination chain", () => {
+  /** Saves an operation for 6_000 out, as a payment's funding would have, and reads its status. */
+  async function reconcile(bridge: CrossChain.Route) {
+    await useTempHome();
+    const request = {
+      amountOut: 6_000n,
+      deadline: Math.floor(Date.now() / 1000) + 300,
+      ...accounts,
+      maxSlippageBps: 50,
+      operationId: "attempt-1",
+    };
+    const operation: CrossChain.Operation = {
+      id: "attempt-1",
+      route: bridge.name,
+      requirementKey: "key",
+      request,
+      quote: await bridge.quote({ ...request, signal: new AbortController().signal }),
+      reference: `0x${"12".repeat(32)}`,
+    };
+    const store = FileStore.create(operationsDirectory());
+    await store.claim({ ...operation, reference: undefined });
+    await store.setReference(operation.id, operation.reference!);
+    return operationStatus({ route: bridge, destination }, operation, 1);
+  }
+
+  it("completes once the payer's balance covers the output", async () => {
+    chains.balances = [6_000n];
+
+    await expect(reconcile(route({ status: "completed" }))).resolves.toBe("completed");
+  });
+
+  it("completes a delivery a payment already spent, from its destination transaction", async () => {
+    // A run killed after paying leaves the operation submitted, and the balance back at zero.
+    chains.balances = [0n];
+    chains.deliveries.set(fill, 6_000n);
+
+    await expect(reconcile(route({ status: "completed", destinationTxs: [fill] }))).resolves.toBe(
+      "completed",
+    );
+    expect(chains.reads).toContain(`delivery ${fill} ${payer}`);
+  });
+
+  it.each([
+    ["less than the output", 5_999n],
+    ["a receipt the RPC does not have yet", new Error("receipt not found")],
+  ])("keeps a completion pending when the transaction shows %s", async (_, delivered) => {
+    chains.balances = [0n];
+    chains.deliveries.set(fill, delivered);
+
+    await expect(reconcile(route({ status: "completed", destinationTxs: [fill] }))).resolves.toBe(
+      "pending",
+    );
   });
 
   it.each(["pending", "refunded", "actionRequired"] as const)(
-    "passes a %s status through without reading the balance",
+    "passes a %s status through without reading the destination chain",
     async (status) => {
-      let reads = 0;
-      const confirmed = confirmedDelivery(
-        route(status),
-        {
-          balance: async () => (reads++, at(0n)),
-          delivery: async () => (reads++, { amount: 0n, block: 0n }),
-        },
-        10_000n,
-      );
+      chains.deliveries.set(fill, 6_000n);
 
-      await expect(confirmed.status(operation, { signal })).resolves.toEqual({ status });
-      expect(reads).toBe(0);
+      await expect(reconcile(route({ status, destinationTxs: [fill] }))).resolves.toBe(status);
+      expect(chains.reads).toEqual([]);
     },
   );
 
-  it("completes a delivery a payment already spent, once its destination transaction shows it", async () => {
-    // A run killed after paying leaves the operation submitted, and the balance back at zero.
-    const reads: [string, string][] = [];
-    const confirmed = (delivered: bigint | Error) =>
-      confirmedDelivery(
-        route("completed", [delivery]),
-        {
-          balance: async () => at(0n),
-          delivery: async (hash, owner) => {
-            reads.push([hash, owner]);
-            if (delivered instanceof Error) throw delivered;
-            return { amount: delivered, block: 7n };
-          },
-        },
-        undefined,
-      );
+  it("rejects when the route cannot report", async () => {
+    const bridge = route();
+    const failing = {
+      ...bridge,
+      status: () => Promise.reject(new Error("Relay is unreachable")),
+    };
 
-    await expect(confirmed(6_000n).status(operation, { signal })).resolves.toMatchObject({
-      status: "completed",
-    });
-    expect(reads).toEqual([[delivery, payer]]);
-    // Less than the output, or a receipt the RPC does not have yet, is not a delivery.
-    await expect(confirmed(5_999n).status(operation, { signal })).resolves.toEqual({
-      status: "pending",
-    });
-    await expect(
-      confirmed(new Error("receipt not found")).status(operation, { signal }),
-    ).resolves.toEqual({ status: "pending" });
-  });
-
-  it("does not take a destination transaction without the provider's completion", async () => {
-    let reads = 0;
-    const confirmed = confirmedDelivery(
-      route("pending", [delivery]),
-      {
-        balance: async () => at(0n),
-        delivery: async () => (reads++, { amount: 10_000n, block: 7n }),
-      },
-      10_000n,
-    );
-
-    await expect(confirmed.status(operation, { signal })).resolves.toMatchObject({
-      status: "pending",
-    });
-    expect(reads).toBe(0);
-  });
-
-  it("records the block that showed the delivery, so later balance reads start there", async () => {
-    const floor: { block?: bigint } = {};
-    const byBalance = confirmedDelivery(
-      route("completed"),
-      { balance: async () => at(10_000n, 41n), delivery: noDelivery, floor },
-      10_000n,
-    );
-    await byBalance.status(operation, { signal });
-    expect(floor.block).toBe(41n);
-
-    const byFill = confirmedDelivery(
-      route("completed", [delivery]),
-      {
-        balance: async () => at(0n, 50n),
-        delivery: async () => ({ amount: 6_000n, block: 45n }),
-        floor,
-      },
-      undefined,
-    );
-    await byFill.status(operation, { signal });
-    expect(floor.block).toBe(45n);
-    // A pending status records nothing.
-    const pending = confirmedDelivery(
-      route("pending"),
-      { balance: async () => at(10_000n, 99n), delivery: noDelivery, floor },
-      10_000n,
-    );
-    await pending.status(operation, { signal });
-    expect(floor.block).toBe(45n);
+    await expect(reconcile(failing)).rejects.toThrow("Relay is unreachable");
   });
 });

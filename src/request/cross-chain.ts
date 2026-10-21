@@ -15,7 +15,7 @@ import {
   requestFingerprint,
 } from "../payment/attempts.js";
 import { caip2 } from "../payment/funding.js";
-import { type DeliveredStatus, transactionHashes } from "../payment/upstream/delivery.js";
+import { transactionHashes } from "../payment/upstream/delivery.js";
 import { requirementKey } from "../payment/upstream/requirement-key.js";
 import { relayDepositRoute } from "../payment/upstream/relay-route.js";
 import { stargateRoute } from "../payment/upstream/stargate-route.js";
@@ -24,7 +24,6 @@ import {
   type Destination,
   destination as destinationFor,
   destinationBalance,
-  destinationBalanceAt,
   destinationDelivery,
   relayDepository,
   stargateConfig,
@@ -118,13 +117,6 @@ export function fundingRoutes(options: {
   stderr?: Pick<NodeJS.WriteStream, "write"> | undefined;
   payer?: Address | undefined;
   symbol?: string | undefined;
-  /**
-   * The destination balance a completed bridge must show, in atomic units: the payment's amount.
-   * @default the operation's own exact output, for reconciliation without the payment
-   */
-  target?: bigint | undefined;
-  /** Where the routes record the block that showed a delivery; see `DeliveryFloor`. */
-  floor?: DeliveryFloor | undefined;
 }): CrossChain.Route[] {
   const { network, asset, destination } = options;
   const symbol = options.symbol ?? tokenSymbol(asset, network.chainId) ?? asset;
@@ -222,85 +214,62 @@ export function fundingRoutes(options: {
       }),
     );
   }
-  return routes.map((route) =>
-    confirmedDelivery(
-      route,
-      {
-        balance: (owner) => destinationBalanceAt(destination, owner),
-        delivery: (hash, owner) => destinationDelivery(destination, hash, owner),
-        floor: options.floor,
-      },
-      options.target,
-    ),
-  );
+  return routes;
 }
 
 /**
- * `route` whose `completed` status also requires the delivery to be visible on the destination
- * chain: until it is, the operation is still `pending`, so machine-fetch keeps polling within its
- * deadline. A provider can report success before the destination chain's RPC reflects the
- * transfer, and machine-fetch verifies the balance only once, which then reported a delivered
- * bridge as an unknown outcome.
- *
- * The delivery is visible when the payer's balance covers `target`, or, failing that, when a
- * destination transaction the provider names transferred at least the operation's output to the
- * payer. The second covers a delivery a payment already spent: a run killed after paying but
- * before recording it leaves the operation for `funding recover`, with nothing left to see in the
- * balance.
+ * How the funder confirms a delivery on `destination`, independently of the bridge: the payer's
+ * USDC balance, polled until it covers the need, and for recovery, what each destination
+ * transaction the route names transferred to the payer, which still shows a delivery a payment
+ * has already spent.
  */
-export function confirmedDelivery(
-  route: CrossChain.Route,
-  read: {
-    balance: (owner: Address) => Promise<{ balance: bigint; block: bigint }>;
-    delivery: (hash: Hex, owner: Address) => Promise<{ amount: bigint; block: bigint }>;
-    /** Records the destination block that showed the delivery, for later balance reads. */
-    floor?: DeliveryFloor | undefined;
-  },
-  target: bigint | undefined,
-): CrossChain.Route {
-  const seen = (block: bigint) => {
-    if (read.floor && (read.floor.block === undefined || block > read.floor.block))
-      read.floor.block = block;
-  };
+export function deliveryReaders(destination: Destination) {
   return {
-    ...route,
-    async status(operation, context) {
-      const result: DeliveredStatus = await route.status(operation, context);
-      if (result.status !== "completed") return result;
-      const { amountOut, to } = operation.request;
-      const held = await read.balance(to.owner).catch(() => undefined);
-      if (held !== undefined && held.balance >= (target ?? amountOut)) {
-        seen(held.block);
-        return result;
-      }
-      for (const hash of transactionHashes(result.destinationTxs)) {
-        const delivered = await read.delivery(hash, to.owner).catch(() => undefined);
-        if (delivered && delivered.amount >= amountOut) {
-          seen(delivered.block);
-          return result;
-        }
-      }
-      return { status: "pending" };
+    balance: (account: Evm.TokenAccount) => destinationBalance(destination, account.owner),
+    delivered: ({ account, transaction }: { account: Evm.TokenAccount; transaction: string }) => {
+      const [hash] = transactionHashes(transaction);
+      if (!hash) throw new Funder.FundingError("Destination transaction hash is malformed");
+      return destinationDelivery(destination, hash, account.owner);
     },
   };
 }
-
-/**
- * The destination block from which a confirmed delivery is visible. machine-fetch reads the
- * balance once more after a route completes; reading no earlier than this block keeps a
- * load-balanced RPC from answering that read from a node that has not seen the delivery.
- */
-export type DeliveryFloor = { block?: bigint | undefined };
 
 /** The route `operation` was submitted through, rebuilt without a signer, for reconciliation. */
 export function operationRoute(operation: CrossChain.Operation, network: Network) {
   const destination = destinationFor(network.chainId, operation.request.to.chainId);
   if (!destination) return undefined;
-  return fundingRoutes({
+  const route = fundingRoutes({
     network,
     asset: operation.request.from.asset as Address,
     destination,
-  }).find((route) => route.name === operation.route);
+  }).find((candidate) => candidate.name === operation.route);
+  return route && { route, destination };
+}
+
+/**
+ * How `operation` stands with its route, without quoting or submitting: a `completed` status
+ * counts only once machine-fetch's `recover` confirms the delivery on the destination chain within
+ * `seconds`, and is `pending` until then. Rejects when the route cannot report.
+ */
+export async function operationStatus(
+  { route, destination }: NonNullable<ReturnType<typeof operationRoute>>,
+  operation: CrossChain.Operation,
+  seconds: number,
+): Promise<CrossChain.Status["status"]> {
+  const { status } = await route.status(operation, { signal: AbortSignal.timeout(seconds * 1000) });
+  if (status !== "completed") return status;
+  const funder = CrossChainFunder.create({
+    from: operation.request.from,
+    to: operation.request.to,
+    routes: [route],
+    operations: FileStore.create(operationsDirectory()),
+    ...deliveryReaders(destination),
+    pollIntervalMs: 500,
+  });
+  return funder
+    .recover(operation.id, { deadlineSeconds: seconds })
+    .then(() => "completed" as const)
+    .catch(() => "pending" as const);
 }
 
 /**
@@ -350,8 +319,6 @@ export async function crossChainFunders(options: {
   destination: Destination;
   payer: Address;
   needed: bigint;
-  /** The payment's amount: the destination balance a completed bridge must show. */
-  target: bigint;
   /** The source token of a saved operation this attempt resumes: it must fund from that token. */
   resumeAsset?: Address | undefined;
   maxSpend?: bigint | undefined;
@@ -396,7 +363,6 @@ export async function crossChainFunders(options: {
     );
   }
   const funders = usable.map(({ asset, symbol }) => {
-    const deliveryFloor: DeliveryFloor = {};
     const { from, to } = fundingAccounts(
       network.chainId,
       source,
@@ -416,12 +382,9 @@ export async function crossChainFunders(options: {
         stderr: options.stderr,
         payer: options.payer,
         symbol,
-        target: options.target,
-        floor: deliveryFloor,
       }),
       operations: FileStore.create(operationsDirectory()),
-      balance: (account: Evm.TokenAccount) =>
-        destinationBalance(destination, account.owner, deliveryFloor.block),
+      ...deliveryReaders(destination),
       pollIntervalMs: 500,
     });
   });
@@ -486,7 +449,6 @@ export async function crossChainFunding(
       destination: offer.destination,
       payer,
       needed,
-      target: offer.requirement.amount,
       resumeAsset: resumed?.request.from.asset as Address | undefined,
       maxSpend: limit,
       stderr,
@@ -542,17 +504,15 @@ async function reconcileEarlier(attempt: AttemptRecord, network: Network) {
 }
 
 /**
- * How an operation stands with its route, without quoting or submitting: `completed` (its USDC was
- * delivered, and may since have paid), `refunded`, or `open` (pending, needing action, or
- * unreadable).
+ * How an operation stands, without quoting or submitting: `completed` (its USDC was delivered,
+ * and may since have paid), `refunded`, or `open` (pending, needing action, or unreadable).
  */
-export async function settledOutcome(route: CrossChain.Route, operation: CrossChain.Operation) {
-  try {
-    const { status } = await route.status(operation, { signal: AbortSignal.timeout(10_000) });
-    return status === "completed" || status === "refunded" ? status : ("open" as const);
-  } catch {
-    return "open" as const;
-  }
+export async function settledOutcome(
+  route: NonNullable<ReturnType<typeof operationRoute>>,
+  operation: CrossChain.Operation,
+) {
+  const status = await operationStatus(route, operation, 10).catch(() => "open" as const);
+  return status === "completed" || status === "refunded" ? status : ("open" as const);
 }
 
 /** E_PAYMENT_OUTCOME_UNKNOWN for funding that may still deliver, with the recover command. */

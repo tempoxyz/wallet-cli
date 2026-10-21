@@ -14,7 +14,7 @@ import { Funder } from "machine-fetch";
 import type { CrossChain } from "machine-fetch/cross-chain";
 import { type Address, encodeFunctionData, erc20Abi, type Hex, pad, parseAbi } from "viem";
 
-import { type DeliveredStatus, namedFetch, transactionHashes } from "./delivery.js";
+import { namedFetch, transactionHashes } from "./delivery.js";
 import { FundingLimitError, SourceBalanceError } from "./funding-limit.js";
 
 export const stargateAbi = parseAbi([
@@ -298,7 +298,7 @@ export function stargateRoute(
       options.onProgress?.({ type: "submitted", hash, amount: amountLD, fee: nativeFee, request });
       return { reference: hash };
     },
-    async status(operation, { signal }): Promise<DeliveredStatus> {
+    async status(operation, { signal }): Promise<CrossChain.Status> {
       const hash = operation.reference ?? (await unrecordedSend(operation));
       // Without the transaction hash there is nothing to look up: reconcile by hand.
       if (!hash || !/^0x[\da-fA-F]{64}$/.test(hash)) return { status: "actionRequired" };

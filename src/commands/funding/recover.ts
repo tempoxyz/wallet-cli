@@ -3,7 +3,7 @@ import type { CrossChain } from "machine-fetch/cross-chain";
 
 import { nonDestructive } from "../../cli/command.js";
 import { loadAttempt, removeAttempt } from "../../payment/attempts.js";
-import { operationRoute } from "../../request/cross-chain.js";
+import { operationRoute, operationStatus } from "../../request/cross-chain.js";
 import {
   fundingRecoverArgs,
   fundingRecoverOptions,
@@ -44,8 +44,8 @@ const statuses = {
 } as const;
 
 /**
- * Reconciles funding operation `id` (Phase 4): asks its route how it stands, never quoting or
- * submitting again. A completed or refunded operation, or one that never started, is settled, and
+ * Reconciles funding operation `id` (Phase 4): asks its route how it stands, and confirms a
+ * completion on the destination chain, never quoting or submitting again. A completed or refunded operation, or one that never started, is settled, and
  * its attempt is forgotten so the request can fund anew; a pending one names this command again.
  */
 export async function recoverFunding(id: string, networkFlag: string | undefined) {
@@ -73,19 +73,15 @@ export async function recoverFunding(id: string, networkFlag: string | undefined
     });
   const reference = operation.reference ?? operation.quote.reference;
   const result = await Promise.resolve()
-    .then(() =>
-      route.status(operation as CrossChain.Operation, {
-        signal: AbortSignal.timeout(15_000),
-      }),
-    )
+    .then(() => operationStatus(route, operation as CrossChain.Operation, 15))
     .catch(() => {
       throw walletError({
         code: "E_NETWORK",
-        message: `${route.name === "stargate" ? "LayerZero Scan" : "Relay"} did not report funding operation ${escapeInvisible(id)}; retry shortly.`,
+        message: `${route.route.name === "stargate" ? "LayerZero Scan" : "Relay"} did not report funding operation ${escapeInvisible(id)}; retry shortly.`,
         retryable: true,
       });
     });
-  const status = statuses[result.status];
+  const status = statuses[result];
   if (status === "completed" || status === "refunded") await removeAttempt(id);
   return {
     ...fields,
