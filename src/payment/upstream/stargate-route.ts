@@ -12,7 +12,15 @@
  */
 import { Funder } from "machine-fetch";
 import type { CrossChain } from "machine-fetch/cross-chain";
-import { type Address, encodeFunctionData, erc20Abi, type Hex, pad, parseAbi } from "viem";
+import {
+  type Address,
+  encodeFunctionData,
+  erc20Abi,
+  type Hex,
+  keccak256,
+  pad,
+  parseAbi,
+} from "viem";
 
 import { namedFetch, transactionHashes } from "./delivery.js";
 import { FundingLimitError, SourceBalanceError } from "./funding-limit.js";
@@ -67,16 +75,29 @@ export type StargateRouteOptions = {
   fetch?: typeof globalThis.fetch;
   /** Validity of a quote, in seconds; messaging fees move with gas prices. @default 30 */
   quoteTtlSeconds?: number;
-  /** Sign and broadcast exactly `calls`, atomically; resolve with the transaction hash. */
-  execute(calls: readonly { to: Address; data: Hex }[], request: CrossChain.Request): Promise<Hex>;
+  /**
+   * Sign exactly `calls` as one atomic transaction that cannot land after `validBefore` (Unix
+   * seconds), without broadcasting; resolve with the signed, serialized transaction.
+   */
+  sign(
+    calls: readonly { to: Address; data: Hex }[],
+    request: CrossChain.Request,
+    validBefore: number,
+  ): Promise<Hex>;
+  /** Broadcast a transaction `sign` returned and wait for it; resolve with its hash. */
+  broadcast(serialized: Hex): Promise<Hex>;
   /** Whether the source transaction `hash` reverted, so nothing moved; `undefined` if unknown. */
   reverted?(hash: Hex): Promise<boolean | undefined>;
-  /** The source chain's latest block number, saved with each quote to bound `findSent`. */
-  blockNumber?(): Promise<bigint>;
+  /**
+   * Whether the source transaction `hash` can no longer land: the source chain is past `after`
+   * (Unix seconds) and has no receipt for it. `false` when that cannot be read.
+   */
+  dropped?(hash: Hex, after: number): Promise<boolean>;
   /**
    * The transactions from block `fromBlock` on in which `owner` sent exactly `amountLD` through
-   * the OFT to `dstEid` (its `OFTSent` events). Recovery uses it when a run was killed after
-   * broadcasting a send but before recording its hash.
+   * the OFT to `dstEid` (its `OFTSent` events). Recovery uses it for an operation saved before the
+   * route recorded its hash ahead of broadcasting, by a run killed after broadcasting a send but
+   * before recording it.
    */
   findSent?(search: {
     owner: Address;
@@ -96,9 +117,21 @@ type StargateQuoteData = {
   dstEid: number;
   amountLD: bigint;
   nativeFee: bigint;
-  /** The source chain's block when quoted: no send for this operation is older. */
+  /** When the send stops being valid on Tempo, in Unix seconds: the quote's expiry. */
+  validBefore?: number | undefined;
+  /**
+   * The source chain's block when quoted, saved by earlier versions, which recorded the send's
+   * hash only after broadcasting: no send for this operation is older.
+   */
   fromBlock?: bigint | undefined;
 };
+
+/**
+ * How long past a send's `validBefore` the source chain must be before a send with no receipt
+ * counts as dropped, so a load-balanced RPC whose receipts lag its head cannot refund one that
+ * landed.
+ */
+const droppedAfterSeconds = 60;
 
 const scanStatuses: Record<string, "pending" | "completed" | "actionRequired"> = {
   INFLIGHT: "pending",
@@ -143,8 +176,9 @@ export function stargateRoute(
   };
 
   /**
-   * The one send an operation without a recorded hash made: a run killed between broadcasting and
-   * recording leaves that window. None, several, or an unbounded search is left for a human.
+   * The one send an operation without a recorded hash made. Only operations saved before the
+   * route recorded its hash ahead of broadcasting can lack one: a run killed between broadcasting
+   * and recording left that window. None, several, or an unbounded search is left for a human.
    */
   const unrecordedSend = async (operation: CrossChain.Operation) => {
     const data = operation.quote.data as StargateQuoteData | undefined;
@@ -204,8 +238,8 @@ export function stargateRoute(
       const required = amountLD + nativeFee + options.maxGas;
       if (options.maxSpend !== undefined && required > options.maxSpend)
         throw new FundingLimitError(required, options.maxSpend, request.from.asset);
-      const fromBlock = await options.blockNumber?.().catch(() => undefined);
-      const data: StargateQuoteData = { dstEid, amountLD, nativeFee, fromBlock };
+      const expiresAt = Math.min(Math.floor(Date.now() / 1000) + ttl, request.deadline);
+      const data: StargateQuoteData = { dstEid, amountLD, nativeFee, validBefore: expiresAt };
       // The messaging fee is debited in the same token, so it is part of the input: machine-fetch
       // ranks routes by `amountIn` alone ([MF-22]), and this keeps Stargate's flat fee in the
       // comparison with Relay.
@@ -215,7 +249,7 @@ export function stargateRoute(
         maxAmountIn: debit,
         amountOut: request.amountOut,
         minAmountOut: request.amountOut,
-        expiresAt: Math.min(Math.floor(Date.now() / 1000) + ttl, request.deadline),
+        expiresAt,
         reference: `stargate:${request.operationId}`,
         data,
         fees: [
@@ -236,7 +270,7 @@ export function stargateRoute(
         ],
       };
     },
-    async submit({ quote, request }) {
+    async submit({ quote, request, saveReference }) {
       const dstEid = check(request);
       const data = quote.data as StargateQuoteData | undefined;
       if (
@@ -244,10 +278,15 @@ export function stargateRoute(
         data.dstEid !== dstEid ||
         typeof data.amountLD !== "bigint" ||
         typeof data.nativeFee !== "bigint" ||
-        data.amountLD + data.nativeFee !== quote.maxAmountIn
+        data.amountLD + data.nativeFee !== quote.maxAmountIn ||
+        data.validBefore !== quote.expiresAt
       )
         throw new Funder.FundingError("Stargate quote data is malformed");
-      const { amountLD, nativeFee } = data;
+      if (!saveReference)
+        throw new Funder.FundingError(
+          "The Stargate route must save its send's hash before sending",
+        );
+      const { amountLD, nativeFee, validBefore } = data;
       const calls = [
         {
           to: options.token,
@@ -294,7 +333,14 @@ export function stargateRoute(
           }),
         },
       ] as const;
-      const hash = await options.execute(calls, request);
+      const serialized = await options.sign(calls, request, validBefore);
+      const hash = keccak256(serialized);
+      // Saved before broadcasting: a run killed in between leaves the hash for `status` to find,
+      // and a send that never lands is dropped once Tempo passes `validBefore`.
+      await saveReference(hash);
+      const sent = await options.broadcast(serialized);
+      if (sent.toLowerCase() !== hash)
+        throw new Funder.FundingError("The Stargate send's hash is not the one saved");
       options.onProgress?.({ type: "submitted", hash, amount: amountLD, fee: nativeFee, request });
       return { reference: hash };
     },
@@ -302,7 +348,16 @@ export function stargateRoute(
       const hash = operation.reference ?? (await unrecordedSend(operation));
       // Without the transaction hash there is nothing to look up: reconcile by hand.
       if (!hash || !/^0x[\da-fA-F]{64}$/.test(hash)) return { status: "actionRequired" };
-      if ((await options.reverted?.(hash as Hex)) === true) return { status: "refunded" };
+      const reverted = await options.reverted?.(hash as Hex);
+      if (reverted === true) return { status: "refunded" };
+      // A saved send that never landed, nor can any more, moved nothing.
+      const { validBefore } = (operation.quote.data ?? {}) as StargateQuoteData;
+      if (
+        reverted === undefined &&
+        typeof validBefore === "number" &&
+        (await options.dropped?.(hash as Hex, validBefore + droppedAfterSeconds)) === true
+      )
+        return { status: "refunded" };
       const response = await fetchJson(`${scanUrl}/v1/messages/tx/${hash}`, { signal });
       if (response.status === 404) return { status: "pending" };
       if (!response.ok)

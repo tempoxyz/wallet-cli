@@ -2,8 +2,24 @@ import { Funder } from "machine-fetch";
 import { type CrossChain, CrossChainFunder } from "machine-fetch/cross-chain";
 import type { Evm } from "machine-fetch/evm";
 import { FileStore } from "machine-fetch/stores/file";
-import { type Address, erc20Abi, formatUnits, type Hex, parseAbiItem, parseUnits } from "viem";
-import { getBlockNumber, getLogs, getTransactionReceipt, sendTransactionSync } from "viem/actions";
+import {
+  type Address,
+  erc20Abi,
+  formatUnits,
+  type Hex,
+  parseAbiItem,
+  parseUnits,
+  TransactionReceiptNotFoundError,
+} from "viem";
+import {
+  getBlock,
+  getLogs,
+  getTransactionReceipt,
+  prepareTransactionRequest,
+  sendRawTransactionSync,
+  sendTransactionSync,
+  signTransaction,
+} from "viem/actions";
 
 import { CtaError } from "../cli/incur-compat.js";
 import {
@@ -95,6 +111,14 @@ export function fundingAccounts(
 
 type Signer = {
   sendCalls(calls: readonly { to: Address; data: Hex }[], feeToken: Address): Promise<Hex>;
+  /** Signs `calls` as one transaction valid before `validBefore` (Unix seconds), unsent. */
+  signCalls(
+    calls: readonly { to: Address; data: Hex }[],
+    feeToken: Address,
+    validBefore: number,
+  ): Promise<Hex>;
+  /** Broadcasts a transaction `signCalls` returned, waits for it, and resolves with its hash. */
+  sendSigned(serialized: Hex): Promise<Hex>;
 };
 
 /** Stargate's OFT event for a send, by the account that sent it. */
@@ -121,10 +145,11 @@ export function fundingRoutes(options: {
   const { network, asset, destination } = options;
   const symbol = options.symbol ?? tokenSymbol(asset, network.chainId) ?? asset;
   const write = (text: string) => options.stderr?.write(text);
-  const send = async (calls: readonly { to: Address; data: Hex }[]) => {
+  const signer = () => {
     if (!options.signer) throw new Funder.FundingError("Reconciliation never sends funding");
-    return options.signer.sendCalls(calls, asset);
+    return options.signer;
   };
+  const send = (calls: readonly { to: Address; data: Hex }[]) => signer().sendCalls(calls, asset);
   const routes: CrossChain.Route[] = [];
   // Both routes refuse a quote the source account cannot cover, before anything is signed.
   const sourceClient = createTempoPublicClient(network.chainId);
@@ -180,12 +205,20 @@ export function fundingRoutes(options: {
         ...(process.env.TEMPO_LAYERZERO_SCAN_URL
           ? { scanUrl: process.env.TEMPO_LAYERZERO_SCAN_URL }
           : {}),
-        execute: send,
+        sign: async (calls, _request, validBefore) => signer().signCalls(calls, asset, validBefore),
+        broadcast: async (serialized) => signer().sendSigned(serialized),
         async reverted(hash) {
           const receipt = await getTransactionReceipt(client, { hash }).catch(() => undefined);
           return receipt ? receipt.status === "reverted" : undefined;
         },
-        blockNumber: () => getBlockNumber(client),
+        async dropped(hash, after) {
+          const block = await getBlock(client).catch(() => undefined);
+          if (!block || block.timestamp <= BigInt(after)) return false;
+          return getTransactionReceipt(client, { hash }).then(
+            () => false,
+            (error: unknown) => error instanceof TransactionReceiptNotFoundError,
+          );
+        },
         async findSent({ owner, dstEid, amountLD, fromBlock }) {
           const logs = await getLogs(client, {
             address: stargate.oft,
@@ -341,6 +374,25 @@ export async function crossChainFunders(options: {
       const { status, transactionHash } = receipt as { status: string; transactionHash: Hex };
       if (status !== "success") throw new Funder.FundingError("Funding transaction reverted");
       return transactionHash;
+    },
+    async signCalls(calls, feeToken, validBefore) {
+      const account = (client as { account?: unknown }).account;
+      const request = await prepareTransactionRequest(
+        client as never,
+        {
+          account,
+          calls: calls.map((call) => ({ to: call.to, data: call.data })),
+          feeToken,
+          validBefore,
+        } as never,
+      );
+      return signTransaction(client as never, { ...(request as object), account } as never);
+    },
+    async sendSigned(serializedTransaction) {
+      const receipt = await sendRawTransactionSync(client as never, { serializedTransaction });
+      if (receipt.status !== "success")
+        throw new Funder.FundingError("Funding transaction reverted");
+      return receipt.transactionHash;
     },
   };
   const balances = await sourceBalances(network, source);

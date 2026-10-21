@@ -1,4 +1,4 @@
-import { readdir, rm } from "node:fs/promises";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { erc20Abi } from "viem";
@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, inject, test } from "vitest";
 
 import { cliEnv, devChains, runCli, startCli } from "./cli.js";
 import { laggingRpc } from "./lagging-rpc.js";
-import { evmBalance, evmClient, tempoBalance } from "./localnet.js";
+import { evmBalance, evmClient, tempoBalance, tempoClient } from "./localnet.js";
 import { type HostileQuote, type StandInRelay, standInRelay } from "./relay.js";
 import { type StandInStargate, standInStargate } from "./stargate.js";
 import { evmServer, type LocalServer, serve } from "./servers.js";
@@ -326,6 +326,11 @@ describe("cross-chain funding", () => {
       JSON.parse(listed.stdout) as { operations: { id: string; route: string | null }[] }
     ).operations;
     expect(operation).toMatchObject({ route: "stargate" });
+    // The send's hash was saved before it was broadcast.
+    const operations = join(wallet.home, ".tempo", "wallet", "funding", "operations");
+    const references = (await readdir(operations)).filter((name) => name.endsWith(".reference"));
+    expect(references).toHaveLength(1);
+    expect(await readFile(join(operations, references[0]!), "utf8")).toContain(stargate.sent[0]);
     const pending = await runCli(
       "wallet",
       ["funding", "recover", operation!.id, "--format", "json"],
@@ -345,19 +350,28 @@ describe("cross-chain funding", () => {
     expect(await evmBalance(net, net.evmUsdc, endpoint.seller)).toBe(100_000n);
   });
 
-  test("finds a Stargate send whose hash was never recorded, instead of asking for a human", async () => {
+  test("finds the Stargate send of an operation saved without its hash, from before it was saved first", async () => {
     const wallet = await localWallet(net, { funds: [{ token: net.usdc, limit: 1_000_000n }] });
     const endpoint = await x402Endpoint();
+    const fromBlock = await tempoClient(net).getBlockNumber();
     stargate.hold(true);
 
     const first = startCli("request", [endpoint.url], env(wallet));
     await stargate.waitForSends(1);
     first.child.kill("SIGKILL");
     await first.done;
-    // A kill between broadcasting and recording leaves the operation without its hash.
+    // Earlier versions saved the send's hash only after broadcasting, and the quote's block for
+    // the search: a kill in between left such an operation without its hash.
     const operations = join(wallet.home, ".tempo", "wallet", "funding", "operations");
-    for (const name of await readdir(operations))
-      if (name.endsWith(".reference")) await rm(join(operations, name));
+    for (const name of await readdir(operations)) {
+      const path = join(operations, name);
+      if (name.endsWith(".reference")) await rm(path);
+      if (!name.endsWith(".json")) continue;
+      const record = JSON.parse(await readFile(path, "utf8"));
+      const { validBefore: _, ...data } = record.operation.quote.data;
+      record.operation.quote.data = { ...data, fromBlock: `~machine-fetch:bigint:${fromBlock}` };
+      await writeFile(path, JSON.stringify(record));
+    }
 
     const listed = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
     const [operation] = (JSON.parse(listed.stdout) as { operations: { id: string }[] }).operations;

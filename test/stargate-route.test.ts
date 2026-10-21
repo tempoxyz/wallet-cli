@@ -1,5 +1,13 @@
 import type { CrossChain } from "machine-fetch/cross-chain";
-import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress, type Hex, pad } from "viem";
+import {
+  decodeFunctionData,
+  encodeFunctionData,
+  erc20Abi,
+  getAddress,
+  type Hex,
+  keccak256,
+  pad,
+} from "viem";
 import { describe, expect, it } from "vitest";
 
 import { FundingLimitError, SourceBalanceError } from "../src/payment/upstream/funding-limit.js";
@@ -15,7 +23,8 @@ const oft = "0x8c76e2F6C5ceDA9AA7772e7efF30280226c44392";
 const wrapper = "0x0cEb237E109eE22374a567c6b09F373C73FA4cBb";
 const wallet = "0x00000000000000000000000000000000000000a1";
 const payer = "0x00000000000000000000000000000000000000b2";
-const hash = `0x${"12".repeat(32)}` as Hex;
+const signed = "0x76c0ffee" as Hex;
+const hash = keccak256(signed);
 
 const request: CrossChain.Request = {
   amountOut: 1_000_000n,
@@ -54,6 +63,7 @@ function route(options: Options = {}) {
   const feeBps = options.feeBps ?? 1n;
   const reads: { functionName: string; args: readonly unknown[] }[] = [];
   const executed: (readonly { to: string; data: Hex }[])[] = [];
+  const steps: string[] = [];
   const client = {
     async readContract({ functionName, args }: { functionName: string; args: readonly unknown[] }) {
       reads.push({ functionName, args });
@@ -82,13 +92,25 @@ function route(options: Options = {}) {
     client,
     maxGas: 20_000n,
     fetch,
-    execute: async (calls) => {
+    sign: async (calls, _request, validBefore) => {
       executed.push(calls);
+      steps.push(`sign before ${validBefore}`);
+      return signed;
+    },
+    broadcast: async (serialized) => {
+      steps.push(`broadcast ${serialized}`);
       return hash;
     },
     ...options,
   });
-  return { stargate, reads, executed };
+  /** Submits `quoted` the way machine-fetch does, saving the reference the route names. */
+  const submit = (
+    quoted: CrossChain.BoundedQuote,
+    saveReference = async (value: string) => {
+      steps.push(`save ${value}`);
+    },
+  ) => stargate.submit({ quote: quoted, request, saveReference });
+  return { stargate, reads, executed, steps, submit };
 }
 
 describe("Stargate route quotes", () => {
@@ -167,15 +189,9 @@ describe("Stargate route quotes", () => {
 
 describe("Stargate route submission", () => {
   it("sends exactly the fee wrap, approvals, and sendToken in one batch", async () => {
-    const { stargate, executed } = route();
+    const { stargate, executed, submit } = route();
     const quoted = await stargate.quote(request);
-    await expect(
-      stargate.submit({
-        quote: quoted,
-        request,
-        limits: { maxAmountIn: quoted.maxAmountIn, fees: quoted.fees, expiresAt: quoted.expiresAt },
-      } as never),
-    ).resolves.toEqual({ reference: hash });
+    await expect(submit(quoted)).resolves.toEqual({ reference: hash });
     expect(executed).toHaveLength(1);
     const [calls] = executed;
     const approve = (spender: string, amount: bigint) =>
@@ -215,24 +231,61 @@ describe("Stargate route submission", () => {
     ]);
   });
 
-  it("refuses saved quote data that disagrees with the bounded quote", async () => {
-    const { stargate, executed } = route();
+  it("signs a send valid until the quote expires, and saves its hash before broadcasting it", async () => {
+    const { stargate, steps, submit } = route();
     const quoted = await stargate.quote(request);
-    const tampered = { ...quoted, data: { ...(quoted.data as object), amountLD: 2_000_000n } };
+    expect(quoted.data).toMatchObject({ validBefore: quoted.expiresAt });
+
+    await submit(quoted);
+
+    expect(steps).toEqual([
+      `sign before ${quoted.expiresAt}`,
+      `save ${hash}`,
+      `broadcast ${signed}`,
+    ]);
+  });
+
+  it("never broadcasts a send whose hash could not be saved", async () => {
+    const { stargate, steps, submit } = route();
+    const quoted = await stargate.quote(request);
+
     await expect(
-      stargate.submit({ quote: tampered, request, limits: tampered } as never),
-    ).rejects.toThrow("Stargate quote data is malformed");
+      submit(quoted, async () => {
+        throw new Error("disk full");
+      }),
+    ).rejects.toThrow("disk full");
+    await expect(stargate.submit({ quote: quoted, request })).rejects.toThrow(
+      "must save its send's hash before sending",
+    );
+    expect(steps.filter((step) => step.startsWith("broadcast"))).toEqual([]);
+  });
+
+  it("rejects a broadcast whose hash is not the one saved", async () => {
+    const { stargate, submit } = route({ broadcast: async () => `0x${"34".repeat(32)}` });
+    await expect(submit(await stargate.quote(request))).rejects.toThrow(
+      "The Stargate send's hash is not the one saved",
+    );
+  });
+
+  it.each([
+    ["amount", { amountLD: 2_000_000n }],
+    ["expiry", { validBefore: 1 }],
+  ])("refuses saved quote data whose %s disagrees with the bounded quote", async (_, change) => {
+    const { stargate, executed, submit } = route();
+    const quoted = await stargate.quote(request);
+    const tampered = { ...quoted, data: { ...(quoted.data as object), ...change } };
+    await expect(submit(tampered)).rejects.toThrow("Stargate quote data is malformed");
     expect(executed).toHaveLength(0);
   });
 });
 
 describe("Stargate route status", () => {
-  const operation = (reference?: string) =>
+  const operation = (reference?: string, data?: Record<string, unknown>) =>
     ({
       operationId: "attempt-1",
       route: "stargate",
       reference,
-      quote: { reference: "stargate:attempt-1" },
+      quote: { reference: "stargate:attempt-1", data },
     }) as never;
   const signal = new AbortController().signal;
 
@@ -283,6 +336,52 @@ describe("Stargate route status", () => {
     });
   });
 
+  describe("a saved send that never landed", () => {
+    const quoted = { dstEid: 30184, amountLD: 1_000_100n, nativeFee: 258_429n, validBefore: 1_000 };
+
+    it("is refunded once Tempo is a minute past its validity and has no receipt", async () => {
+      const asked: [string, number][] = [];
+      const { stargate } = route({
+        reverted: async () => undefined,
+        dropped: async (sent, after) => (asked.push([sent, after]), true),
+      });
+      await expect(stargate.status(operation(hash, quoted), { signal })).resolves.toEqual({
+        status: "refunded",
+      });
+      expect(asked).toEqual([[hash, 1_060]]);
+    });
+
+    it("is tracked with LayerZero while it may still land", async () => {
+      const { stargate } = route({
+        reverted: async () => undefined,
+        dropped: async () => false,
+        scan: () => new Response("", { status: 404 }),
+      });
+      await expect(stargate.status(operation(hash, quoted), { signal })).resolves.toEqual({
+        status: "pending",
+      });
+    });
+
+    it.each([
+      ["a send that landed", false, quoted],
+      [
+        "an operation saved before sends had a validity",
+        undefined,
+        { ...quoted, validBefore: undefined },
+      ],
+    ])("is never assumed for %s", async (_, reverted, data) => {
+      let asked = false;
+      const { stargate } = route({
+        reverted: async () => reverted,
+        dropped: async () => ((asked = true), true),
+      });
+      await expect(stargate.status(operation(hash, data), { signal })).resolves.toMatchObject({
+        status: "completed",
+      });
+      expect(asked).toBe(false);
+    });
+  });
+
   it("needs reconciliation by hand without a transaction hash", async () => {
     await expect(route().stargate.status(operation(undefined), { signal })).resolves.toEqual({
       status: "actionRequired",
@@ -290,7 +389,8 @@ describe("Stargate route status", () => {
   });
 
   describe("a send whose hash was never recorded", () => {
-    // A run killed after broadcasting but before recording the hash leaves only the quote.
+    // Before the route saved its hash ahead of broadcasting, a run killed after broadcasting but
+    // before recording the hash left only the quote, with the block it was made at.
     const unrecorded = (data: Record<string, unknown>) =>
       ({
         operationId: "attempt-1",
@@ -299,11 +399,6 @@ describe("Stargate route status", () => {
         request,
       }) as never;
     const data = { dstEid: 30184, amountLD: 1_000_100n, nativeFee: 258_429n, fromBlock: 900n };
-
-    it("records the source block with each quote", async () => {
-      const quoted = await route({ blockNumber: async () => 900n }).stargate.quote(request);
-      expect(quoted.data).toMatchObject({ fromBlock: 900n });
-    });
 
     it("finds the one send of exactly that amount from the quote's block on, then tracks it", async () => {
       const searches: unknown[] = [];
