@@ -13,6 +13,8 @@ import { destinationBalance, tempoFundingInputs } from "../shared/chains.js";
 import { rpcChainCheck, tokenBalance } from "../wallet/key-output.js";
 import { loadRemotePayer } from "../wallet/remote-payer.js";
 import { challengeAmount, normalizedChallengeChainId, sessionDetails } from "./challenge.js";
+import { crossChainEnabled } from "./cross-chain.js";
+import { crossChainFundingQuote } from "./cross-chain-quote.js";
 import { chargeFunder } from "./funding.js";
 import type { EvmOffer } from "./offers.js";
 import {
@@ -149,7 +151,8 @@ export async function paymentQuote(
 /**
  * The `--dry-run` quote for an EVM offer, in the shape of a Tempo charge's. The payer is the
  * private-key signer or the wallet's remote payer, which a quote never creates; `balance` is its
- * USDC on the offer's chain, `null` when unknown.
+ * USDC on the offer's chain, `null` when unknown. With `--funding auto`, a payer short of the
+ * amount gets `funding`: the bridge the payment would take, quoted but never run.
  */
 export async function evmPaymentQuote(
   offer: EvmOffer,
@@ -169,6 +172,18 @@ export async function evmPaymentQuote(
       ? 0n
       : null;
   const cap = spendCap(options);
+  const source =
+    signer?.account.address ?? (wallet && !("code" in wallet) ? wallet.address : undefined);
+  const funding =
+    source && balance !== null && balance < requirement.amount && crossChainEnabled(options)
+      ? await crossChainFundingQuote({
+          destination,
+          source: source as Address,
+          payer: (payer ?? source) as Address,
+          shortfall: requirement.amount - balance,
+          request: options,
+        })
+      : undefined;
   return {
     payment_required: true,
     method: offer.kind === "x402" ? "x402" : offer.challenge.method,
@@ -192,5 +207,6 @@ export async function evmPaymentQuote(
     max_spend: cap,
     within_budget: requirement.amount <= parseUnits(cap, 6),
     signer: { address: payer?.toLowerCase() ?? null, source: signer ? signer.source : "wallet" },
+    ...(funding ? { funding } : {}),
   };
 }

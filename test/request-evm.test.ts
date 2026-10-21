@@ -8,6 +8,7 @@ import { Challenge, Credential } from "mppx";
 import { Header as X402Header } from "mppx/x402";
 import {
   decodeFunctionData,
+  encodeFunctionData,
   encodeFunctionResult,
   erc20Abi,
   getAddress,
@@ -16,6 +17,8 @@ import {
 } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { listAttempts, operationsDirectory } from "../src/payment/attempts.js";
+import { relayDepositoryAbi } from "../src/payment/upstream/relay-route.js";
 import { runRequest } from "../src/request/run.js";
 import {
   ensureRemotePayer,
@@ -29,6 +32,9 @@ const exec = promisify(execFile);
 const baseUsdc = getAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
 const tempoUsdc = "0x20c000000000000000000000b9537d11c60e8b50";
 const ousd = "0x20c0000000000000000000006a37da5c996874be";
+const usdce = "0x20c000000000000000000000b9537d11c60e8b50";
+/** Relay's depository on Tempo mainnet, which the CLI pins. */
+const depository = "0x4cD00E387622C35bDDB9b4c962C136462338BC31";
 const seller = "0x00000000000000000000000000000000000000a1";
 const servers: ReturnType<typeof createServer>[] = [];
 /** Balances the stub RPC reports, by lowercase `token:owner`. */
@@ -545,5 +551,244 @@ describe("whoami", () => {
         },
       ],
     });
+  });
+});
+
+/**
+ * A stand-in for Relay's quote API: a contract-deposit quote for the requested exact output, at
+ * 0.3% plus 0.001 of the origin token, or `status` when given. Records each quote request.
+ */
+async function relayStub(options: { status?: number } = {}) {
+  const quotes: Record<string, string>[] = [];
+  const url = await listen(
+    createServer(async (req, res) => {
+      let text = "";
+      for await (const chunk of req) text += chunk;
+      if (req.url !== "/quote/v2") return res.writeHead(404).end();
+      const body = JSON.parse(text) as Record<string, string>;
+      quotes.push(body);
+      if (options.status) return res.writeHead(options.status).end("{}");
+      const amountOut = BigInt(body.amount!);
+      const amountIn = amountOut + (amountOut * 30n) / 10_000n + 1_000n;
+      const requestId = `0x${"ab".repeat(32)}`;
+      const orderId = `0x${"cd".repeat(32)}` as const;
+      const tx = (to: string, data: string) => ({
+        chainId: 4217,
+        from: body.user,
+        to,
+        value: "0",
+        data,
+      });
+      const step = (id: string, data: ReturnType<typeof tx>) => ({
+        id,
+        kind: "transaction",
+        requestId,
+        items: [{ status: "incomplete", data }],
+      });
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          details: {
+            sender: body.user,
+            recipient: body.recipient,
+            currencyIn: {
+              amount: amountIn.toString(),
+              currency: { chainId: 4217, address: body.originCurrency },
+            },
+            currencyOut: {
+              amount: amountOut.toString(),
+              currency: { chainId: 8453, address: body.destinationCurrency },
+            },
+          },
+          protocol: { v2: { orderId } },
+          steps: [
+            step(
+              "approve",
+              tx(
+                body.originCurrency!,
+                encodeFunctionData({
+                  abi: erc20Abi,
+                  functionName: "approve",
+                  args: [depository, amountIn],
+                }),
+              ),
+            ),
+            step(
+              "deposit",
+              tx(
+                depository,
+                encodeFunctionData({
+                  abi: relayDepositoryAbi,
+                  functionName: "depositErc20",
+                  args: [body.user as Address, body.originCurrency as Address, amountIn, orderId],
+                }),
+              ),
+            ),
+          ],
+        }),
+      );
+    }),
+  );
+  vi.stubEnv("TEMPO_RELAY_URL", url);
+  return { quotes };
+}
+
+describe("bridged dry run", () => {
+  const wallet = () => walletState().accounts[0]!.address;
+  const quote = async (args: string[] = []) => {
+    const endpoint = await service({ x402: [x402Accept()] });
+    const result = await run(["--dry-run", "--funding", "auto", ...args], endpoint.url);
+    return { ...JSON.parse(result.stdout), stderr: result.stderr };
+  };
+
+  it("quotes the bridge a payment would take for the payer's shortfall, without saving or signing", async () => {
+    const relay = await relayStub();
+    const payer = await remotePayerAddress();
+    fund(ousd, wallet(), 1_000_000n);
+    fund(baseUsdc, payer, 30_000n);
+
+    const output = await quote();
+
+    expect(output).toMatchObject({
+      method: "x402",
+      amount: "0.1",
+      balance: "0.03",
+      signer: { address: payer.toLowerCase() },
+      funding: {
+        route: "relay",
+        inputs: [ousd],
+        shortfall: "0.07",
+        raw_shortfall: "70000",
+        source_token: ousd,
+        source_symbol: "OUSD",
+        amount_in: "0.07121",
+        raw_amount_in: "71210",
+        fee: "0.00121",
+        gas: "0.02",
+        total: "0.09121",
+        max_funding_spend: "10.6",
+        within_funding_budget: true,
+        quotes: [
+          {
+            route: "relay",
+            amount_in: "0.07121",
+            fee: "0.00121",
+            gas: "0.02",
+            total: "0.09121",
+            within_funding_budget: true,
+            reason: null,
+          },
+        ],
+      },
+    });
+    expect(output.funding).not.toHaveProperty("reason");
+    expect(relay.quotes).toEqual([
+      expect.objectContaining({
+        amount: "70000",
+        originCurrency: getAddress(ousd),
+        recipient: payer,
+        user: wallet(),
+        tradeType: "EXACT_OUTPUT",
+      }),
+    ]);
+    expect(output.stderr).toBe("");
+    expect(await listAttempts()).toEqual([]);
+    await expect(stat(operationsDirectory())).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reports whether --max-funding-spend covers the bridge", async () => {
+    await relayStub();
+    fund(ousd, wallet(), 1_000_000n);
+
+    expect(await quote(["--max-funding-spend", "0.12"])).toMatchObject({
+      funding: { total: "0.1213", max_funding_spend: "0.12", within_funding_budget: false },
+    });
+    expect(await quote(["--max-funding-spend", "0.1213"])).toMatchObject({
+      funding: { route: "relay", within_funding_budget: true },
+    });
+  });
+
+  it("quotes a wallet without a remote payer to its own address and creates none", async () => {
+    const relay = await relayStub();
+    fund(ousd, wallet(), 1_000_000n);
+
+    expect(await quote()).toMatchObject({
+      balance: "0",
+      signer: { address: null },
+      funding: { route: "relay", shortfall: "0.1", amount_in: "0.1013" },
+    });
+    expect(relay.quotes[0]).toMatchObject({ recipient: wallet(), user: wallet() });
+    expect(await loadRemotePayer(wallet())).toBeUndefined();
+  });
+
+  it("lists each route's quote or why it declined, choosing the one that quoted", async () => {
+    await relayStub();
+    // Stargate bridges USDC.e, the preferred source; the stub RPC answers none of its reads.
+    fund(usdce, wallet(), 1_000_000n);
+    fund(ousd, wallet(), 1_000_000n);
+
+    const { funding } = await quote();
+
+    expect(funding).toMatchObject({
+      route: "relay",
+      inputs: [usdce],
+      source_symbol: "USDC.e",
+      quotes: [
+        { route: "relay", amount_in: "0.1013", reason: null },
+        {
+          route: "stargate",
+          amount_in: null,
+          within_funding_budget: null,
+          reason: expect.any(String),
+        },
+      ],
+    });
+    expect(funding.quotes[1].reason.length).toBeGreaterThan(0);
+  });
+
+  it("names why no route can fund the payment", async () => {
+    await relayStub({ status: 500 });
+    fund(ousd, wallet(), 1_000_000n);
+
+    expect(await quote()).toMatchObject({
+      funding: {
+        route: null,
+        inputs: [ousd],
+        amount_in: null,
+        within_funding_budget: null,
+        reason: "No trusted cross-chain route can fund the payment",
+        quotes: [{ route: "relay", reason: expect.stringContaining("HTTP 500") }],
+      },
+    });
+  });
+
+  it("names a wallet whose tokens cannot cover the shortfall, quoting nothing", async () => {
+    const relay = await relayStub();
+    fund(ousd, wallet(), 50_000n);
+
+    expect(await quote()).toMatchObject({
+      funding: {
+        route: null,
+        inputs: [],
+        shortfall: "0.1",
+        quotes: [],
+        reason: "Bridging 0.1 USDC to base needs more than the wallet holds (0 USDC.e, 0.05 OUSD)",
+      },
+    });
+    expect(relay.quotes).toHaveLength(0);
+  });
+
+  it("previews no bridge when the payer holds the USDC, or without --funding auto", async () => {
+    const relay = await relayStub();
+    fund(ousd, wallet(), 1_000_000n);
+    const endpoint = await service({ x402: [x402Accept()] });
+
+    const off = JSON.parse((await run(["--dry-run"], endpoint.url)).stdout);
+    fund(baseUsdc, await remotePayerAddress(), 100_000n);
+    const held = await quote();
+
+    expect(off).not.toHaveProperty("funding");
+    expect(held).not.toHaveProperty("funding");
+    expect(relay.quotes).toHaveLength(0);
   });
 });

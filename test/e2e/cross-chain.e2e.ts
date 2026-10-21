@@ -514,8 +514,31 @@ describe("cross-chain funding", () => {
     const result = await runCli("request", ["--dry-run", endpoint.url], env(wallet));
 
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ amount: "0.1", symbol: "USDC" });
+    // The stand-in relay's fee on 0.10: 0.3% plus 0.001.
+    const relayQuote = {
+      route: "relay",
+      amount_in: "0.1013",
+      fee: "0.0013",
+      gas: "0.02",
+      total: "0.1213",
+      within_funding_budget: true,
+    };
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      amount: "0.1",
+      symbol: "USDC",
+      balance: "0",
+      funding: {
+        ...relayQuote,
+        quotes: expect.arrayContaining([{ ...relayQuote, reason: null }]),
+        inputs: [net.ousd.toLowerCase()],
+        shortfall: "0.1",
+        source_token: net.ousd.toLowerCase(),
+        max_funding_spend: "10.6",
+      },
+    });
+    expect(relay.quotes).toEqual([expect.objectContaining({ amount: "100000" })]);
     expect(relay.deposited).toHaveLength(0);
+    expect(stargate.sent).toHaveLength(0);
     expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
     const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
     expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });

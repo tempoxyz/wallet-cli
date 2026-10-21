@@ -307,7 +307,7 @@ export function operationRoute(operation: CrossChain.Operation, network: Network
  * `source`'s balance of each cross-chain source token on Tempo, unreadable as zero, with the
  * token's listed symbol, else its on-chain `symbol()`, else its address.
  */
-async function sourceBalances(network: Network, source: Address) {
+export async function sourceBalances(network: Network, source: Address) {
   const client = createTempoPublicClient(network.chainId);
   return Promise.all(
     crossChainSources(network.chainId).map(async (asset) => ({
@@ -323,6 +323,20 @@ async function sourceBalances(network: Network, source: Address) {
           .catch(() => asset)),
     })),
   );
+}
+
+/**
+ * The source tokens worth quoting for a destination shortfall of `needed`: any, when the payer
+ * already holds the USDC and nothing is bridged; otherwise those covering a rough lower bound on
+ * any route's input, the output plus 1%.
+ */
+export function bridgeableSources<entry extends { balance: bigint }>(
+  balances: readonly entry[],
+  needed: bigint,
+) {
+  if (needed === 0n) return [...balances];
+  const floor = needed + needed / 100n;
+  return balances.filter((entry) => entry.balance >= floor);
 }
 
 /**
@@ -363,16 +377,11 @@ export async function crossChainFunders(options: {
     },
   };
   const balances = await sourceBalances(network, source);
-  // A resumed operation reconciles from the token it was submitted in, whatever it holds now; when
-  // the payer already holds the USDC nothing is bridged and any source will do; otherwise only
-  // sources covering a rough lower bound on any route's input (the output plus 1%) are tried.
+  // A resumed operation reconciles from the token it was submitted in, whatever it holds now.
   const resume = options.resumeAsset?.toLowerCase();
-  const floor = options.needed + options.needed / 100n;
   const usable = resume
     ? balances.filter((entry) => entry.asset.toLowerCase() === resume)
-    : options.needed === 0n
-      ? balances
-      : balances.filter((entry) => entry.balance >= floor);
+    : bridgeableSources(balances, options.needed);
   if (usable.length === 0) {
     const held = balances
       .map((entry) => `${formatUnits(entry.balance, 6)} ${entry.symbol}`)
