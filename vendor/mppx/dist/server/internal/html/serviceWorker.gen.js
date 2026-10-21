@@ -1,3 +1,0 @@
-// Generated — do not edit.
-export const serviceWorker = "(function(){let e=self,t,n=`Authorization`;e.addEventListener(`activate`,t=>{t.waitUntil(e.clients.claim())}),e.addEventListener(`message`,e=>{if(!e.source)return;let r=e.data?.credential;typeof r!=`string`||!r.startsWith(`Payment `)||(t=r,typeof e.data?.header==`string`&&(n=e.data.header),e.ports[0]?.postMessage(`ack`))}),e.addEventListener(`fetch`,r=>{if(!t||r.request.mode!==`navigate`||new URL(r.request.url).origin!==e.location.origin)return;let i=new Headers(r.request.headers);i.set(n,t),t=void 0,r.respondWith(fetch(r.request,{headers:i})),e.registration.unregister()})})();";
-//# sourceMappingURL=serviceWorker.gen.js.map
