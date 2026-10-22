@@ -13,7 +13,13 @@ const sentEvent = parseAbiItem(
   "event Sent(uint32 dstEid, bytes32 to, uint256 amountLD, uint256 amountReceivedLD)",
 );
 
-type Message = { recipient: Address; amount: bigint; status: "INFLIGHT" | "DELIVERED" | "FAILED" };
+type Message = {
+  recipient: Address;
+  amount: bigint;
+  status: "INFLIGHT" | "DELIVERED" | "FAILED";
+  /** The destination transaction that delivered it. */
+  delivery?: Hex;
+};
 
 export type StandInStargate = Awaited<ReturnType<typeof standInStargate>>;
 
@@ -55,6 +61,7 @@ export async function standInStargate(net: Localnet) {
       args: [message.recipient, message.amount],
     });
     const receipt = await inventory.waitForTransactionReceipt({ hash });
+    message.delivery = hash;
     message.status = receipt.status === "success" ? "DELIVERED" : "FAILED";
   };
   let polling = true;
@@ -75,7 +82,14 @@ export async function standInStargate(net: Localnet) {
     if (request.method !== "GET" || !match) return json(404, { message: "Not found" });
     const message = messages.get(match[1]!.toLowerCase() as Hex) ?? messages.get(match[1] as Hex);
     if (!message) return json(404, { message: "Unknown message" });
-    return json(200, { data: [{ status: { name: message.status } }] });
+    return json(200, {
+      data: [
+        {
+          status: { name: message.status },
+          ...(message.delivery ? { destination: { tx: { txHash: message.delivery } } } : {}),
+        },
+      ],
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 

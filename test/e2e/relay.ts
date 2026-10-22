@@ -133,7 +133,8 @@ export async function standInRelay(net: Localnet) {
     const amountIn = amountOut + (amountOut * feeBps) / 10_000n + flatFee;
     const requestId = `0x${randomBytes(32).toString("hex")}` as Hex;
     const contract = body.useDepositAddress !== true;
-    const deadline = Math.floor(Date.now() / 1000) + 600;
+    // The order's own deadline binds the solver, so an expired quote is an expired order.
+    const deadline = Math.floor(Date.now() / 1000) + (hostile === "expired" ? -10 : 600);
     const user0 = getAddress(String(body.user));
     const order = {
       version: "v1",
