@@ -1,0 +1,7 @@
+{
+  "name": "wallet-cli-pnpm-bootstrap",
+  "private": true,
+  "dependencies": {
+    "pnpm": "11.0.8"
+  }
+}
