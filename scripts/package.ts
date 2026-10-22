@@ -16,13 +16,26 @@ type CliPackageName = keyof typeof entrypoints;
 
 const args = new Set(process.argv.slice(2));
 const root = resolve(import.meta.dirname, "..");
+// SEA uses official Node binaries rather than pkg-fetch's patched runtime cache.
+const nodeVersion = readFileSync(join(root, ".node-version"), "utf8").trim();
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as PackageJson;
 const packageName = resolvePackageName();
 const version = process.env.TEMPO_WALLET_VERSION ?? packageJson.version ?? "0.0.0-dev";
 const outDir = resolve(root, process.env.TEMPO_WALLET_PACKAGE_DIR ?? "dist-package");
 const bundlePath = join(outDir, `${packageName}.cjs`);
 const suffix = process.env.TEMPO_WALLET_PACKAGE_SUFFIX ?? hostSuffix();
-const target = process.env.TEMPO_WALLET_PKG_TARGET ?? hostPkgTarget();
+const target = (process.env.TEMPO_WALLET_PKG_TARGET ?? hostPkgTarget()).replace(
+  /^node22-/,
+  `node${nodeVersion}-`,
+);
+if (
+  !args.has("--bundle-only") &&
+  !["linux-x64", "linux-arm64", "macos-x64", "macos-arm64"].some(
+    (platform) => target === `node${nodeVersion}-${platform}`,
+  )
+) {
+  throw new Error(`Packaging requires a node${nodeVersion} target; received ${target}`);
+}
 const output = resolve(
   root,
   process.env.TEMPO_WALLET_PACKAGE_OUTPUT ?? join(outDir, `${packageName}-${suffix}`),
@@ -37,6 +50,12 @@ run("esbuild", [
   "--platform=node",
   "--format=cjs",
   "--target=node22",
+  // Every packaged startup (including the release smoke test) verifies the embedded runtime.
+  ...(!args.has("--bundle-only")
+    ? [
+        `--banner:js=if (process.versions.node !== ${JSON.stringify(nodeVersion)}) throw new Error("Unexpected packaged Node.js runtime: " + process.versions.node);`,
+      ]
+    : []),
   `--define:process.env.TEMPO_WALLET_VERSION=${JSON.stringify(version)}`,
   // `tempo wallet doctor` reports these; the bundle ships without package.json.
   `--define:process.env.TEMPO_WALLET_INCUR_VERSION=${JSON.stringify(packageJson.dependencies?.incur ?? null)}`,
@@ -47,16 +66,7 @@ run("esbuild", [
 if (!args.has("--bundle-only")) {
   mkdirSync(dirname(output), { recursive: true });
   rmSync(output, { force: true });
-  run("pkg", [
-    bundlePath,
-    "--targets",
-    target,
-    "--output",
-    output,
-    "--fallback-to-source",
-    "--public-packages",
-    "*",
-  ]);
+  run("pkg", [bundlePath, "--sea", "--targets", target, "--output", output]);
   console.log(`packaged ${output}`);
 }
 
@@ -88,5 +98,5 @@ function hostSuffix() {
 function hostPkgTarget() {
   const os = platform === "darwin" ? "macos" : platform;
   const cpu = arch === "x64" ? "x64" : arch;
-  return `node22-${os}-${cpu}`;
+  return `node${nodeVersion}-${os}-${cpu}`;
 }
