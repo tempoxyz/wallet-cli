@@ -1,5 +1,5 @@
 import { Errors } from "incur";
-import { type Challenge, Credential, PaymentRequest } from "mppx";
+import { Challenge, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession } from "mppx/client";
 import { parseUnits } from "viem";
 import { Actions, Channel as TempoChannel } from "viem/tempo";
@@ -17,9 +17,21 @@ import {
 import { paymentError } from "../shared/errors.js";
 import { createTempoPublicClient, networkName } from "../shared/network.js";
 import { getRecord, nowSeconds, sanitizeText, stringValue } from "../shared/utils.js";
-import { sessionDetails, type SessionDetails, tempoPaymentChallengeResponse } from "./challenge.js";
+import {
+  isMachSession,
+  preparePaymentChallenge,
+  sessionDetails,
+  type SessionDetails,
+  tempoPaymentChallengeResponse,
+} from "./challenge.js";
 import { cloneRequestInit, type FetchPlan } from "./fetch.js";
-import { type PaymentIdentity, requestNetwork, resolvePaymentIdentity } from "./identity.js";
+import {
+  type PaymentIdentity,
+  requestNetwork,
+  resolvePaymentIdentity,
+  storedAccessKeyLimit,
+} from "./identity.js";
+import { isMachPaymentToken } from "./mach.js";
 import type { RequestOptions } from "./options.js";
 import { fetchPaidRequest, paidResponseFailures, paymentReceipts } from "./paid.js";
 import { persistSessionReceipt, sessionShortfall, tryTopUpAndRetry } from "./session-topup.js";
@@ -27,6 +39,70 @@ import { assertWithinMaxSpend, formatTokenAmount, spendCap } from "./spend.js";
 
 // Dry-run reads only inform the quote, so a stalled RPC must not hold it up.
 export const dryRunRpc = { timeout: 3_000, retryCount: 0 };
+
+/**
+ * Prefer a payable native MACH session before signing. Use the same deposit/reuse plan as the
+ * payment and quote, including already-funded channels. Explicit token choices stay strict;
+ * failed reads or insufficient MACH leave the other advertised session available.
+ */
+export async function preferMachSession(response: Response, options: RequestOptions, url: string) {
+  if (options.paymentToken || options.paymentIntent === "charge") return response;
+  let offers: Challenge.Challenge[];
+  try {
+    offers = Challenge.fromResponseList(response);
+  } catch {
+    return response;
+  }
+  const sessions = offers.filter(
+    (offer) =>
+      offer.method === "tempo" &&
+      offer.intent === "session" &&
+      getRecord(offer.request.methodDetails).sessionProtocol === "v2" &&
+      (getRecord(offer.request.methodDetails).chainId ?? requestNetwork(options).chainId) ===
+        requestNetwork(options).chainId,
+  );
+  if (!sessions.some(isMachSession)) return response;
+  try {
+    const selected = preparePaymentChallenge(
+      response,
+      {
+        ...options,
+        paymentToken: "MACH",
+        paymentIntent: "session",
+        dryRun: true,
+      },
+      url,
+    );
+    const details = sessionDetails(selected.challenge, url, options);
+    const identity = await resolvePaymentIdentity(options);
+    const plan = await planSessionPayment(details, identity, options, { dryRun: true });
+    assertWithinMaxSpend(plan.signedCumulative, options);
+    const limit = storedAccessKeyLimit("key" in identity ? identity.key : undefined, details.token);
+    if (plan.depositRaw === 0n) return selected.response;
+    if (limit === null || limit >= plan.depositRaw) {
+      const balance = await Actions.token.getBalance(
+        createTempoPublicClient(details.chainId, dryRunRpc) as never,
+        {
+          account: identity.address,
+          token: details.token as `0x${string}`,
+        },
+      );
+      if (balance.amount >= plan.depositRaw) return selected.response;
+    }
+  } catch {
+    // Preference is advisory. The normal path still validates and reports the selected offer.
+  }
+  if (!sessions.some((offer) => !isMachSession(offer))) return response;
+  const headers = new Headers(response.headers);
+  headers.set(
+    "www-authenticate",
+    offers
+      .filter((offer) => !isMachSession(offer))
+      .map(Challenge.serialize)
+      .join(", "),
+  );
+  return new Response(null, { status: response.status, headers });
+}
 
 export async function paySessionAndRetryRequest(
   paymentRequiredResponse: Response,
@@ -51,6 +127,7 @@ export async function paySessionAndRetryRequest(
           ...identity.methodOptions,
           getClient: identity.getClient,
           maxDeposit: spendCap(options),
+          ...(isMachPaymentToken(details.token) ? { autoSwap: false } : {}),
         }),
       ],
       polyfill: false,

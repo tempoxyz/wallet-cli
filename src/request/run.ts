@@ -21,6 +21,7 @@ import {
   writeResponseBody,
 } from "./output.js";
 import { paidResponseFailures, paymentReceipts, paymentReferences } from "./paid.js";
+import { preferMachSession } from "./session.js";
 
 export async function runRequest(argv: readonly string[], io: RequestRunOptions = {}) {
   const options = parseRequestArgs(argv);
@@ -61,8 +62,9 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
     // Only payment depends on the network, so free requests never read the wallet store.
     options.network = (await resolvePaymentNetwork(options)).name;
     options.paymentToken = paymentTokenValue(options);
+    const paymentResponse = await preferMachSession(response, options, request.url);
     if (options.dryRun) {
-      const { challenge } = preparePaymentChallenge(response, options, request.url);
+      const { challenge } = preparePaymentChallenge(paymentResponse, options, request.url);
       const quote = await paymentQuote(challenge, options, request.url);
       if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
       if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
@@ -74,7 +76,7 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
       throw paymentError(
         "Refusing to pay over a connection with TLS certificate verification disabled (--insecure); pass --allow-insecure-payment to override",
       );
-    response = await payAndRetryRequest(response, request, options, stderr);
+    response = await payAndRetryRequest(paymentResponse, request, options, stderr);
     paid = true;
   }
 
