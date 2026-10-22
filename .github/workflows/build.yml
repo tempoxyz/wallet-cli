@@ -134,7 +134,8 @@ jobs:
         run: pnpm test:types
 
       - name: Run tests
-        run: pnpm test
+        # Source tests use package.json; the release version override is for packaging.
+        run: env -u TEMPO_WALLET_VERSION pnpm test
 
       - name: Build JavaScript
         run: pnpm build
