@@ -8,7 +8,7 @@ overrides:
 allowBuilds:
   esbuild: true
 
-minimumReleaseAge: 10080
+minimumReleaseAge: 1440
 trustPolicy: no-downgrade
 
 minimumReleaseAgeExclude:
