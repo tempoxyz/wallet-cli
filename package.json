@@ -42,7 +42,7 @@
   "dependencies": {
     "accounts": "0.21.0",
     "incur": "0.7.1",
-    "machine-fetch": "0.3.2",
+    "machine-fetch": "0.4.1",
     "mppx": "0.13.6",
     "qr": "0.7.2",
     "undici": "8.10.2",

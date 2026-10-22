@@ -1,9 +1,8 @@
-import { Errors as MachineFetchErrors } from "machine-fetch";
+import { Funder, Errors as MachineFetchErrors } from "machine-fetch";
 import { type CrossChain, CrossChainFunder } from "machine-fetch/cross-chain";
 import { MemoryStore } from "machine-fetch/stores/memory";
 import { type Address, formatUnits } from "viem";
 
-import { SourceBalanceError } from "../payment/upstream/funding-limit.js";
 import { type Destination, destinationBalance, stargateConfig } from "../shared/chains.js";
 import { sanitizeText } from "../shared/utils.js";
 import {
@@ -65,7 +64,7 @@ export function quoteCost(quote: CrossChain.Quote, request: { amountOut: bigint 
 
 /** Why a route declined to quote, sanitized and bounded since it may quote a provider's response. */
 function declineReason(error: unknown, symbol: string) {
-  if (error instanceof SourceBalanceError)
+  if (error instanceof Funder.SourceBalanceError)
     return `needs ${formatUnits(error.required, 6)} ${symbol}, the bridge's fee included, and the wallet holds ${formatUnits(error.held, 6)}`;
   const message =
     error instanceof MachineFetchErrors.BaseError

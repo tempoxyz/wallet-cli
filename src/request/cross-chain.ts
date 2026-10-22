@@ -1,25 +1,18 @@
 import { Funder } from "machine-fetch";
 import { type CrossChain, CrossChainFunder } from "machine-fetch/cross-chain";
 import type { Evm } from "machine-fetch/evm";
+import { RelayProtocolRoute } from "machine-fetch/relay";
+import { StargateRoute } from "machine-fetch/stargate";
 import { FileStore } from "machine-fetch/stores/file";
 import {
   type Address,
+  createPublicClient,
+  defineChain,
   erc20Abi,
   formatUnits,
-  type Hex,
-  parseAbiItem,
+  http,
   parseUnits,
-  TransactionReceiptNotFoundError,
 } from "viem";
-import {
-  getBlock,
-  getLogs,
-  getTransactionReceipt,
-  prepareTransactionRequest,
-  sendRawTransactionSync,
-  sendTransactionSync,
-  signTransaction,
-} from "viem/actions";
 
 import { CtaError } from "../cli/incur-compat.js";
 import {
@@ -31,10 +24,8 @@ import {
   requestFingerprint,
 } from "../payment/attempts.js";
 import { caip2 } from "../payment/funding.js";
-import { transactionHashes } from "../payment/upstream/delivery.js";
+import { namedFetch, transactionHashes } from "../payment/upstream/delivery.js";
 import { requirementKey } from "../payment/upstream/requirement-key.js";
-import { relayDepositRoute } from "../payment/upstream/relay-route.js";
-import { stargateRoute } from "../payment/upstream/stargate-route.js";
 import {
   crossChainSources,
   type Destination,
@@ -54,9 +45,6 @@ import { requestNetwork, resolvePaymentIdentity } from "./identity.js";
 import type { EvmOffer } from "./offers.js";
 import type { RequestOptions } from "./options.js";
 import { spendCap } from "./spend.js";
-
-/** Most a bridge's Tempo-side transaction fee may cost, in the source token: 0.02. */
-export const maxDepositGas = 20_000n;
 
 /**
  * The cap on one cross-chain funding operation's source-token spend, bridge fees and gas included:
@@ -109,35 +97,21 @@ export function fundingAccounts(
   return { from, to };
 }
 
-type Signer = {
-  sendCalls(calls: readonly { to: Address; data: Hex }[], feeToken: Address): Promise<Hex>;
-  /** Signs `calls` as one transaction valid before `validBefore` (Unix seconds), unsent. */
-  signCalls(
-    calls: readonly { to: Address; data: Hex }[],
-    feeToken: Address,
-    validBefore: number,
-  ): Promise<Hex>;
-  /** Broadcasts a transaction `signCalls` returned, waits for it, and resolves with its hash. */
-  sendSigned(serialized: Hex): Promise<Hex>;
-};
-
-/** Stargate's OFT event for a send, by the account that sent it. */
-const oftSentEvent = parseAbiItem(
-  "event OFTSent(bytes32 indexed guid, uint32 dstEid, address indexed fromAddress, uint256 amountSentLD, uint256 amountReceivedLD)",
-);
+/** A viem client machine-fetch's routes read through, and sign with when it has an account. */
+type RouteClient = Evm.Client;
 
 /**
- * The bridges that fund `asset` on Tempo into USDC on `destination`, by route name: Relay (a
- * contract deposit into its pinned depository where one is configured, else a strict deposit
- * address) for any source token, and Stargate for the token its OFT bridges. With no `signer`
- * (reconciliation) the routes can quote and report status but never send.
+ * Relay and Stargate through machine-fetch's own routes, from `asset` on Tempo to USDC on
+ * `destination`. With `client`, a Tempo client whose account is the funding account (the access
+ * key, so its token limits bound every bridge), the routes can sign; without one they can quote
+ * and report status but never send. Both refuse a quote the source account cannot cover before
+ * anything is signed, and the CLI's progress lines wrap their `submit` and `status`.
  */
 export function fundingRoutes(options: {
   network: Network;
   asset: Address;
   destination: Destination;
-  signer?: Signer | undefined;
-  maxSpend?: bigint | undefined;
+  client?: RouteClient | undefined;
   stderr?: Pick<NodeJS.WriteStream, "write"> | undefined;
   payer?: Address | undefined;
   symbol?: string | undefined;
@@ -145,109 +119,110 @@ export function fundingRoutes(options: {
   const { network, asset, destination } = options;
   const symbol = options.symbol ?? tokenSymbol(asset, network.chainId) ?? asset;
   const write = (text: string) => options.stderr?.write(text);
-  const signer = () => {
-    if (!options.signer) throw new Funder.FundingError("Reconciliation never sends funding");
-    return options.signer;
+  const clients = {
+    [network.chainId]: options.client ?? (createTempoPublicClient(network.chainId) as RouteClient),
+    [destination.chainId]: destinationClient(destination) as RouteClient,
   };
-  const send = (calls: readonly { to: Address; data: Hex }[]) => signer().sendCalls(calls, asset);
+  const to = `${options.payer ?? "the payer"} on ${destination.name}`;
   const routes: CrossChain.Route[] = [];
-  // Both routes refuse a quote the source account cannot cover, before anything is signed.
-  const sourceClient = createTempoPublicClient(network.chainId);
-  const balance = (request: { from: { owner: Address; asset: Address } }) =>
-    sourceClient.readContract({
-      address: request.from.asset,
-      abi: erc20Abi,
-      functionName: "balanceOf",
-      args: [request.from.owner],
-    });
   const url = relayUrl(network);
   if (url) {
-    let waiting = false;
+    const depository = relayDepository(network.chainId);
     routes.push(
-      relayDepositRoute({
-        url,
-        depository: relayDepository(network.chainId),
-        maxGas: maxDepositGas,
-        maxSpend: options.maxSpend,
-        balance,
-        async execute(deposit) {
-          await send(deposit.calls);
+      withProgress(
+        RelayProtocolRoute.create({
+          name: "relay",
+          url,
+          fetch: namedFetch("Relay", globalThis.fetch),
+          clients,
+          ...(depository ? { depositories: { [network.chainId]: depository } } : {}),
+          // Read with no sender since machine-fetch 0.4.1, so an unpublished access key works.
+          balance: true,
+        }),
+        {
+          submitted: (quote, reference) =>
+            `Bridging ${formatUnits(quote.amountIn, 6)} ${symbol} to ${to} via Relay (request ${reference})\n`,
+          pending: (reference) => `Waiting for Relay to deliver (request ${reference})…\n`,
         },
-        onProgress(event) {
-          if (event.type === "submitted")
-            write(
-              `Bridging ${formatUnits(event.deposit.amount, 6)} ${symbol} to ${options.payer ?? "the payer"} on ${destination.name} via Relay (request ${event.deposit.requestId})\n`,
-            );
-          else if (!waiting) {
-            waiting = true;
-            write(`Waiting for Relay to deliver (request ${event.requestId})…\n`);
-          }
-        },
-      }),
+        write,
+      ),
     );
   }
   const stargate = stargateConfig(network.chainId);
-  if (
-    stargate &&
-    stargate.token.toLowerCase() === asset.toLowerCase() &&
-    stargate.endpointIds[String(destination.chainId)]
-  ) {
-    const client = createTempoPublicClient(network.chainId);
-    let waiting = false;
+  const endpointId = stargate?.endpointIds[String(destination.chainId)];
+  if (stargate && endpointId && stargate.token.toLowerCase() === asset.toLowerCase()) {
     routes.push(
-      stargateRoute({
-        ...stargate,
-        destinationToken: (chainId) => destinationFor(network.chainId, chainId)?.usdc.address,
-        client: client as never,
-        maxGas: maxDepositGas,
-        maxSpend: options.maxSpend,
-        balance,
-        ...(process.env.TEMPO_LAYERZERO_SCAN_URL
-          ? { scanUrl: process.env.TEMPO_LAYERZERO_SCAN_URL }
-          : {}),
-        sign: async (calls, _request, validBefore) => signer().signCalls(calls, asset, validBefore),
-        broadcast: async (serialized) => signer().sendSigned(serialized),
-        async reverted(hash) {
-          const receipt = await getTransactionReceipt(client, { hash }).catch(() => undefined);
-          return receipt ? receipt.status === "reverted" : undefined;
+      withProgress(
+        StargateRoute.create({
+          name: "stargate",
+          oft: stargate.oft,
+          token: stargate.token,
+          feeWrapper: stargate.feeWrapper,
+          endpointIds: { [destination.chainId]: endpointId },
+          destinationTokens: { [destination.chainId]: destination.usdc.address },
+          clients,
+          balance: true,
+          fetch: namedFetch("LayerZero Scan", globalThis.fetch),
+          ...(process.env.TEMPO_LAYERZERO_SCAN_URL
+            ? { scanUrl: process.env.TEMPO_LAYERZERO_SCAN_URL }
+            : {}),
+        }),
+        {
+          submitted: (quote, reference) => {
+            const fee = quote.fees.find((entry) => entry.kind === "provider")?.amount ?? 0n;
+            return `Bridging ${formatUnits(quote.amountIn - fee, 6)} ${symbol} (plus ${formatUnits(fee, 6)} LayerZero fee) to ${to} via Stargate (tx ${reference})\n`;
+          },
+          pending: (reference) => `Waiting for Stargate to deliver (tx ${reference})…\n`,
         },
-        async dropped(hash, after) {
-          const block = await getBlock(client).catch(() => undefined);
-          if (!block || block.timestamp <= BigInt(after)) return false;
-          return getTransactionReceipt(client, { hash }).then(
-            () => false,
-            (error: unknown) => error instanceof TransactionReceiptNotFoundError,
-          );
-        },
-        async findSent({ owner, dstEid, amountLD, fromBlock }) {
-          const logs = await getLogs(client, {
-            address: stargate.oft,
-            event: oftSentEvent,
-            args: { fromAddress: owner },
-            fromBlock,
-          });
-          return [
-            ...new Set(
-              logs
-                .filter((log) => log.args.dstEid === dstEid && log.args.amountSentLD === amountLD)
-                .map((log) => log.transactionHash),
-            ),
-          ];
-        },
-        onProgress(event) {
-          if (event.type === "submitted")
-            write(
-              `Bridging ${formatUnits(event.amount, 6)} ${symbol} (plus ${formatUnits(event.fee, 6)} LayerZero fee) to ${options.payer ?? "the payer"} on ${destination.name} via Stargate (tx ${event.hash})\n`,
-            );
-          else if (!waiting) {
-            waiting = true;
-            write(`Waiting for Stargate to deliver (tx ${event.hash})…\n`);
-          }
-        },
-      }),
+        write,
+      ),
     );
   }
   return routes;
+}
+
+/** `route`, writing a line once it submits and the first time it reports pending. */
+function withProgress<quote extends CrossChain.BoundedQuote>(
+  route: CrossChain.Route<quote>,
+  lines: {
+    submitted: (quote: quote, reference: string) => string;
+    pending: (reference: string) => string;
+  },
+  write: (text: string) => void,
+): CrossChain.Route<quote> {
+  let waiting = false;
+  return {
+    ...route,
+    async submit(input) {
+      const result = await route.submit(input);
+      write(lines.submitted(input.quote, result.reference));
+      return result;
+    },
+    async status(operation, context) {
+      const result = await route.status(operation, context);
+      if (result.status === "pending" && !waiting) {
+        waiting = true;
+        write(lines.pending(operation.reference ?? operation.quote.reference));
+      }
+      return result;
+    },
+  };
+}
+
+/**
+ * A read-only client for `destination`'s RPC, where routes confirm deliveries. machine-fetch
+ * checks that a client is on the chain it is keyed by, so it carries that chain.
+ */
+function destinationClient(destination: Destination) {
+  return createPublicClient({
+    chain: defineChain({
+      id: destination.chainId,
+      name: destination.name,
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: { default: { http: [destination.rpcUrl] } },
+    }),
+    transport: http(destination.rpcUrl, { retryCount: 1 }),
+  });
 }
 
 /**
@@ -361,40 +336,6 @@ export async function crossChainFunders(options: {
   const { network, destination, identity } = options;
   const source = identity.address as Address;
   const client = identity.getClient({ chainId: network.chainId });
-  const signer: Signer = {
-    async sendCalls(calls, feeToken) {
-      const receipt = await sendTransactionSync(
-        client as never,
-        {
-          account: (client as { account?: unknown }).account,
-          calls: calls.map((call) => ({ to: call.to, data: call.data })),
-          feeToken,
-        } as never,
-      );
-      const { status, transactionHash } = receipt as { status: string; transactionHash: Hex };
-      if (status !== "success") throw new Funder.FundingError("Funding transaction reverted");
-      return transactionHash;
-    },
-    async signCalls(calls, feeToken, validBefore) {
-      const account = (client as { account?: unknown }).account;
-      const request = await prepareTransactionRequest(
-        client as never,
-        {
-          account,
-          calls: calls.map((call) => ({ to: call.to, data: call.data })),
-          feeToken,
-          validBefore,
-        } as never,
-      );
-      return signTransaction(client as never, { ...(request as object), account } as never);
-    },
-    async sendSigned(serializedTransaction) {
-      const receipt = await sendRawTransactionSync(client as never, { serializedTransaction });
-      if (receipt.status !== "success")
-        throw new Funder.FundingError("Funding transaction reverted");
-      return receipt.transactionHash;
-    },
-  };
   const balances = await sourceBalances(network, source);
   // A resumed operation reconciles from the token it was submitted in, whatever it holds now.
   const resume = options.resumeAsset?.toLowerCase();
@@ -429,8 +370,7 @@ export async function crossChainFunders(options: {
         network,
         asset,
         destination,
-        signer,
-        maxSpend: options.maxSpend,
+        client: client as unknown as RouteClient,
         stderr: options.stderr,
         payer: options.payer,
         symbol,

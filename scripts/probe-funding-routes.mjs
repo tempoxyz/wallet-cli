@@ -1,84 +1,50 @@
-// Quote-only probe of the CLI's Relay and Stargate routes against mainnet. It never signs or sends:
-// every route's `execute` throws, and only `quote()` runs (Relay's includes the CLI's guarantees
-// check). Usage: pnpm build && node scripts/probe-funding-routes.mjs [sourceAccount] [payer]
-import { relayDepositRoute } from "../dist/payment/upstream/relay-route.js";
-import { stargateRoute } from "../dist/payment/upstream/stargate-route.js";
-import {
-  crossChainSources,
-  destinations,
-  relayDepository,
-  stargateConfig,
-} from "../dist/shared/chains.js";
-import { createTempoPublicClient } from "../dist/shared/network.js";
-import { tokenSymbol } from "../dist/shared/tokens.js";
+// Quote-only probe of machine-fetch's own Relay and Stargate routes on mainnet, from the logged-in
+// wallet's address on Tempo to its remote payer on Base. Nothing is signed or sent: `quote` reads
+// Relay's API, the chain registry, the OFT's quotes, balances, and gas estimates only.
+//
+//   node scripts/probe-funding-routes.mjs <tempo-owner> <base-payer> [amountOut atomic]
+import { RelayProtocolRoute } from "machine-fetch/relay";
+import { StargateRoute } from "machine-fetch/stargate";
+import { createPublicClient, http } from "viem";
+import { base, tempo } from "viem/chains";
 
-const tempo = 4217;
-const [
-  source = "0x41d8fa0f3032e12ccf3c3d75776685bb740a8381",
-  payer = "0x3e389BaD81a66d163ef35576b3e0CdBacd1d27A3",
-] = process.argv.slice(2);
-const base = destinations(tempo).find((entry) => entry.name === "base");
-const never = async () => {
-  throw new Error("probe must never send");
+const [owner, payer, amount = "10000"] = process.argv.slice(2);
+if (!owner || !payer) throw new Error("usage: probe-funding-routes.mjs <tempo-owner> <base-payer>");
+const clients = {
+  4217: createPublicClient({ chain: tempo, transport: http("https://rpc.tempo.xyz") }),
+  8453: createPublicClient({ chain: base, transport: http("https://mainnet.base.org") }),
 };
-const fmt = (value) => (Number(value) / 1e6).toFixed(6);
-
-const chains = await (await fetch("https://api.relay.link/chains")).json();
-const listed = chains.chains.find((chain) => chain.id === tempo)?.protocol?.v2?.depository;
-const pinned = relayDepository(tempo);
-console.log(
-  `Relay depository: pinned ${pinned}, Relay lists ${listed} -> ${listed?.toLowerCase() === pinned.toLowerCase() ? "match" : "MISMATCH"}`,
-);
-
-const stargate = stargateConfig(tempo);
-const client = createTempoPublicClient(tempo);
-for (const asset of crossChainSources(tempo)) {
-  const symbol = tokenSymbol(asset, tempo) ?? asset;
-  const routes = [relayDepositRoute({ depository: pinned, maxGas: 20_000n, execute: never })];
-  if (stargate.token.toLowerCase() === asset.toLowerCase())
-    routes.push(
-      stargateRoute({
-        ...stargate,
-        destinationToken: (chainId) =>
-          destinations(tempo).find((d) => d.chainId === chainId)?.usdc.address,
-        client,
-        maxGas: 20_000n,
-        execute: never,
-      }),
-    );
-  for (const amountOut of [10_000n, 1_000_000n, 5_000_000n]) {
-    const request = {
-      operationId: `probe-${crypto.randomUUID()}`,
-      amountOut,
-      deadline: Math.floor(Date.now() / 1000) + 120,
-      from: {
-        owner: source,
-        asset,
-        chainId: tempo,
-        currency: "USD",
-        decimals: 6,
-        network: `eip155:${tempo}`,
-      },
-      to: {
-        owner: payer,
-        asset: base.usdc.address,
-        chainId: base.chainId,
-        currency: "USD",
-        decimals: 6,
-        network: base.network,
-      },
-      maxSlippageBps: 50,
-      signal: AbortSignal.timeout(20_000),
-    };
-    const results = await Promise.all(
-      routes.map((route) =>
-        route.quote(request).then(
-          (quote) =>
-            `${route.name}: debit ${fmt(quote.amountIn)} (cost ${fmt(quote.amountIn - amountOut)})`,
-          (error) => `${route.name}: REFUSED ${String(error?.message).slice(0, 160)}`,
-        ),
-      ),
-    );
-    console.log(`${symbol} -> ${fmt(amountOut)} Base USDC | ${results.join(" | ")}`);
-  }
-}
+const usdce = "0x20C000000000000000000000b9537d11c60E8b50";
+const ousd = "0x20c0000000000000000000006a37DA5C996874BE";
+const baseUsdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const request = (asset) => ({
+  amountOut: BigInt(amount),
+  deadline: Math.floor(Date.now() / 1000) + 300,
+  from: { owner, asset, chainId: 4217, currency: "USD", decimals: 6, network: "eip155:4217" },
+  maxSlippageBps: 50,
+  operationId: `probe-${Date.now()}`,
+  signal: AbortSignal.timeout(30_000),
+  to: { owner: payer, asset: baseUsdc, chainId: 8453, currency: "USD", decimals: 6, network: "eip155:8453" },
+});
+const show = (name, quote) =>
+  console.log(
+    `${name}: amountIn ${quote.amountIn} maxAmountIn ${quote.maxAmountIn} fees ${JSON.stringify(
+      quote.fees.map((fee) => ({ kind: fee.kind, amount: String(fee.amount), included: fee.includedInAmountIn })),
+    )}`,
+  );
+const relay = RelayProtocolRoute.create({
+  name: "relay",
+  clients,
+  depositories: { 4217: "0x4cD00E387622C35bDDB9b4c962C136462338BC31" },
+  balance: true,
+});
+for (const [label, asset] of [["USDC.e", usdce], ["OUSD", ousd]])
+  await relay
+    .quote(request(asset))
+    .then((quote) => show(`relay from ${label}`, quote))
+    .catch((error) => console.log(`relay from ${label}: REFUSED ${error.name}: ${error.shortMessage ?? error.message}`));
+const stargate = StargateRoute.create({ ...StargateRoute.tempoUsdce, clients, balance: true });
+await stargate
+  .quote(request(usdce))
+  .then((quote) => show("stargate from USDC.e", quote))
+  .catch((error) => console.log(`stargate from USDC.e: REFUSED ${error.name}: ${error.shortMessage ?? error.message}`));
