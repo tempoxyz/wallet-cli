@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { Challenge, Credential } from "mppx";
 import { machineTokenDeployments } from "mppx/tempo";
-import { decodeFunctionData, type Hex } from "viem";
+import { decodeFunctionData, type Hex, zeroAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { prepareTransactionRequest, signTransaction } from "viem/actions";
 import { Abis, Actions, Channel, Transaction } from "viem/tempo";
@@ -15,7 +15,13 @@ import { preparePaymentChallenge } from "../src/request/challenge.js";
 import { preferMachSession } from "../src/request/session.js";
 import { runRequest } from "../src/request/run.js";
 import { usdcToken } from "../src/shared/constants.js";
-import { testPrivateKey, useTempHome, walletState, writeWalletState } from "./helpers.js";
+import {
+  testAccessKey,
+  testPrivateKey,
+  useTempHome,
+  walletState,
+  writeWalletState,
+} from "./helpers.js";
 
 vi.mock("viem/actions", async (original) => ({
   ...(await original<typeof import("viem/actions")>()),
@@ -32,6 +38,11 @@ vi.mock("viem/tempo", async (original) => {
         ...actual.Actions.token,
         getBalance: vi.fn(),
       },
+      accessKey: {
+        ...actual.Actions.accessKey,
+        getMetadata: vi.fn(),
+        getRemainingLimit: vi.fn(),
+      },
     },
   };
 });
@@ -45,6 +56,13 @@ const payee = "0x1111111111111111111111111111111111111111";
 const account = privateKeyToAccount(testPrivateKey);
 const servers: ReturnType<typeof createServer>[] = [];
 const silent = { write: () => true };
+const publishedKey = {
+  address: testAccessKey as Hex,
+  keyType: "secp256k1" as const,
+  expiry: 0n,
+  spendPolicy: "limited" as const,
+  isRevoked: false,
+};
 
 beforeEach(async () => {
   await useTempHome();
@@ -52,6 +70,11 @@ beforeEach(async () => {
   vi.stubEnv("TEMPO_MAX_SPEND", "");
   vi.stubEnv("TEMPO_WALLET_NETWORK", "mainnet");
   vi.mocked(Actions.token.getBalance).mockResolvedValue({ amount: 1_000_000n } as never);
+  vi.mocked(Actions.accessKey.getMetadata).mockResolvedValue(publishedKey);
+  vi.mocked(Actions.accessKey.getRemainingLimit).mockResolvedValue({
+    remaining: 0n,
+    periodEnd: undefined,
+  });
   vi.mocked(readOnChainChannel).mockResolvedValue(null);
   vi.mocked(prepareTransactionRequest).mockImplementation(
     async (_client, request) =>
@@ -148,9 +171,11 @@ function run(url: string, flags: string[] = []) {
 }
 
 it.each(
-  [[], ["--mach"], ["--mach", "--payment-intent", "session"], ["--payment-token", mach]].map(
-    (flags) => ({ flags }),
-  ),
+  [
+    [],
+    ["--mach", "--payment-intent", "session"],
+    ["--payment-token", mach, "--payment-intent", "session"],
+  ].map((flags) => ({ flags })),
 )("opens a direct MACH session with the real SDK using $flags", async ({ flags }) => {
   const endpoint = await service();
   await run(endpoint.url, flags);
@@ -202,7 +227,7 @@ it.each([false, true])(
 it("keeps explicit MACH strict when its deposit is unaffordable", async () => {
   vi.mocked(Actions.token.getBalance).mockResolvedValue({ amount: 0n } as never);
   const endpoint = await service();
-  await expect(run(endpoint.url, ["--mach"])).rejects.toThrow(
+  await expect(run(endpoint.url, ["--mach", "--payment-intent", "session"])).rejects.toThrow(
     "Insufficient balance for session deposit",
   );
   expect(endpoint.paid).toEqual([]);
@@ -226,24 +251,142 @@ it("uses the other session when the MACH balance cannot be read", async () => {
   );
   expect(signTransaction).not.toHaveBeenCalled();
 });
-it("skips MACH when the stored key limit cannot fund its deposit", async () => {
+it.each([0n, 2999n, 3000n])(
+  "uses the remaining MACH key allowance (%s), not its stored limit",
+  async (remaining) => {
+    vi.stubEnv("TEMPO_PRIVATE_KEY", "");
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            ...walletState().accessKeys[0]!,
+            permissionSemantics: 1,
+            limits: [{ token: mach, limit: "1000000#__bigint" }],
+            keyAuthorization: {
+              address: testAccessKey,
+              chainId: 4217n,
+              expiry: 2_000_000_000,
+              signature: { type: "secp256k1", signature: "0x1234" },
+              type: "secp256k1",
+            },
+          },
+        ],
+      }),
+    );
+    vi.mocked(Actions.accessKey.getRemainingLimit).mockResolvedValue({
+      remaining,
+      periodEnd: undefined,
+    });
+    const options = parseRequestArgs(["--max-spend", "0.003", "https://example.com"]);
+    const selected = await preferMachSession(response(), options, options.url);
+    expect(preparePaymentChallenge(selected, options, options.url).challenge.request.currency).toBe(
+      remaining >= 3000n ? mach : usdcToken,
+    );
+    expect(Actions.accessKey.getRemainingLimit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ token: mach.toLowerCase() }),
+    );
+  },
+);
+
+it.each(["unlimited", "pending", "unpublished", "revoked", "expired", "unreadable"] as const)(
+  "handles a %s access key before preferring MACH",
+  async (status) => {
+    vi.stubEnv("TEMPO_PRIVATE_KEY", "");
+    const key = walletState().accessKeys[0]!;
+    await writeWalletState(
+      walletState({
+        accessKeys: [
+          {
+            ...key,
+            limits: [{ token: mach, limit: "1000000#__bigint" }],
+            ...(status === "pending"
+              ? {
+                  keyAuthorization: {
+                    address: testAccessKey,
+                    chainId: 4217n,
+                    expiry: key.expiry,
+                    signature: { type: "secp256k1", signature: "0x1234" },
+                    type: "secp256k1",
+                  },
+                }
+              : {}),
+          },
+        ],
+      }),
+    );
+    vi.mocked(Actions.accessKey.getMetadata).mockResolvedValue({
+      ...publishedKey,
+      address:
+        status === "pending" || status === "unpublished" ? zeroAddress : publishedKey.address,
+      spendPolicy: status === "unlimited" ? "unlimited" : "limited",
+      isRevoked: status === "revoked",
+      expiry: status === "expired" ? 1n : 0n,
+    });
+    if (status === "unreadable")
+      vi.mocked(Actions.accessKey.getRemainingLimit).mockRejectedValue(
+        new Error("RPC unavailable"),
+      );
+    const options = parseRequestArgs(["https://example.com"]);
+    const selected = await preferMachSession(response(), options, options.url);
+    expect(preparePaymentChallenge(selected, options, options.url).challenge.request.currency).toBe(
+      status === "unlimited" || status === "pending" ? mach : usdcToken,
+    );
+    expect(signTransaction).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  { intent: "auto", chainId: 4217, fallback: true },
+  { intent: "session", chainId: 4217, fallback: false },
+  { intent: "auto", chainId: 42431, fallback: false },
+])(
+  "falls back to a compatible advertised charge: $intent on $chainId",
+  async ({ intent, chainId, fallback }) => {
+    vi.mocked(Actions.token.getBalance).mockResolvedValue({ amount: 0n } as never);
+    const charge = Challenge.from({ ...offer(usdcToken, { chainId }), intent: "charge" });
+    const original = response([offer(), charge]);
+    const options = parseRequestArgs(["--payment-intent", intent, "https://example.com"]);
+    const selected = await preferMachSession(original, options, options.url);
+    expect(preparePaymentChallenge(selected, options, options.url).challenge).toEqual(
+      fallback ? charge : offer(),
+    );
+    expect(signTransaction).not.toHaveBeenCalled();
+    if (fallback) {
+      const endpoint = await service([offer(), charge]);
+      await run(endpoint.url);
+      expect(endpoint.paid.map((credential) => credential.challenge)).toEqual([charge]);
+    }
+  },
+);
+
+it("reuses a funded MACH channel without needing new key allowance", async () => {
+  const endpoint = await service();
+  await run(endpoint.url);
+  vi.mocked(readOnChainChannel).mockResolvedValue({
+    payer: account.address,
+    payee,
+    token: mach,
+    authorizedSigner: account.address,
+    deposit: 3000n,
+    settled: 0n,
+    closeRequestedAt: 0n,
+  });
   vi.stubEnv("TEMPO_PRIVATE_KEY", "");
   await writeWalletState(
     walletState({
-      accessKeys: [
-        {
-          ...walletState().accessKeys[0]!,
-          permissionSemantics: 1,
-          limits: [{ token: usdcToken, limit: "1000000#__bigint" }],
-        },
-      ],
+      accounts: [{ address: account.address }],
+      accessKeys: [{ ...walletState().accessKeys[0]!, access: account.address }],
     }),
   );
-  const options = parseRequestArgs(["https://example.com"]);
+  vi.mocked(Actions.token.getBalance)
+    .mockClear()
+    .mockResolvedValue({ amount: 0n } as never);
+  const options = parseRequestArgs([endpoint.url]);
   const selected = await preferMachSession(response(), options, options.url);
-  expect(preparePaymentChallenge(selected, options, options.url).challenge.request.currency).toBe(
-    usdcToken,
-  );
+  expect(preparePaymentChallenge(selected, options, options.url).challenge).toEqual(offer());
+  expect(Actions.accessKey.getMetadata).not.toHaveBeenCalled();
+  expect(Actions.accessKey.getRemainingLimit).not.toHaveBeenCalled();
   expect(Actions.token.getBalance).not.toHaveBeenCalled();
 });
 

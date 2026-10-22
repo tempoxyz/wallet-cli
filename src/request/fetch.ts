@@ -22,6 +22,7 @@ import {
   validateMethod,
   validateUrl,
 } from "./args.js";
+import { isMachPaymentToken } from "./mach.js";
 import type { RequestOptions } from "./options.js";
 
 export type FetchPlan = {
@@ -58,6 +59,8 @@ export async function buildFetchRequest(options: RequestOptions) {
   if (!headers.has("accept-payment")) {
     if (options.paymentIntent !== "auto")
       headers.set("accept-payment", `tempo/${options.paymentIntent}`);
+    else if (isMachPaymentToken(options.paymentToken))
+      headers.set("accept-payment", "tempo/charge");
   }
 
   if (options.json !== undefined) {

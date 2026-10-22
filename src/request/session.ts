@@ -1,7 +1,7 @@
 import { Errors } from "incur";
 import { Challenge, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession } from "mppx/client";
-import { parseUnits } from "viem";
+import { parseUnits, zeroAddress } from "viem";
 import { Actions, Channel as TempoChannel } from "viem/tempo";
 
 import { readOnChainChannel } from "../payment/channel.js";
@@ -31,7 +31,6 @@ import {
   resolvePaymentIdentity,
   storedAccessKeyLimit,
 } from "./identity.js";
-import { isMachPaymentToken } from "./mach.js";
 import type { RequestOptions } from "./options.js";
 import { fetchPaidRequest, paidResponseFailures, paymentReceipts } from "./paid.js";
 import { persistSessionReceipt, sessionShortfall, tryTopUpAndRetry } from "./session-topup.js";
@@ -43,7 +42,7 @@ export const dryRunRpc = { timeout: 3_000, retryCount: 0 };
 /**
  * Prefer a payable native MACH session before signing. Use the same deposit/reuse plan as the
  * payment and quote, including already-funded channels. Explicit token choices stay strict;
- * failed reads or insufficient MACH leave the other advertised session available.
+ * failed reads or insufficient MACH leave a compatible stablecoin offer available.
  */
 export async function preferMachSession(response: Response, options: RequestOptions, url: string) {
   if (options.paymentToken || options.paymentIntent === "charge") return response;
@@ -53,15 +52,7 @@ export async function preferMachSession(response: Response, options: RequestOpti
   } catch {
     return response;
   }
-  const sessions = offers.filter(
-    (offer) =>
-      offer.method === "tempo" &&
-      offer.intent === "session" &&
-      getRecord(offer.request.methodDetails).sessionProtocol === "v2" &&
-      (getRecord(offer.request.methodDetails).chainId ?? requestNetwork(options).chainId) ===
-        requestNetwork(options).chainId,
-  );
-  if (!sessions.some(isMachSession)) return response;
+  if (!offers.some(isMachSession)) return response;
   try {
     const selected = preparePaymentChallenge(
       response,
@@ -77,9 +68,8 @@ export async function preferMachSession(response: Response, options: RequestOpti
     const identity = await resolvePaymentIdentity(options);
     const plan = await planSessionPayment(details, identity, options, { dryRun: true });
     assertWithinMaxSpend(plan.signedCumulative, options);
-    const limit = storedAccessKeyLimit("key" in identity ? identity.key : undefined, details.token);
     if (plan.depositRaw === 0n) return selected.response;
-    if (limit === null || limit >= plan.depositRaw) {
+    if (await canFundSessionDeposit(identity, details, plan.depositRaw)) {
       const balance = await Actions.token.getBalance(
         createTempoPublicClient(details.chainId, dryRunRpc) as never,
         {
@@ -92,16 +82,56 @@ export async function preferMachSession(response: Response, options: RequestOpti
   } catch {
     // Preference is advisory. The normal path still validates and reports the selected offer.
   }
-  if (!sessions.some((offer) => !isMachSession(offer))) return response;
   const headers = new Headers(response.headers);
   headers.set(
     "www-authenticate",
     offers
-      .filter((offer) => !isMachSession(offer))
+      .filter(
+        (offer) =>
+          !isMachSession(offer) && (offer.intent === "session" || offer.intent === "charge"),
+      )
       .map(Challenge.serialize)
       .join(", "),
   );
-  return new Response(null, { status: response.status, headers });
+  try {
+    return preparePaymentChallenge(
+      new Response(null, { status: response.status, headers }),
+      options,
+      url,
+    ).response;
+  } catch {
+    // Preserve the original diagnostic when no compatible alternative is advertised.
+    return response;
+  }
+}
+
+/** Published keys use their live allowance; an unpublished authorization has its initial limit. */
+async function canFundSessionDeposit(
+  identity: PaymentIdentity,
+  details: SessionDetails,
+  amount: bigint,
+) {
+  if (!("key" in identity)) return true;
+  const client = createTempoPublicClient(details.chainId, dryRunRpc);
+  const parameters = { account: identity.address, accessKey: identity.signerAddress };
+  const metadata = await Actions.accessKey.getMetadata(client, parameters);
+  if (metadata.isRevoked) return false;
+  if (metadata.address === zeroAddress) {
+    if (!identity.key.keyAuthorization) return false;
+    const limit = storedAccessKeyLimit(identity.key, details.token);
+    return limit === null || limit >= amount;
+  }
+  if (
+    metadata.address.toLowerCase() !== identity.signerAddress.toLowerCase() ||
+    (metadata.expiry !== 0n && metadata.expiry <= BigInt(nowSeconds()))
+  )
+    return false;
+  if (metadata.spendPolicy === "unlimited") return true;
+  const { remaining } = await Actions.accessKey.getRemainingLimit(client, {
+    ...parameters,
+    token: details.token as `0x${string}`,
+  });
+  return remaining >= amount;
 }
 
 export async function paySessionAndRetryRequest(
@@ -127,7 +157,6 @@ export async function paySessionAndRetryRequest(
           ...identity.methodOptions,
           getClient: identity.getClient,
           maxDeposit: spendCap(options),
-          ...(isMachPaymentToken(details.token) ? { autoSwap: false } : {}),
         }),
       ],
       polyfill: false,

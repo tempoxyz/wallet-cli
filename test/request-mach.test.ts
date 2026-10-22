@@ -177,8 +177,9 @@ it("accepts the concise MACH flag and rejects conflicting selectors", () => {
 });
 it.each([
   ["--mach", "--payment-intent", "charge"],
-  ["--payment-token", "MACH", "--payment-intent", "charge"],
-  ["--payment-token", deployment.token, "--payment-intent", "charge"],
+  ["--mach"],
+  ["--payment-token", "MACH"],
+  ["--payment-token", deployment.token],
 ])("negotiates a MACH charge from a session-default server with %j", async (...flags) => {
   const selected = offer();
   const service = await server([selected], true);
