@@ -7,6 +7,7 @@ import {
   encodeFunctionData,
   erc20Abi,
   getAddress,
+  hashStruct,
   type Hex,
   parseAbi,
   parseAbiItem,
@@ -26,6 +27,61 @@ const depositoryAbi = parseAbi([
 const depositEvent = parseAbiItem(
   "event RelayErc20Deposit(address token, uint256 amount, address depositor, bytes32 id)",
 );
+
+/** The chain names the stand-in's `/chains` registry gives the local chains. */
+const tempoName = "tempo-local";
+const evmName = "local-evm";
+
+/** Relay's EIP-712 order types for EVM chains: an order's struct hash is its order ID. */
+const orderTypes = {
+  Order: [
+    { name: "version", type: "string" },
+    { name: "solverChainId", type: "string" },
+    { name: "solver", type: "address" },
+    { name: "salt", type: "uint256" },
+    { name: "inputs", type: "Input[]" },
+    { name: "output", type: "Output" },
+    { name: "fees", type: "Fee[]" },
+  ],
+  Input: [
+    { name: "payment", type: "InputPayment" },
+    { name: "refunds", type: "InputRefund[]" },
+  ],
+  InputPayment: [
+    { name: "chainId", type: "string" },
+    { name: "currency", type: "bytes" },
+    { name: "amount", type: "uint256" },
+    { name: "weight", type: "uint256" },
+  ],
+  InputRefund: [
+    { name: "chainId", type: "string" },
+    { name: "recipient", type: "bytes" },
+    { name: "currency", type: "bytes" },
+    { name: "minimumAmount", type: "uint256" },
+    { name: "deadline", type: "uint32" },
+    { name: "extraData", type: "bytes" },
+  ],
+  Output: [
+    { name: "chainId", type: "string" },
+    { name: "payments", type: "OutputPayment[]" },
+    { name: "deadline", type: "uint32" },
+    { name: "calls", type: "bytes[]" },
+    { name: "extraData", type: "bytes" },
+  ],
+  OutputPayment: [
+    { name: "recipient", type: "bytes" },
+    { name: "currency", type: "bytes" },
+    { name: "minimumAmount", type: "uint256" },
+    { name: "expectedAmount", type: "uint256" },
+  ],
+  Fee: [
+    { name: "recipientChainId", type: "string" },
+    { name: "recipient", type: "bytes" },
+    { name: "currencyChainId", type: "string" },
+    { name: "currency", type: "bytes" },
+    { name: "amount", type: "uint256" },
+  ],
+} as const;
 
 /** Quote tampering that a safe client must refuse before it signs anything. */
 export type HostileQuote =
@@ -77,7 +133,56 @@ export async function standInRelay(net: Localnet) {
     const amountIn = amountOut + (amountOut * feeBps) / 10_000n + flatFee;
     const requestId = `0x${randomBytes(32).toString("hex")}` as Hex;
     const contract = body.useDepositAddress !== true;
-    const orderId = contract ? (`0x${randomBytes(32).toString("hex")}` as Hex) : undefined;
+    // The order's own deadline binds the solver, so an expired quote is an expired order.
+    const deadline = Math.floor(Date.now() / 1000) + (hostile === "expired" ? -10 : 600);
+    const user0 = getAddress(String(body.user));
+    const order = {
+      version: "v1",
+      solverChainId: evmName,
+      solver: inventory.account!.address,
+      salt: BigInt(`0x${randomBytes(16).toString("hex")}`).toString(),
+      inputs: [
+        {
+          payment: {
+            chainId: tempoName,
+            currency: getAddress(String(body.originCurrency)),
+            amount: amountIn.toString(),
+            weight: "1",
+          },
+          refunds: [
+            {
+              chainId: tempoName,
+              recipient: user0,
+              currency: getAddress(String(body.originCurrency)),
+              minimumAmount: "0",
+              deadline,
+              extraData: "0x",
+            },
+          ],
+        },
+      ],
+      output: {
+        chainId: evmName,
+        payments: [
+          {
+            recipient:
+              hostile === "wrong-destination-recipient"
+                ? privateKeyToAccount(`0x${"11".repeat(32)}`).address
+                : getAddress(String(body.recipient)),
+            currency: getAddress(String(body.destinationCurrency)),
+            minimumAmount: amountOut.toString(),
+            expectedAmount: amountOut.toString(),
+          },
+        ],
+        deadline,
+        calls: [] as Hex[],
+        extraData: "0x",
+      },
+      fees: [] as never[],
+    };
+    const orderId = contract
+      ? hashStruct({ types: orderTypes, primaryType: "Order", data: order as never })
+      : undefined;
     const depositAddress = contract
       ? net.depository
       : privateKeyToAccount(`0x${randomBytes(32).toString("hex")}`).address;
@@ -210,7 +315,15 @@ export async function standInRelay(net: Localnet) {
       expiresAt,
       fees: {},
       ...(orderId
-        ? { protocol: { v2: { orderId, chainId: "tempo", depository: net.depository } } }
+        ? {
+            protocol: {
+              v2: {
+                orderId,
+                orderData: order,
+                paymentDetails: { chainId: tempoName, depository: net.depository },
+              },
+            },
+          }
         : {}),
     };
   };
@@ -277,6 +390,19 @@ export async function standInRelay(net: Localnet) {
     const json = (status: number, body: unknown) =>
       response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
     try {
+      if (request.method === "GET" && url.pathname === "/chains")
+        return json(200, {
+          chains: [
+            {
+              id: net.tempoChainId,
+              protocol: { v2: { chainId: tempoName, depository: net.depository } },
+            },
+            {
+              id: net.evmChainId,
+              protocol: { v2: { chainId: evmName, depository: net.depository } },
+            },
+          ],
+        });
       if (request.method === "POST" && url.pathname === "/quote/v2") {
         const body = JSON.parse(await read(request)) as Record<string, unknown>;
         quotes.push(body);

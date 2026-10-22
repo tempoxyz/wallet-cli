@@ -12,13 +12,14 @@ import {
   encodeFunctionResult,
   erc20Abi,
   getAddress,
+  hashStruct,
   verifyTypedData,
   type Address,
+  parseAbi,
 } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { listAttempts, operationsDirectory } from "../src/payment/attempts.js";
-import { relayDepositoryAbi } from "../src/payment/upstream/relay-route.js";
 import { runRequest } from "../src/request/run.js";
 import {
   ensureRemotePayer,
@@ -85,7 +86,23 @@ async function listen(server: ReturnType<typeof createServer>) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-/** A JSON-RPC stub for Tempo and Base: chain IDs, and `balanceOf` from `balances` (else 0). */
+/** The latest block the RPC stub returns, for fee estimation. */
+const stubBlock = {
+  number: "0x1",
+  hash: `0x${"11".repeat(32)}`,
+  parentHash: `0x${"00".repeat(32)}`,
+  timestamp: "0x1",
+  baseFeePerGas: "0x4a817c800",
+  gasLimit: "0x1c9c380",
+  gasUsed: "0x0",
+  miner: "0x0000000000000000000000000000000000000000",
+  transactions: [],
+};
+
+/**
+ * A JSON-RPC stub for Tempo and Base: chain IDs, gas and fee estimates, and `balanceOf` from
+ * `balances` (else 0).
+ */
 async function rpcStub() {
   return listen(
     createServer(async (req, res) => {
@@ -96,8 +113,12 @@ async function rpcStub() {
         method: string;
         params: [{ to: string; data: `0x${string}` }];
       };
-      let result: string | undefined;
+      let result: unknown;
       if (method === "eth_chainId") result = "0x1079";
+      // Gas for a bridge deposit: 200,000 at 20 gwei, Tempo's price unit being attodollars.
+      else if (method === "eth_estimateGas") result = "0x30d40";
+      else if (method === "eth_maxPriorityFeePerGas") result = "0x0";
+      else if (method === "eth_getBlockByNumber") result = stubBlock;
       else if (method === "eth_call" && params[0].data.startsWith("0x70a08231")) {
         const { args } = decodeFunctionData({ abi: erc20Abi, data: params[0].data });
         const owner = String(args?.[0]).toLowerCase();
@@ -219,6 +240,10 @@ async function remotePayerAddress() {
 function fund(token: string, owner: string, amount: bigint) {
   balances.set(`${token.toLowerCase()}:${owner.toLowerCase()}`, amount);
 }
+
+const relayDepositoryAbi = parseAbi([
+  "function depositErc20(address depositor, address token, uint256 amount, bytes32 id)",
+]);
 
 describe("EVM offers", () => {
   it("pays an x402 Base USDC charge from a funded remote payer with a verifiable authorization", async () => {
@@ -554,6 +579,110 @@ describe("whoami", () => {
   });
 });
 
+/** Relay's EIP-712 order types for EVM chains: an order's struct hash is its order ID. */
+const relayOrderTypes = {
+  Order: [
+    { name: "version", type: "string" },
+    { name: "solverChainId", type: "string" },
+    { name: "solver", type: "address" },
+    { name: "salt", type: "uint256" },
+    { name: "inputs", type: "Input[]" },
+    { name: "output", type: "Output" },
+    { name: "fees", type: "Fee[]" },
+  ],
+  Input: [
+    { name: "payment", type: "InputPayment" },
+    { name: "refunds", type: "InputRefund[]" },
+  ],
+  InputPayment: [
+    { name: "chainId", type: "string" },
+    { name: "currency", type: "bytes" },
+    { name: "amount", type: "uint256" },
+    { name: "weight", type: "uint256" },
+  ],
+  InputRefund: [
+    { name: "chainId", type: "string" },
+    { name: "recipient", type: "bytes" },
+    { name: "currency", type: "bytes" },
+    { name: "minimumAmount", type: "uint256" },
+    { name: "deadline", type: "uint32" },
+    { name: "extraData", type: "bytes" },
+  ],
+  Output: [
+    { name: "chainId", type: "string" },
+    { name: "payments", type: "OutputPayment[]" },
+    { name: "deadline", type: "uint32" },
+    { name: "calls", type: "bytes[]" },
+    { name: "extraData", type: "bytes" },
+  ],
+  OutputPayment: [
+    { name: "recipient", type: "bytes" },
+    { name: "currency", type: "bytes" },
+    { name: "minimumAmount", type: "uint256" },
+    { name: "expectedAmount", type: "uint256" },
+  ],
+  Fee: [
+    { name: "recipientChainId", type: "string" },
+    { name: "recipient", type: "bytes" },
+    { name: "currencyChainId", type: "string" },
+    { name: "currency", type: "bytes" },
+    { name: "amount", type: "uint256" },
+  ],
+} as const;
+
+/** A Relay order paying `amountOut` of `destination` on Base for `amountIn` of `origin` on Tempo. */
+function relayOrder(o: {
+  user: Address;
+  origin: Address;
+  recipient: Address;
+  destination: Address;
+  amountIn: bigint;
+  amountOut: bigint;
+}) {
+  const deadline = Math.floor(Date.now() / 1000) + 600;
+  return {
+    version: "v1",
+    solverChainId: "base",
+    solver: seller as Address,
+    salt: "1",
+    inputs: [
+      {
+        payment: {
+          chainId: "tempo",
+          currency: o.origin,
+          amount: o.amountIn.toString(),
+          weight: "1",
+        },
+        refunds: [
+          {
+            chainId: "tempo",
+            recipient: o.user,
+            currency: o.origin,
+            minimumAmount: "0",
+            deadline,
+            extraData: "0x",
+          },
+        ],
+      },
+    ],
+    output: {
+      chainId: "base",
+      payments: [
+        {
+          recipient: o.recipient,
+          currency: o.destination,
+          minimumAmount: o.amountOut.toString(),
+          expectedAmount: o.amountOut.toString(),
+        },
+      ],
+      deadline,
+      calls: [],
+      extraData: "0x",
+    },
+    fees: [],
+  } as const;
+}
+
 /**
  * A stand-in for Relay's quote API: a contract-deposit quote for the requested exact output, at
  * 0.3% plus 0.001 of the origin token, or `status` when given. Records each quote request.
@@ -564,6 +693,17 @@ async function relayStub(options: { status?: number } = {}) {
     createServer(async (req, res) => {
       let text = "";
       for await (const chunk of req) text += chunk;
+      if (req.url === "/chains") {
+        res.setHeader("content-type", "application/json");
+        return res.end(
+          JSON.stringify({
+            chains: [
+              { id: 4217, protocol: { v2: { chainId: "tempo", depository } } },
+              { id: 8453, protocol: { v2: { chainId: "base", depository } } },
+            ],
+          }),
+        );
+      }
       if (req.url !== "/quote/v2") return res.writeHead(404).end();
       const body = JSON.parse(text) as Record<string, string>;
       quotes.push(body);
@@ -571,7 +711,19 @@ async function relayStub(options: { status?: number } = {}) {
       const amountOut = BigInt(body.amount!);
       const amountIn = amountOut + (amountOut * 30n) / 10_000n + 1_000n;
       const requestId = `0x${"ab".repeat(32)}`;
-      const orderId = `0x${"cd".repeat(32)}` as const;
+      const order = relayOrder({
+        user: body.user as Address,
+        origin: body.originCurrency as Address,
+        recipient: body.recipient as Address,
+        destination: body.destinationCurrency as Address,
+        amountIn,
+        amountOut,
+      });
+      const orderId = hashStruct({
+        types: relayOrderTypes,
+        primaryType: "Order",
+        data: order as never,
+      });
       const tx = (to: string, data: string) => ({
         chainId: 4217,
         from: body.user,
@@ -600,7 +752,9 @@ async function relayStub(options: { status?: number } = {}) {
               currency: { chainId: 8453, address: body.destinationCurrency },
             },
           },
-          protocol: { v2: { orderId } },
+          protocol: {
+            v2: { orderId, orderData: order, paymentDetails: { chainId: "tempo", depository } },
+          },
           steps: [
             step(
               "approve",
@@ -664,8 +818,8 @@ describe("bridged dry run", () => {
         amount_in: "0.07121",
         raw_amount_in: "71210",
         fee: "0.00121",
-        gas: "0.02",
-        total: "0.09121",
+        gas: "0.0096",
+        total: "0.08081",
         max_funding_spend: "10.6",
         within_funding_budget: true,
         quotes: [
@@ -673,8 +827,8 @@ describe("bridged dry run", () => {
             route: "relay",
             amount_in: "0.07121",
             fee: "0.00121",
-            gas: "0.02",
-            total: "0.09121",
+            gas: "0.0096",
+            total: "0.08081",
             within_funding_budget: true,
             reason: null,
           },
@@ -700,10 +854,10 @@ describe("bridged dry run", () => {
     await relayStub();
     fund(ousd, wallet(), 1_000_000n);
 
-    expect(await quote(["--max-funding-spend", "0.12"])).toMatchObject({
-      funding: { total: "0.1213", max_funding_spend: "0.12", within_funding_budget: false },
+    expect(await quote(["--max-funding-spend", "0.11"])).toMatchObject({
+      funding: { total: "0.1109", max_funding_spend: "0.11", within_funding_budget: false },
     });
-    expect(await quote(["--max-funding-spend", "0.1213"])).toMatchObject({
+    expect(await quote(["--max-funding-spend", "0.1109"])).toMatchObject({
       funding: { route: "relay", within_funding_budget: true },
     });
   });
