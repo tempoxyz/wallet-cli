@@ -1,6 +1,8 @@
 node_modules/
 
 dist/
+# Vendored build output is checked in; see scripts/vendor-machine-fetch.sh.
+!vendor/*/dist/
 dist-package/
 artifacts/
 

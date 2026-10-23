@@ -3,7 +3,7 @@ import { formatUnits } from "viem";
 import { networkFields, type Network } from "../shared/network.js";
 import { nextStep } from "../shared/next.js";
 import { knownToken } from "../shared/tokens.js";
-import { decodeBase64UrlJson, escapeInvisible, stringValue } from "../shared/utils.js";
+import { decodeBase64UrlJson, escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
 
 /** What a paid request spent, as `--write-meta` reports it under `payment`. */
 export type PaymentReceipt = ReturnType<typeof paymentReceipt>;
@@ -30,9 +30,15 @@ export function paymentReceipt(payment: {
   session?: { channelId: string; deposit: bigint; cumulative: bigint; reused: boolean } | undefined;
   /** A subscription's billing period (e.g. `1 week`) and when its authorization expires. */
   subscription?: { period: string; expires: string } | undefined;
+  /** How the payment acquired `token`: a swap's route, its input token, and the most it spent. */
+  funding?: { route: string; input: { token: string; maxAmount: bigint } } | undefined;
+  /** The chain paid on when it is not `network`'s Tempo chain, such as Base. */
+  chain?: { chainId: number; name: string } | undefined;
+  /** `token`'s listing on `chain`, which the Tempo token list does not cover. */
+  listed?: { symbol: string; decimals: number } | undefined;
 }) {
-  const { network, session, subscription } = payment;
-  const listed = knownToken(payment.token, network.chainId);
+  const { network, session, subscription, funding, chain } = payment;
+  const listed = payment.listed ?? knownToken(payment.token, network.chainId);
   const token = escapeInvisible(payment.token.toLowerCase());
   const channelId = session ? escapeInvisible(session.channelId) : null;
   const deposit = session ? tokenUnits(session.deposit) : null;
@@ -54,7 +60,19 @@ export function paymentReceipt(payment: {
         }
       : null,
     payer: payment.payer.toLowerCase(),
-    ...networkFields(network.chainId),
+    ...(funding
+      ? {
+          funding: {
+            route: escapeInvisible(funding.route),
+            input: {
+              token: escapeInvisible(funding.input.token.toLowerCase()),
+              symbol: knownToken(funding.input.token, network.chainId)?.symbol ?? null,
+              max_amount: tokenUnits(funding.input.maxAmount),
+            },
+          },
+        }
+      : {}),
+    ...(chain ? { chain_id: chain.chainId, network: chain.name } : networkFields(network.chainId)),
     ...(session && !session.reused && channelId
       ? nextStep(
           `Session ${channelId} keeps ${deposit} ${listed?.symbol ?? token} locked until it is closed. When you are done with this service, run the next command to request its close, then follow that command's _next to withdraw the unspent deposit once the close grace period ends.`,
@@ -83,7 +101,10 @@ export function receiptSummary(receipt: PaymentReceipt) {
     return `${paid} · opened a session with ${receipt.deposit_locked} ${label} locked\nWhen done, request its close, then rerun after the grace period to withdraw the unspent deposit: ${receipt._next.command}\n`;
   if (receipt.session === "reuse")
     return `${paid} · session ${receipt.channel_id} (${receipt.cumulative} of ${receipt.deposit_locked} ${label} deposit in signed vouchers)\n`;
-  return `${paid}${receipt.tx_hash ? ` · tx ${receipt.tx_hash}` : ""}\n`;
+  const swapped = receipt.funding
+    ? ` · bought with up to ${receipt.funding.input.max_amount} ${receipt.funding.input.symbol ?? receipt.funding.input.token} on the Tempo DEX`
+    : "";
+  return `${paid}${swapped}${receipt.tx_hash ? ` · tx ${receipt.tx_hash}` : ""}\n`;
 }
 
 /**
@@ -100,6 +121,35 @@ export function receiptTxHash(response: Response, channelId?: string) {
     if (channelId === undefined) return transactionHash(receipt.reference);
     const sameChannel = stringValue(receipt.channelId).toLowerCase() === channelId.toLowerCase();
     return receipt.intent === "session" && sameChannel ? transactionHash(receipt.txHash) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The settlement transaction a paid EVM charge's response names, or `null`: x402's
+ * `payment-response` header (`x-payment-response` before v2) when it reports success on one of
+ * `networks`, else an MPP `payment-receipt` for the `evm` method. x402 encodes the header in
+ * standard base64.
+ */
+export function evmReceiptTxHash(response: Response, networks: readonly string[]) {
+  for (const name of ["payment-response", "x-payment-response"]) {
+    const header = response.headers.get(name);
+    if (!header) continue;
+    try {
+      const settled = getRecord(JSON.parse(Buffer.from(header, "base64").toString("utf8")));
+      const network = stringValue(settled.network).toLowerCase();
+      if (settled.success === true && (!network || networks.includes(network)))
+        return transactionHash(settled.transaction);
+    } catch {}
+    return null;
+  }
+  const header = response.headers.get("payment-receipt");
+  if (!header) return null;
+  try {
+    const receipt = decodeBase64UrlJson(header);
+    if (receipt.method !== "evm" || receipt.status !== "success") return null;
+    return transactionHash(receipt.reference);
   } catch {
     return null;
   }

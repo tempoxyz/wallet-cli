@@ -177,6 +177,29 @@ function isTransientRpcError(error: unknown) {
 }
 
 /** Whether a charge credential's signed transaction approves and swaps MACH, the MACH route. */
+/**
+ * The MACH token the SDK tries first for `challenge`, a machine-enabled charge without splits on a
+ * chain with a MACH deployment; `undefined` otherwise. `--dry-run` reports its balance, and
+ * stablecoin funding steps aside while it covers the charge.
+ */
+export function machCandidate(
+  challenge: { intent: string; request: Record<string, unknown> },
+  chainId: number,
+  amount: bigint,
+) {
+  const details = challenge.request.methodDetails as Record<string, unknown> | undefined;
+  if (
+    challenge.intent !== "charge" ||
+    amount <= 0n ||
+    details?.machineTokenEnabled !== true ||
+    (Array.isArray(details.splits) && details.splits.length > 0)
+  )
+    return undefined;
+  return machineTokenDeployments[chainId as keyof typeof machineTokenDeployments]?.token as
+    | Address
+    | undefined;
+}
+
 export function runsMachRoute(
   payload: Record<string, unknown>,
   deployment: { token: string; swap: string },

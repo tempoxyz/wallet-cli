@@ -9,8 +9,14 @@ import { nextStep } from "../shared/next.js";
 import { walletFix } from "../shared/require-wallet.js";
 import { knownToken, readTokenMetadata, tokenMetadata } from "../shared/tokens.js";
 import { getRecord, stringValue } from "../shared/utils.js";
+import { destinationBalance, tempoFundingInputs } from "../shared/chains.js";
 import { rpcChainCheck, tokenBalance } from "../wallet/key-output.js";
+import { loadRemotePayer } from "../wallet/remote-payer.js";
 import { challengeAmount, normalizedChallengeChainId, sessionDetails } from "./challenge.js";
+import { crossChainEnabled } from "./cross-chain.js";
+import { crossChainFundingQuote } from "./cross-chain-quote.js";
+import { chargeFunder } from "./funding.js";
+import type { EvmOffer } from "./offers.js";
 import {
   privateKeyIdentity,
   privateKeySigner,
@@ -63,7 +69,7 @@ export async function paymentQuote(
         servesChain,
       })
     )?.raw ?? null;
-  const [metadata, balance, machBalance, plan] = await Promise.all([
+  const [metadata, balance, machBalance, plan, funder] = await Promise.all([
     tokenMetadata(token.toLowerCase() as Address, chainId, (address) =>
       readTokenMetadata(address, chainId, dryRunRpc),
     ).catch(() => undefined),
@@ -79,6 +85,7 @@ export async function paymentQuote(
           return undefined;
         })
       : undefined,
+    challenge.intent === "charge" ? chargeFunder(challenge, options) : undefined,
   ]);
   const decimals = metadata?.decimals;
   const key = payer && "key" in payer ? payer.key : undefined;
@@ -120,6 +127,17 @@ export async function paymentQuote(
     signer: signer
       ? { address: signer.account.address.toLowerCase(), source: signer.source }
       : { address: null, source: "wallet" },
+    ...(funder &&
+    balance !== null &&
+    balance < amount &&
+    !(mach && machBalance !== null && machBalance >= amount)
+      ? {
+          funding: {
+            route: funder,
+            inputs: tempoFundingInputs(chainId).map((input) => input.toLowerCase()),
+          },
+        }
+      : {}),
     ...(fix
       ? nextStep(
           `${fix.reason} Run the next command, then rerun this request without --dry-run to pay.`,
@@ -127,5 +145,68 @@ export async function paymentQuote(
           { network: requestNetwork(options) },
         )
       : {}),
+  };
+}
+
+/**
+ * The `--dry-run` quote for an EVM offer, in the shape of a Tempo charge's. The payer is the
+ * private-key signer or the wallet's remote payer, which a quote never creates; `balance` is its
+ * USDC on the offer's chain, `null` when unknown. With `--funding auto`, a payer short of the
+ * amount gets `funding`: the bridge the payment would take, quoted but never run.
+ */
+export async function evmPaymentQuote(
+  offer: EvmOffer,
+  options: RequestOptions,
+): Promise<RequestDryRunOutput> {
+  const { destination, requirement } = offer;
+  const signer = privateKeySigner(options);
+  const wallet = signer ? undefined : await walletIdentity(options).catch(() => undefined);
+  const remote =
+    wallet && !("code" in wallet)
+      ? await loadRemotePayer(wallet.address).catch(() => undefined)
+      : undefined;
+  const payer = signer?.account.address ?? remote?.address;
+  const balance = payer
+    ? await destinationBalance(destination, payer).catch(() => null)
+    : remote === undefined && wallet && !("code" in wallet)
+      ? 0n
+      : null;
+  const cap = spendCap(options);
+  const source =
+    signer?.account.address ?? (wallet && !("code" in wallet) ? wallet.address : undefined);
+  const funding =
+    source && balance !== null && balance < requirement.amount && crossChainEnabled(options)
+      ? await crossChainFundingQuote({
+          destination,
+          source: source as Address,
+          payer: (payer ?? source) as Address,
+          shortfall: requirement.amount - balance,
+          request: options,
+        })
+      : undefined;
+  return {
+    payment_required: true,
+    method: offer.kind === "x402" ? "x402" : offer.challenge.method,
+    intent: "charge",
+    recurring: false,
+    amount: formatTokenAmount(requirement.amount),
+    raw_amount: requirement.amount.toString(),
+    session: null,
+    deposit: null,
+    raw_deposit: null,
+    token: destination.usdc.address.toLowerCase(),
+    symbol: "USDC",
+    decimals: destination.usdc.decimals,
+    balance: balance === null ? null : formatUnits(balance, destination.usdc.decimals),
+    access_key_limit: null,
+    mach: null,
+    machine_token_enabled: false,
+    payment_token: options.paymentToken ?? null,
+    chain_id: destination.chainId,
+    network: destination.name,
+    max_spend: cap,
+    within_budget: requirement.amount <= parseUnits(cap, 6),
+    signer: { address: payer?.toLowerCase() ?? null, source: signer ? signer.source : "wallet" },
+    ...(funding ? { funding } : {}),
   };
 }

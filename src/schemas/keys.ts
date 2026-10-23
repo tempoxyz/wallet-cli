@@ -85,6 +85,15 @@ export const accessKeyOutput = z.object({
 export const keysOutput = z.object({
   keys: z.array(accessKeyOutput),
   total: z.number(),
+  remote_payer: z
+    .object({
+      address: z.string(),
+      key_type: z.literal("secp256k1"),
+    })
+    .optional()
+    .describe(
+      "The active wallet's key for paying on other chains, once a payment created it; kept in the wallet store with the access keys",
+    ),
 });
 
 export const updateAccessKeyArgs = z.object({

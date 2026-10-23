@@ -5,6 +5,7 @@ import { machineTokenDeployments } from "mppx/tempo";
 import { formatUnits, parseUnits, type Address } from "viem";
 
 import { paymentReceipt, receiptTxHash, transactionHash } from "../payment/receipt.js";
+import { signedSwap } from "../payment/tempo-funding.js";
 import { withSessionLock } from "../payment/session-lock.js";
 import { paymentError } from "../shared/errors.js";
 import { readTokenMetadata, tokenLabel, tokenMetadata } from "../shared/tokens.js";
@@ -31,7 +32,10 @@ import {
   runsMachRoute,
 } from "./mach.js";
 import type { RequestOptions } from "./options.js";
+import { payEvmAndRetry } from "./evm-charge.js";
+import { checkCharge, prepareCharge } from "./funding.js";
 import { fetchPaidRequest, paymentReceipts } from "./paid.js";
+import { selectPayment } from "./select.js";
 import { dryRunRpc, paySessionAndRetryRequest } from "./session.js";
 import { formatTokenAmount, MaxSpendExceededError, spendCap } from "./spend.js";
 
@@ -41,11 +45,16 @@ export async function payAndRetryRequest(
   options: RequestOptions,
   stderr: Pick<NodeJS.WriteStream, "write">,
 ) {
+  const selection = await selectPayment(paymentRequiredResponse, options, request.url);
+  if (selection.kind === "evm")
+    return await payEvmAndRetry(selection.offer, request, options, stderr);
   const { challenge: selectedChallenge, response: selectedResponse } = preparePaymentChallenge(
     paymentRequiredResponse,
     options,
     request.url,
   );
+  // Policy refuses a charge before anything names the payer.
+  if (selectedChallenge.intent !== "session") await checkCharge(selectedChallenge, options);
   writePrivateKeyNotice(stderr, options);
   const header = selectPaymentTokenResponse(
     paymentRequiredResponse,
@@ -92,12 +101,13 @@ export async function payAndRetryRequest(
       polyfill: false,
     });
 
-    payment.onChallengeReceived(async ({ challenge, createCredential }) =>
-      createCredential(paymentContext(challenge, options) as never),
-    );
-
+    // Policy and funding run before signing; the credential carries the context they prepared.
+    const prepared = await prepareCharge(selectedChallenge, options, {
+      address: identity.address,
+      key: "key" in identity ? identity.key : undefined,
+    });
     const credential = await payment
-      .createCredential(challengeResponse)
+      .createCredential(challengeResponse, prepared.credentialContext as never)
       .catch(async (error: unknown) => {
         throw (await charge.limitError(error)) ?? error;
       });
@@ -198,6 +208,7 @@ function recordChargeReceipt(
       network,
       payer,
       txHash: payload.type === "hash" ? transactionHash(payload.hash) : receiptTxHash(response),
+      funding: swapFunding(payload),
       subscription:
         challenge.intent === "subscription"
           ? {
@@ -208,6 +219,14 @@ function recordChargeReceipt(
           : undefined,
     }),
   );
+}
+
+/** The Tempo DEX swap a credential's transaction makes before it pays, as the receipt reports it. */
+function swapFunding(payload: Record<string, unknown>) {
+  const swap = signedSwap(payload);
+  return swap
+    ? { route: "tempo-dex", input: { token: swap.token, maxAmount: swap.maxAmount } }
+    : undefined;
 }
 
 function credentialPayload(credential: string) {
@@ -261,9 +280,4 @@ function chargeWithinCap(
     // A malformed charge offer is no alternative.
   }
   return undefined;
-}
-
-function paymentContext(challenge: { intent: string }, options: RequestOptions) {
-  if (challenge.intent !== "session" || !options.maxSpend) return undefined;
-  return { depositRaw: parseUnits(options.maxSpend, 6).toString() };
 }

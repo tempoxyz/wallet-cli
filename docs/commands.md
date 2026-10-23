@@ -20,6 +20,9 @@ This list is generated from the mounted command schemas. Run `tempo wallet <comm
 - `swap <amount> <token-in> <token-out>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
 - `tx status <tx-hash>`: Show a transaction's status on chain.
 - `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--credits`, `--amount`, `--referral-code`.
+- `funding`: Inspect and reconcile cross-chain funding for paid requests.
+- `funding list`: List cross-chain funding that has not been paid with.
+- `funding recover <id>`: Check a cross-chain funding operation with its route, without sending anything.
 - `sessions`: Manage payment sessions. Options: `--orphaned`, `--all`.
 - `sessions list`: List payment sessions. Options: `--orphaned`, `--all`.
 - `sessions close [target]`: Request a session close, then withdraw after the grace period with --finalize. Options: `--all`, `--orphaned`, `--finalize`, `--cooperative`, `--dry-run`, `--yes`.

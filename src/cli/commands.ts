@@ -5,6 +5,7 @@ import config from "../commands/config.js";
 import debug from "../commands/debug.js";
 import doctor from "../commands/doctor.js";
 import fund from "../commands/fund.js";
+import funding from "../commands/funding/index.js";
 import keys from "../commands/keys.js";
 import login from "../commands/login.js";
 import logout from "../commands/logout.js";
@@ -36,6 +37,7 @@ export const commands: WalletCommand[] = [
   swap,
   tx,
   fund,
+  funding,
   sessions,
   services,
   mcp,

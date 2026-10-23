@@ -61,6 +61,85 @@ export const requestDryRunOutput = z.union([
       address: z.string().nullable(),
       source: z.enum(["flag", "env", "wallet"]),
     }),
+    funding: z
+      .object({
+        route: z
+          .string()
+          .nullable()
+          .describe(
+            "The funder that would acquire the token, such as tempo-dex, or the bridge route, such as relay or stargate; null when no bridge route quoted",
+          ),
+        inputs: z.array(z.string()).describe("Tokens it may spend, most preferred first"),
+        shortfall: z
+          .string()
+          .optional()
+          .describe("Bridge only: the USDC the payer lacks, which the bridge delivers"),
+        raw_shortfall: z.string().register(displayMeta, { hidden: true }).optional(),
+        source_token: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Bridge only: the Tempo token the bridge spends"),
+        source_symbol: z.string().nullable().optional(),
+        amount_in: z
+          .string()
+          .nullable()
+          .optional()
+          .describe(
+            "Bridge only: the chosen route's quoted debit of the source token, fee included",
+          ),
+        raw_amount_in: z.string().register(displayMeta, { hidden: true }).nullable().optional(),
+        fee: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Bridge only: the bridge's fee, amount_in beyond the shortfall"),
+        gas: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Bridge only: most the Tempo transaction's gas may cost, in the source token"),
+        total: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Bridge only: most the funding may debit, fee and gas included"),
+        max_funding_spend: z
+          .string()
+          .optional()
+          .describe(
+            "Bridge only: the cap on total, from --max-funding-spend, else --max-spend plus 5% and 0.10",
+          ),
+        within_funding_budget: z
+          .boolean()
+          .nullable()
+          .optional()
+          .describe(
+            "Bridge only: whether total fits max_funding_spend; null when no route quoted. When no quote fits, route is the cheapest one",
+          ),
+        quotes: z
+          .array(
+            z.object({
+              route: z.string(),
+              amount_in: z.string().nullable(),
+              fee: z.string().nullable(),
+              gas: z.string().nullable(),
+              total: z.string().nullable(),
+              within_funding_budget: z.boolean().nullable(),
+              reason: z.string().nullable().describe("Why the route declined to quote"),
+            }),
+          )
+          .optional()
+          .describe("Bridge only: every route's quote, or why it declined, in preference order"),
+        reason: z
+          .string()
+          .optional()
+          .describe("Bridge only: why no route can fund the payment, when none can"),
+      })
+      .optional()
+      .describe(
+        "Set when the payer's balance is below the amount and a funder would acquire the rest, or with --funding auto a bridge would deliver it; nothing is swapped, bridged, or saved in a dry run",
+      ),
     // Set when the wallet cannot pay: the login or refresh command that fixes it.
     ...nextOutputShape,
   }),

@@ -1,6 +1,8 @@
 overrides:
   "@yao-pkg/pkg>@yao-pkg/pkg-fetch": 3.6.7
   esbuild: 0.28.2
+  # One mppx in the install and the bundle: machine-fetch's and accounts' mppx peers resolve to it.
+  mppx: 0.13.6
   source-map-js: 1.2.2
   tar: 7.5.22
   tinypool: 2.1.2
@@ -16,7 +18,8 @@ minimumReleaseAgeExclude:
   - "@yao-pkg/pkg-fetch@3.6.7"
   - accounts@0.21.0
   - incur@0.7.1
-  - mppx@0.12.0
+  - machine-fetch@0.4.1
+  - mppx@0.13.6
   - viem@2.57.1
 
 patchedDependencies:

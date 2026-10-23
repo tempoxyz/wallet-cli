@@ -101,6 +101,24 @@ tempo request -t -X GET --max-spend <APPROVED_AMOUNT> --network <QUOTED_NETWORK>
 - `recurring: true` is a subscription. The quote does not show its renewal terms and `--max-spend` refuses it, so do not run it: tell the user, and quote again with `--payment-intent charge` or `session`.
 - `payment_required: false` means the dry run already sent the request; rerun it without `--dry-run` only when repeating the request is safe.
 
+### Paying from Other Tokens and Chains
+
+`tempo request` can pay a charge in a token the wallet does not hold, or on another chain:
+
+- `--funding tempo` (the default) buys a Tempo charge's token on the Tempo DEX, in the payment's own transaction, from OUSD, USDC.e, or pathUSD the wallet holds, within `--max-slippage-bps` (default 50). The dry run's `funding` names the route and inputs.
+- `--funding auto` also pays x402 and MPP `evm` offers in USDC on Base. It pays them from the wallet's remote payer, a per-wallet key the CLI creates on first use (`tempo wallet whoami` shows `remote_payer` and its Base USDC). When the payer lacks USDC, it bridges exactly the shortfall from USDC.e or OUSD through Relay (or Stargate), capped by `--max-funding-spend`. USDC left on the payer pays later Base charges; there is no command to withdraw it.
+- `--funding off` pays only from tokens already held. On Base that means the payer's USDC, which it never bridges.
+- `--payment-network base` or `tempo` picks the offer when a server offers both. Otherwise the CLI prefers a token the wallet holds, then a DEX swap, then held Base USDC, then a bridge.
+- A machine-enabled charge is left to MACH, with no swap, when the wallet holds enough MACH.
+
+Bridging moves funds and costs a fee (Relay about $0.02, Stargate about $1.26). Use `--funding auto` only when the user approves bridging, and pass `--max-funding-spend` with the most they approve. `--dry-run` reports the payment but not yet the bridge's cost.
+
+- A DEX swap counts twice against the access key's limit, once for its approve and once for the DEX's pull of the input. A limit short of that fails with `E_LIMIT_EXCEEDED` before signing, and its `cta` is the `tempo wallet keys update` with the limit needed; run it only after the wallet owner approves.
+- `E_PAYMENT_OUTCOME_UNKNOWN` naming a funding operation means a bridge may have moved funds. Do not pay again. Run its `cta` (`tempo wallet funding recover <ID>`), which only reads, and rerun its `_next` while it reports `pending`:
+  - `completed` or `refunded`: the request can be retried. It pays from the delivery and does not bridge again.
+  - `action_required`: report the operation and its `reference` to the user, who reconciles it with the bridge provider.
+- `tempo wallet funding list` shows funding that has not been paid with.
+
 ### MACH Funding and Payments
 
 ```bash
@@ -198,6 +216,7 @@ tempo wallet send <AMOUNT> <TOKEN> <RECIPIENT> --idempotency-key <KEY> --yes
 - `network`: `--network`, then `TEMPO_WALLET_NETWORK`, then the saved `network`, then the logged-in wallet's network, then mainnet. A saved `network` does not narrow `keys list` or `logout`.
 - `rpc-url`, saved per network: `TEMPO_RPC_URL` (every network), then the saved `rpc-url` for that network, then the network's default RPC.
 - `max-spend`: `--max-spend`, then `TEMPO_MAX_SPEND`, then the saved `max-spend`, then 10.
+- `funding`: `--funding`, then `TEMPO_FUNDING`, then the saved `funding`, then `tempo`.
 
 A saved setting applies to every later command, including the user's own:
 
@@ -223,6 +242,9 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 | `debug`           | true           | false             | true             | true            |
 | `doctor`          | true           | false             | true             | true            |
 | `fund`            | false          | false             | false            | true            |
+| `funding`         | true           | false             | true             | false           |
+| `funding_list`    | true           | false             | true             | false           |
+| `funding_recover` | false          | false             | true             | true            |
 | `keys_list`       | true           | false             | true             | true            |
 | `keys_revoke`     | false          | true              | true             | true            |
 | `keys_update`     | false          | true              | false            | true            |
