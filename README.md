@@ -100,7 +100,7 @@ pnpm check
 pnpm docs:check
 ```
 
-The release workflow publishes standalone macOS and Linux binaries with checksums, SBOMs, Sigstore bundles, and GitHub attestations. See [Releasing](docs/releasing.md) for runtime security checks and the shared wallet/request release procedure.
+The release workflow publishes standalone macOS and Linux binaries with checksums, SBOMs, Sigstore bundles, and GitHub attestations.
 
 ## Security and contributing
 

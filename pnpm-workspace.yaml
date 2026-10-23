@@ -1,4 +1,5 @@
 overrides:
+  "@yao-pkg/pkg>@yao-pkg/pkg-fetch": 3.6.7
   esbuild: 0.28.2
   source-map-js: 1.2.2
   tar: 7.5.22
@@ -8,10 +9,11 @@ overrides:
 allowBuilds:
   esbuild: true
 
-minimumReleaseAge: 10080
+minimumReleaseAge: 1440
 trustPolicy: no-downgrade
 
 minimumReleaseAgeExclude:
+  - "@yao-pkg/pkg-fetch@3.6.7"
   - accounts@0.21.0
   - incur@0.7.1
   - mppx@0.12.0

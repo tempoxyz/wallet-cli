@@ -57,5 +57,5 @@
     "vitest": "5.0.3",
     "vp": "npm:vite-plus@1.1.0"
   },
-  "packageManager": "pnpm@11.25.0"
+  "packageManager": "pnpm@11.0.8"
 }

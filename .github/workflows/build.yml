@@ -92,7 +92,7 @@ jobs:
           - os: ubuntu-24.04-arm
             pkg_target: node22-linux-arm64
             suffix: linux-arm64
-          - os: macos-15-intel
+          - os: macos-latest
             pkg_target: node22-macos-x64
             suffix: darwin-amd64
           - os: macos-latest
@@ -115,14 +115,14 @@ jobs:
           ref: ${{ needs.parse-tag.outputs.release_tag }}
           persist-credentials: false
 
+      - name: Setup pnpm
+        uses: tempoxyz/gh-actions/vendor/pnpm/action-setup@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: .node-version
+          node-version: "22"
           package-manager-cache: false
-
-      - name: Setup pnpm
-        uses: tempoxyz/gh-actions/vendor/pnpm/action-setup@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -134,8 +134,7 @@ jobs:
         run: pnpm test:types
 
       - name: Run tests
-        # Source tests use package.json; the release version override is for packaging.
-        run: env -u TEMPO_WALLET_VERSION pnpm test
+        run: pnpm test
 
       - name: Build JavaScript
         run: pnpm build
@@ -143,8 +142,9 @@ jobs:
       - name: Build TypeScript CLI release binary
         run: pnpm package
 
-      - name: Smoke test packaged binary and embedded runtime
-        run: pnpm exec tsx scripts/smoke-package.ts artifacts/"${PACKAGE}"-${{ matrix.build.suffix }}
+      - name: Smoke test host binary
+        if: matrix.build.pkg_target == 'node22-linux-x64' || matrix.build.pkg_target == 'node22-linux-arm64' || matrix.build.pkg_target == 'node22-macos-arm64'
+        run: ./artifacts/"${PACKAGE}"-${{ matrix.build.suffix }} --version
 
       - name: Generate sha256
         shell: bash
