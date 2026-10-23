@@ -1,5 +1,0 @@
----
-tempo-wallet: minor
----
-
-Add `tempo wallet balance [--token <symbol|address>]` and `tempo wallet address [--qr]`. `balance` prints the logged-in wallet's token balances on the resolved network as `{ wallet, chain_id, network, balances: [{ token, symbol, decimals, balance, verified }] }`: each token the wallet app reports, plus the network's default token (USDC.e on mainnet, pathUSD on testnet) read on chain even at zero. `--token` shows only that token, read on chain in its own decimals. A failed on-chain read returns retryable `E_NETWORK`, unless the wallet app reported that token, whose balance is then shown. Session deposits are held in escrow, so locked and pending-refund amounts stay in `whoami`. `address` prints `{ address, chain_id, network }`; on a terminal, `--qr` also draws a QR code of the address for receiving funds, while agent and JSON output stay the same. Both need a login but no access key, return `E_NOT_AUTHENTICATED` with a login `cta` without one, and are read-only MCP tools; `address` makes no network request.
