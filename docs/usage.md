@@ -77,9 +77,11 @@ Saved payment metadata includes the `intent`, `amount`, `token`, `payer`, `chain
 
 For a JSON endpoint, use `tempo request -X POST --json '{"input":"hello"}' <url>`. The request is sent before a 402 challenge is evaluated, including with `--dry-run`; inspect the method's side effects first.
 
-For a one-time MACH charge, use `tempo request --mach --max-spend <amount> <url>` (or `--payment-token MACH`). The service must offer a machine-enabled charge; MACH does not pay for sessions. The merchant still receives its advertised settlement currency. Funding MACH does not convert legacy credits.
+For a one-time MACH charge, use `tempo request --mach --max-spend <amount> <url>` (or `--payment-token MACH`). Add `--payment-intent session` for a native MACH v2 session, which locks MACH in the channel and pays the merchant directly without a swapper. Charges retain the SDK swapper route and pay the merchant its advertised settlement currency. Funding MACH does not convert legacy credits.
 
-An explicit MACH selection does not fall back to a stablecoin and requires an explicit spending cap for payment. Insufficient MACH returns `E_INSUFFICIENT_FUNDS`; an insufficient stored key limit returns `E_LIMIT_EXCEEDED` with a `keys update` continuation. An unreadable balance returns retryable `E_NETWORK`; call-scope or swap-route failures return `E_PAYMENT`. `tempo wallet transfer --mach` can settle a captured challenge, but it does not deliver the credential to the merchant; prefer `tempo request` for the full flow.
+Without an explicit token, the CLI prefers an offered MACH session when its deposit or top-up is covered, including reuse of a funded channel. Otherwise it uses a compatible advertised stablecoin session or charge. New deposits and top-ups must fit the access key’s remaining allowance. `--dry-run` uses the same selection and shows MACH as the session token. MACH cannot pay gas: session opens and top-ups use the advertised fee token, and unilateral close/finalize uses the network default fee token (USDC.e on mainnet).
+
+An explicit MACH selection does not fall back to a stablecoin and requires an explicit spending cap for payment. For charges, insufficient MACH returns `E_INSUFFICIENT_FUNDS`; an insufficient stored key limit returns `E_LIMIT_EXCEEDED` with a `keys update` continuation. An unreadable balance returns retryable `E_NETWORK`; call-scope or swap-route failures return `E_PAYMENT`. `tempo wallet transfer --mach` can settle a captured challenge, but it does not deliver the credential to the merchant; prefer `tempo request` for the full flow.
 
 ## Legacy credits
 
