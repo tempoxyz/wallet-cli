@@ -244,16 +244,17 @@ describe("generated CLI metadata", () => {
       output: {
         anyOf: {
           properties?: {
-            balance?: { properties: { available: { anyOf: { type: string }[] } } };
+            balance?: { properties: { available: { type: string[] } } };
             key?: { anyOf: { properties?: Record<string, unknown> }[] };
           };
         }[];
       };
     };
     const detailedWhoami = whoami.output.anyOf.find((item) => item.properties?.balance);
-    expect(detailedWhoami?.properties?.balance?.properties.available.anyOf).toContainEqual({
-      type: "null",
-    });
+    expect(detailedWhoami?.properties?.balance?.properties.available.type).toEqual([
+      "string",
+      "null",
+    ]);
     expect(detailedWhoami?.properties?.key?.anyOf[0]?.properties).toHaveProperty("balance_error");
 
     const keys = JSON.parse(await walletCli(["keys", "list", "--schema", "--format", "json"])) as {
