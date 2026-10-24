@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.1 (2026-10-24)
+
+### Patch Changes
+
+- Updated Undici and Zod dependencies to patched versions and upgraded the development test tooling to resolve security advisories.
+
 ## 0.15.0 (2026-10-23)
 
 ### Minor Changes
