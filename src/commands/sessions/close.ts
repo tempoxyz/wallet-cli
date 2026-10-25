@@ -741,7 +741,11 @@ export function buildSessionManagementTransactionRequest(options: {
   const descriptor = isPrecompile ? requireSessionDescriptor(options.record) : undefined;
   return {
     chainId: toHex(options.record.chain_id),
-    feeToken: options.record.token as Address,
+    // MACH is a session currency, never a gas token. Unilateral closes use the network default.
+    feeToken:
+      tokenSymbol(options.record.token, options.record.chain_id) === "MACH"
+        ? tokenAddress(options.record.chain_id)
+        : (options.record.token as Address),
     calls: [
       {
         to: options.escrowContract,

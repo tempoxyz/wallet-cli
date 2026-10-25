@@ -28,11 +28,11 @@ const options = z.object({
     .enum(["auto", "session", "charge"])
     .default("auto")
     .describe("Payment intent: auto, session, or charge"),
-  mach: z.boolean().optional().describe("Require MACH settlement; alias for --payment-token MACH"),
+  mach: z.boolean().optional().describe("Require MACH payments; alias for --payment-token MACH"),
   "payment-token": z
     .string()
     .optional()
-    .describe("Select a payment token by address or symbol (e.g. USDC.e), or MACH settlement"),
+    .describe("Select a payment token by address or symbol (e.g. USDC.e or MACH)"),
   "private-key": z
     .string()
     .optional()
@@ -314,13 +314,13 @@ function describeRequestCli() {
       {
         name: "mach",
         long: "--mach",
-        help: "Require MACH settlement; alias for --payment-token MACH",
+        help: "Require MACH payments; alias for --payment-token MACH",
       },
       {
         name: "payment_token",
         long: "--payment-token",
         value_name: "TOKEN",
-        help: "Select a payment token by address or symbol (e.g. USDC.e), or MACH settlement",
+        help: "Select a payment token by address or symbol (e.g. USDC.e or MACH)",
       },
       {
         name: "private_key",

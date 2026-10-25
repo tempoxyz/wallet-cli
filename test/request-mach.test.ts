@@ -210,16 +210,10 @@ it("requires a budget before explicit MACH payment, but allows inspection", () =
   ).not.toThrow();
   expect(signTransaction).not.toHaveBeenCalled();
 });
-it("rejects MACH sessions before requests", () => {
-  expect(() =>
-    parseRequestArgs([
-      "--payment-token",
-      "MACH",
-      "--payment-intent",
-      "session",
-      "https://example.com",
-    ]),
-  ).toThrow("supports charge payments");
+it("accepts MACH session selection", () => {
+  expect(
+    parseRequestArgs(["--mach", "--payment-intent", "session", "https://example.com"]),
+  ).toMatchObject({ paymentToken: "MACH", paymentIntent: "session" });
 });
 it("selects one exact capped MACH-enabled settlement offer without changing its signed request", () => {
   const selected = offer();
@@ -242,7 +236,7 @@ it.each([
     "network mismatch",
   ],
   ["recipient", { recipient: "invalid" }, {}, "valid recipient"],
-  ["direct MACH", { currency: deployment.token }, {}, "not advertised"],
+  ["direct MACH", { currency: deployment.token }, {}, "cannot be advertised"],
   ["expired", {}, { expires: "2000-01-01T00:00:00Z" }, "expired"],
   [
     "split",
