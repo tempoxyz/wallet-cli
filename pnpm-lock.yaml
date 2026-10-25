@@ -28,9 +28,12 @@ importers:
       incur:
         specifier: 0.7.1
         version: 0.7.1(patch_hash=ce9f4f28b7cb426f7ad6048b002752028a94ba5d9f22643b1fb0b254ffb2dcc1)
+      machine-fetch:
+        specifier: file:/tmp/machine-fetch-0.4.1.tgz
+        version: file:../../../../../tmp/machine-fetch-0.4.1.tgz(mppx@0.15.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7)))(viem@2.57.1(typescript@7.0.2)(zod@4.6.7))
       mppx:
-        specifier: 0.12.0
-        version: 0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7))
+        specifier: 0.15.0
+        version: 0.15.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7))
       qr:
         specifier: 0.7.2
         version: 0.7.2
@@ -810,6 +813,10 @@ packages:
     resolution: {integrity: sha512-/0c72BUgzzVkVTlsw5uBn8x3waTdVJ/PZGfQ6jY1eu6K7olUPf4d9lgDPA9/0sIdsR8j7o3QIG8fOCO6ItcL7A==}
     engines: {node: '>=12.16'}
 
+  '@stripe/stripe-js@9.17.0':
+    resolution: {integrity: sha512-uidL4OJum5kivsOAQnVfQmYLJ2zdgirtmT0zWgskASZ4TPXxpXQ0MNrzW4NsXB90uEqmPHpSEtciLFbF1QQvNA==}
+    engines: {node: '>=12.16'}
+
   '@testing-library/dom@10.4.2':
     resolution: {integrity: sha512-yzr2S9HyAIdhz2/6qHgbs665Q7PKVcDF05vsOlHPxG1mo36gKVesdYVeDLnXgfjJ03CrKRk08knc6+E/9m8v2Q==}
     engines: {node: '>=18'}
@@ -1439,6 +1446,10 @@ packages:
     resolution: {integrity: sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ==}
     engines: {node: '>=18.0.0'}
 
+  eventsource-parser@4.1.1:
+    resolution: {integrity: sha512-zaWNqeSLeyzEAAt2Q6aDBRDRk/VnPmsKqvToyGvv6aahvLv71A4Jw7jG93Hckf11zXurbqgsffvpSgKPoeU1Qw==}
+    engines: {node: '>=22.12'}
+
   expand-template@2.0.3:
     resolution: {integrity: sha512-XYfuKMvj4O35f/pOXLObndIRvyQ+/+6AhODh+OKWj9S9498pHHn/IMszH+gt0fBCRWMNfk1ZSp5x3AifmnI2vg==}
     engines: {node: '>=6'}
@@ -1649,6 +1660,23 @@ packages:
     resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
     hasBin: true
 
+  machine-fetch@file:../../../../../tmp/machine-fetch-0.4.1.tgz:
+    resolution: {integrity: sha512-b+dZnB3h9RkaUxDVxAJSNGdNB/DiFahVPfa/jn78I+0aBevYG8jfzhk6CdrYVH231w59H+Z3EHK4Qmamhicljw==, tarball: file:../../../../../tmp/machine-fetch-0.4.1.tgz}
+    version: 0.4.1
+    engines: {node: '>=22'}
+    peerDependencies:
+      '@x402/core': '>=2.25.0 <3'
+      '@x402/fetch': '>=2.25.0 <3'
+      mppx: '>=0.13.6 <0.16'
+      viem: '>=2.57.1 <3'
+    peerDependenciesMeta:
+      '@x402/core':
+        optional: true
+      '@x402/fetch':
+        optional: true
+      mppx:
+        optional: true
+
   magic-string@1.4.3:
     resolution: {integrity: sha512-z12OxmaPGE0F4xlpGdjuAUckipLpQlTAuAmyGhNoD7ODpYUzvDfvtxUbjM/jwznyP178oju/KDdyi220wNJ0RQ==}
 
@@ -1689,6 +1717,43 @@ packages:
       '@x402/mcp': '>=2.22.0'
       '@x402/next': '>=2.22.0'
       elysia: '>=1'
+      express: '>=5'
+      hono: '>=4.12.25'
+      next: '>=16.2.6'
+      viem: '>=2.57.1'
+    peerDependenciesMeta:
+      '@modelcontextprotocol/sdk':
+        optional: true
+      '@x402/core':
+        optional: true
+      '@x402/express':
+        optional: true
+      '@x402/hono':
+        optional: true
+      '@x402/mcp':
+        optional: true
+      '@x402/next':
+        optional: true
+      elysia:
+        optional: true
+      express:
+        optional: true
+      hono:
+        optional: true
+      next:
+        optional: true
+
+  mppx@0.15.0:
+    resolution: {integrity: sha512-RfxkgBPO8ZGQvIWcYd4ojU6fqYbfjLeCX1vJ0TqPS2eE5ItvFsfx/vQVzEdyElnZPPhsH7HkEZ8Wf8PRdt5FXQ==}
+    hasBin: true
+    peerDependencies:
+      '@modelcontextprotocol/sdk': '>=1.25.0'
+      '@x402/core': '>=2.22.0'
+      '@x402/express': '>=2.22.0'
+      '@x402/hono': '>=2.22.0'
+      '@x402/mcp': '>=2.22.0'
+      '@x402/next': '>=2.22.0'
+      elysia: '>=1.2.0'
       express: '>=5'
       hono: '>=4.12.25'
       next: '>=16.2.6'
@@ -1931,6 +1996,10 @@ packages:
 
   structured-headers@2.0.3:
     resolution: {integrity: sha512-4g5yxhlDMClRwCcfKfLeS7Z8yAVdOWGDADwm80Poh1iReU2KVKLGBlqwpHWJ2qovq0+ZIf1atAEO1eua2o9Rgg==}
+    engines: {node: '>=18', npm: '>=6'}
+
+  structured-headers@2.1.0:
+    resolution: {integrity: sha512-ClzykN+XQVaSW5UfpOdEWfDplZ1Th7mISdaFvaC2+GjLTeBhGMJw83D/Rw9jPkHOml4oYd3EXaZhbz3gnE5nBQ==}
     engines: {node: '>=18', npm: '>=6'}
 
   supports-preserve-symlinks-flag@1.0.0:
@@ -2706,6 +2775,8 @@ snapshots:
 
   '@stripe/stripe-js@9.13.0': {}
 
+  '@stripe/stripe-js@9.17.0': {}
+
   '@testing-library/dom@10.4.2':
     dependencies:
       '@babel/code-frame': 7.29.7
@@ -3243,6 +3314,8 @@ snapshots:
 
   eventsource-parser@3.1.1: {}
 
+  eventsource-parser@4.1.1: {}
+
   expand-template@2.0.3: {}
 
   expect-type@1.4.0: {}
@@ -3407,6 +3480,12 @@ snapshots:
 
   lz-string@1.5.0: {}
 
+  machine-fetch@file:../../../../../tmp/machine-fetch-0.4.1.tgz(mppx@0.15.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7)))(viem@2.57.1(typescript@7.0.2)(zod@4.6.7)):
+    dependencies:
+      viem: 2.57.1(typescript@7.0.2)(zod@4.6.7)
+    optionalDependencies:
+      mppx: 0.15.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7))
+
   magic-string@1.4.3:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
@@ -3433,6 +3512,19 @@ snapshots:
       eventsource-parser: 3.1.1
       ox: 0.14.45(typescript@7.0.2)(zod@4.6.7)
       structured-headers: 2.0.3
+      viem: 2.57.1(typescript@7.0.2)(zod@4.6.7)
+      zod: 4.6.7
+    optionalDependencies:
+      hono: 4.13.12
+    transitivePeerDependencies:
+      - typescript
+
+  mppx@0.15.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7)):
+    dependencies:
+      '@stripe/stripe-js': 9.17.0
+      eventsource-parser: 4.1.1
+      ox: 0.14.45(typescript@7.0.2)(zod@4.6.7)
+      structured-headers: 2.1.0
       viem: 2.57.1(typescript@7.0.2)(zod@4.6.7)
       zod: 4.6.7
     optionalDependencies:
@@ -3709,6 +3801,8 @@ snapshots:
   strip-json-comments@2.0.1: {}
 
   structured-headers@2.0.3: {}
+
+  structured-headers@2.1.0: {}
 
   supports-preserve-symlinks-flag@1.0.0: {}
 
