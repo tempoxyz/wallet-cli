@@ -58,6 +58,10 @@ vi.mock("viem/tempo", async (importOriginal) => {
 });
 
 const deployment = machineTokenDeployments[4217];
+const notAccepted = (host: string, retry = "Retry without --payment-token MACH.") =>
+  `${host} doesn't accept MACH. ${retry}`;
+const transferRetry =
+  "Pay it without MACH through 'tempo request <url>' to the service's URL, without --mach.";
 const recipient = "0x1111111111111111111111111111111111111111";
 const hash = `0x${"a".repeat(64)}`;
 const servers: ReturnType<typeof createServer>[] = [];
@@ -256,7 +260,7 @@ it.each([
     {},
     "split charge",
   ],
-  ["disabled MACH", { methodDetails: { chainId: 4217 } }, {}, "did not offer payment token"],
+  ["disabled MACH", { methodDetails: { chainId: 4217 } }, {}, notAccepted("example.com")],
 ] as const)("rejects %s before signing", (_name, request, fields, error) => {
   expect(() => validate([offer(request, fields)])).toThrow(error);
   expect(prepareTransactionRequest).not.toHaveBeenCalled();
@@ -315,6 +319,8 @@ type MachRouteFailure = {
   stored?: Partial<typeof storedKey>;
   /** The MACH balance read, or its failure. */
   balance?: bigint | Error;
+  /** The swapper's merchantSupported read for the recipient, or its failure. */
+  merchant?: false | Error;
   /** The route simulation's failure; `once` fails only the SDK's attempt, not the re-check. */
   simulation?: { error: Error; once?: true };
   /** Decided from the stored key, without an RPC read. */
@@ -434,6 +440,50 @@ const machRouteFailures: MachRouteFailure[] = [
     error: { code: "E_PAYMENT", retryable: true, message: expect.stringContaining("Try again") },
   },
   {
+    cause: "a recipient the MACH swapper does not support",
+    merchant: false,
+    simulation: { error: new Error("swapper reverted") },
+    error: {
+      code: "E_PAYMENT",
+      exitCode: 4,
+      retryable: false,
+      message: expect.stringContaining(" doesn't accept MACH. "),
+    },
+  },
+  {
+    cause: "a MerchantNotSupported revert when the allowlist cannot be read",
+    merchant: new Error("rpc down"),
+    simulation: {
+      error: new Error("call reverted", {
+        cause: Object.assign(new Error("execution reverted"), {
+          data: `0xfc1faa65${recipient.slice(2).padStart(64, "0")}`,
+        }),
+      }),
+    },
+    error: {
+      code: "E_PAYMENT",
+      retryable: false,
+      message: expect.stringContaining(" doesn't accept MACH. "),
+    },
+  },
+  {
+    cause: "a MerchantNotSupported revert, not a shortfall, when the allowlist cannot be read",
+    merchant: new Error("rpc down"),
+    balance: 0n,
+    simulation: {
+      error: new Error("call reverted", {
+        cause: Object.assign(new Error("execution reverted"), {
+          data: `0xfc1faa65${recipient.slice(2).padStart(64, "0")}`,
+        }),
+      }),
+    },
+    error: {
+      code: "E_PAYMENT",
+      retryable: false,
+      message: expect.stringContaining(" doesn't accept MACH. "),
+    },
+  },
+  {
     cause: "a MACH balance that cannot be read",
     balance: new Error("rpc down"),
     error: {
@@ -479,7 +529,16 @@ describe.each([
 ])("an unavailable MACH route through $via", ({ pay }) => {
   it.each(machRouteFailures)(
     "reports $cause without signing",
-    async ({ network = "mainnet", stored, balance, simulation, offline, error: expected, cta }) => {
+    async ({
+      network = "mainnet",
+      stored,
+      balance,
+      merchant,
+      simulation,
+      offline,
+      error: expected,
+      cta,
+    }) => {
       if (stored) {
         await useTempHome();
         await writeWalletState(walletState({ accessKeys: [{ ...storedKey, ...stored }] }));
@@ -487,6 +546,13 @@ describe.each([
       }
       if (typeof balance === "bigint") vi.mocked(readContract).mockResolvedValue(balance);
       else if (balance) vi.mocked(readContract).mockRejectedValue(balance);
+      if (merchant !== undefined)
+        vi.mocked(readContract).mockImplementation(async (_client, parameters) => {
+          if (parameters.functionName !== "merchantSupported")
+            return typeof balance === "bigint" ? balance : 1_000_000n;
+          if (merchant instanceof Error) throw merchant;
+          return merchant;
+        });
       if (simulation?.once) vi.mocked(call).mockRejectedValueOnce(simulation.error);
       else if (simulation) vi.mocked(call).mockRejectedValue(simulation.error);
 
@@ -780,3 +846,62 @@ describe("transferMach", () => {
 function sdkCalls(parameters: unknown) {
   return (parameters as { calls: { to: string; data: `0x${string}` }[] }).calls;
 }
+
+it.each([
+  ["a session-only offer", [offer({}, { intent: "session" })]],
+  ["a charge without MACH", [offer({ methodDetails: { chainId: 4217 } })]],
+])("names the host that does not accept MACH for %s", (_name, challenges) => {
+  expect(() => validate(challenges)).toThrow(notAccepted("example.com"));
+  expect(signTransaction).not.toHaveBeenCalled();
+});
+it("names the realm of a captured challenge that does not accept MACH", async () => {
+  const error = await transferMach({
+    options: {
+      network: "mainnet",
+      "mpp-challenge": Challenge.serialize(
+        offer({ methodDetails: { chainId: 4217 } }, { realm: "api.example.com" }),
+      ),
+      "max-spend": "0.015",
+    },
+  }).catch((value: unknown) => value);
+  expect(error).toMatchObject({
+    code: "E_PAYMENT",
+    message: notAccepted("api.example.com", transferRetry),
+  });
+});
+
+it.each([
+  [["--mach"], "Retry without --mach."],
+  [["--payment-token", "MACH"], "Retry without --payment-token MACH."],
+])("tells %j how to retry a service whose recipient MACH cannot pay", async (flags, retry) => {
+  vi.mocked(readContract).mockImplementation(async (_client, parameters) =>
+    parameters.functionName === "merchantSupported" ? false : 1_000_000n,
+  );
+  vi.mocked(call).mockRejectedValue(new Error("swapper reverted"));
+  const service = await server();
+  const error = await runRequest([...flags, "--max-spend", "0.015", service.url]).catch(
+    (value: unknown) => value,
+  );
+  expect(error).toMatchObject({
+    code: "E_PAYMENT",
+    message: notAccepted(new URL(service.url).host, retry),
+  });
+  expect(service.paid).toEqual([]);
+});
+it("names the realm of the captured charge MACH cannot pay, not of another offer", async () => {
+  vi.mocked(readContract).mockImplementation(async (_client, parameters) =>
+    parameters.functionName === "merchantSupported" ? false : 1_000_000n,
+  );
+  vi.mocked(call).mockRejectedValue(new Error("swapper reverted"));
+  const header = [
+    offer({}, { intent: "session", realm: "other.example.com" }),
+    offer({}, { realm: "api.example.com" }),
+  ]
+    .map((challenge) => Challenge.serialize(challenge))
+    .join(", ");
+  const error = await transferMach({
+    options: { network: "mainnet", "mpp-challenge": header, "max-spend": "0.015" },
+  }).catch((value: unknown) => value);
+  expect(error).toMatchObject({ message: notAccepted("api.example.com", transferRetry) });
+  expect(signTransaction).not.toHaveBeenCalled();
+});
