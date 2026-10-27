@@ -16,10 +16,19 @@ import { preparePaymentChallenge } from "../../request/challenge.js";
 import { resolvePaymentIdentity, resolvePaymentNetwork } from "../../request/identity.js";
 import { machChargeParameters } from "../../request/mach.js";
 
-/** The realm of the captured challenge, or "The service" when it names none. */
+const transferRetry =
+  "Pay it without MACH through 'tempo request <url>' to the service's URL, without --mach.";
+
+/**
+ * The realm of the captured offer MACH would pay, a Tempo charge, else of the first offer, or
+ * "The service" when none names one.
+ */
 function challengeRealm(header: string) {
   try {
-    const realm = Challenge.deserializeList(header)[0]?.realm;
+    const offers = Challenge.deserializeList(header);
+    const realm = (
+      offers.find((offer) => offer.method === "tempo" && offer.intent === "charge") ?? offers[0]
+    )?.realm;
     if (realm) return realm;
   } catch {
     // preparePaymentChallenge reports a malformed challenge.
@@ -73,13 +82,14 @@ export async function transferMach(options: {
       .split(/\r?\n/)
       .find((line) => /^www-authenticate:/i.test(line))
       ?.replace(/^www-authenticate:\s*/i, "") ?? input.trim();
-  // A captured challenge has no URL; its realm names the service.
-  const host = challengeRealm(header);
+  // A captured challenge has no URL; its realm names the service. Without MACH, it is paid
+  // through a request to the service, since `transfer` without --mach sends tokens instead.
+  const service = (realm: string) => ({ host: realm, retry: transferRetry });
   const { challenge, response } = preparePaymentChallenge(
     new Response(null, { status: 402, headers: { "www-authenticate": header } }),
     requestOptions,
     requestOptions.url,
-    host,
+    service(challengeRealm(header)),
   );
   const output = {
     amount: formatUnits(BigInt(challenge.request.amount as string), 6),
@@ -125,7 +135,7 @@ export async function transferMach(options: {
           amount: BigInt(output.raw_amount),
           key: "key" in identity ? identity.key : undefined,
           recipient: String(challenge.request.recipient),
-          host,
+          service: service(challenge.realm || challengeRealm(header)),
         }),
         clientId: flags["mpp-client-id"],
         mode: "push",

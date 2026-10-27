@@ -48,8 +48,8 @@ export function machChargeParameters(
     key?: WalletState["accessKeys"][number] | undefined;
     /** The charge's recipient, which the MACH swapper must support. */
     recipient: string;
-    /** The service named when it does not accept MACH. */
-    host: string;
+    /** The service named, and how to retry, when it does not accept MACH. */
+    service: MachService;
   },
 ): ChargeParameters {
   if (!isMachPaymentToken(options.paymentToken)) return {};
@@ -97,7 +97,7 @@ export function machChargeParameters(
         route,
         scoped: key !== undefined,
         recipient: payment.recipient,
-        host: payment.host,
+        service: payment.service,
       });
     },
   };
@@ -118,8 +118,28 @@ const merchantNotSupported = toFunctionSelector("MerchantNotSupported(address)")
  * A service that does not accept MACH: it offers no machine-enabled charge, or the MACH swapper
  * does not settle to its recipient.
  */
-export function machNotAcceptedError(host: string) {
-  return paymentError(`${escapeInvisible(host)} doesn't accept MACH. Retry without --mach.`);
+export function machNotAcceptedError(service: MachService) {
+  return paymentError(`${escapeInvisible(service.host)} doesn't accept MACH. ${service.retry}`);
+}
+
+/** The service a MACH payment is for, and the retry that pays it without MACH. */
+export type MachService = { host: string; retry: string };
+
+/**
+ * The service at `url`, and the retry that drops the flag that selected MACH: `--mach`, or
+ * `--payment-token` with MACH or its address.
+ */
+export function machService(options: RequestOptions, url: string): MachService {
+  let host = url;
+  try {
+    host = new URL(url).host;
+  } catch {
+    // Name the URL itself.
+  }
+  const retry = options.mach
+    ? "Retry without --mach."
+    : `Retry without --payment-token ${escapeInvisible(options.paymentToken ?? "MACH")}.`;
+  return { host, retry };
 }
 
 /** Whether `error`, or any error it wraps, is the swapper's `MerchantNotSupported` revert. */
@@ -164,12 +184,12 @@ async function machRouteError(options: {
   /** Whether an access key pays, whose call scopes may refuse the route. */
   scoped: boolean;
   recipient: string;
-  host: string;
+  service: MachService;
 }) {
   const { payer, amount, network, route } = options;
   const client = createTempoPublicClient(network.chainId);
-  // A recipient the swapper does not support fails every route, whatever the balance. A failed
-  // read decides nothing here; the route's revert still names it below.
+  // A recipient the swapper does not support fails every route, whatever the balance. When the
+  // read fails, the route's revert names it: the swapper checks the merchant before the balance.
   const swapper =
     machineTokenDeployments[network.chainId as keyof typeof machineTokenDeployments]?.swap;
   const supported = swapper
@@ -180,7 +200,19 @@ async function machRouteError(options: {
         args: [options.recipient as Address],
       }).catch(() => undefined)
     : undefined;
-  if (supported === false) return machNotAcceptedError(options.host);
+  if (supported === false) return machNotAcceptedError(options.service);
+  // Simulated once, and only when the swapper's answer is unknown or the balance covers the charge.
+  let simulated: Promise<unknown> | undefined;
+  const simulate = () =>
+    (simulated ??=
+      route === undefined
+        ? Promise.resolve(undefined)
+        : call(client, { account: payer, calls: route }).then(
+            () => null,
+            (error: unknown) => error,
+          ));
+  if (supported === undefined && revertsMerchantNotSupported(await simulate()))
+    return machNotAcceptedError(options.service);
   const balance = await readContract(client, {
     address: machToken(network.chainId),
     abi: erc20Abi,
@@ -194,14 +226,8 @@ async function machRouteError(options: {
     );
   if (balance >= amount) {
     // A route that simulates now, or failed on transport, may settle on a retry.
-    const failure =
-      route === undefined
-        ? undefined
-        : await call(client, { account: payer, calls: route }).then(
-            () => null,
-            (error: unknown) => error,
-          );
-    if (revertsMerchantNotSupported(failure)) return machNotAcceptedError(options.host);
+    const failure = await simulate();
+    if (revertsMerchantNotSupported(failure)) return machNotAcceptedError(options.service);
     const retryable = failure === null || isTransientRpcError(failure);
     const causes = options.scoped
       ? "insufficient swapper liquidity, the access key's call scopes, or a transient RPC error"

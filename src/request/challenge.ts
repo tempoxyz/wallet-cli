@@ -8,21 +8,22 @@ import { paymentError, usageError } from "../shared/errors.js";
 import { escrowContract } from "../shared/network.js";
 import { escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
 import { requestNetwork } from "./identity.js";
-import { isMachPaymentToken, machNotAcceptedError } from "./mach.js";
+import { isMachPaymentToken, type MachService, machNotAcceptedError, machService } from "./mach.js";
 import type { RequestOptions } from "./options.js";
 import { enforceMaxSpend } from "./spend.js";
 
 /**
- * Pass exactly the validated offer to mppx. Observation hooks cannot reject payment. `host` names
- * the service in errors, the request URL's host unless given.
+ * Pass exactly the validated offer to mppx. Observation hooks cannot reject payment. `service`
+ * names the service, and how to retry it, when it does not accept MACH; the request URL's host
+ * unless given.
  */
 export function preparePaymentChallenge(
   response: Response,
   options: RequestOptions,
   requestUrl: string,
-  host = urlHost(requestUrl),
+  service = machService(options, requestUrl),
 ) {
-  const selected = selectPaymentTokenResponse(response, options.paymentToken, host);
+  const selected = selectPaymentTokenResponse(response, options.paymentToken, service);
   const header = selected.headers.get("www-authenticate");
   const error = paymentChallengeError(header);
   if (error) throw error;
@@ -82,7 +83,7 @@ export function preparePaymentChallenge(
     if (options.maxSpend === undefined && !options.dryRun)
       throw usageError("MACH payments require --max-spend (or TEMPO_MAX_SPEND)");
     if (challenge.intent !== "charge" || details.machineTokenEnabled !== true)
-      throw machNotAcceptedError(host);
+      throw machNotAcceptedError(service);
     if (Array.isArray(details.splits) && details.splits.length > 0)
       throw paymentError("MACH settlement does not support split charge offers");
   }
@@ -249,11 +250,11 @@ export function tempoPaymentChallengeResponse(response: Response) {
   });
 }
 
-/** `host` names the service when it offers no machine-enabled charge for MACH. */
+/** `service` names the service when it offers no machine-enabled charge for MACH. */
 export function selectPaymentTokenResponse(
   response: Response,
   token: string | undefined,
-  host = "The service",
+  service: MachService = { host: "The service", retry: "Retry without --mach." },
 ) {
   if (!token) return response;
   const header = response.headers.get("www-authenticate");
@@ -276,7 +277,7 @@ export function selectPaymentTokenResponse(
   }
 
   if (challenges.length === 0) {
-    if (isMachPaymentToken(token)) throw machNotAcceptedError(host);
+    if (isMachPaymentToken(token)) throw machNotAcceptedError(service);
     const available = offeredTempoCurrencies(header).map(escapeInvisible);
     throw paymentError(
       `Server did not offer payment token ${token}.${available.length > 0 ? ` Available tokens: ${available.join(", ")}.` : ""}`,
@@ -293,15 +294,6 @@ export function selectPaymentTokenResponse(
     status: response.status,
     statusText: response.statusText,
   });
-}
-
-/** The host of `url`, or the URL itself when it does not parse. */
-export function urlHost(url: string) {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
 }
 
 function paymentChallengeError(header: string | null) {
