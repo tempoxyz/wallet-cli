@@ -119,7 +119,13 @@ describe("request command", () => {
       }
     });
     const create = vi.spyOn(Mppx, "create").mockReturnValue({
-      onChallengeReceived: vi.fn(),
+      // mppx selects the only offer; machine-fetch checks it before signing.
+      preparePayment(response: Response) {
+        return Promise.resolve({
+          challenge: Challenge.fromResponseList(response)[0]!,
+          createCredential: () => Promise.resolve(credential),
+        });
+      },
       createCredential: vi.fn().mockResolvedValue(credential),
       transport: {
         setCredential: (init: RequestInit) => ({ ...init, headers: { authorization: credential } }),
@@ -1667,7 +1673,13 @@ function mockSessionPayment(challenge: Challenge.Challenge, channelId: string) {
   const credential = Credential.serialize({ challenge, payload: { channelId } });
   vi.spyOn(TempoActions.token, "getBalance").mockResolvedValue({ amount: 1_000_000n } as never);
   vi.spyOn(Mppx, "create").mockReturnValue({
-    onChallengeReceived: vi.fn(),
+    // mppx selects the only offer; machine-fetch checks it before signing.
+    preparePayment(response: Response) {
+      return Promise.resolve({
+        challenge: Challenge.fromResponseList(response)[0]!,
+        createCredential: () => Promise.resolve(credential),
+      });
+    },
     createCredential: vi.fn().mockResolvedValue(credential),
     transport: {
       setCredential: (init: RequestInit) => ({ ...init, headers: { authorization: credential } }),
