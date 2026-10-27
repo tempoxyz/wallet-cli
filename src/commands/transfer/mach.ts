@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import { formatUnits } from "viem";
 import { Errors } from "incur";
-import { Credential } from "mppx";
+import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 
 import type { RetiredFlag } from "../../cli/argv.js";
@@ -15,6 +15,17 @@ import { parseRequestArgs } from "../../request/args.js";
 import { preparePaymentChallenge } from "../../request/challenge.js";
 import { resolvePaymentIdentity, resolvePaymentNetwork } from "../../request/identity.js";
 import { machChargeParameters } from "../../request/mach.js";
+
+/** The realm of the captured challenge, or "The service" when it names none. */
+function challengeRealm(header: string) {
+  try {
+    const realm = Challenge.deserializeList(header)[0]?.realm;
+    if (realm) return realm;
+  } catch {
+    // preparePaymentChallenge reports a malformed challenge.
+  }
+  return "The service";
+}
 
 export async function transferMach(options: {
   options: {
@@ -62,10 +73,13 @@ export async function transferMach(options: {
       .split(/\r?\n/)
       .find((line) => /^www-authenticate:/i.test(line))
       ?.replace(/^www-authenticate:\s*/i, "") ?? input.trim();
+  // A captured challenge has no URL; its realm names the service.
+  const host = challengeRealm(header);
   const { challenge, response } = preparePaymentChallenge(
     new Response(null, { status: 402, headers: { "www-authenticate": header } }),
     requestOptions,
     requestOptions.url,
+    host,
   );
   const output = {
     amount: formatUnits(BigInt(challenge.request.amount as string), 6),
@@ -110,6 +124,8 @@ export async function transferMach(options: {
         ...machChargeParameters(requestOptions, {
           amount: BigInt(output.raw_amount),
           key: "key" in identity ? identity.key : undefined,
+          recipient: String(challenge.request.recipient),
+          host,
         }),
         clientId: flags["mpp-client-id"],
         mode: "push",

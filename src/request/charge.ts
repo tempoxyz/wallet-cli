@@ -16,6 +16,7 @@ import {
   preparePaymentChallenge,
   selectPaymentTokenResponse,
   tempoPaymentChallengeResponse,
+  urlHost,
 } from "./challenge.js";
 import { cloneRequestInit, type FetchPlan } from "./fetch.js";
 import {
@@ -50,6 +51,7 @@ export async function payAndRetryRequest(
   const header = selectPaymentTokenResponse(
     paymentRequiredResponse,
     options.paymentToken,
+    urlHost(request.url),
   ).headers.get("www-authenticate");
   const challengeResponse = tempoPaymentChallengeResponse(selectedResponse);
 
@@ -83,7 +85,7 @@ export async function payAndRetryRequest(
       getClient,
       maxDeposit: spendCap(options),
     };
-    const charge = chargeSettlement(selectedChallenge, options, identity);
+    const charge = chargeSettlement(selectedChallenge, options, identity, urlHost(request.url));
     const payment = Mppx.create({
       methods: [
         tempo.charge({ ...methodOptions, ...charge.parameters }),
@@ -125,10 +127,12 @@ function chargeSettlement(
   challenge: Challenge.Challenge,
   options: RequestOptions,
   identity: PaymentIdentity,
+  host: string,
 ) {
   const amount = challengeAmount(challenge);
   const key = "key" in identity ? identity.key : undefined;
-  const mach = machChargeParameters(options, { amount, key });
+  const recipient = stringValue(challenge.request.recipient);
+  const mach = machChargeParameters(options, { amount, key, recipient, host });
   let debited = stringValue(challenge.request.currency).toLowerCase();
   const parameters: ChargeParameters = {
     ...mach,

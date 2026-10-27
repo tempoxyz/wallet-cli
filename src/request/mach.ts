@@ -1,6 +1,13 @@
 import type { tempo } from "mppx/client";
 import { machineTokenDeployments } from "mppx/tempo";
-import { erc20Abi, HttpRequestError, TimeoutError, type Address } from "viem";
+import {
+  erc20Abi,
+  HttpRequestError,
+  parseAbi,
+  TimeoutError,
+  toFunctionSelector,
+  type Address,
+} from "viem";
 import { call, readContract } from "viem/actions";
 import { Transaction as TempoTransaction } from "viem/tempo";
 
@@ -9,7 +16,7 @@ import { commandError, networkError, paymentError, walletError } from "../shared
 import { machToken } from "../shared/mach.js";
 import { createTempoPublicClient, type Network } from "../shared/network.js";
 import { continuationCommand } from "../shared/next.js";
-import { stringValue } from "../shared/utils.js";
+import { escapeInvisible, stringValue } from "../shared/utils.js";
 import { accessKeyLimitError } from "../wallet/access-key.js";
 import type { WalletState } from "../wallet/store.js";
 import { requestNetwork, storedAccessKeyLimit } from "./identity.js";
@@ -36,7 +43,14 @@ export type ChargeParameters = NonNullable<Parameters<typeof tempo.charge>[0]>;
  */
 export function machChargeParameters(
   options: RequestOptions,
-  payment: { amount: bigint; key?: WalletState["accessKeys"][number] | undefined },
+  payment: {
+    amount: bigint;
+    key?: WalletState["accessKeys"][number] | undefined;
+    /** The charge's recipient, which the MACH swapper must support. */
+    recipient: string;
+    /** The service named when it does not accept MACH. */
+    host: string;
+  },
 ): ChargeParameters {
   if (!isMachPaymentToken(options.paymentToken)) return {};
   const network = requestNetwork(options);
@@ -82,6 +96,8 @@ export function machChargeParameters(
         network,
         route,
         scoped: key !== undefined,
+        recipient: payment.recipient,
+        host: payment.host,
       });
     },
   };
@@ -90,6 +106,32 @@ export function machChargeParameters(
 type MachRouteCall = { to: Address; data: `0x${string}` };
 
 const noMachFallback = "No stablecoin fallback was authorized.";
+
+const machSwapperAbi = parseAbi([
+  "function merchantSupported(address merchant) view returns (bool)",
+]);
+
+/** The MACH swapper's revert for a recipient it does not settle to. */
+const merchantNotSupported = toFunctionSelector("MerchantNotSupported(address)");
+
+/**
+ * A service that does not accept MACH: it offers no machine-enabled charge, or the MACH swapper
+ * does not settle to its recipient.
+ */
+export function machNotAcceptedError(host: string) {
+  return paymentError(`${escapeInvisible(host)} doesn't accept MACH. Retry without --mach.`);
+}
+
+/** Whether `error`, or any error it wraps, is the swapper's `MerchantNotSupported` revert. */
+function revertsMerchantNotSupported(error: unknown) {
+  for (let cause = error; cause instanceof Error; cause = cause.cause) {
+    const data = (cause as { data?: unknown }).data;
+    const raw =
+      typeof data === "string" ? data : stringValue((data as { data?: unknown } | undefined)?.data);
+    if (raw.toLowerCase().startsWith(merchantNotSupported)) return true;
+  }
+  return false;
+}
 
 /**
  * Whether `key`'s stored call scopes allow `call`: a scope must name its address and, if it names
@@ -121,9 +163,24 @@ async function machRouteError(options: {
   route: readonly MachRouteCall[] | undefined;
   /** Whether an access key pays, whose call scopes may refuse the route. */
   scoped: boolean;
+  recipient: string;
+  host: string;
 }) {
   const { payer, amount, network, route } = options;
   const client = createTempoPublicClient(network.chainId);
+  // A recipient the swapper does not support fails every route, whatever the balance. A failed
+  // read decides nothing here; the route's revert still names it below.
+  const swapper =
+    machineTokenDeployments[network.chainId as keyof typeof machineTokenDeployments]?.swap;
+  const supported = swapper
+    ? await readContract(client, {
+        address: swapper,
+        abi: machSwapperAbi,
+        functionName: "merchantSupported",
+        args: [options.recipient as Address],
+      }).catch(() => undefined)
+    : undefined;
+  if (supported === false) return machNotAcceptedError(options.host);
   const balance = await readContract(client, {
     address: machToken(network.chainId),
     abi: erc20Abi,
@@ -137,9 +194,15 @@ async function machRouteError(options: {
     );
   if (balance >= amount) {
     // A route that simulates now, or failed on transport, may settle on a retry.
-    const retryable =
-      route !== undefined &&
-      (await call(client, { account: payer, calls: route }).then(() => true, isTransientRpcError));
+    const failure =
+      route === undefined
+        ? undefined
+        : await call(client, { account: payer, calls: route }).then(
+            () => null,
+            (error: unknown) => error,
+          );
+    if (revertsMerchantNotSupported(failure)) return machNotAcceptedError(options.host);
+    const retryable = failure === null || isTransientRpcError(failure);
     const causes = options.scoped
       ? "insufficient swapper liquidity, the access key's call scopes, or a transient RPC error"
       : "insufficient swapper liquidity or a transient RPC error";
