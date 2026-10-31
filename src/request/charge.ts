@@ -34,6 +34,7 @@ import {
 } from "./mach.js";
 import type { RequestOptions } from "./options.js";
 import { fetchPaidRequest, paymentReceipts } from "./paid.js";
+import { createChargeCredential } from "./policy.js";
 import { dryRunRpc, paySessionAndRetryRequest } from "./session.js";
 import { formatTokenAmount, MaxSpendExceededError, spendCap } from "./spend.js";
 
@@ -100,15 +101,19 @@ export async function payAndRetryRequest(
       polyfill: false,
     });
 
-    payment.onChallengeReceived(async ({ challenge, createCredential }) =>
-      createCredential(paymentContext(challenge, options) as never),
-    );
-
-    const credential = await payment
-      .createCredential(challengeResponse)
-      .catch(async (error: unknown) => {
-        throw (await charge.limitError(error)) ?? error;
-      });
+    // A charge is checked against the spending policy, and funded, before mppx signs it; a
+    // subscription's renewals cannot be bounded per charge, so it keeps mppx's own path.
+    const credential = await (
+      selectedChallenge.intent === "charge"
+        ? createChargeCredential(payment, challengeResponse, {
+            challenge: selectedChallenge,
+            payer: identity.address,
+            request: options,
+          })
+        : payment.createCredential(challengeResponse)
+    ).catch(async (error: unknown) => {
+      throw (await charge.limitError(error)) ?? error;
+    });
     const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
     const response = await fetchPaidRequest(
       { init: paidInit, url: request.url },
@@ -271,9 +276,4 @@ function chargeWithinCap(
     // A malformed charge offer is no alternative.
   }
   return undefined;
-}
-
-function paymentContext(challenge: { intent: string }, options: RequestOptions) {
-  if (challenge.intent !== "session" || !options.maxSpend) return undefined;
-  return { depositRaw: parseUnits(options.maxSpend, 6).toString() };
 }
