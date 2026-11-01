@@ -1,6 +1,7 @@
 ---
-title: "runSql keeps running a script after a statement fails, so BEGIN ... COMMIT can commit part of it"
-severity: "minor"
+title: 'runSql keeps running a script after a statement fails, so BEGIN ... COMMIT can commit part of it'
+severity: 'minor'
+issue: 'tempoxyz/wallet-cli#252'
 ---
 
 ## Expected Behavior
