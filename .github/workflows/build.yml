@@ -285,7 +285,6 @@ jobs:
           name: release-signer
           path: wallet-release-tools/target/release/tempo-sign
           if-no-files-found: error
-          retention-days: 1
 
   publish:
     name: Publish ${{ matrix.package }}
