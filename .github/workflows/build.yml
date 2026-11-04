@@ -195,16 +195,25 @@ jobs:
   # Types and the test suite, once per release and sharded as in CI, run alongside the builds;
   # publishing waits for them.
   verify:
-    name: Verify (${{ matrix.shard }}/5)
+    name: Verify ${{ matrix.os }} (${{ matrix.shard }}/${{ matrix.shards }})
     permissions:
       contents: read
       id-token: write
     needs: [parse-tag]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Linux x64 sharded as in CI; every other platform that ships a binary runs the
+      # whole suite once, since ci.yml tests only on Linux x64.
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        include:
+          - { os: ubuntu-latest, shard: 1, shards: 5 }
+          - { os: ubuntu-latest, shard: 2, shards: 5 }
+          - { os: ubuntu-latest, shard: 3, shards: 5 }
+          - { os: ubuntu-latest, shard: 4, shards: 5 }
+          - { os: ubuntu-latest, shard: 5, shards: 5 }
+          - { os: ubuntu-24.04-arm, shard: 1, shards: 1 }
+          - { os: macos-latest, shard: 1, shards: 1 }
     steps:
       - name: Secure runner
         uses: tempoxyz/gh-actions/actions/secure-runner@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
@@ -227,15 +236,15 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Check types
-        if: matrix.shard == 1
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
         run: pnpm check:types
 
       - name: Check test types
-        if: matrix.shard == 1
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
         run: pnpm test:types
 
       - name: Run tests
-        run: pnpm test --shard=${{ matrix.shard }}/5
+        run: pnpm test --shard=${{ matrix.shard }}/${{ matrix.shards }}
 
   # The release signer, built once alongside the binaries rather than in each publish job.
   signer:
@@ -245,6 +254,10 @@ jobs:
     needs: [parse-tag]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
+    # Any job in the run can upload an artifact under this name, so publish runs the
+    # signer only if it matches the digest this job, which runs no release code, built.
+    outputs:
+      sha256: ${{ steps.digest.outputs.sha256 }}
     steps:
       - name: Secure runner
         uses: tempoxyz/gh-actions/actions/secure-runner@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
@@ -262,6 +275,10 @@ jobs:
       - name: Build release signer
         run: cargo build --locked --release -p tempo-sign
         working-directory: wallet-release-tools
+
+      - name: Record signer digest
+        id: digest
+        run: echo "sha256=$(sha256sum wallet-release-tools/target/release/tempo-sign | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -332,6 +349,15 @@ jobs:
           name: release-signer
           path: wallet-release-tools/target/release
 
+      - name: Verify release signer
+        env:
+          SIGNER_SHA256: ${{ needs.signer.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNER_SHA256"
+          echo "$SIGNER_SHA256  wallet-release-tools/target/release/tempo-sign" | sha256sum -c -
+          chmod +x wallet-release-tools/target/release/tempo-sign
+
       - name: Sign release binaries
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
@@ -363,7 +389,6 @@ jobs:
             )
           fi
 
-          chmod +x ./wallet-release-tools/target/release/tempo-sign
           ./wallet-release-tools/target/release/tempo-sign sign "${SIGN_ARGS[@]}"
 
           rm /tmp/release.key
