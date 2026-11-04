@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 
 import { Challenge, Credential } from "mppx";
 import { decodeFunctionData, toHex, type Hex } from "viem";
-import { Channel as TempoChannel } from "viem/tempo";
+import { Account as TempoAccount, Channel as TempoChannel } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -651,6 +651,52 @@ describe("--cooperative", () => {
         grace_ready_at: 0,
       });
     }
+  });
+
+  it("signs a v2 close with the P-256 key `tempo wallet login` stores, with descriptor and closeSignature", async () => {
+    const p256Key = `0x${"11".repeat(32)}` as Hex;
+    const p256Address = TempoAccount.fromP256(p256Key).address;
+    const base = walletState().accessKeys[0]!;
+    await writeWalletState(
+      walletState({
+        chainId: mainnet,
+        accessKeys: [
+          { ...base, address: p256Address, chainId: mainnet, keyType: "p256", privateKey: p256Key },
+        ],
+      }),
+    );
+    await saveSession(channelId, mainnet, {
+      authorized_signer: p256Address,
+      challenge_echo: sessionChallenge(),
+      ...v2Session,
+    });
+    let authorization: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        authorization ||= (init?.headers as Record<string, string> | undefined)?.Authorization;
+        return new Response(null, { status: authorization ? 204 : 503 });
+      }),
+    );
+    mocks.readContract.mockImplementation(async ({ functionName }: { functionName: string }) =>
+      functionName === "CLOSE_GRACE_PERIOD" ? 900n : precompileState(10_000n),
+    );
+    mocks.getLogs.mockResolvedValue([]);
+
+    const result = await closeSessions({ cooperative: true, target: channelId });
+
+    expect(result).toMatchObject({ failed: 0 });
+    const credential = Credential.deserialize(authorization!);
+    expect(credential.payload).toMatchObject({
+      action: "close",
+      channelId,
+      cumulativeAmount: "2000",
+      descriptor: sessionDescriptor(),
+      signature: expect.stringMatching(/^0x[0-9a-f]+$/i),
+      closeSignature: expect.stringMatching(/^0x[0-9a-f]+$/i),
+    });
+    const payload = credential.payload as { signature: Hex; closeSignature: Hex };
+    expect(payload.closeSignature).not.toBe(payload.signature);
   });
 
   it("requests the close on-chain when a rerun finds the channel the server accepted still open", async () => {

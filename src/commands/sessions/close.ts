@@ -1,8 +1,24 @@
 import type { z } from "incur";
-import { encodeFunctionData, formatUnits, toHex, type Address, type Hex } from "viem";
+import { Keystore } from "accounts";
+import {
+  createClient,
+  encodeFunctionData,
+  formatUnits,
+  hashTypedData,
+  http,
+  toHex,
+  type Address,
+  type Hex,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { Abis as TempoAbis } from "viem/tempo";
+import {
+  Account as TempoAccount,
+  Abis as TempoAbis,
+  Chain as TempoChain,
+  KeyAuthorizationManager,
+} from "viem/tempo";
 import { Challenge, Credential } from "mppx";
+import { Session as TempoSession } from "mppx/tempo";
 
 import { destructive } from "../../cli/command.js";
 import {
@@ -569,21 +585,30 @@ async function closeSessionCooperatively(options: {
       ? options.record.accepted_cumulative
       : options.record.cumulative_amount;
   const signer = await sessionVoucherSigner(options.record);
-  const signature = await signSessionVoucher({
-    chain,
-    channelId: options.channelId,
-    cumulativeAmount,
-    escrowContract: options.escrowContract,
-    privateKey: signer.privateKey as Hex,
-  });
+  const payload = isPrecompileEscrow(options.escrowContract)
+    ? await precompileClosePayload({
+        account: signer.account,
+        chain,
+        channelId: options.channelId,
+        cumulativeAmount,
+        escrowContract: options.escrowContract,
+        record: options.record,
+      })
+    : {
+        action: "close" as const,
+        channelId: options.channelId,
+        cumulativeAmount: cumulativeAmount.toString(),
+        signature: await signLegacySessionVoucher({
+          chain,
+          channelId: options.channelId,
+          cumulativeAmount,
+          escrowContract: options.escrowContract,
+          signer,
+        }),
+      };
   const authorization = Credential.serialize({
     challenge,
-    payload: {
-      action: "close",
-      channelId: options.channelId,
-      cumulativeAmount: cumulativeAmount.toString(),
-      signature,
-    },
+    payload,
     source: credentialSource(options.record.payer, chain),
   });
 
@@ -600,12 +625,18 @@ async function closeSessionCooperatively(options: {
   }
 }
 
+/**
+ * The channel's authorized signer as a bare (unwrapped) account. TIP-1034 vouchers must carry a
+ * primitive secp256k1 or P-256 signature, so the access key signs on its own, not through the
+ * wallet's keychain wrapper. `tempo wallet login` stores a P-256 key, either as raw key material
+ * or as a WebCrypto keystore handle.
+ */
 async function sessionVoucherSigner(record: ChannelRecord) {
   const state = await loadWalletState();
   const activeAccount = state.accounts[state.activeAccount ?? 0];
   const expected = record.authorized_signer.toLowerCase();
   const key = state.accessKeys.find((candidate) => {
-    if (candidate.chainId !== record.chain_id || !candidate.privateKey) return false;
+    if (candidate.chainId !== record.chain_id || !hasSigningMaterial(candidate)) return false;
     if (expected && expected !== "0x0000000000000000000000000000000000000000")
       return candidate.address.toLowerCase() === expected;
     return candidate.access.toLowerCase() === activeAccount?.address.toLowerCase();
@@ -613,11 +644,100 @@ async function sessionVoucherSigner(record: ChannelRecord) {
   if (!key)
     throw walletError({
       code: "E_NOT_FOUND",
-      message: "cooperative close requires a local secp256k1 session access key",
+      message: "cooperative close requires the session's access key on this device",
     });
-  if (key.keyType && key.keyType !== "secp256k1")
-    throw usageError("session close vouchers require a secp256k1 access key");
-  return key;
+  const keyType = key.keyType ?? "secp256k1";
+  if (keyType !== "secp256k1" && keyType !== "p256")
+    throw usageError(`session close vouchers cannot be signed with a ${keyType} access key`);
+  const account = key.privateKey
+    ? keyType === "p256"
+      ? TempoAccount.fromP256(key.privateKey as Hex)
+      : TempoAccount.fromSecp256k1(key.privateKey as Hex)
+    : await Keystore.webCryptoP256({ extractable: true }).toAccount(
+        {
+          handle: key.handle as Keystore.Handle,
+          keyType: "p256",
+          publicKey: key.publicKey as Hex,
+        },
+        {
+          access: key.access as Address,
+          keyAuthorizationManager: KeyAuthorizationManager.memory(),
+        },
+      );
+  // An access-key account's `address` is the root account; the key itself is `accessKeyAddress`.
+  const signerAddress =
+    "accessKeyAddress" in account ? (account.accessKeyAddress as string) : account.address;
+  if (signerAddress.toLowerCase() !== key.address.toLowerCase())
+    throw walletError({
+      code: "E_NOT_FOUND",
+      message: "the stored access key does not match its signing material",
+    });
+  return { account, keyType, privateKey: key.privateKey as Hex | undefined };
+}
+
+function hasSigningMaterial(key: {
+  keyType?: string | undefined;
+  privateKey?: string | undefined;
+  handle?: unknown;
+  publicKey?: string | undefined;
+}) {
+  return Boolean(key.privateKey || (key.keyType === "p256" && key.handle && key.publicKey));
+}
+
+/**
+ * The TIP-1034 close payload: the same fields as mppx's `createClosePayload`, including the
+ * channel `descriptor` the server needs to settle and close a precompile channel.
+ */
+async function precompileClosePayload(options: {
+  account: Awaited<ReturnType<typeof sessionVoucherSigner>>["account"];
+  chain: number;
+  channelId: Hex;
+  cumulativeAmount: bigint;
+  escrowContract: Address;
+  record: ChannelRecord;
+}) {
+  const descriptor = requireSessionDescriptor(options.record);
+  const client = createClient({
+    chain: options.chain === 42431 ? TempoChain.tempoModerato : TempoChain.tempo,
+    transport: http(),
+  });
+  const signature = await TempoSession.Precompile.Voucher.signVoucher(
+    client,
+    options.account as never,
+    { channelId: options.channelId, cumulativeAmount: options.cumulativeAmount },
+    options.escrowContract,
+    options.chain,
+  );
+  // mppx 0.17+ servers also require a cooperative-close authorization (TIP-1034), an EIP-712
+  // `CloseAuthorization` over the same domain as vouchers, signed by the same key.
+  const closeHash = hashTypedData({
+    domain: TempoSession.Precompile.Voucher.getVoucherDomain(options.escrowContract, options.chain),
+    types: {
+      CloseAuthorization: [
+        { name: "channelId", type: "bytes32" },
+        { name: "cumulativeAmount", type: "uint96" },
+      ],
+    },
+    primaryType: "CloseAuthorization",
+    message: { channelId: options.channelId, cumulativeAmount: options.cumulativeAmount },
+  });
+  // Like viem's `Account.signVoucher`: an access-key account signs raw, so the server sees the
+  // primitive P-256 / secp256k1 signature rather than a keychain wrapper it would reject.
+  const signer = options.account as unknown as {
+    source?: string;
+    sign(parameters: { hash: Hex; raw?: boolean }): Promise<Hex>;
+  };
+  const closeSignature = await signer.sign(
+    signer.source === "accessKey" ? { hash: closeHash, raw: true } : { hash: closeHash },
+  );
+  return {
+    action: "close" as const,
+    channelId: options.channelId,
+    descriptor,
+    cumulativeAmount: options.cumulativeAmount.toString(),
+    signature,
+    closeSignature,
+  };
 }
 
 async function refreshSessionChallenge(url: string) {
@@ -657,6 +777,19 @@ function storedSessionChallenge(record: ChannelRecord) {
 
 function isSessionChallenge(challenge: Challenge.Challenge) {
   return challenge.method === "tempo" && challenge.intent === "session";
+}
+
+/** Legacy escrow contracts recover the voucher signer with ecrecover: secp256k1 only. */
+async function signLegacySessionVoucher(options: {
+  chain: number;
+  channelId: Hex;
+  cumulativeAmount: bigint;
+  escrowContract: Address;
+  signer: Awaited<ReturnType<typeof sessionVoucherSigner>>;
+}) {
+  if (options.signer.keyType !== "secp256k1" || !options.signer.privateKey)
+    throw usageError("legacy escrow session close vouchers require a secp256k1 access key");
+  return signSessionVoucher({ ...options, privateKey: options.signer.privateKey });
 }
 
 async function signSessionVoucher(options: {
