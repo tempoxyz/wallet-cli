@@ -251,6 +251,7 @@ jobs:
     name: Build release signer
     permissions:
       contents: read
+      id-token: write
     needs: [parse-tag]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
