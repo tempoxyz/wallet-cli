@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.1 (2026-11-04)
+
+### Patch Changes
+
+- `tempo wallet sessions close` (the on-chain `requestClose` and `withdraw` path) now works for a session on a network other than the last one you logged in on, as long as the wallet holds an access key on the session's network. The transaction names the session's chain, and the provider signs it with that chain's key. Before, it refused with "wallet is logged in on tempo, not tempo-moderato" even with a key for the session's network, so you had to log in again just to close. Without a key on that network, it now says "wallet has no access key on <network>" and names the login to run.
+- `tempo wallet sessions close --cooperative` now works with the P-256 access key that `tempo wallet login` creates, whether stored as key material or as a WebCrypto keystore handle, and against TIP-1034 precompile channels. The close credential now carries the channel `descriptor` and the `closeSignature` cooperative-close authorization that mppx 0.17 servers require. Both the voucher and the authorization are signed by the bare access key (a primitive secp256k1 or P-256 signature, not a keychain wrapper). Before, it failed with "cooperative close requires a local secp256k1 session access key", and with a secp256k1 key the server answered "Credential payload is invalid". Legacy escrow channels still need a secp256k1 key, because the escrow recovers the signer with ecrecover.
+- `tempo request --mach` and `tempo wallet transfer --mach` now say when a service does not accept MACH, instead of a generic settlement failure. A service that offers no machine-enabled charge, or whose recipient the MACH swapper does not support (checked with the swapper's `merchantSupported`, or from a `MerchantNotSupported` revert when that read fails), returns `E_PAYMENT` "<host> doesn't accept MACH. Retry without --mach." before anything is signed, naming `--payment-token` instead when that selected MACH. A `MerchantNotSupported` revert is reported ahead of a MACH balance shortfall, so an unsupported service never asks you to buy MACH. `transfer --mach` names the realm of the captured charge and points to `tempo request` instead. This replaces "Server did not offer payment token MACH", "Server did not offer a machine-enabled MACH charge", and the "swap route could not be simulated" error for such services.
+- Updated Undici and Zod dependencies to patched versions and upgraded the development test tooling to resolve security advisories.
+
 ## 0.15.0 (2026-10-23)
 
 ### Minor Changes
