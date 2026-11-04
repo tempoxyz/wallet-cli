@@ -41,7 +41,6 @@ import {
   networkName,
   parseNetwork,
   requireRpcChain,
-  storedChainId,
   tokenAddress,
   tokenDecimals,
   type Network,
@@ -176,7 +175,9 @@ export async function closeSessions(
 ) {
   validateCloseOptions(options);
   const summary = closeSummary();
-  const targets = await closeTargets(options, network, { walletChainId: storedChainId(state) });
+  const targets = await closeTargets(options, network, {
+    hasLogin: (chainId) => hasAccessKeyOn(state, chainId),
+  });
   const closable = targets.filter(hasChannel);
   // Refused for every target at once, before the prompt, rather than as each one's error.
   if (closable.length > 0) await requireRpcChain(network.chainId);
@@ -356,13 +357,16 @@ function validateCloseOptions(options: CloseOptions) {
 /**
  * Selects the sessions a close acts on. A target selects its own sessions, also with `--finalize`,
  * so each one reports why it was or was not withdrawn. Otherwise the selected network is scanned,
- * and `--finalize` keeps only channels whose grace period has ended. `walletChainId`, the chain
- * the wallet is logged in on, is set when the close may send transactions.
+ * and `--finalize` keeps only channels whose grace period has ended. `hasLogin`, whether the
+ * wallet holds an access key on a chain, is set when the close may send transactions.
  */
 async function closeTargets(
   options: CloseOptions,
   network: Network,
-  { dryRun = false, walletChainId }: { dryRun?: boolean; walletChainId?: number } = {},
+  {
+    dryRun = false,
+    hasLogin,
+  }: { dryRun?: boolean; hasLogin?: ((chainId: number) => boolean) | undefined } = {},
 ) {
   if (options.target && !options.all && !options.orphaned)
     return targetRecords(
@@ -376,7 +380,7 @@ async function closeTargets(
         // A confirmed close stays confirmed on the right network; an unconfirmed one still asks.
         ...(options.yes ? ["--yes"] : []),
       ],
-      walletChainId,
+      hasLogin,
     );
 
   const local = (await discoverAndPersistOrphanedChannels(network)).filter(
@@ -394,15 +398,15 @@ async function closeTargets(
 /**
  * The sessions a channel ID, origin, or URL names on `network`. A target whose sessions are all on
  * another network is refused before any on-chain read, since the selected chain says nothing
- * about a channel whose deposit is locked on another one. When the wallet is logged in on another
- * chain than the sessions, the refusal also names the login their transactions need.
+ * about a channel whose deposit is locked on another one. When the wallet holds no access key on
+ * the sessions' chain, the refusal also names the login their transactions need.
  */
 function targetRecords(
   target: string,
   records: ChannelRecord[],
   network: Network,
   modeFlags: readonly string[],
-  walletChainId?: number,
+  hasLogin?: (chainId: number) => boolean,
 ) {
   const channelId = isChannelId(target) ? target.toLowerCase() : undefined;
   const origin = normalizeOrigin(target);
@@ -421,7 +425,7 @@ function targetRecords(
       sessionNetwork,
     );
     const location = `No session for ${target} on ${networkName(network.chainId)}; it is on ${elsewhere.network}`;
-    if (walletChainId !== undefined && walletChainId !== elsewhere.chain_id)
+    if (hasLogin && !hasLogin(elsewhere.chain_id))
       throw usageError(
         `${location}, where the wallet is not logged in. Run '${continuationCommand(["wallet", "login"], sessionNetwork)}', then rerun with '${rerun}'.`,
       );
@@ -827,6 +831,14 @@ function credentialSource(payer: string, chain: number) {
   return `did:pkh:eip155:${chain}:${payer}`;
 }
 
+/** Whether the wallet holds an access key for its active account on `chainId`. */
+function hasAccessKeyOn(state: Awaited<ReturnType<typeof loadWalletState>>, chainId: number) {
+  const active = state.accounts[state.activeAccount ?? 0]?.address.toLowerCase();
+  return state.accessKeys.some(
+    (key) => key.chainId === chainId && key.access.toLowerCase() === active,
+  );
+}
+
 async function sendSessionManagementTransaction(options: {
   channelId: Hex;
   escrowContract: Address;
@@ -835,12 +847,13 @@ async function sendSessionManagementTransaction(options: {
   network: Network;
   record: ChannelRecord;
 }) {
-  // The provider signs through the wallet's login, which is for one chain; a session on another
-  // chain needs a login there, or its transaction could go to the wrong chain.
-  const walletChainId = storedChainId(await loadWalletState());
-  if (walletChainId !== options.record.chain_id)
+  // The request names the session's chain, and the provider signs it with the access key the
+  // wallet holds for that chain (it has an RPC transport for each network). So a login on the
+  // session's network is what is needed, not that it was the last network logged in on.
+  const hasAccessKey = hasAccessKeyOn(await loadWalletState(), options.record.chain_id);
+  if (!hasAccessKey)
     throw usageError(
-      `wallet is logged in on ${networkName(walletChainId)}, not ${networkName(options.record.chain_id)}; log in with '${continuationCommand(["wallet", "login"], options.network)}', then rerun the close`,
+      `wallet has no access key on ${networkName(options.record.chain_id)}; log in with '${continuationCommand(["wallet", "login"], options.network)}', then rerun the close`,
     );
 
   const provider = await createProvider({ network: options.network });
