@@ -73,39 +73,30 @@ jobs:
             echo "release_tag=${RELEASE_TAG}"
           } >> "$GITHUB_OUTPUT"
 
+  # One job per platform builds every package the tag names: they share one install and
+  # JavaScript build. macOS Intel (darwin-amd64) is not built for now.
   build:
-    name: Build ${{ matrix.package }} (${{ matrix.build.suffix }})
+    name: Build (${{ matrix.suffix }})
     permissions:
       contents: read
       id-token: write
       attestations: write
     needs: [parse-tag]
-    runs-on: ${{ matrix.build.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        package: ${{ fromJson(needs.parse-tag.outputs.packages) }}
-        build:
-          - os: ubuntu-latest
-            pkg_target: node22-linux-x64
-            suffix: linux-amd64
-          - os: ubuntu-24.04-arm
-            pkg_target: node22-linux-arm64
-            suffix: linux-arm64
-          - os: macos-latest
-            pkg_target: node22-macos-x64
-            suffix: darwin-amd64
-          - os: macos-latest
-            pkg_target: node22-macos-arm64
-            suffix: darwin-arm64
+        include:
+          - { os: ubuntu-latest, pkg_target: node22-linux-x64, suffix: linux-amd64 }
+          - { os: ubuntu-24.04-arm, pkg_target: node22-linux-arm64, suffix: linux-arm64 }
+          - { os: macos-latest, pkg_target: node22-macos-arm64, suffix: darwin-arm64 }
     env:
-      PACKAGE: ${{ matrix.package }}
+      PACKAGES: ${{ join(fromJson(needs.parse-tag.outputs.packages), ' ') }}
+      SUFFIX: ${{ matrix.suffix }}
       TEMPO_WALLET_VERSION: ${{ needs.parse-tag.outputs.version }}
-      TEMPO_WALLET_PACKAGE_NAME: ${{ matrix.package }}
-      TEMPO_WALLET_PKG_TARGET: ${{ matrix.build.pkg_target }}
-      TEMPO_WALLET_PACKAGE_SUFFIX: ${{ matrix.build.suffix }}
+      TEMPO_WALLET_PKG_TARGET: ${{ matrix.pkg_target }}
+      TEMPO_WALLET_PACKAGE_SUFFIX: ${{ matrix.suffix }}
       TEMPO_WALLET_PACKAGE_DIR: artifacts
-      TEMPO_WALLET_PACKAGE_OUTPUT: artifacts/${{ matrix.package }}-${{ matrix.build.suffix }}
     steps:
       - name: Secure runner
         uses: tempoxyz/gh-actions/actions/secure-runner@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
@@ -131,66 +122,112 @@ jobs:
       - name: Build JavaScript
         run: pnpm build
 
-      - name: Build TypeScript CLI release binary
-        run: pnpm package
+      - name: Build release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for PACKAGE in $PACKAGES; do
+            TEMPO_WALLET_PACKAGE_NAME="$PACKAGE" \
+            TEMPO_WALLET_PACKAGE_OUTPUT="artifacts/$PACKAGE-$SUFFIX" \
+              pnpm package
+          done
 
-      - name: Smoke test host binary
-        if: matrix.build.pkg_target == 'node22-linux-x64' || matrix.build.pkg_target == 'node22-linux-arm64' || matrix.build.pkg_target == 'node22-macos-arm64'
-        run: ./artifacts/"${PACKAGE}"-${{ matrix.build.suffix }} --version
+      - name: Smoke test binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for PACKAGE in $PACKAGES; do ./artifacts/"$PACKAGE-$SUFFIX" --version; done
 
       - name: Generate sha256
         shell: bash
         run: |
           set -euo pipefail
-          BIN="artifacts/${PACKAGE}-${{ matrix.build.suffix }}"
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "$BIN" > "$BIN.sha256"
-          else
-            shasum -a 256 "$BIN" > "$BIN.sha256"
-          fi
-          cat "$BIN.sha256"
+          for PACKAGE in $PACKAGES; do
+            BIN="artifacts/$PACKAGE-$SUFFIX"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$BIN" > "$BIN.sha256"
+            else
+              shasum -a 256 "$BIN" > "$BIN.sha256"
+            fi
+            cat "$BIN.sha256"
+          done
 
-      - name: Generate SBOM (SPDX-JSON)
+      - name: Generate SBOM for tempo-wallet (SPDX-JSON)
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-wallet"')
         uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
         with:
-          file: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
+          file: artifacts/tempo-wallet-${{ matrix.suffix }}
           format: spdx-json
-          output-file: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
+          output-file: artifacts/tempo-wallet-${{ matrix.suffix }}.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
-      - name: Attest SBOM
+      - name: Attest SBOM for tempo-wallet
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-wallet"')
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
-          sbom-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
+          subject-path: artifacts/tempo-wallet-${{ matrix.suffix }}
+          sbom-path: artifacts/tempo-wallet-${{ matrix.suffix }}.spdx.json
+
+      - name: Generate SBOM for tempo-request (SPDX-JSON)
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-request"')
+        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+        with:
+          file: artifacts/tempo-request-${{ matrix.suffix }}
+          format: spdx-json
+          output-file: artifacts/tempo-request-${{ matrix.suffix }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest SBOM for tempo-request
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-request"')
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: artifacts/tempo-request-${{ matrix.suffix }}
+          sbom-path: artifacts/tempo-request-${{ matrix.suffix }}.spdx.json
 
       - name: Attest build provenance (SLSA v1)
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
+          subject-path: artifacts/*-${{ matrix.suffix }}
 
       - name: Install cosign
         uses: tempoxyz/gh-actions/vendor/sigstore/cosign-installer@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
 
-      - name: Sign binary with cosign (keyless)
+      - name: Sign binaries with cosign (keyless)
         shell: bash
         run: |
           set -euo pipefail
-          BIN="artifacts/${PACKAGE}-${{ matrix.build.suffix }}"
-          cosign sign-blob --yes \
-            --bundle "${BIN}.sigstore.json" \
-            "$BIN"
+          for PACKAGE in $PACKAGES; do
+            BIN="artifacts/$PACKAGE-$SUFFIX"
+            cosign sign-blob --yes --bundle "$BIN.sigstore.json" "$BIN"
+          done
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Upload tempo-wallet
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-wallet"')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ env.PACKAGE }}-${{ matrix.build.suffix }}
+          name: tempo-wallet-${{ matrix.suffix }}
           path: |
-            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
-            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.sha256
-            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
-            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.sigstore.json
+            artifacts/tempo-wallet-${{ matrix.suffix }}
+            artifacts/tempo-wallet-${{ matrix.suffix }}.sha256
+            artifacts/tempo-wallet-${{ matrix.suffix }}.spdx.json
+            artifacts/tempo-wallet-${{ matrix.suffix }}.sigstore.json
           if-no-files-found: error
+
+      - name: Upload tempo-request
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-request"')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tempo-request-${{ matrix.suffix }}
+          path: |
+            artifacts/tempo-request-${{ matrix.suffix }}
+            artifacts/tempo-request-${{ matrix.suffix }}.sha256
+            artifacts/tempo-request-${{ matrix.suffix }}.spdx.json
+            artifacts/tempo-request-${{ matrix.suffix }}.sigstore.json
+          if-no-files-found: error
+
+
 
   # Types and the test suite, once per release and sharded as in CI, run alongside the builds;
   # publishing waits for them.
