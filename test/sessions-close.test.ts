@@ -419,7 +419,7 @@ describe("close transactions", () => {
       session: closing,
     },
   ])(
-    "refuses $name for a session on a chain the wallet is not logged in on",
+    "refuses $name for a session on a chain the wallet has no access key on",
     async ({ onChain, session }) => {
       await writeWalletState(stateFor(mainnet));
       await saveSession(channelId, testnet, session);
@@ -437,7 +437,7 @@ describe("close transactions", () => {
             status: "error",
             origin,
             error:
-              "wallet is logged in on tempo, not tempo-moderato; log in with 'tempo wallet login --network testnet', then rerun the close",
+              "wallet has no access key on tempo-moderato; log in with 'tempo wallet login --network testnet', then rerun the close",
           },
         ],
       });
@@ -452,6 +452,33 @@ describe("close transactions", () => {
       ]);
     },
   );
+
+  it("requests the close for a testnet session while the wallet was last logged in on mainnet", async () => {
+    // Logged in on both networks, testnet first: the store's chain is mainnet, and it holds a key
+    // for each. The testnet key signs the request, which names the session's chain.
+    const key = walletState().accessKeys[0]!;
+    await writeWalletState(
+      walletState({
+        chainId: mainnet,
+        accessKeys: [
+          { ...key, chainId: mainnet },
+          { ...key, chainId: testnet },
+        ],
+      }),
+    );
+    await saveSession(channelId, testnet);
+    mockEscrow({ [channelId]: escrowChannel() });
+    mocks.request.mockResolvedValue({ transactionHash: txHash, status: "0x1" });
+
+    const result = await closeSessions({ network: "testnet", target: channelId });
+
+    expect(result).toMatchObject({ closed: 0, pending: 1, failed: 0 });
+    expect(mocks.request).toHaveBeenCalledWith({
+      method: "eth_sendTransactionSync",
+      params: [expect.objectContaining({ chainId: toHex(testnet), from: testWallet })],
+    });
+    expect(withdrawals()).toEqual([{ functionName: "requestClose", args: [channelId] }]);
+  });
 
   it.each([
     { functionName: "requestClose", onChain: escrowChannel(), session: {} },
