@@ -127,15 +127,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check types
-        run: pnpm check:types
-
-      - name: Check test types
-        run: pnpm test:types
-
-      - name: Run tests
-        run: pnpm test
-
+      # Types and tests run once per release in the verify job, not in each build job.
       - name: Build JavaScript
         run: pnpm build
 
@@ -200,13 +192,91 @@ jobs:
             artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.sigstore.json
           if-no-files-found: error
 
+  # Types and the test suite, once per release and sharded as in CI, run alongside the builds;
+  # publishing waits for them.
+  verify:
+    name: Verify (${{ matrix.shard }}/5)
+    permissions:
+      contents: read
+      id-token: write
+    needs: [parse-tag]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.parse-tag.outputs.release_tag }}
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: tempoxyz/gh-actions/vendor/pnpm/action-setup@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check types
+        if: matrix.shard == 1
+        run: pnpm check:types
+
+      - name: Check test types
+        if: matrix.shard == 1
+        run: pnpm test:types
+
+      - name: Run tests
+        run: pnpm test --shard=${{ matrix.shard }}/5
+
+  # The release signer, built once alongside the binaries rather than in each publish job.
+  signer:
+    name: Build release signer
+    permissions:
+      contents: read
+    needs: [parse-tag]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+
+      - name: Checkout release signing tool
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: tempoxyz/wallet-rs
+          path: wallet-release-tools
+          persist-credentials: false
+
+      - name: Setup Rust
+        run: rustup default stable
+
+      - name: Build release signer
+        run: cargo build --locked --release -p tempo-sign
+        working-directory: wallet-release-tools
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-signer
+          path: wallet-release-tools/target/release/tempo-sign
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
     name: Publish ${{ matrix.package }}
     environment: release
     permissions:
       contents: write
       id-token: write
-    needs: [parse-tag, build]
+    needs: [parse-tag, build, verify, signer]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
     strategy:
@@ -256,19 +326,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" artifacts/* --clobber
 
-      - name: Checkout release signing tool
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download release signer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          repository: tempoxyz/wallet-rs
-          path: wallet-release-tools
-          persist-credentials: false
-
-      - name: Setup Rust
-        run: rustup default stable
-
-      - name: Build release signer
-        run: cargo build --locked --release -p tempo-sign
-        working-directory: wallet-release-tools
+          name: release-signer
+          path: wallet-release-tools/target/release
 
       - name: Sign release binaries
         env:
@@ -301,6 +363,7 @@ jobs:
             )
           fi
 
+          chmod +x ./wallet-release-tools/target/release/tempo-sign
           ./wallet-release-tools/target/release/tempo-sign sign "${SIGN_ARGS[@]}"
 
           rm /tmp/release.key
