@@ -149,7 +149,7 @@ async function buildTopUpTransaction(options: {
 
 export function buildTopUpTransactionRequest(options: {
   additionalDeposit: bigint;
-  details: Pick<SessionDetails, "feePayer" | "token">;
+  details: Pick<SessionDetails, "feePayer" | "token"> & Partial<Pick<SessionDetails, "feeToken">>;
   record: Pick<
     PersistedSessionRecord,
     "chain_id" | "channel_id" | "descriptor_json" | "escrow_contract" | "session_protocol"
@@ -188,7 +188,7 @@ export function buildTopUpTransactionRequest(options: {
   return {
     calls,
     ...(options.details.feePayer ? { feePayer: true } : {}),
-    feeToken: options.details.token,
+    feeToken: options.details.feeToken ?? options.details.token,
   };
 }
 

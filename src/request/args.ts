@@ -223,8 +223,6 @@ export function validateRequestOptions(options: RequestOptions) {
   }
   options.paymentToken = paymentTokenValue(options);
   if (options.paymentIntent !== undefined) paymentIntentValue(options.paymentIntent);
-  if (isMachPaymentToken(options.paymentToken) && options.paymentIntent === "session")
-    throw usageError("MACH settlement supports charge payments, not sessions");
   for (const [value, flag] of [
     [options.maxTime, "--timeout"],
     [options.connectTimeout, "--connect-timeout"],

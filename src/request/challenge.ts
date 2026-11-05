@@ -40,18 +40,20 @@ export function preparePaymentChallenge(
   // Prefer offers on the selected network before applying intent preference.
   // Keep mismatched offers when none match so the network diagnostic remains explicit.
   if (networkChallenges.length > 0) challenges = networkChallenges;
+  const charge = challenges.find(
+    (offer) =>
+      offer.method === "tempo" &&
+      (offer.intent === "charge" ||
+        (options.paymentIntent === "auto" && offer.intent === "subscription")),
+  );
+  // In auto intent, `--mach` asks for a one-time charge, so a MACH session is used only when the
+  // server offers no machine-enabled charge.
   const session =
-    options.paymentIntent !== "charge"
+    options.paymentIntent === "session" ||
+    (options.paymentIntent === "auto" && !(isMachPaymentToken(options.paymentToken) && charge))
       ? sessionChallengeFromHeader(challenges.map(Challenge.serialize).join(", "))
       : undefined;
-  const challenge =
-    session ??
-    challenges.find(
-      (offer) =>
-        offer.method === "tempo" &&
-        (offer.intent === "charge" ||
-          (options.paymentIntent === "auto" && offer.intent === "subscription")),
-    );
+  const challenge = session ?? charge;
   if (!challenge || (options.paymentIntent === "session" && !session))
     throw paymentError("Server did not offer a compatible payment intent");
   const details = getRecord(challenge.request.methodDetails);
@@ -73,18 +75,24 @@ export function preparePaymentChallenge(
   validatePaymentAddresses(challenge);
   const deployment = machineTokenDeployments[expectedChain as keyof typeof machineTokenDeployments];
   if (
-    deployment &&
-    stringValue(challenge.request.currency).toLowerCase() === deployment.token.toLowerCase()
+    isMachPaymentToken(stringValue(challenge.request.currency)) &&
+    !(
+      isMachSession(challenge) &&
+      stringValue(challenge.request.currency).toLowerCase() === deployment?.token.toLowerCase()
+    )
   )
     throw paymentError(
-      "MACH must be spent through a machine-enabled settlement-currency charge, not advertised as the payment currency",
+      "MACH must use a native v2 session or a machine-enabled settlement-currency charge; it cannot be advertised as a charge currency",
     );
   if (isMachPaymentToken(options.paymentToken)) {
     if (options.maxSpend === undefined && !options.dryRun)
       throw usageError("MACH payments require --max-spend (or TEMPO_MAX_SPEND)");
-    if (challenge.intent !== "charge" || details.machineTokenEnabled !== true)
+    if (
+      !isMachSession(challenge) &&
+      (challenge.intent !== "charge" || details.machineTokenEnabled !== true)
+    )
       throw machNotAcceptedError(service);
-    if (Array.isArray(details.splits) && details.splits.length > 0)
+    if (challenge.intent === "charge" && Array.isArray(details.splits) && details.splits.length > 0)
       throw paymentError("MACH settlement does not support split charge offers");
   }
   if (challenge.intent === "session") sessionDetails(challenge, requestUrl, options);
@@ -108,8 +116,15 @@ export function sessionDetails(
   const token = stringValue(request.currency).toLowerCase();
   const payee = stringValue(request.recipient).toLowerCase();
   const sessionProtocol = stringValue(methodDetails.sessionProtocol) || "v1";
+  const feeToken = stringValue(methodDetails.feeToken).toLowerCase() || undefined;
   if (!token) throw paymentError("Session challenge is missing currency");
   if (!payee) throw paymentError("Session challenge is missing recipient");
+  if (feeToken && (!isAddress(feeToken) || isMachPaymentToken(feeToken)))
+    throw paymentError(
+      "Session challenge must name a valid fee token; MACH cannot pay transaction fees",
+    );
+  if (isMachPaymentToken(token) && !feeToken)
+    throw paymentError("MACH sessions require an advertised fee token for transaction fees");
   if (sessionProtocol !== "v1" && sessionProtocol !== "v2")
     throw paymentError(`Unsupported Tempo session protocol: ${escapeInvisible(sessionProtocol)}`);
 
@@ -128,6 +143,7 @@ export function sessionDetails(
     chainId: resolvedChainId,
     escrowContract: expectedEscrow.toLowerCase(),
     feePayer: Boolean(methodDetails.feePayer),
+    feeToken,
     origin: originFromUrl(requestUrl),
     payee,
     requestUrl,
@@ -141,6 +157,16 @@ export function sessionDetails(
 }
 
 export type SessionDetails = ReturnType<typeof sessionDetails>;
+
+/** TIP-1095 allows MACH to settle directly to the payee through the native channel contract. */
+export function isMachSession(challenge: Challenge.Challenge) {
+  return (
+    challenge.method === "tempo" &&
+    challenge.intent === "session" &&
+    getRecord(challenge.request.methodDetails).sessionProtocol === "v2" &&
+    isMachPaymentToken(stringValue(challenge.request.currency))
+  );
+}
 
 export function sessionChallengeFromHeader(header: string | null) {
   if (!header) return undefined;
@@ -250,7 +276,10 @@ export function tempoPaymentChallengeResponse(response: Response) {
   });
 }
 
-/** `service` names the service when it offers no machine-enabled charge for MACH. */
+/**
+ * `service` names the service when it offers neither a native MACH session nor a machine-enabled
+ * charge for MACH.
+ */
 export function selectPaymentTokenResponse(
   response: Response,
   token: string | undefined,
@@ -267,8 +296,9 @@ export function selectPaymentTokenResponse(
       const request = challenge.request as Record<string, unknown>;
       if (isMachPaymentToken(token))
         return (
-          challenge.intent === "charge" &&
-          getRecord(request.methodDetails).machineTokenEnabled === true
+          isMachSession(challenge) ||
+          (challenge.intent === "charge" &&
+            getRecord(request.methodDetails).machineTokenEnabled === true)
         );
       return stringValue(request.currency).toLowerCase() === token.toLowerCase();
     });

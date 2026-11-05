@@ -370,6 +370,26 @@ it.each<{
   env?: Record<string, string>;
   expected: Record<string, unknown>;
 }>([
+  ...[[], ["--mach"]].map((args) => ({
+    name: `a native MACH session (${args.join(" ") || "default"})`,
+    challenge: offer("session", {
+      currency: machToken,
+      methodDetails: {
+        chainId: 4217,
+        sessionProtocol: "v2",
+        feeToken: usdc,
+      },
+    }),
+    args,
+    expected: {
+      ...opened,
+      token: machToken,
+      symbol: "MACH",
+      balance: "7",
+      access_key_limit: null,
+      payment_token: args.length ? "MACH" : null,
+    },
+  })),
   { name: "a charge under the default cap", challenge: offer("charge"), expected: {} },
   {
     name: "a charge under an explicit cap",
