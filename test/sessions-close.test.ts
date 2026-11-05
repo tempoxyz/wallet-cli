@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 
 import { Challenge, Credential } from "mppx";
 import { decodeFunctionData, toHex, type Hex } from "viem";
-import { Channel as TempoChannel } from "viem/tempo";
+import { Account as TempoAccount, Channel as TempoChannel } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -419,7 +419,7 @@ describe("close transactions", () => {
       session: closing,
     },
   ])(
-    "refuses $name for a session on a chain the wallet is not logged in on",
+    "refuses $name for a session on a chain the wallet has no access key on",
     async ({ onChain, session }) => {
       await writeWalletState(stateFor(mainnet));
       await saveSession(channelId, testnet, session);
@@ -437,7 +437,7 @@ describe("close transactions", () => {
             status: "error",
             origin,
             error:
-              "wallet is logged in on tempo, not tempo-moderato; log in with 'tempo wallet login --network testnet', then rerun the close",
+              "wallet has no access key on tempo-moderato; log in with 'tempo wallet login --network testnet', then rerun the close",
           },
         ],
       });
@@ -452,6 +452,33 @@ describe("close transactions", () => {
       ]);
     },
   );
+
+  it("requests the close for a testnet session while the wallet was last logged in on mainnet", async () => {
+    // Logged in on both networks, testnet first: the store's chain is mainnet, and it holds a key
+    // for each. The testnet key signs the request, which names the session's chain.
+    const key = walletState().accessKeys[0]!;
+    await writeWalletState(
+      walletState({
+        chainId: mainnet,
+        accessKeys: [
+          { ...key, chainId: mainnet },
+          { ...key, chainId: testnet },
+        ],
+      }),
+    );
+    await saveSession(channelId, testnet);
+    mockEscrow({ [channelId]: escrowChannel() });
+    mocks.request.mockResolvedValue({ transactionHash: txHash, status: "0x1" });
+
+    const result = await closeSessions({ network: "testnet", target: channelId });
+
+    expect(result).toMatchObject({ closed: 0, pending: 1, failed: 0 });
+    expect(mocks.request).toHaveBeenCalledWith({
+      method: "eth_sendTransactionSync",
+      params: [expect.objectContaining({ chainId: toHex(testnet), from: testWallet })],
+    });
+    expect(withdrawals()).toEqual([{ functionName: "requestClose", args: [channelId] }]);
+  });
 
   it.each([
     { functionName: "requestClose", onChain: escrowChannel(), session: {} },
@@ -651,6 +678,52 @@ describe("--cooperative", () => {
         grace_ready_at: 0,
       });
     }
+  });
+
+  it("signs a v2 close with the P-256 key `tempo wallet login` stores, with descriptor and closeSignature", async () => {
+    const p256Key = `0x${"11".repeat(32)}` as Hex;
+    const p256Address = TempoAccount.fromP256(p256Key).address;
+    const base = walletState().accessKeys[0]!;
+    await writeWalletState(
+      walletState({
+        chainId: mainnet,
+        accessKeys: [
+          { ...base, address: p256Address, chainId: mainnet, keyType: "p256", privateKey: p256Key },
+        ],
+      }),
+    );
+    await saveSession(channelId, mainnet, {
+      authorized_signer: p256Address,
+      challenge_echo: sessionChallenge(),
+      ...v2Session,
+    });
+    let authorization: string | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        authorization ||= (init?.headers as Record<string, string> | undefined)?.Authorization;
+        return new Response(null, { status: authorization ? 204 : 503 });
+      }),
+    );
+    mocks.readContract.mockImplementation(async ({ functionName }: { functionName: string }) =>
+      functionName === "CLOSE_GRACE_PERIOD" ? 900n : precompileState(10_000n),
+    );
+    mocks.getLogs.mockResolvedValue([]);
+
+    const result = await closeSessions({ cooperative: true, target: channelId });
+
+    expect(result).toMatchObject({ failed: 0 });
+    const credential = Credential.deserialize(authorization!);
+    expect(credential.payload).toMatchObject({
+      action: "close",
+      channelId,
+      cumulativeAmount: "2000",
+      descriptor: sessionDescriptor(),
+      signature: expect.stringMatching(/^0x[0-9a-f]+$/i),
+      closeSignature: expect.stringMatching(/^0x[0-9a-f]+$/i),
+    });
+    const payload = credential.payload as { signature: Hex; closeSignature: Hex };
+    expect(payload.closeSignature).not.toBe(payload.signature);
   });
 
   it("requests the close on-chain when a rerun finds the channel the server accepted still open", async () => {

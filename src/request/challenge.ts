@@ -8,17 +8,22 @@ import { paymentError, usageError } from "../shared/errors.js";
 import { escrowContract } from "../shared/network.js";
 import { escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
 import { requestNetwork } from "./identity.js";
-import { isMachPaymentToken } from "./mach.js";
+import { isMachPaymentToken, type MachService, machNotAcceptedError, machService } from "./mach.js";
 import type { RequestOptions } from "./options.js";
 import { enforceMaxSpend } from "./spend.js";
 
-// Pass exactly the validated offer to mppx. Observation hooks cannot reject payment.
+/**
+ * Pass exactly the validated offer to mppx. Observation hooks cannot reject payment. `service`
+ * names the service, and how to retry it, when it does not accept MACH; the request URL's host
+ * unless given.
+ */
 export function preparePaymentChallenge(
   response: Response,
   options: RequestOptions,
   requestUrl: string,
+  service = machService(options, requestUrl),
 ) {
-  const selected = selectPaymentTokenResponse(response, options.paymentToken);
+  const selected = selectPaymentTokenResponse(response, options.paymentToken, service);
   const header = selected.headers.get("www-authenticate");
   const error = paymentChallengeError(header);
   if (error) throw error;
@@ -84,9 +89,7 @@ export function preparePaymentChallenge(
       !isMachSession(challenge) &&
       (challenge.intent !== "charge" || details.machineTokenEnabled !== true)
     )
-      throw paymentError(
-        "Server did not offer a native MACH session or a machine-enabled MACH charge",
-      );
+      throw machNotAcceptedError(service);
     if (challenge.intent === "charge" && Array.isArray(details.splits) && details.splits.length > 0)
       throw paymentError("MACH settlement does not support split charge offers");
   }
@@ -271,7 +274,15 @@ export function tempoPaymentChallengeResponse(response: Response) {
   });
 }
 
-export function selectPaymentTokenResponse(response: Response, token: string | undefined) {
+/**
+ * `service` names the service when it offers neither a native MACH session nor a machine-enabled
+ * charge for MACH.
+ */
+export function selectPaymentTokenResponse(
+  response: Response,
+  token: string | undefined,
+  service: MachService = { host: "The service", retry: "Retry without --mach." },
+) {
   if (!token) return response;
   const header = response.headers.get("www-authenticate");
   if (!header) return response;
@@ -294,6 +305,7 @@ export function selectPaymentTokenResponse(response: Response, token: string | u
   }
 
   if (challenges.length === 0) {
+    if (isMachPaymentToken(token)) throw machNotAcceptedError(service);
     const available = offeredTempoCurrencies(header).map(escapeInvisible);
     throw paymentError(
       `Server did not offer payment token ${token}.${available.length > 0 ? ` Available tokens: ${available.join(", ")}.` : ""}`,

@@ -453,7 +453,7 @@ it.each([
   ["invalid gas token", { feeToken: "invalid" }, "valid fee token"],
   ["custom escrow", { escrowContract: payee }, "Unsupported Tempo session escrow"],
   ["wrong network", { chainId: 42431 }, "network mismatch"],
-  ["old protocol", { sessionProtocol: "v1" }, "did not offer payment token"],
+  ["old protocol", { sessionProtocol: "v1" }, "example.com doesn't accept MACH"],
 ] as const)("rejects a MACH session with %s before signing", (_label, details, message) => {
   const options = parseRequestArgs(["--mach", "--max-spend", "0.003", "https://example.com"]);
   expect(() =>

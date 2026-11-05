@@ -194,7 +194,7 @@ describe("session close process exit status", () => {
             expect(summary.results).toContainEqual(
               expect.objectContaining({
                 status: "error",
-                error: "cooperative close requires a local secp256k1 session access key",
+                error: "cooperative close requires the session's access key on this device",
               }),
             );
           if (scenario === "pending") {

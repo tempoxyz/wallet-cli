@@ -73,39 +73,184 @@ jobs:
             echo "release_tag=${RELEASE_TAG}"
           } >> "$GITHUB_OUTPUT"
 
+  # One job per platform builds every package the tag names: they share one install and
+  # JavaScript build. macOS Intel (darwin-amd64) is not built for now.
   build:
-    name: Build ${{ matrix.package }} (${{ matrix.build.suffix }})
+    name: Build (${{ matrix.suffix }})
     permissions:
       contents: read
       id-token: write
       attestations: write
     needs: [parse-tag]
-    runs-on: ${{ matrix.build.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        package: ${{ fromJson(needs.parse-tag.outputs.packages) }}
-        build:
-          - os: ubuntu-latest
-            pkg_target: node22-linux-x64
-            suffix: linux-amd64
-          - os: ubuntu-24.04-arm
-            pkg_target: node22-linux-arm64
-            suffix: linux-arm64
-          - os: macos-latest
-            pkg_target: node22-macos-x64
-            suffix: darwin-amd64
-          - os: macos-latest
-            pkg_target: node22-macos-arm64
-            suffix: darwin-arm64
+        include:
+          - { os: ubuntu-latest, pkg_target: node22-linux-x64, suffix: linux-amd64 }
+          - { os: ubuntu-24.04-arm, pkg_target: node22-linux-arm64, suffix: linux-arm64 }
+          - { os: macos-latest, pkg_target: node22-macos-arm64, suffix: darwin-arm64 }
     env:
-      PACKAGE: ${{ matrix.package }}
+      PACKAGES: ${{ join(fromJson(needs.parse-tag.outputs.packages), ' ') }}
+      SUFFIX: ${{ matrix.suffix }}
       TEMPO_WALLET_VERSION: ${{ needs.parse-tag.outputs.version }}
-      TEMPO_WALLET_PACKAGE_NAME: ${{ matrix.package }}
-      TEMPO_WALLET_PKG_TARGET: ${{ matrix.build.pkg_target }}
-      TEMPO_WALLET_PACKAGE_SUFFIX: ${{ matrix.build.suffix }}
+      TEMPO_WALLET_PKG_TARGET: ${{ matrix.pkg_target }}
+      TEMPO_WALLET_PACKAGE_SUFFIX: ${{ matrix.suffix }}
       TEMPO_WALLET_PACKAGE_DIR: artifacts
-      TEMPO_WALLET_PACKAGE_OUTPUT: artifacts/${{ matrix.package }}-${{ matrix.build.suffix }}
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.parse-tag.outputs.release_tag }}
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: tempoxyz/gh-actions/vendor/pnpm/action-setup@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Types and tests run once per release in the verify job, not in each build job.
+      - name: Build JavaScript
+        run: pnpm build
+
+      - name: Build release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for PACKAGE in $PACKAGES; do
+            TEMPO_WALLET_PACKAGE_NAME="$PACKAGE" \
+            TEMPO_WALLET_PACKAGE_OUTPUT="artifacts/$PACKAGE-$SUFFIX" \
+              pnpm package
+          done
+
+      - name: Smoke test binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for PACKAGE in $PACKAGES; do ./artifacts/"$PACKAGE-$SUFFIX" --version; done
+
+      - name: Generate sha256
+        shell: bash
+        run: |
+          set -euo pipefail
+          for PACKAGE in $PACKAGES; do
+            BIN="artifacts/$PACKAGE-$SUFFIX"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$BIN" > "$BIN.sha256"
+            else
+              shasum -a 256 "$BIN" > "$BIN.sha256"
+            fi
+            cat "$BIN.sha256"
+          done
+
+      - name: Generate SBOM for tempo-wallet (SPDX-JSON)
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-wallet"')
+        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+        with:
+          file: artifacts/tempo-wallet-${{ matrix.suffix }}
+          format: spdx-json
+          output-file: artifacts/tempo-wallet-${{ matrix.suffix }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest SBOM for tempo-wallet
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-wallet"')
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: artifacts/tempo-wallet-${{ matrix.suffix }}
+          sbom-path: artifacts/tempo-wallet-${{ matrix.suffix }}.spdx.json
+
+      - name: Generate SBOM for tempo-request (SPDX-JSON)
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-request"')
+        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+        with:
+          file: artifacts/tempo-request-${{ matrix.suffix }}
+          format: spdx-json
+          output-file: artifacts/tempo-request-${{ matrix.suffix }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest SBOM for tempo-request
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-request"')
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: artifacts/tempo-request-${{ matrix.suffix }}
+          sbom-path: artifacts/tempo-request-${{ matrix.suffix }}.spdx.json
+
+      - name: Attest build provenance (SLSA v1)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: artifacts/*-${{ matrix.suffix }}
+
+      - name: Install cosign
+        uses: tempoxyz/gh-actions/vendor/sigstore/cosign-installer@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+
+      - name: Sign binaries with cosign (keyless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for PACKAGE in $PACKAGES; do
+            BIN="artifacts/$PACKAGE-$SUFFIX"
+            cosign sign-blob --yes --bundle "$BIN.sigstore.json" "$BIN"
+          done
+
+      - name: Upload tempo-wallet
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-wallet"')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tempo-wallet-${{ matrix.suffix }}
+          path: |
+            artifacts/tempo-wallet-${{ matrix.suffix }}
+            artifacts/tempo-wallet-${{ matrix.suffix }}.sha256
+            artifacts/tempo-wallet-${{ matrix.suffix }}.spdx.json
+            artifacts/tempo-wallet-${{ matrix.suffix }}.sigstore.json
+          if-no-files-found: error
+
+      - name: Upload tempo-request
+        if: contains(needs.parse-tag.outputs.packages, '"tempo-request"')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tempo-request-${{ matrix.suffix }}
+          path: |
+            artifacts/tempo-request-${{ matrix.suffix }}
+            artifacts/tempo-request-${{ matrix.suffix }}.sha256
+            artifacts/tempo-request-${{ matrix.suffix }}.spdx.json
+            artifacts/tempo-request-${{ matrix.suffix }}.sigstore.json
+          if-no-files-found: error
+
+
+
+  # Types and the test suite, once per release and sharded as in CI, run alongside the builds;
+  # publishing waits for them.
+  verify:
+    name: Verify ${{ matrix.os }} (${{ matrix.shard }}/${{ matrix.shards }})
+    permissions:
+      contents: read
+      id-token: write
+    needs: [parse-tag]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      # Linux x64 sharded as in CI; every other platform that ships a binary runs the
+      # whole suite once, since ci.yml tests only on Linux x64.
+      matrix:
+        include:
+          - { os: ubuntu-latest, shard: 1, shards: 5 }
+          - { os: ubuntu-latest, shard: 2, shards: 5 }
+          - { os: ubuntu-latest, shard: 3, shards: 5 }
+          - { os: ubuntu-latest, shard: 4, shards: 5 }
+          - { os: ubuntu-latest, shard: 5, shards: 5 }
+          - { os: ubuntu-24.04-arm, shard: 1, shards: 1 }
+          - { os: macos-latest, shard: 1, shards: 1 }
     steps:
       - name: Secure runner
         uses: tempoxyz/gh-actions/actions/secure-runner@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
@@ -128,76 +273,55 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Check types
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
         run: pnpm check:types
 
       - name: Check test types
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
         run: pnpm test:types
 
       - name: Run tests
-        run: pnpm test
+        run: pnpm test --shard=${{ matrix.shard }}/${{ matrix.shards }}
 
-      - name: Build JavaScript
-        run: pnpm build
+  # The release signer, built once alongside the binaries rather than in each publish job.
+  signer:
+    name: Build release signer
+    permissions:
+      contents: read
+      id-token: write
+    needs: [parse-tag]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
+    # Any job in the run can upload an artifact under this name, so publish runs the
+    # signer only if it matches the digest this job, which runs no release code, built.
+    outputs:
+      sha256: ${{ steps.digest.outputs.sha256 }}
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
 
-      - name: Build TypeScript CLI release binary
-        run: pnpm package
-
-      - name: Smoke test host binary
-        if: matrix.build.pkg_target == 'node22-linux-x64' || matrix.build.pkg_target == 'node22-linux-arm64' || matrix.build.pkg_target == 'node22-macos-arm64'
-        run: ./artifacts/"${PACKAGE}"-${{ matrix.build.suffix }} --version
-
-      - name: Generate sha256
-        shell: bash
-        run: |
-          set -euo pipefail
-          BIN="artifacts/${PACKAGE}-${{ matrix.build.suffix }}"
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "$BIN" > "$BIN.sha256"
-          else
-            shasum -a 256 "$BIN" > "$BIN.sha256"
-          fi
-          cat "$BIN.sha256"
-
-      - name: Generate SBOM (SPDX-JSON)
-        uses: tempoxyz/gh-actions/vendor/anchore/sbom-action@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
+      - name: Checkout release signing tool
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          file: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
-          format: spdx-json
-          output-file: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
+          repository: tempoxyz/wallet-rs
+          path: wallet-release-tools
+          persist-credentials: false
 
-      - name: Attest SBOM
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
-          sbom-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
+      - name: Setup Rust
+        run: rustup default stable
 
-      - name: Attest build provenance (SLSA v1)
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
+      - name: Build release signer
+        run: cargo build --locked --release -p tempo-sign
+        working-directory: wallet-release-tools
 
-      - name: Install cosign
-        uses: tempoxyz/gh-actions/vendor/sigstore/cosign-installer@35019557465e3c38ee3468be171771fd73577584 # 2026-10-20T06-22-38Z-35019557
-
-      - name: Sign binary with cosign (keyless)
-        shell: bash
-        run: |
-          set -euo pipefail
-          BIN="artifacts/${PACKAGE}-${{ matrix.build.suffix }}"
-          cosign sign-blob --yes \
-            --bundle "${BIN}.sigstore.json" \
-            "$BIN"
+      - name: Record signer digest
+        id: digest
+        run: echo "sha256=$(sha256sum wallet-release-tools/target/release/tempo-sign | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ env.PACKAGE }}-${{ matrix.build.suffix }}
-          path: |
-            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}
-            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.sha256
-            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.spdx.json
-            artifacts/${{ env.PACKAGE }}-${{ matrix.build.suffix }}.sigstore.json
+          name: release-signer
+          path: wallet-release-tools/target/release/tempo-sign
           if-no-files-found: error
 
   publish:
@@ -206,7 +330,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
-    needs: [parse-tag, build]
+    needs: [parse-tag, build, verify, signer]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && !startsWith(needs.parse-tag.outputs.release_tag, 'refs/heads/')
     strategy:
@@ -256,19 +380,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" artifacts/* --clobber
 
-      - name: Checkout release signing tool
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download release signer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          repository: tempoxyz/wallet-rs
-          path: wallet-release-tools
-          persist-credentials: false
+          name: release-signer
+          path: wallet-release-tools/target/release
 
-      - name: Setup Rust
-        run: rustup default stable
-
-      - name: Build release signer
-        run: cargo build --locked --release -p tempo-sign
-        working-directory: wallet-release-tools
+      - name: Verify release signer
+        env:
+          SIGNER_SHA256: ${{ needs.signer.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNER_SHA256"
+          echo "$SIGNER_SHA256  wallet-release-tools/target/release/tempo-sign" | sha256sum -c -
+          chmod +x wallet-release-tools/target/release/tempo-sign
 
       - name: Sign release binaries
         env:

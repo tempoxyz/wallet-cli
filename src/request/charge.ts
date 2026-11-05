@@ -28,6 +28,8 @@ import {
   type ChargeParameters,
   isMachPaymentToken,
   machChargeParameters,
+  type MachService,
+  machService,
   runsMachRoute,
 } from "./mach.js";
 import type { RequestOptions } from "./options.js";
@@ -50,6 +52,7 @@ export async function payAndRetryRequest(
   const header = selectPaymentTokenResponse(
     paymentRequiredResponse,
     options.paymentToken,
+    machService(options, request.url),
   ).headers.get("www-authenticate");
   const challengeResponse = tempoPaymentChallengeResponse(selectedResponse);
 
@@ -83,7 +86,12 @@ export async function payAndRetryRequest(
       getClient,
       maxDeposit: spendCap(options),
     };
-    const charge = chargeSettlement(selectedChallenge, options, identity);
+    const charge = chargeSettlement(
+      selectedChallenge,
+      options,
+      identity,
+      machService(options, request.url),
+    );
     const payment = Mppx.create({
       methods: [
         tempo.charge({ ...methodOptions, ...charge.parameters }),
@@ -125,10 +133,12 @@ function chargeSettlement(
   challenge: Challenge.Challenge,
   options: RequestOptions,
   identity: PaymentIdentity,
+  service: MachService,
 ) {
   const amount = challengeAmount(challenge);
   const key = "key" in identity ? identity.key : undefined;
-  const mach = machChargeParameters(options, { amount, key });
+  const recipient = stringValue(challenge.request.recipient);
+  const mach = machChargeParameters(options, { amount, key, recipient, service });
   let debited = stringValue(challenge.request.currency).toLowerCase();
   const parameters: ChargeParameters = {
     ...mach,

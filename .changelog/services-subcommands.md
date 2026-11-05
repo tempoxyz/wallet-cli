@@ -1,5 +1,0 @@
----
-wallet-cli: minor
----
-
-Add `tempo wallet services list`, `services search <query>`, and `services show <id>`, and the MCP tools `services_list`, `services_search`, and `services_show`. `search` keeps the word matching of `--search`, reading unquoted words as one query, and `show` the endpoint prices and not-found suggestions of `services <id>`; bare `services` still lists. The old forms are deprecated but keep working with the same output: `services <id>` runs `services show <id>`, and `services --search <query>` and `services list --search <query>` run `services search <query>`. Each prints a deprecation notice on stderr only when stdout is a terminal and no `--format` is set, so agent and JSON output is unchanged. A subcommand name now wins over a service id: `services search` and `services show` are the subcommands, and a service whose id is `list`, `search`, or `show` is looked up with `services show <id>`. The `services` MCP tool keeps taking `serviceId` and `search` for one release, and its description now marks it deprecated. A search over 256 characters or 16 words now reports `Search queries accept at most ...` instead of naming `--search`.
