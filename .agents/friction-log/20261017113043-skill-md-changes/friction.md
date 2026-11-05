@@ -1,6 +1,7 @@
 ---
-title: "SKILL.md changes need a changelog entry, but only the Changelog workflow says so"
-severity: "minor"
+title: 'SKILL.md changes need a changelog entry, but only the Changelog workflow says so'
+severity: 'minor'
+issue: 'tempoxyz/wallet-cli#270'
 ---
 
 ## Expected Behavior
