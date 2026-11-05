@@ -34,7 +34,12 @@ import {
 import type { RequestOptions } from "./options.js";
 import { fetchPaidRequest, paidResponseFailures, paymentReceipts } from "./paid.js";
 import { persistSessionReceipt, sessionShortfall, tryTopUpAndRetry } from "./session-topup.js";
-import { assertWithinMaxSpend, formatTokenAmount, spendCap } from "./spend.js";
+import {
+  assertWithinMaxSpend,
+  formatTokenAmount,
+  MaxSpendExceededError,
+  spendCap,
+} from "./spend.js";
 
 // Dry-run reads only inform the quote, so a stalled RPC must not hold it up.
 export const dryRunRpc = { timeout: 3_000, retryCount: 0 };
@@ -53,8 +58,9 @@ export async function preferMachSession(response: Response, options: RequestOpti
     return response;
   }
   if (!offers.some(isMachSession)) return response;
+  let selected: ReturnType<typeof preparePaymentChallenge> | undefined;
   try {
-    const selected = preparePaymentChallenge(
+    selected = preparePaymentChallenge(
       response,
       {
         ...options,
@@ -79,7 +85,9 @@ export async function preferMachSession(response: Response, options: RequestOpti
       );
       if (balance.amount >= plan.depositRaw) return selected.response;
     }
-  } catch {
+  } catch (error) {
+    // A MACH session over the spending cap is refused by the payment, not traded for another offer.
+    if (selected && error instanceof MaxSpendExceededError) return selected.response;
     // Preference is advisory. The normal path still validates and reports the selected offer.
   }
   const headers = new Headers(response.headers);

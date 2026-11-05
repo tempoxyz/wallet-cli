@@ -40,18 +40,20 @@ export function preparePaymentChallenge(
   // Prefer offers on the selected network before applying intent preference.
   // Keep mismatched offers when none match so the network diagnostic remains explicit.
   if (networkChallenges.length > 0) challenges = networkChallenges;
+  const charge = challenges.find(
+    (offer) =>
+      offer.method === "tempo" &&
+      (offer.intent === "charge" ||
+        (options.paymentIntent === "auto" && offer.intent === "subscription")),
+  );
+  // In auto intent, `--mach` asks for a one-time charge, so a MACH session is used only when the
+  // server offers no machine-enabled charge.
   const session =
-    options.paymentIntent !== "charge"
+    options.paymentIntent === "session" ||
+    (options.paymentIntent === "auto" && !(isMachPaymentToken(options.paymentToken) && charge))
       ? sessionChallengeFromHeader(challenges.map(Challenge.serialize).join(", "))
       : undefined;
-  const challenge =
-    session ??
-    challenges.find(
-      (offer) =>
-        offer.method === "tempo" &&
-        (offer.intent === "charge" ||
-          (options.paymentIntent === "auto" && offer.intent === "subscription")),
-    );
+  const challenge = session ?? charge;
   if (!challenge || (options.paymentIntent === "session" && !session))
     throw paymentError("Server did not offer a compatible payment intent");
   const details = getRecord(challenge.request.methodDetails);

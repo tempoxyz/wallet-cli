@@ -360,6 +360,49 @@ it.each([
   },
 );
 
+it.each([
+  { intent: "auto", selected: "charge" },
+  { intent: "session", selected: "session" },
+] as const)(
+  "keeps --mach on an offered machine-enabled charge unless asked for a session: $intent",
+  ({ intent, selected }) => {
+    const charge = Challenge.from({
+      ...offer(usdcToken, { machineTokenEnabled: true }),
+      intent: "charge",
+    });
+    const options = parseRequestArgs([
+      "--mach",
+      "--payment-intent",
+      intent,
+      "--max-spend",
+      "0.003",
+      "https://example.com",
+    ]);
+    expect(
+      preparePaymentChallenge(response([offer(), charge]), options, options.url).challenge,
+    ).toEqual(selected === "charge" ? charge : offer());
+  },
+);
+
+it("refuses a MACH session over the cap rather than paying an advertised charge", async () => {
+  const charge = Challenge.from({ ...offer(usdcToken), intent: "charge" });
+  const endpoint = await service([offer(), charge]);
+  await run(endpoint.url);
+  vi.mocked(readOnChainChannel).mockResolvedValue({
+    payer: account.address,
+    payee,
+    token: mach,
+    authorizedSigner: account.address,
+    deposit: 3000n,
+    settled: 0n,
+    closeRequestedAt: 0n,
+  });
+  await expect(
+    runRequest(["--max-spend", "0.001", endpoint.url], { stdout: silent, stderr: silent }),
+  ).rejects.toMatchObject({ code: "E_LIMIT_EXCEEDED" });
+  expect(endpoint.paid.map((credential) => credential.challenge)).toEqual([offer()]);
+});
+
 it("reuses a funded MACH channel without needing new key allowance", async () => {
   const endpoint = await service();
   await run(endpoint.url);
