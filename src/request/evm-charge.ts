@@ -13,7 +13,7 @@ import type { Network } from "../shared/network.js";
 import { continuationCommand } from "../shared/next.js";
 import { sanitizeText } from "../shared/utils.js";
 import { ensureRemotePayer } from "../wallet/remote-payer.js";
-import { crossChainFunding, relayUrl } from "./cross-chain.js";
+import { crossChainEnabled, crossChainFunding, relayUrl } from "./cross-chain.js";
 import { cloneRequestInit, type FetchPlan } from "./fetch.js";
 import { parseMaxSlippageBps } from "./funding-mode.js";
 import {
@@ -75,11 +75,30 @@ export async function payEvmAndRetry(
     });
   writePrivateKeyNotice(stderr, options);
   const payer = await evmPayer(options);
+  // A challenge expiring before any bridge could deliver is refused before an attempt is saved,
+  // unless the payer already holds the USDC and nothing needs to move.
+  const deadlineSeconds = fundingDeadlineSeconds(offer.challenge.expires);
+  if (
+    crossChainEnabled(options) &&
+    deadlineSeconds !== undefined &&
+    deadlineSeconds < 1 &&
+    (await destinationBalance(destination, payer.address).catch(() => 0n)) < requirement.amount
+  )
+    throw paymentError(
+      "The payment challenge expires too soon to bridge funding before it; nothing was funded or paid. Retry the request for a fresh challenge.",
+    );
   const funding = await crossChainFunding(offer, payer.address, request, options, stderr);
   const funders = funding?.funders ?? [];
-  // The policy leaves `deadlineSeconds` unset, so each funder applies its own default: 300 s for
-  // a bridge, which outlasts machine-fetch's 30 s payment default.
-  if (funding) policy = { ...policy, maxFundingSpend: funding.maxFundingSpend };
+  // Without a challenge expiry the policy leaves `deadlineSeconds` unset, so each funder applies
+  // its own default: 300 s for a bridge, which outlasts machine-fetch's 30 s payment default. With
+  // one, the bridge must deliver before it, or the payer would hold USDC for a challenge Mppx then
+  // refuses to sign.
+  if (funding)
+    policy = {
+      ...policy,
+      maxFundingSpend: funding.maxFundingSpend,
+      ...(deadlineSeconds !== undefined && deadlineSeconds >= 1 ? { deadlineSeconds } : {}),
+    };
   // `--timeout` bounds funding and signing as well as the request: past it, nothing is signed.
   const signal = request.init.signal ?? undefined;
   const timedOut = () => timeoutError(network, funding?.attemptId);
@@ -163,6 +182,22 @@ export async function payEvmAndRetry(
     if (error instanceof Errors.IncurError) throw error;
     throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
   }
+}
+
+/** Seconds left to sign and send the credential once funding delivered. */
+const signingMarginSeconds = 15;
+/** machine-fetch's cross-chain funders' own deadline, which an expiry only shortens. */
+const bridgeDeadlineSeconds = 300;
+
+/**
+ * How long cross-chain funding may take so its delivery lands before the challenge expires, with
+ * `signingMarginSeconds` left to sign and send: undefined without an expiry, and under 1 when the
+ * challenge expires too soon to fund.
+ */
+export function fundingDeadlineSeconds(expires: string | undefined, now = Date.now()) {
+  if (!expires) return undefined;
+  const left = Math.floor((Date.parse(expires) - now) / 1000) - signingMarginSeconds;
+  return Math.min(bridgeDeadlineSeconds, left);
 }
 
 /**
