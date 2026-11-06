@@ -1,9 +1,10 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  attemptAbandonSeconds,
   claimAttempt,
   fundingDirectory,
   listAttempts,
@@ -84,10 +85,33 @@ describe("funding attempts", () => {
   });
 });
 
+/** Moves the clock past the point an attempt without an operation counts as abandoned. */
+function abandon() {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + (attemptAbandonSeconds + 1) * 1000);
+}
+
 describe("funding commands", () => {
-  it("lists an attempt that never started, and recover forgets it", async () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps a recent attempt that has not claimed its operation, as it may still fund", async () => {
     await useTempHome();
     const { attemptId } = await claimAttempt(terms);
+
+    expect(await recoverFunding(attemptId, "mainnet")).toMatchObject({
+      id: attemptId,
+      status: "pending",
+      reference: null,
+    });
+    expect(await loadAttempt(attemptId)).toBeDefined();
+  });
+
+  it("lists an attempt that never started, and recover forgets it once abandoned", async () => {
+    await useTempHome();
+    const { attemptId } = await claimAttempt(terms);
+    abandon();
 
     expect(await listFunding("mainnet")).toMatchObject({
       chain_id: 4217,

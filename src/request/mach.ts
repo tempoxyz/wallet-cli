@@ -265,7 +265,6 @@ function isTransientRpcError(error: unknown) {
   return false;
 }
 
-/** Whether a charge credential's signed transaction approves and swaps MACH, the MACH route. */
 /**
  * The MACH token the SDK tries first for `challenge`, a machine-enabled charge without splits on a
  * chain with a MACH deployment; `undefined` otherwise. `--dry-run` reports its balance, and
@@ -289,6 +288,7 @@ export function machCandidate(
     | undefined;
 }
 
+/** Whether a charge credential's signed transaction approves and swaps MACH, the MACH route. */
 export function runsMachRoute(
   payload: Record<string, unknown>,
   deployment: { token: string; swap: string },

@@ -91,7 +91,7 @@ export async function ensureRemotePayer(wallet: string) {
   await ensurePrivateWalletDirectory(path);
   return await withFileLock(`${path}.lock`, "remote payer lock", async () => {
     const key = wallet.toLowerCase();
-    const { current, backup } = await payers();
+    const { current, backup } = await payers(true);
     const found = current[key];
     if (found) return remotePayer(found);
     const { handle } = await Keystore.secp256k1().createKey();
@@ -111,16 +111,19 @@ export async function ensureRemotePayer(wallet: string) {
 /**
  * Every remote payer, from the wallet store, with any payer only the backup holds restored into
  * the store: one created before payers moved there, or one a concurrent store rewrite dropped.
+ * `locked` when the caller already holds the remote payer lock, which is not reentrant.
  */
-async function payers(): Promise<{ current: Payers; backup: Payers }> {
+async function payers(locked = false): Promise<{ current: Payers; backup: Payers }> {
   const [stored, backup] = await Promise.all([readItem(), readBackup()]);
   const missing = Object.entries(backup).filter(([key]) => !stored[key]);
   if (missing.length === 0) return { current: stored, backup };
   const current = { ...stored, ...Object.fromEntries(missing) };
-  await withFileLock(`${remotePayersPath()}.lock`, "remote payer lock", async () => {
+  const restore = async () => {
     const latest = await readItem();
     await writeItem({ ...Object.fromEntries(missing), ...latest });
-  });
+  };
+  if (locked) await restore();
+  else await withFileLock(`${remotePayersPath()}.lock`, "remote payer lock", restore);
   return { current, backup };
 }
 

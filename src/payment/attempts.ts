@@ -111,6 +111,17 @@ export async function loadAttempt(attemptId: string) {
   return await readAttemptFile(attemptPath(attemptId));
 }
 
+/**
+ * Seconds after which an attempt with no operation counts as abandoned: a bridge's 300 s deadline.
+ * A younger one may belong to a live process that has not claimed its operation yet.
+ */
+export const attemptAbandonSeconds = 300;
+
+/** Whether `attempt` is old enough that, without an operation, no live process still funds it. */
+export function attemptAbandoned(attempt: AttemptRecord, now = Date.now()) {
+  return Math.floor(now / 1000) - attempt.createdAt >= attemptAbandonSeconds;
+}
+
 /** Forgets an attempt whose funding is settled: paid with, refunded, or never started. */
 export async function removeAttempt(attemptId: string) {
   await unlink(attemptPath(attemptId)).catch((error: NodeJS.ErrnoException) => {

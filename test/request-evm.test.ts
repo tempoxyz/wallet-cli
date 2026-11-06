@@ -20,6 +20,8 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { listAttempts, operationsDirectory } from "../src/payment/attempts.js";
+import { destinations } from "../src/shared/chains.js";
+import { crossChainFunding } from "../src/request/cross-chain.js";
 import { runRequest } from "../src/request/run.js";
 import {
   ensureRemotePayer,
@@ -482,6 +484,37 @@ describe("offer ranking", () => {
     });
   });
 
+  it.each([
+    { name: "--mach", args: ["--mach", "--max-spend", "1"] },
+    { name: "--payment-token", args: ["--payment-token", tempoUsdc] },
+    { name: "--payment-intent session", args: ["--payment-intent", "session"] },
+  ])("never pays an EVM offer with $name", async ({ args }) => {
+    fund(tempoUsdc, walletState().accounts[0]!.address, 1_000_000n);
+    fund(baseUsdc, await remotePayerAddress(), 1_000_000n);
+    for (const offers of [{ x402: [x402Accept()] }, { mpp: [evmOffer()] }]) {
+      const endpoint = await service(offers);
+      await expect(run(args, endpoint.url)).rejects.toMatchObject({ code: "E_PAYMENT" });
+      await expect(run(["--dry-run", ...args], endpoint.url)).rejects.toMatchObject({
+        code: "E_PAYMENT",
+      });
+      expect(endpoint.paid).toEqual([]);
+    }
+  });
+
+  it("keeps the Tempo offer with --payment-intent session, which has no session to pay", async () => {
+    fund(baseUsdc, await remotePayerAddress(), 1_000_000n);
+    await expect(quote(["--payment-intent", "session"])).rejects.toMatchObject({
+      code: "E_PAYMENT",
+      message: "Server did not offer a compatible payment intent",
+    });
+  });
+
+  it("refuses --payment-network base with --payment-intent session as a usage error", async () => {
+    await expect(
+      quote(["--payment-network", "base", "--payment-intent", "session"]),
+    ).rejects.toMatchObject({ code: "E_USAGE" });
+  });
+
   it("quotes an EVM offer without creating a remote payer", async () => {
     const endpoint = await service({ x402: [x402Accept()] });
     const output = JSON.parse((await run(["--dry-run"], endpoint.url)).stdout);
@@ -786,6 +819,34 @@ async function relayStub(options: { status?: number } = {}) {
   vi.stubEnv("TEMPO_RELAY_URL", url);
   return { quotes };
 }
+
+describe("funding without a bridge route", () => {
+  // Testnet has no Relay or Stargate route by default.
+  const options = { funding: "auto", network: "testnet" } as never;
+  const offer = () =>
+    ({
+      destination: { ...destinations(42431)[0]!, rpcUrl: process.env.TEMPO_RPC_URL! },
+      requirement: { amount: 100_000n },
+    }) as never;
+  const payer = "0x00000000000000000000000000000000000000b2";
+  const request = { url: "https://api.example.com/", init: {} } as never;
+
+  it("lets a payer that already holds the USDC pay, and refuses only a shortfall", async () => {
+    const usdc = destinations(42431)[0]!.usdc.address;
+    fund(usdc, payer, 40_000n);
+    await expect(
+      crossChainFunding(offer(), payer, request, options, process.stderr),
+    ).rejects.toMatchObject({
+      code: "E_PAYMENT",
+      message: expect.stringContaining("Cross-chain funding is unavailable on testnet"),
+    });
+    fund(usdc, payer, 100_000n);
+    await expect(
+      crossChainFunding(offer(), payer, request, options, process.stderr),
+    ).resolves.toBeUndefined();
+    expect(await listAttempts()).toEqual([]);
+  });
+});
 
 describe("bridged dry run", () => {
   const wallet = () => walletState().accounts[0]!.address;
