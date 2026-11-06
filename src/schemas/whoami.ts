@@ -64,6 +64,26 @@ export const whoamiOutput = z.union([
       }),
     ),
     key: accessKeyOutput.omit({ wallet: true }).nullable(),
+    remote_payer: z
+      .object({
+        address: z.string(),
+        balances: z.array(
+          z.object({
+            ...networkOutputShape,
+            token: z.string().register(displayMeta, { address: true }),
+            symbol: z.literal("USDC"),
+            balance: z
+              .string()
+              .register(displayMeta, amount)
+              .nullable()
+              .describe("USDC balance; null when the read failed"),
+          }),
+        ),
+      })
+      .optional()
+      .describe(
+        "The wallet's key for paying on other chains, once a payment created it, with its USDC on each",
+      ),
   }),
   machOutput,
   creditsOutput,
