@@ -111,7 +111,7 @@ tempo request -t -X GET --max-spend <APPROVED_AMOUNT> --network <QUOTED_NETWORK>
 - `--payment-network base` or `tempo` picks the offer when a server offers both. Otherwise the CLI prefers a token the wallet holds, then a DEX swap, then held Base USDC, then a bridge.
 - A machine-enabled charge is left to MACH, with no swap, when the wallet holds enough MACH.
 
-Bridging moves funds and costs a fee (Relay about $0.02, Stargate about $1.26). Use `--funding auto` only when the user approves bridging, and pass `--max-funding-spend` with the most they approve. `--dry-run` reports the payment but not yet the bridge's cost.
+Bridging moves funds and costs a fee (Relay about $0.02, Stargate about $1.26). Use `--funding auto` only when the user approves bridging, and pass `--max-funding-spend` with the most they approve. `--dry-run` reports the payment and, under `funding`, the bridge each route quotes with its fee, gas and whether `--max-funding-spend` covers it.
 
 - A DEX swap counts twice against the access key's limit, once for its approve and once for the DEX's pull of the input. A limit short of that fails with `E_LIMIT_EXCEEDED` before signing, and its `cta` is the `tempo wallet keys update` with the limit needed; run it only after the wallet owner approves.
 - `E_PAYMENT_OUTCOME_UNKNOWN` naming a funding operation means a bridge may have moved funds. Do not pay again. Run its `cta` (`tempo wallet funding recover <ID>`), which only reads, and rerun its `_next` while it reports `pending`:
