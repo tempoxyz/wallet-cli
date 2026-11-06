@@ -15,6 +15,8 @@ import { usageError } from "../shared/errors.js";
 import { querySql } from "../shared/process.js";
 import { knownToken } from "../shared/tokens.js";
 import { cleanStoredScalar, getArray, getRecord, parseStoredBigInt } from "../shared/utils.js";
+import { destinationBalance, destinations } from "../shared/chains.js";
+import { loadRemotePayer } from "../wallet/remote-payer.js";
 import { loadWalletState, type WalletState } from "../wallet/store.js";
 import { assetBalances, fetchWalletAssets, type WalletAsset } from "../wallet/balances.js";
 import {
@@ -120,7 +122,7 @@ export async function currentWhoamiOutput(options: {
       : undefined);
   const token = key?.limits?.[0]?.token ?? tokenAddress(options.chain);
   const servesChain = rpcChainCheck();
-  const [balance, assets, sessions, details, chainKey] = await Promise.all([
+  const [balance, assets, sessions, details, chainKey, remotePayer] = await Promise.all([
     tokenBalance({
       chain: options.chain,
       token,
@@ -136,6 +138,7 @@ export async function currentWhoamiOutput(options: {
     tokenDetails(key ? keyTokens(key) : [{ chain: options.chain, token, read: true }], servesChain),
     // `key` is always the logged-in wallet's.
     key ? readChainKey(key, servesChain) : undefined,
+    options.walletAddress ? remotePayerOutput(options.walletAddress, options.chain) : undefined,
   ]);
   const symbol = details.get(tokenKey(options.chain, token))?.symbol ?? null;
   const balances = walletBalances({
@@ -156,6 +159,28 @@ export async function currentWhoamiOutput(options: {
     },
     balances,
     key: keyOutput,
+    ...(remotePayer ? { remote_payer: remotePayer } : {}),
+  };
+}
+
+/** The wallet's remote payer and its USDC on each destination; never creates one. */
+async function remotePayerOutput(walletAddress: string, chain: number) {
+  const payer = await loadRemotePayer(walletAddress).catch(() => undefined);
+  if (!payer) return undefined;
+  return {
+    address: payer.address.toLowerCase(),
+    balances: await Promise.all(
+      destinations(chain).map(async (entry) => {
+        const balance = await destinationBalance(entry, payer.address).catch(() => undefined);
+        return {
+          chain_id: entry.chainId,
+          network: entry.name,
+          token: entry.usdc.address.toLowerCase(),
+          symbol: "USDC" as const,
+          balance: balance === undefined ? null : formatUnits(balance, entry.usdc.decimals),
+        };
+      }),
+    ),
   };
 }
 

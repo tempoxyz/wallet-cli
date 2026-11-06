@@ -63,7 +63,9 @@ export function enforceMaxSpend(
   if (typeof amount !== "string" || !/^\d+$/.test(amount))
     throw paymentError("Payment challenge is missing a valid amount");
   // An explicit cap already refused the subscription, and the default cap leaves recurring
-  // offers to the per-period limit the wallet signs.
+  // offers to the per-period limit the wallet signs. For a charge this is the cap its funding
+  // policy (`chargePolicy`) enforces again before signing: every token that policy caps has six
+  // decimals, so both refuse the same amounts, and policy also refuses every other token.
   if (challenge.intent === "subscription") return;
   assertWithinMaxSpend(BigInt(amount), options);
 }

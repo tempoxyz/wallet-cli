@@ -55,26 +55,48 @@ export function accessKeyMatches(
 }
 
 /**
+ * How much of an access key's spending limit a Tempo DEX swap of at most `maxAmountIn` uses: the
+ * `approve` of the DEX and the DEX's pull of the input each count against it, so a key needs twice
+ * the input. A key with less passes a single-spend check and then reverts in simulation.
+ */
+export function dexSwapSpend(maxAmountIn: bigint) {
+  return 2n * maxAmountIn;
+}
+
+/**
  * E_LIMIT_EXCEEDED for an access key whose spending limit cannot cover `amount` (token units) of
  * `token`, with the `tempo wallet keys update` that sets the limit to that amount as its `cta`.
- * `label` names the token in the message.
+ * `label` names the token in the message, and `remaining`, when given, what the key has left.
+ * `swap` explains that a DEX swap counts twice, and `walletApp` that a send would otherwise have
+ * gone to the wallet app for approval.
  */
 export function accessKeyLimitError(options: {
   key: string;
   token: string;
   label: string;
   amount: string;
+  remaining?: string | undefined;
+  swap?: boolean | undefined;
+  walletApp?: boolean | undefined;
   network: Network;
 }) {
-  const { key, token, label, amount, network } = options;
+  const { key, token, label, amount, remaining, network } = options;
   const command = continuationCommand(
     ["wallet", "keys", "update", key.toLowerCase(), "--token", token, "--limit", amount],
     network,
   );
+  const needs = options.swap
+    ? `the ${amount} ${label} a DEX swap needs (its approve and the DEX's pull each count)`
+    : `${amount} ${label}`;
+  const fallback = options.walletApp
+    ? ": sending would need the wallet app to approve it instead"
+    : "";
   return new CtaError(
     commandError(
       "E_LIMIT_EXCEEDED",
-      `The access key cannot spend ${amount} ${label}. Ask the wallet owner to run '${command}', then retry.`,
+      remaining === undefined
+        ? `The access key cannot spend ${needs}. Ask the wallet owner to run '${command}', then retry.`
+        : `The access key has ${remaining} ${label} left of its spending limit, short of ${needs}, so nothing was sent${fallback}. Ask the wallet owner to run '${command}', then retry.`,
       command,
     ),
   );

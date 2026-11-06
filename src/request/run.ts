@@ -3,7 +3,7 @@ import { httpError, paymentOutcomeUnknownError, paymentError } from "../shared/e
 import { parseRequestArgs, paymentTokenValue, validateRequestOptions } from "./args.js";
 import { preparePaymentChallenge } from "./challenge.js";
 import { payAndRetryRequest } from "./charge.js";
-import { paymentQuote, type RequestDryRunOutput } from "./dry-run.js";
+import { evmPaymentQuote, paymentQuote, type RequestDryRunOutput } from "./dry-run.js";
 import {
   buildFetchRequest,
   fetchWithRetries,
@@ -12,6 +12,7 @@ import {
 } from "./fetch.js";
 import { privateKeySigner, resolvePaymentNetwork } from "./identity.js";
 import type { RequestOptions, RequestRunOptions } from "./options.js";
+import { selectPayment } from "./select.js";
 import {
   remoteNamePath,
   write,
@@ -64,8 +65,15 @@ export async function executeRequest(options: RequestOptions, io: RequestRunOpti
     options.paymentToken = paymentTokenValue(options);
     const paymentResponse = await preferMachSession(response, options, request.url);
     if (options.dryRun) {
-      const { challenge } = preparePaymentChallenge(paymentResponse, options, request.url);
-      const quote = await paymentQuote(challenge, options, request.url);
+      const selection = await selectPayment(paymentResponse, options, request.url);
+      const quote =
+        selection.kind === "evm"
+          ? await evmPaymentQuote(selection.offer, options)
+          : await paymentQuote(
+              preparePaymentChallenge(paymentResponse, options, request.url).challenge,
+              options,
+              request.url,
+            );
       if (options.dumpHeader) await writeHeadersFile(options.dumpHeader, response);
       if (options.writeMeta) await writeMetaFile(options.writeMeta, response, started);
       await writeOutput(options.output, `${JSON.stringify(quote, null, 2)}\n`, stdout);
