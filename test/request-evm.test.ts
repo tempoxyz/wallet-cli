@@ -521,6 +521,19 @@ describe("EVM offers", () => {
     expect(await listAttempts()).toEqual([]);
   });
 
+  it("pays a challenge expiring soon from USDC the payer already holds, with --funding auto", async () => {
+    await relayStub();
+    fund(baseUsdc, await remotePayerAddress(), 100_000n);
+    fund(ousd, walletState().accounts[0]!.address, 1_000_000n);
+    const endpoint = await service({
+      mpp: [evmOffer({}, new Date(Date.now() + 5_000).toISOString())],
+    });
+
+    await run(["--funding", "auto"], endpoint.url);
+
+    expect(endpoint.paid).toHaveLength(1);
+  });
+
   it("refuses an x402 v1 challenge as E_PAYMENT", async () => {
     const endpoint = await service({ x402: [x402Accept()], x402Version: 1 });
 

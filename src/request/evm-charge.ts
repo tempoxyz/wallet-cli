@@ -108,6 +108,7 @@ export async function payEvmAndRetry(
       offer.challenge,
       { policy, funders, payer: payer.address, operationId: funding?.attemptId, signal },
       funding?.claimed ?? (async () => false),
+      funding?.bridges ?? false,
     );
   } catch (error) {
     // Keeps an attempt whose operation was saved, so a bridge already sent stays recoverable.
@@ -191,6 +192,7 @@ async function planAndFundFromEachSource(
   challenge: EvmOffer["challenge"],
   options: FundingOptions,
   claimed: () => Promise<boolean>,
+  bridges: boolean,
 ) {
   const funders = options.funders ?? [];
   let refusal: unknown;
@@ -199,7 +201,7 @@ async function planAndFundFromEachSource(
     // Reconciling earlier attempts and quoting earlier tokens take time: each bridge must still
     // land before the challenge expires, so its deadline is measured as it starts, and none starts
     // once too little is left.
-    if (challenge.expires) {
+    if (bridges && challenge.expires) {
       const deadlineSeconds = fundingDeadlineSeconds(challenge.expires)!;
       if (deadlineSeconds < 1) throw refusal ?? expiresTooSoonError();
       policy = { ...policy, deadlineSeconds };

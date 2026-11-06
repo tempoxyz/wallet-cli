@@ -469,6 +469,8 @@ export async function crossChainFunding(
   const { funders, sources } = prepared;
   return {
     funders,
+    /** Whether a bridge must move USDC: false when the payer already holds what the offer needs. */
+    bridges: needed > 0n || resumed !== undefined,
     attemptId: attempt.attemptId,
     abandon,
     maxFundingSpend: sources.map((asset) => ({
