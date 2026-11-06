@@ -16,6 +16,7 @@ import { whoamiHandler } from "../src/commands/whoami.js";
 import { parseRequestArgs } from "../src/request/args.js";
 import { resolvePaymentNetwork } from "../src/request/identity.js";
 import { defaultMaxSpend, maxSpendSetting, resolveMaxSpend } from "../src/request/spend.js";
+import { fundingSetting } from "../src/request/funding-mode.js";
 import { configKeys, configSettings, type ConfigKey } from "../src/schemas/config.js";
 import {
   explicitNetwork,
@@ -185,7 +186,7 @@ describe("config set, get, and unset", () => {
       await expect(run(key)).rejects.toMatchObject({
         code: "E_USAGE",
         exitCode: 2,
-        message: `Unknown config key: ${key}. Valid keys: network, rpc-url, max-spend`,
+        message: `Unknown config key: ${key}. Valid keys: network, rpc-url, max-spend, funding`,
       });
     expect(await savedConfig()).toBeUndefined();
   });
@@ -201,6 +202,7 @@ describe("config set, get, and unset", () => {
           testnet: { value: moderatoRpc, source: "default" },
         },
         "max-spend": { value: "10", source: "default" },
+        funding: { value: "tempo", source: "default" },
       },
     },
     {
@@ -213,6 +215,7 @@ describe("config set, get, and unset", () => {
           testnet: { value: moderatoRpc, source: "default" },
         },
         "max-spend": { value: "10", source: "default" },
+        funding: { value: "tempo", source: "default" },
       },
     },
   ])("config get reports every setting when $state", async ({ chainId, expected }) => {
@@ -225,6 +228,7 @@ describe("config set, get, and unset", () => {
       "network",
       "rpc-url",
       "max-spend",
+      "funding",
     ]);
   });
 });
@@ -1049,6 +1053,7 @@ describe("one command's settings", () => {
       next: "https://next.example.com",
     },
     "max-spend": { read: () => resolveMaxSpend(), first: "5", next: "50" },
+    funding: { read: () => fundingSetting().value, first: "off", next: "auto" },
   };
 
   it.each(configKeys)("keep the first %s a command reads", async (key) => {
@@ -1103,25 +1108,26 @@ describe("an invalid config file", () => {
     network: () => resolveNetwork(undefined),
     "rpc-url": () => rpcUrl(4217),
     "max-spend": () => resolveMaxSpend(),
+    funding: () => fundingSetting(),
   };
 
   it.each<{ name: string; body: string; keys: readonly ConfigKey[]; problem: string }>([
     {
       name: "is not JSON",
       body: "{",
-      keys: ["network", "rpc-url", "max-spend"],
+      keys: ["network", "rpc-url", "max-spend", "funding"],
       problem: `is not valid JSON. ${fix}`,
     },
     {
       name: "is an array",
       body: "[]",
-      keys: ["network", "rpc-url", "max-spend"],
+      keys: ["network", "rpc-url", "max-spend", "funding"],
       problem: `is not a JSON object. ${fix}`,
     },
     {
       name: "is null",
       body: "null",
-      keys: ["network", "rpc-url", "max-spend"],
+      keys: ["network", "rpc-url", "max-spend", "funding"],
       problem: `is not a JSON object. ${fix}`,
     },
     {

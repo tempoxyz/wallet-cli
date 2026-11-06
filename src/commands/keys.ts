@@ -27,6 +27,7 @@ import {
   type WalletState,
 } from "../wallet/store.js";
 import { accessKeyMatches } from "../wallet/access-key.js";
+import { loadRemotePayer } from "../wallet/remote-payer.js";
 import {
   currentKeyOutput,
   keyTokens,
@@ -112,13 +113,23 @@ export default {
 export async function keysHandler(options: { network?: string | undefined } = {}) {
   const state = await loadWalletState();
   const network = explicitNetwork(options.network);
-
-  return await currentKeysOutput({
-    walletAddress: state.accounts[state.activeAccount ?? 0]?.address ?? null,
+  const walletAddress = state.accounts[state.activeAccount ?? 0]?.address ?? null;
+  const listed = await currentKeysOutput({
+    walletAddress,
     accessKeys: network
       ? state.accessKeys.filter((key) => key.chainId === network.chainId)
       : state.accessKeys,
   });
+  // Never created here: only a payment creates the remote payer.
+  const payer = walletAddress
+    ? await loadRemotePayer(walletAddress).catch(() => undefined)
+    : undefined;
+  return payer
+    ? {
+        ...listed,
+        remote_payer: { address: payer.address.toLowerCase(), key_type: "secp256k1" as const },
+      }
+    : listed;
 }
 
 /**

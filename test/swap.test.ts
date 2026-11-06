@@ -20,6 +20,7 @@ import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { CtaError } from "../src/cli/incur-compat.js";
 import { machToken } from "../src/shared/mach.js";
 import { parseNetwork } from "../src/shared/network.js";
+import { storedAccessKeyLimit } from "../src/request/identity.js";
 import {
   containsSymbol,
   expectTokenError,
@@ -47,6 +48,11 @@ function dependencies(overrides: Record<string, unknown> = {}) {
     getBuyQuote: vi.fn(async () => 10_100_000n),
     getSellQuote: vi.fn(async () => 9_800_000n),
     submit: vi.fn(async () => `0x${"ab".repeat(32)}`),
+    // An unpublished key: its stored limits apply, and an unlisted token is zero.
+    getAccessKeyLimit: vi.fn(
+      async (key: { limits?: readonly unknown[] | undefined }, token: string) =>
+        storedAccessKeyLimit(key as never, token) ?? ((key.limits?.length ?? 0) > 0 ? 0n : null),
+    ),
     ...overrides,
   };
 }
@@ -276,7 +282,8 @@ describe("swapTokens", () => {
       limits: [{ token: usdc, limit: "100000000#__bigint" }],
       args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
       options: {},
-      limit: "10",
+      limit: "20",
+      remaining: "0",
       label: "pathUSD",
     },
     {
@@ -284,12 +291,13 @@ describe("swapTokens", () => {
       limits: [{ token: moderatoToken, limit: "10000000#__bigint" }],
       args: { amount: "10", tokenIn: moderatoToken, tokenOut: usdcToken },
       options: { "exact-out": true },
-      limit: "10.1505",
+      limit: "20.301",
+      remaining: "10",
       label: "pathUSD",
     },
   ])(
     "returns the keys update for $name as the cta",
-    async ({ limits, args, options, limit, label }) => {
+    async ({ limits, args, options, limit, remaining, label }) => {
       await useTempHome();
       const state = walletState();
       await writeWalletState({
@@ -310,12 +318,50 @@ describe("swapTokens", () => {
         code: "E_LIMIT_EXCEEDED",
         exitCode: 4,
         retryable: false,
-        message: `The access key cannot spend ${limit} ${label}. Ask the wallet owner to run '${command}', then retry.`,
+        message: `The access key has ${remaining} ${label} left of its spending limit, short of the ${limit} ${label} a DEX swap needs (its approve and the DEX's pull each count), so nothing was sent: sending would need the wallet app to approve it instead. Ask the wallet owner to run '${command}', then retry.`,
         payload: { cta: { commands: [{ command }] } },
       });
       expect(runtime.submit).not.toHaveBeenCalled();
     },
   );
+
+  it("checks the chain's remaining limit, which earlier spends draw below the stored one", async () => {
+    await useTempHome();
+    const state = walletState();
+    await writeWalletState({
+      ...state,
+      accessKeys: state.accessKeys.map((stored) => ({
+        ...stored,
+        limits: [{ token: moderatoToken, limit: "1000000000#__bigint" }],
+      })),
+    });
+    const runtime = dependencies({ getAccessKeyLimit: vi.fn(async () => 87_000n) });
+    const args = { amount: "0.111101", tokenIn: moderatoToken, tokenOut: usdcToken };
+
+    const dryRun = await swapTokens(
+      await readyWallet(),
+      { args, options: { "dry-run": true, "slippage-bps": 50 } },
+      runtime,
+    );
+    const error = await swapTokens(
+      await readyWallet(),
+      { args, options: { "slippage-bps": 50, yes: true } },
+      runtime,
+    ).catch((value: unknown) => value);
+
+    expect(dryRun).toMatchObject({ access_key_limit: "0.087", requires_access_key_update: true });
+    expect(error).toMatchObject({
+      code: "E_LIMIT_EXCEEDED",
+      message: expect.stringContaining(
+        "The access key has 0.087 pathUSD left of its spending limit, short of the 0.222202 pathUSD a DEX swap needs",
+      ),
+    });
+    expect(runtime.getAccessKeyLimit).toHaveBeenCalledWith(
+      expect.objectContaining({ address: testAccessKey }),
+      moderatoToken,
+    );
+    expect(runtime.submit).not.toHaveBeenCalled();
+  });
 
   it.each([
     { name: "an access key that has no stored limits", key: { limits: undefined } },
@@ -768,7 +814,9 @@ describe("swapTokens", () => {
         token_in: unlistedToken,
         token_in_symbol: null,
         requires_access_key_update: true,
-        instruction: expect.stringContaining(`cannot spend 10 ${unlistedToken}.`),
+        instruction: expect.stringContaining(
+          `cannot spend the 20 ${unlistedToken} this swap needs`,
+        ),
       });
       expect(quoteMoved).toMatchObject({
         message: expect.stringContaining(`now returns 9.8 ${unlistedToken}, below`),

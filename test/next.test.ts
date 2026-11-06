@@ -172,7 +172,7 @@ const continuations: {
         swapDependencies(),
       );
     },
-    argv: ["wallet", "keys", "update", testAccessKey, "--token", moderatoToken, "--limit", "10"],
+    argv: ["wallet", "keys", "update", testAccessKey, "--token", moderatoToken, "--limit", "20"],
   },
   {
     name: "send --dry-run reruns with --yes",
@@ -494,7 +494,7 @@ it("points a limited key at keys update in a non-6-decimal input token's units",
         "--token",
         unlistedToken,
         "--limit",
-        "10.21",
+        "20.42",
         "--network",
         "mainnet",
       ],

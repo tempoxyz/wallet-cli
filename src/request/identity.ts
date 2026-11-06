@@ -1,10 +1,15 @@
 import { Keystore } from "accounts";
-import { createWalletClient, http } from "viem";
+import { type Address, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { Account as TempoAccount, Chain, KeyAuthorizationManager } from "viem/tempo";
+import { Account as TempoAccount, Actions, Chain, KeyAuthorizationManager } from "viem/tempo";
 
 import { usageError } from "../shared/errors.js";
-import { parseNetwork, resolveNetwork, rpcUrl } from "../shared/network.js";
+import {
+  createTempoPublicClient,
+  parseNetwork,
+  resolveNetwork,
+  rpcUrl,
+} from "../shared/network.js";
 import { loadWallet, walletProblem, WalletRequiredError } from "../shared/require-wallet.js";
 import { cleanStoredScalar } from "../shared/utils.js";
 import { isPaymentCapableAccessKey } from "../wallet/access-key.js";
@@ -196,4 +201,35 @@ export function storedAccessKeyLimit(
   if (!stored) return key?.permissionSemantics === 1 && key.limits !== undefined ? 0n : null;
   const raw = cleanStoredScalar(stored.limit);
   return /^\d+$/.test(raw) ? BigInt(raw) : null;
+}
+
+/**
+ * How much of `token` the access key may spend now, in raw units; `null` when it is unrestricted
+ * or cannot be read. For a key the chain holds, that is its remaining limit, zero for a token it
+ * lists none for: payments and swaps draw it down, so the stored limit, what the key was granted,
+ * can overstate it. An unpublished key will be published with its signed limits, under which the
+ * stored limit applies and an unlisted token is zero.
+ */
+export async function accessKeySpendLimit(
+  key: WalletState["accessKeys"][number],
+  token: string,
+): Promise<bigint | null> {
+  const stored = storedAccessKeyLimit(key, token);
+  const limited = (key.limits?.length ?? 0) > 0;
+  const client = createTempoPublicClient(key.chainId);
+  const account = key.access as Address;
+  const accessKey = key.address as Address;
+  const metadata = await Actions.accessKey
+    .getMetadata(client, { account, accessKey })
+    .catch(() => undefined);
+  const published =
+    metadata && !metadata.isRevoked && metadata.address.toLowerCase() === accessKey.toLowerCase();
+  if (!published) return stored ?? (limited ? 0n : null);
+  if (metadata.spendPolicy !== "limited") return null;
+  return Actions.accessKey
+    .getRemainingLimit(client, { account, accessKey, token: token as Address })
+    .then(
+      (result) => result.remaining,
+      () => stored,
+    );
 }
