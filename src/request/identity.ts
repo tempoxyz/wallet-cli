@@ -230,6 +230,6 @@ export async function accessKeySpendLimit(
     .getRemainingLimit(client, { account, accessKey, token: token as Address })
     .then(
       (result) => result.remaining,
-      () => stored,
+      () => stored ?? 0n,
     );
 }

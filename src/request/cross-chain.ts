@@ -16,6 +16,7 @@ import {
 
 import { CtaError } from "../cli/incur-compat.js";
 import {
+  attemptAbandoned,
   type AttemptRecord,
   claimAttempt,
   listAttempts,
@@ -39,6 +40,7 @@ import { commandError, paymentError } from "../shared/errors.js";
 import { createTempoPublicClient, type Network } from "../shared/network.js";
 import { continuationCommand } from "../shared/next.js";
 import { tokenSymbol } from "../shared/tokens.js";
+import { escapeInvisible } from "../shared/utils.js";
 import type { FetchPlan } from "./fetch.js";
 import { fundingSetting } from "./funding-mode.js";
 import { requestNetwork, resolvePaymentIdentity } from "./identity.js";
@@ -56,11 +58,15 @@ export function maxFundingSpend(options: RequestOptions) {
   return cap + (cap * 5n) / 100n + 100_000n;
 }
 
-/** Whether cross-chain funding may run: `--funding auto` or `TEMPO_EXPERIMENTAL_CROSS_CHAIN=1`. */
+/**
+ * Whether cross-chain funding may run: `--funding auto`, or `TEMPO_EXPERIMENTAL_CROSS_CHAIN=1` when
+ * no funding mode is set, so an explicit `tempo` or `off` never bridges.
+ */
 export function crossChainEnabled(options: RequestOptions) {
+  const setting = fundingSetting(options.funding);
   return (
-    fundingSetting(options.funding).value === "auto" ||
-    process.env.TEMPO_EXPERIMENTAL_CROSS_CHAIN === "1"
+    setting.value === "auto" ||
+    (setting.source === "default" && process.env.TEMPO_EXPERIMENTAL_CROSS_CHAIN === "1")
   );
 }
 
@@ -195,14 +201,14 @@ function withProgress<quote extends CrossChain.BoundedQuote>(
     ...route,
     async submit(input) {
       const result = await route.submit(input);
-      write(lines.submitted(input.quote, result.reference));
+      write(lines.submitted(input.quote, escapeInvisible(result.reference)));
       return result;
     },
     async status(operation, context) {
       const result = await route.status(operation, context);
       if (result.status === "pending" && !waiting) {
         waiting = true;
-        write(lines.pending(operation.reference ?? operation.quote.reference));
+        write(lines.pending(escapeInvisible(operation.reference ?? operation.quote.reference)));
       }
       return result;
     },
@@ -398,10 +404,14 @@ export async function crossChainFunding(
 ) {
   if (!crossChainEnabled(options)) return undefined;
   const network = requestNetwork(options);
-  if (!relayUrl(network) && !stargateConfig(network.chainId))
+  if (!relayUrl(network) && !stargateConfig(network.chainId)) {
+    // Without a route, a payer that already holds the USDC pays as with `--funding tempo`.
+    const held = await destinationBalance(offer.destination, payer).catch(() => 0n);
+    if (held >= offer.requirement.amount) return undefined;
     throw paymentError(
       `Cross-chain funding is unavailable on ${network.name}: no bridge routes from it. Pay with USDC the payer already holds on ${offer.destination.name}, or use mainnet.`,
     );
+  }
   const limit = maxFundingSpend(options);
   const identity = await resolvePaymentIdentity(options);
   const source = identity.address as Address;
@@ -469,7 +479,8 @@ export async function crossChainFunding(
 /**
  * Settles every other saved attempt to the same destination and payer before this one funds: a
  * completed or refunded operation is forgotten (its USDC, if any, now counts toward the payment),
- * one never claimed moved nothing, and one still in flight stops this payment.
+ * one never claimed moved nothing and is forgotten once abandoned, and one still in flight stops
+ * this payment.
  */
 async function reconcileEarlier(attempt: AttemptRecord, network: Network) {
   const store = FileStore.create(operationsDirectory());
@@ -482,7 +493,8 @@ async function reconcileEarlier(attempt: AttemptRecord, network: Network) {
       continue;
     const operation = await store.get(earlier.attemptId);
     if (!operation) {
-      await removeAttempt(earlier.attemptId);
+      // A recent one may belong to a process that has not claimed its operation yet.
+      if (attemptAbandoned(earlier)) await removeAttempt(earlier.attemptId);
       continue;
     }
     const route = operationRoute(operation, network);

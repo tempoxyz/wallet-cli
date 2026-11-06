@@ -2,7 +2,7 @@ import { type Address, erc20Abi } from "viem";
 
 import { destinationBalance, tempoFundingInputs } from "../shared/chains.js";
 import { crossChainEnabled } from "./cross-chain.js";
-import { paymentError } from "../shared/errors.js";
+import { paymentError, usageError } from "../shared/errors.js";
 import { createTempoPublicClient } from "../shared/network.js";
 import { escapeInvisible } from "../shared/utils.js";
 import { loadRemotePayer } from "../wallet/remote-payer.js";
@@ -22,7 +22,8 @@ export type Selection = { kind: "tempo" } | { kind: "evm"; offer: EvmOffer };
  * Otherwise the Tempo offer, which reports why it cannot be paid. `--payment-network` overrides
  * the ranking. `--funding off` prefers the Tempo offer, as before funding existed, and pays an EVM
  * offer only when `--payment-network` names its chain or the server offers nothing on Tempo; it is
- * then paid only from USDC the payer already holds there, never bridged. Ranking without quotes is a heuristic ([MF-4]); balances are read
+ * then paid only from USDC the payer already holds there, never bridged. `--mach`,
+ * `--payment-token`, and `--payment-intent session` keep the Tempo offer. Ranking without quotes is a heuristic ([MF-4]); balances are read
  * only when both kinds are offered.
  */
 export async function selectPayment(
@@ -33,6 +34,23 @@ export async function selectPayment(
   const mode = fundingSetting(options.funding).value;
   const forced = options.paymentNetwork?.toLowerCase();
   if (forced === "tempo") return { kind: "tempo" };
+  // An EVM offer is a one-time USDC charge, so an explicit token or a session never pays one: the
+  // Tempo path pays the choice or refuses it.
+  const pinned =
+    options.paymentToken !== undefined
+      ? options.mach
+        ? "--mach"
+        : "--payment-token"
+      : options.paymentIntent === "session"
+        ? "--payment-intent session"
+        : undefined;
+  if (pinned) {
+    if (forced)
+      throw usageError(
+        `--payment-network ${escapeInvisible(forced)} pays a one-time USDC charge and cannot be used with ${pinned}`,
+      );
+    return { kind: "tempo" };
+  }
   const { offers, refused } = evmOffers(response, options);
   const tempo = offersTempo(response);
   if (mode === "off" && !forced) {

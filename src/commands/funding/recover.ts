@@ -2,7 +2,7 @@ import type { z } from "incur";
 import type { CrossChain } from "machine-fetch/cross-chain";
 
 import { nonDestructive } from "../../cli/command.js";
-import { loadAttempt, removeAttempt } from "../../payment/attempts.js";
+import { attemptAbandoned, loadAttempt, removeAttempt } from "../../payment/attempts.js";
 import { operationRoute, operationStatus } from "../../request/cross-chain.js";
 import {
   fundingRecoverArgs,
@@ -11,7 +11,7 @@ import {
 } from "../../schemas/funding.js";
 import { globalAlias, type cliGlobals } from "../../schemas/shared.js";
 import { walletError } from "../../shared/errors.js";
-import { networkFields, networks, resolveNetwork } from "../../shared/network.js";
+import { type Network, networkFields, networks, resolveNetwork } from "../../shared/network.js";
 import { nextStep } from "../../shared/next.js";
 import { escapeInvisible } from "../../shared/utils.js";
 import { operationStore } from "./records.js";
@@ -45,7 +45,7 @@ const statuses = {
 
 /**
  * Reconciles funding operation `id` (Phase 4): asks its route how it stands, and confirms a
- * completion on the destination chain, never quoting or submitting again. A completed or refunded operation, or one that never started, is settled, and
+ * completion on the destination chain, never quoting or submitting again. A completed or refunded operation, or one that never started and is abandoned, is settled, and
  * its attempt is forgotten so the request can fund anew; a pending one names this command again.
  */
 export async function recoverFunding(id: string, networkFlag: string | undefined) {
@@ -62,6 +62,14 @@ export async function recoverFunding(id: string, networkFlag: string | undefined
     (await resolveNetwork(networkFlag));
   const fields = { ...networkFields(network.chainId), id };
   if (!operation) {
+    // A recent attempt may belong to a request that has not claimed its operation yet.
+    if (attempt && !attemptAbandoned(attempt))
+      return {
+        ...fields,
+        status: "pending" as const,
+        reference: null,
+        ...pendingStep(id, network),
+      };
     await removeAttempt(id);
     return { ...fields, status: "not_started" as const, reference: null };
   }
@@ -87,12 +95,14 @@ export async function recoverFunding(id: string, networkFlag: string | undefined
     ...fields,
     status,
     reference,
-    ...(status === "pending"
-      ? nextStep(
-          "The funding is still in flight. Run the next command again shortly; retry the request only once it reports completed or refunded.",
-          ["wallet", "funding", "recover", id],
-          { network, pollIntervalSeconds: 5, until: "status != pending" },
-        )
-      : {}),
+    ...(status === "pending" ? pendingStep(id, network) : {}),
   };
+}
+
+function pendingStep(id: string, network: Network) {
+  return nextStep(
+    "The funding is still in flight. Run the next command again shortly; retry the request only once it reports completed or refunded.",
+    ["wallet", "funding", "recover", id],
+    { network, pollIntervalSeconds: 5, until: "status != pending" },
+  );
 }
