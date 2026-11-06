@@ -88,10 +88,26 @@ export function evmOffers(response: Response, options: RequestOptions) {
       refuse("missing a valid recipient address");
       continue;
     }
-    // The signer refuses split payments, so refuse them here, before any funding is bridged for them.
-    const splits = getRecord(getRecord(challenge.request).methodDetails).splits;
-    if (Array.isArray(splits) && splits.length > 0) {
+    // Refuse what the signer cannot sign here, before any funding is bridged for it.
+    const methodDetails = getRecord(getRecord(challenge.request).methodDetails);
+    if (Array.isArray(methodDetails.splits) && methodDetails.splits.length > 0) {
       refuse("it splits the payment across recipients, which the CLI cannot sign");
+      continue;
+    }
+    if (
+      kind === "mpp" &&
+      !(
+        Array.isArray(methodDetails.credentialTypes) &&
+        methodDetails.credentialTypes.includes("authorization")
+      )
+    ) {
+      refuse("it does not accept an EIP-3009 authorization, the only credential the CLI signs");
+      continue;
+    }
+    if (kind === "x402" && (extra.assetTransferMethod ?? "eip3009") !== "eip3009") {
+      refuse(
+        `it uses ${escapeInvisible(String(extra.assetTransferMethod))}, but the CLI signs only EIP-3009`,
+      );
       continue;
     }
     if (

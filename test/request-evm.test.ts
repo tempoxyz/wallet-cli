@@ -476,6 +476,30 @@ describe("EVM offers", () => {
     expect(await listAttempts()).toEqual([]);
   });
 
+  it.each([
+    {
+      name: "no authorization credential type",
+      mpp: evmOffer({
+        methodDetails: { chainId: 8453, decimals: 6 },
+      }),
+    },
+    {
+      name: "a permit2 x402 transfer",
+      x402: x402Accept({
+        extra: { name: "USD Coin", version: "2", assetTransferMethod: "permit2" },
+      }),
+    },
+  ])("refuses an EVM offer with $name before funding it", async ({ mpp, x402 }) => {
+    await remotePayerAddress();
+    const endpoint = await service(mpp ? { mpp: [mpp] } : { x402: [x402!] });
+
+    await expect(run(["--funding", "auto"], endpoint.url)).rejects.toMatchObject({
+      code: "E_PAYMENT",
+    });
+    expect(endpoint.paid).toEqual([]);
+    expect(await listAttempts()).toEqual([]);
+  });
+
   it("refuses an x402 v1 challenge as E_PAYMENT", async () => {
     const endpoint = await service({ x402: [x402Accept()], x402Version: 1 });
 
