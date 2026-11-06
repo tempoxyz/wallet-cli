@@ -5,7 +5,12 @@ import { ctaErrors } from "./cli/incur-compat.js";
 import { normalizeIncurArgv, redacted, rerunArgs } from "./request/argv.js";
 import type { RequestOptions } from "./request/options.js";
 import { executeRequest } from "./request/run.js";
-import { defaultFunding, defaultMaxSlippageBps, fundingModes } from "./request/funding-mode.js";
+import {
+  defaultFunding,
+  defaultMaxSlippageBps,
+  fundingModes,
+  maxMaxSlippageBps,
+} from "./request/funding-mode.js";
 import { defaultMaxSpend, MaxSpendExceededError } from "./request/spend.js";
 import { cliGlobalAlias, cliGlobals } from "./schemas/shared.js";
 import { version } from "./shared/constants.js";
@@ -20,7 +25,7 @@ const paymentNetworkHelp =
   "Pay on this network when the server offers several: tempo, or an EVM chain such as base (default: ranked by what the wallet holds)";
 const maxFundingSpendHelp =
   "Cap on the source token (USDC.e or OUSD) one cross-chain funding may spend, bridge fee and gas included (default: max spend plus 5% and 0.10)";
-const maxSlippageHelp = `Maximum funding slippage in basis points (default ${defaultMaxSlippageBps})`;
+const maxSlippageHelp = `Maximum funding slippage in basis points, 0 to ${maxMaxSlippageBps} (default ${defaultMaxSlippageBps})`;
 
 const args = z.object({
   url: z.string().describe("URL to request"),

@@ -38,9 +38,15 @@ export function fundingSetting(
 /** Maximum Tempo DEX slippage, in basis points, when `--max-slippage-bps` is not set. */
 export const defaultMaxSlippageBps = 50;
 
+/**
+ * The most `--max-slippage-bps` accepts: the Tempo DEX funder hands Mppx auto-swap `bps / 100`
+ * percent, and Mppx refuses more than 50%.
+ */
+export const maxMaxSlippageBps = 5_000;
+
 export function parseMaxSlippageBps(value: number | undefined) {
   if (value === undefined) return defaultMaxSlippageBps;
-  if (!Number.isInteger(value) || value < 0 || value > 10_000)
-    throw usageError("--max-slippage-bps must be an integer from 0 to 10000");
+  if (!Number.isInteger(value) || value < 0 || value > maxMaxSlippageBps)
+    throw usageError(`--max-slippage-bps must be an integer from 0 to ${maxMaxSlippageBps}`);
   return value;
 }

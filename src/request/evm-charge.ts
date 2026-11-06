@@ -8,7 +8,9 @@ import { fundingError, planAndFund } from "../payment/funding.js";
 import { evmReceiptTxHash, paymentReceipt } from "../payment/receipt.js";
 import { WalletRequiredError } from "../shared/require-wallet.js";
 import { destinationBalance } from "../shared/chains.js";
-import { paymentError, walletError } from "../shared/errors.js";
+import { networkError, paymentError, walletError } from "../shared/errors.js";
+import type { Network } from "../shared/network.js";
+import { continuationCommand } from "../shared/next.js";
 import { sanitizeText } from "../shared/utils.js";
 import { ensureRemotePayer } from "../wallet/remote-payer.js";
 import { crossChainFunding, relayUrl } from "./cross-chain.js";
@@ -78,6 +80,9 @@ export async function payEvmAndRetry(
   // The policy leaves `deadlineSeconds` unset, so each funder applies its own default: 300 s for
   // a bridge, which outlasts machine-fetch's 30 s payment default.
   if (funding) policy = { ...policy, maxFundingSpend: funding.maxFundingSpend };
+  // `--timeout` bounds funding and signing as well as the request: past it, nothing is signed.
+  const signal = request.init.signal ?? undefined;
+  const timedOut = () => timeoutError(network, funding?.attemptId);
   let prepared;
   try {
     // The attempt ID was saved before this; the payer travels with it, so funding refuses to
@@ -87,12 +92,17 @@ export async function payEvmAndRetry(
       funders,
       payer: payer.address,
       operationId: funding?.attemptId,
+      signal,
     });
   } catch (error) {
+    // Keeps an attempt whose operation was saved, so a bridge already sent stays recoverable.
     await funding?.abandon().catch(() => undefined);
+    if (signal?.aborted) throw timedOut();
     throw report(error);
   }
   if (!funding) await assertFunded(offer, payer, options);
+  // Funding may have delivered; its attempt stays, so a rerun reuses that delivery.
+  if (signal?.aborted) throw timedOut();
   try {
     const payment = Mppx.create({
       methods: [
@@ -119,6 +129,7 @@ export async function payEvmAndRetry(
       offer.response,
       prepared.credentialContext as never,
     );
+    if (signal?.aborted) throw timedOut();
     const init = cloneRequestInit(request.init);
     const headers = new Headers(init.headers);
     headers.set(credentialHeader(offer), credential);
@@ -152,6 +163,22 @@ export async function payEvmAndRetry(
     if (error instanceof Errors.IncurError) throw error;
     throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
   }
+}
+
+/**
+ * Retryable E_NETWORK for a `--timeout` that ran out before the credential was sent: nothing was
+ * paid. With cross-chain funding, the attempt is kept: a rerun of the same request reuses what it
+ * delivered, and `funding recover` reconciles a bridge still in flight.
+ */
+function timeoutError(network: Network, attemptId: string | undefined) {
+  const recover =
+    attemptId === undefined
+      ? ""
+      : ` Cross-chain funding may have started; rerun the same request to reuse it, or check it with '${continuationCommand(["wallet", "funding", "recover", attemptId], network)}'.`;
+  return networkError(
+    `The request timed out (--timeout) before the payment was sent; nothing was paid.${recover}`,
+    { retryable: true },
+  );
 }
 
 /**
