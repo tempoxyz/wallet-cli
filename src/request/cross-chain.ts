@@ -431,15 +431,18 @@ export async function crossChainFunding(
   });
   const store = FileStore.create(operationsDirectory());
   /**
-   * Forgets the attempt when funding failed before anything moved: no operation was claimed for
-   * it, so there is nothing to reconcile, and keeping it would only clutter `funding list`. An
-   * attempt with an operation is always kept for recovery.
+   * Forgets the attempt when funding failed before anything moved and no other run can still fund
+   * it: no operation was claimed for it, and it is abandoned (see `attemptAbandoned`). A younger
+   * one is shared with any concurrent run of the same request, which may yet claim it, so it stays
+   * until `reconcileEarlier` or `funding recover` forgets it. An attempt with an operation is
+   * always kept for recovery.
    */
   const abandon = async () => {
     const operation = await Promise.resolve()
       .then(() => store.get(attempt.attemptId))
       .catch(() => "unknown" as const);
-    if (operation === undefined) await removeAttempt(attempt.attemptId);
+    if (operation === undefined && attemptAbandoned(attempt))
+      await removeAttempt(attempt.attemptId);
   };
   const resumed = attempt.reused ? await store.get(attempt.attemptId) : undefined;
   const held = await destinationBalance(offer.destination, payer).catch(() => 0n);

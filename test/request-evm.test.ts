@@ -20,9 +20,16 @@ import {
 } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { listAttempts, operationsDirectory } from "../src/payment/attempts.js";
+import {
+  attemptAbandonSeconds,
+  listAttempts,
+  operationsDirectory,
+} from "../src/payment/attempts.js";
 import { destinations } from "../src/shared/chains.js";
+import { parseRequestArgs } from "../src/request/args.js";
 import { crossChainFunding } from "../src/request/cross-chain.js";
+import { payEvmAndRetry } from "../src/request/evm-charge.js";
+import { evmOffers } from "../src/request/offers.js";
 import { runRequest } from "../src/request/run.js";
 import {
   ensureRemotePayer,
@@ -894,6 +901,84 @@ describe("funding without a bridge route", () => {
     await expect(
       crossChainFunding(offer(), payer, request, options, process.stderr),
     ).resolves.toBeUndefined();
+    expect(await listAttempts()).toEqual([]);
+  });
+});
+
+describe("an EVM charge's funding", () => {
+  const silent = { write: () => true };
+  const wallet = () => walletState().accounts[0]!.address;
+  /** The endpoint's EVM offer, parsed as `tempo request <args> <url>` would. */
+  const evmOffer = async (args: string[] = []) => {
+    const endpoint = await service({ x402: [x402Accept()] });
+    const options = parseRequestArgs([...args, endpoint.url]);
+    const [offer] = evmOffers(await fetch(endpoint.url), options).offers;
+    return { endpoint, options, offer: offer! };
+  };
+  const timedOut = () =>
+    AbortSignal.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("signs and sends nothing once --timeout ran out", async () => {
+    fund(baseUsdc, await remotePayerAddress(), 100_000n);
+    const { endpoint, options, offer } = await evmOffer();
+
+    await expect(
+      payEvmAndRetry(
+        offer,
+        { url: endpoint.url, init: { method: "GET", signal: timedOut() } },
+        options,
+        silent,
+      ),
+    ).rejects.toMatchObject({
+      code: "E_NETWORK",
+      message: expect.stringContaining("timed out (--timeout) before the payment was sent"),
+    });
+    expect(endpoint.paid).toEqual([]);
+  });
+
+  it("keeps the funding attempt when --timeout runs out during cross-chain funding", async () => {
+    await relayStub();
+    await remotePayerAddress();
+    fund(ousd, wallet(), 1_000_000n);
+    const { endpoint, options, offer } = await evmOffer(["--funding", "auto"]);
+
+    const error = await payEvmAndRetry(
+      offer,
+      { url: endpoint.url, init: { method: "GET", signal: timedOut() } },
+      options,
+      silent,
+    ).catch((caught: unknown) => caught);
+
+    const [attempt] = await listAttempts();
+    expect(attempt).toBeDefined();
+    expect(error).toMatchObject({
+      code: "E_NETWORK",
+      message: expect.stringContaining(`wallet funding recover ${attempt!.attemptId}`),
+    });
+    expect(endpoint.paid).toEqual([]);
+  });
+
+  it("leaves a shared attempt a concurrent run may still claim, until it is abandoned", async () => {
+    await relayStub();
+    const payer = await remotePayerAddress();
+    fund(ousd, wallet(), 1_000_000n);
+    const { endpoint, options, offer } = await evmOffer(["--funding", "auto"]);
+    const request = { url: endpoint.url, init: { method: "GET" } };
+
+    const first = await crossChainFunding(offer, payer, request, options, silent);
+    const second = await crossChainFunding(offer, payer, request, options, silent);
+    expect(second!.attemptId).toBe(first!.attemptId);
+
+    await first!.abandon();
+    expect(await listAttempts()).toHaveLength(1);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + (attemptAbandonSeconds + 1) * 1000);
+    await second!.abandon();
     expect(await listAttempts()).toEqual([]);
   });
 });

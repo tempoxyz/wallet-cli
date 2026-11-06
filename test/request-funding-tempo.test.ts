@@ -4,6 +4,7 @@ import { Challenge, Credential } from "mppx";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CtaError } from "../src/cli/incur-compat.js";
+import { parseMaxSlippageBps } from "../src/request/funding-mode.js";
 import { runRequest } from "../src/request/run.js";
 import { ousdToken, testAccessKey, useTempHome, walletState, writeWalletState } from "./helpers.js";
 
@@ -341,14 +342,21 @@ describe("Tempo DEX funding", () => {
     expect(JSON.parse(stdout)).not.toHaveProperty("funding");
   });
 
-  it("refuses an invalid --max-slippage-bps", async () => {
+  // Mppx auto-swap takes slippage in percent, bps / 100, and refuses more than 50%.
+  it.each(["5001", "10000", "1.5"])("refuses --max-slippage-bps %s", async (value) => {
     await wallet();
     balances.set(usdcE, 0n).set(ousd, 5_000_000n);
     const paid = await service(usdcE);
 
-    await expect(run(["--max-slippage-bps", "10001"], paid.url)).rejects.toMatchObject({
+    await expect(run(["--max-slippage-bps", value], paid.url)).rejects.toMatchObject({
       code: "E_USAGE",
-      message: "--max-slippage-bps must be an integer from 0 to 10000",
+      message: "--max-slippage-bps must be an integer from 0 to 5000",
     });
+    expect(paid.paid()).toBe(0);
+  });
+
+  it("accepts --max-slippage-bps up to 5000, Mppx's 50%", () => {
+    expect(parseMaxSlippageBps(5000)).toBe(5000);
+    expect(parseMaxSlippageBps(0)).toBe(0);
   });
 });

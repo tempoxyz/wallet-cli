@@ -105,7 +105,7 @@ tempo request -t -X GET --max-spend <APPROVED_AMOUNT> --network <QUOTED_NETWORK>
 
 `tempo request` can pay a charge in a token the wallet does not hold, or on another chain:
 
-- `--funding tempo` (the default) buys a Tempo charge's token on the Tempo DEX, in the payment's own transaction, from OUSD, USDC.e, or pathUSD the wallet holds, within `--max-slippage-bps` (default 50). The dry run's `funding` names the route and inputs.
+- `--funding tempo` (the default) buys a Tempo charge's token on the Tempo DEX, in the payment's own transaction, from OUSD, USDC.e, or pathUSD the wallet holds, within `--max-slippage-bps` (0 to 5000, default 50). The dry run's `funding` names the route and inputs.
 - `--funding auto` also pays x402 and MPP `evm` offers in USDC on Base. It pays them from the wallet's remote payer, a per-wallet key the CLI creates on first use (`tempo wallet whoami` shows `remote_payer` and its Base USDC). When the payer lacks USDC, it bridges exactly the shortfall from USDC.e or OUSD through Relay (or Stargate), capped by `--max-funding-spend`. USDC left on the payer pays later Base charges; there is no command to withdraw it.
 - `--funding off` pays only from tokens already held. On Base that means the payer's USDC, which it never bridges.
 - `--payment-network base` or `tempo` picks the offer when a server offers both. Otherwise the CLI prefers a token the wallet holds, then a DEX swap, then held Base USDC, then a bridge.
