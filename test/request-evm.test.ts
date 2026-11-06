@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { Challenge, Credential } from "mppx";
 import { Transport } from "mppx/client";
 import { Header as X402Header } from "mppx/x402";
+import { FileStore } from "machine-fetch/stores/file";
 import {
   decodeFunctionData,
   encodeFunctionData,
@@ -27,7 +28,7 @@ import {
 } from "../src/payment/attempts.js";
 import { destinations } from "../src/shared/chains.js";
 import { parseRequestArgs } from "../src/request/args.js";
-import { crossChainFunding } from "../src/request/cross-chain.js";
+import { crossChainFunding, fundingAccounts } from "../src/request/cross-chain.js";
 import { payEvmAndRetry } from "../src/request/evm-charge.js";
 import { evmOffers } from "../src/request/offers.js";
 import { runRequest } from "../src/request/run.js";
@@ -1004,6 +1005,48 @@ describe("an EVM charge's funding", () => {
     vi.setSystemTime(Date.now() + (attemptAbandonSeconds + 1) * 1000);
     await second!.abandon();
     expect(await listAttempts()).toEqual([]);
+  });
+
+  it("keeps refusing a retry while another bridge to the same payer is in flight", async () => {
+    await relayStub();
+    const payer = await remotePayerAddress();
+    fund(ousd, wallet(), 1_000_000n);
+    const other = await evmOffer(["--funding", "auto"]);
+    const pending = await crossChainFunding(
+      other.offer,
+      payer,
+      { url: other.endpoint.url, init: { method: "GET" } },
+      other.options,
+      silent,
+    );
+    // Its bridge was submitted, through a route this run cannot ask, so it may still deliver.
+    const id = pending!.attemptId;
+    await FileStore.create(operationsDirectory()).claim({
+      id,
+      route: "unreachable",
+      requirementKey: "key",
+      request: {
+        ...fundingAccounts(4217, wallet() as Address, ousd, other.offer.destination, payer),
+        amountOut: 100_000n,
+        deadline: Math.floor(Date.now() / 1000) + 300,
+        maxSlippageBps: 50,
+        operationId: id,
+      },
+      quote: {
+        amountIn: 100_000n,
+        amountOut: 100_000n,
+        minAmountOut: 100_000n,
+        expiresAt: 0,
+        reference: "quote",
+      },
+    });
+
+    const { endpoint, options, offer } = await evmOffer(["--funding", "auto"]);
+    const request = { url: endpoint.url, init: { method: "GET" } };
+    for (let run = 0; run < 2; run++)
+      await expect(crossChainFunding(offer, payer, request, options, silent)).rejects.toMatchObject(
+        { code: "E_PAYMENT_OUTCOME_UNKNOWN" },
+      );
   });
 });
 

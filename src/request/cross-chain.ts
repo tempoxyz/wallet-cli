@@ -459,7 +459,9 @@ export async function crossChainFunding(
       stderr,
       identity,
     });
-    if (!attempt.reused) await reconcileEarlier(attempt, network);
+    // A reused attempt that never claimed an operation may have been refused here before, by a
+    // bridge still in flight, so only one resuming its own operation skips reconciliation.
+    if (!resumed) await reconcileEarlier(attempt, network);
   } catch (error) {
     await abandon().catch(() => undefined);
     throw error;
