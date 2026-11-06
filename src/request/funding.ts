@@ -169,9 +169,12 @@ export async function prepareCharge(
   const { policy, report } = chargeFunding(challenge, options);
   // The SDK pays a machine-enabled charge with MACH first; while MACH covers it, swapping
   // stablecoins for the advertised token would spend them for nothing, or refuse a payable charge.
-  const funders = (await machCovers(challenge, options, payer.address))
-    ? []
-    : chargeFunders(options, payer);
+  // A subscription signs only a recurring key authorization and moves nothing now, so nothing is
+  // funded; a balance below one period's amount must not refuse it.
+  const funders =
+    challenge.intent === "subscription" || (await machCovers(challenge, options, payer.address))
+      ? []
+      : chargeFunders(options, payer);
   try {
     return await planAndFund(challenge, {
       ...funding,
