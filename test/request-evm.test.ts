@@ -29,7 +29,7 @@ import {
 import { destinations } from "../src/shared/chains.js";
 import { parseRequestArgs } from "../src/request/args.js";
 import { crossChainFunding, fundingAccounts } from "../src/request/cross-chain.js";
-import { payEvmAndRetry } from "../src/request/evm-charge.js";
+import { fundingDeadlineSeconds, payEvmAndRetry } from "../src/request/evm-charge.js";
 import { evmOffers } from "../src/request/offers.js";
 import { runRequest } from "../src/request/run.js";
 import {
@@ -178,9 +178,10 @@ function tempoOffer(amount = "100000") {
   );
 }
 
-function evmOffer(overrides: Record<string, unknown> = {}) {
+function evmOffer(overrides: Record<string, unknown> = {}, expires?: string) {
   return Challenge.serialize(
     Challenge.from({
+      ...(expires ? { expires } : {}),
       id: "evm",
       realm: "local",
       method: "evm",
@@ -496,6 +497,22 @@ describe("EVM offers", () => {
 
     await expect(run(["--funding", "auto"], endpoint.url)).rejects.toMatchObject({
       code: "E_PAYMENT",
+    });
+    expect(endpoint.paid).toEqual([]);
+    expect(await listAttempts()).toEqual([]);
+  });
+
+  it("refuses to bridge for a challenge that expires before funding could deliver", async () => {
+    await relayStub();
+    await remotePayerAddress();
+    fund(ousd, walletState().accounts[0]!.address, 1_000_000n);
+    const endpoint = await service({
+      mpp: [evmOffer({}, new Date(Date.now() + 5_000).toISOString())],
+    });
+
+    await expect(run(["--funding", "auto"], endpoint.url)).rejects.toMatchObject({
+      code: "E_PAYMENT",
+      message: expect.stringContaining("expires too soon to bridge funding"),
     });
     expect(endpoint.paid).toEqual([]);
     expect(await listAttempts()).toEqual([]);
@@ -1005,6 +1022,14 @@ describe("an EVM charge's funding", () => {
     vi.setSystemTime(Date.now() + (attemptAbandonSeconds + 1) * 1000);
     await second!.abandon();
     expect(await listAttempts()).toEqual([]);
+  });
+
+  it("bounds a bridge's deadline by the challenge's expiry, keeping time to sign", () => {
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    expect(fundingDeadlineSeconds(undefined, now)).toBeUndefined();
+    expect(fundingDeadlineSeconds("2026-01-01T00:01:00Z", now)).toBe(45);
+    expect(fundingDeadlineSeconds("2026-01-01T01:00:00Z", now)).toBe(300);
+    expect(fundingDeadlineSeconds("2026-01-01T00:00:10Z", now)).toBeLessThan(1);
   });
 
   it("keeps refusing a retry while another bridge to the same payer is in flight", async () => {
