@@ -534,6 +534,40 @@ describe("EVM offers", () => {
     expect(endpoint.paid).toHaveLength(1);
   });
 
+  it("bridges nothing when the payer held the USDC, refusing if it was spent since", async () => {
+    const relay = await relayStub();
+    const payer = await remotePayerAddress();
+    fund(baseUsdc, payer, 100_000n);
+    fund(ousd, walletState().accounts[0]!.address, 1_000_000n);
+    const endpoint = await service({
+      mpp: [evmOffer({}, new Date(Date.now() + 5_000).toISOString())],
+    });
+    const options = parseRequestArgs(["--funding", "auto", endpoint.url]);
+    const [offer] = evmOffers(await fetch(endpoint.url), options).offers;
+    const funding = await crossChainFunding(
+      offer!,
+      payer,
+      { url: endpoint.url, init: { method: "GET" } },
+      options,
+      { write: () => true },
+    );
+    await funding!.abandon();
+    // Another payment spends the USDC after the no-bridge decision.
+    vi.spyOn(
+      await import("../src/request/cross-chain.js"),
+      "crossChainFunding",
+    ).mockImplementationOnce(async () => {
+      fund(baseUsdc, payer, 0n);
+      return funding;
+    });
+
+    await expect(run(["--funding", "auto"], endpoint.url)).rejects.toMatchObject({
+      code: "E_INSUFFICIENT_FUNDS",
+    });
+    expect(relay.quotes).toEqual([]);
+    expect(endpoint.paid).toEqual([]);
+  });
+
   it("refuses an x402 v1 challenge as E_PAYMENT", async () => {
     const endpoint = await service({ x402: [x402Accept()], x402Version: 1 });
 
