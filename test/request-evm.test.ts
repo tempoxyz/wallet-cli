@@ -197,6 +197,9 @@ function evmOffer(overrides: Record<string, unknown> = {}, expires?: string) {
   );
 }
 
+/** A native MPP evm charge that expires at an ISO time. */
+const expiringEvmOffer = (expires: string) => evmOffer({}, expires);
+
 /** A paid endpoint offering `x402` accepts and `mpp` WWW-Authenticate offers; records credentials. */
 async function service(offers: {
   x402?: Accept[];
@@ -821,6 +824,8 @@ function relayOrder(o: {
  */
 async function relayStub(options: { status?: number } = {}) {
   const quotes: Record<string, string>[] = [];
+  /** Runs as each quote request arrives, before it is answered. */
+  const stub = { quotes, onQuote: undefined as (() => void) | undefined };
   const url = await listen(
     createServer(async (req, res) => {
       let text = "";
@@ -839,6 +844,7 @@ async function relayStub(options: { status?: number } = {}) {
       if (req.url !== "/quote/v2") return res.writeHead(404).end();
       const body = JSON.parse(text) as Record<string, string>;
       quotes.push(body);
+      stub.onQuote?.();
       if (options.status) return res.writeHead(options.status).end("{}");
       const amountOut = BigInt(body.amount!);
       const amountIn = amountOut + (amountOut * 30n) / 10_000n + 1_000n;
@@ -916,7 +922,7 @@ async function relayStub(options: { status?: number } = {}) {
     }),
   );
   vi.stubEnv("TEMPO_RELAY_URL", url);
-  return { quotes };
+  return stub;
 }
 
 describe("funding without a bridge route", () => {
@@ -1020,6 +1026,31 @@ describe("an EVM charge's funding", () => {
     ).catch(() => undefined);
 
     expect(relay.quotes.map((quote) => quote.originCurrency!.toLowerCase())).toEqual([usdce, ousd]);
+  });
+
+  it("starts no later source token's bridge once the challenge expires too soon for it", async () => {
+    const relay = await relayStub();
+    await remotePayerAddress();
+    fund(usdce, wallet(), 101_100n);
+    fund(ousd, wallet(), 1_000_000n);
+    const endpoint = await service({
+      mpp: [expiringEvmOffer(new Date(Date.now() + 60_000).toISOString())],
+    });
+    const options = parseRequestArgs(["--funding", "auto", endpoint.url]);
+    const [offer] = evmOffers(await fetch(endpoint.url), options).offers;
+    // Quoting USDC.e uses up the time left before the expiry, less the margin to sign.
+    vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });
+    const quote = relay.onQuote;
+    relay.onQuote = () => {
+      vi.setSystemTime(Date.now() + 50_000);
+      relay.onQuote = quote;
+    };
+
+    await expect(
+      payEvmAndRetry(offer!, { url: endpoint.url, init: { method: "GET" } }, options, silent),
+    ).rejects.toMatchObject({ code: "E_INSUFFICIENT_FUNDS" });
+    expect(relay.quotes.map((entry) => entry.originCurrency!.toLowerCase())).toEqual([usdce]);
+    expect(endpoint.paid).toEqual([]);
   });
 
   it("leaves a shared attempt a concurrent run may still claim, until it is abandoned", async () => {

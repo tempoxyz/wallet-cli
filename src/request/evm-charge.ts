@@ -195,9 +195,18 @@ async function planAndFundFromEachSource(
   claimed: () => Promise<boolean>,
 ) {
   const funders = options.funders ?? [];
+  let refusal: unknown;
   for (const [index, funder] of funders.entries()) {
+    let { policy } = options;
+    // Quoting the earlier tokens took time: a later one's bridge must still land before the
+    // challenge expires, so its deadline is measured again, and none starts once too little is left.
+    if (index > 0 && challenge.expires) {
+      const deadlineSeconds = fundingDeadlineSeconds(challenge.expires)!;
+      if (deadlineSeconds < 1) throw refusal;
+      policy = { ...policy, deadlineSeconds };
+    }
     try {
-      return await planAndFund(challenge, { ...options, funders: [funder] });
+      return await planAndFund(challenge, { ...options, policy, funders: [funder] });
     } catch (error) {
       if (
         index === funders.length - 1 ||
@@ -206,6 +215,7 @@ async function planAndFundFromEachSource(
         (await claimed())
       )
         throw error;
+      refusal = error;
     }
   }
   return planAndFund(challenge, options);
