@@ -1004,6 +1004,24 @@ describe("an EVM charge's funding", () => {
     expect(endpoint.paid).toEqual([]);
   });
 
+  it("funds from a later source token when the first cannot cover the bridge's quote", async () => {
+    const relay = await relayStub();
+    await remotePayerAddress();
+    // USDC.e clears the 1% floor on the 0.1 USDC shortfall, but not the stub's 0.3% + 0.001 quote.
+    fund(usdce, wallet(), 101_100n);
+    fund(ousd, wallet(), 1_000_000n);
+    const { endpoint, options, offer } = await evmOffer(["--funding", "auto"]);
+
+    await payEvmAndRetry(
+      offer,
+      { url: endpoint.url, init: { method: "GET", signal: AbortSignal.timeout(5_000) } },
+      options,
+      silent,
+    ).catch(() => undefined);
+
+    expect(relay.quotes.map((quote) => quote.originCurrency!.toLowerCase())).toEqual([usdce, ousd]);
+  });
+
   it("leaves a shared attempt a concurrent run may still claim, until it is abandoned", async () => {
     await relayStub();
     const payer = await remotePayerAddress();
