@@ -101,11 +101,14 @@ export function resolvePaymentNetwork(options: RequestOptions) {
 }
 
 /** executeRequest resolves this before payment; mainnet only backs direct callers. */
-export function requestNetwork(options: RequestOptions) {
+export function requestNetwork(options: Pick<RequestOptions, "network">) {
   return parseNetwork(options.network ?? "mainnet");
 }
 
-export async function storedAccessKeyIdentity(walletState: WalletState, options: RequestOptions) {
+export async function storedAccessKeyIdentity(
+  walletState: WalletState,
+  options: Pick<RequestOptions, "network">,
+) {
   const activeAccount = walletState.accounts[walletState.activeAccount ?? 0];
   if (!activeAccount) return undefined;
 

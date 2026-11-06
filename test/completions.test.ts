@@ -22,6 +22,7 @@ const topLevel = [
   "send",
   "transfer",
   "swap",
+  "stocks",
   "tx",
   "fund",
   "sessions",

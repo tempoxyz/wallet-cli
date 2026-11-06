@@ -18,6 +18,8 @@ export const errorCodes = {
   E_NETWORK: { exitCode: 3, retryable: false, description: "A network request failed or was refused." },
   E_NOT_AUTHENTICATED: { exitCode: 4, retryable: false, description: "No wallet is logged in." },
   E_NOT_FOUND: { exitCode: 2, retryable: false, description: "A required session, key, or record was not found." },
+  E_ONBOARDING_REQUIRED: { exitCode: 4, retryable: false, description: "Tempo Stocks onboarding must be finished in the browser first." },
+  E_ORDER_REJECTED: { exitCode: 4, retryable: false, description: "A stock order was rejected, cancelled, or expired before submission." },
   E_PAYMENT: { exitCode: 4, retryable: false, description: "The payment challenge or settlement was rejected." },
   E_PAYMENT_OUTCOME_UNKNOWN: { exitCode: 4, retryable: false, description: "A payment or transaction may have completed; check before retrying." },
   E_POLL_TIMEOUT: { exitCode: 3, retryable: true, description: "Stopped waiting before the expected result arrived." },

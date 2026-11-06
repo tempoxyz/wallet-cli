@@ -13,6 +13,7 @@ import revoke from "../commands/revoke.js";
 import send from "../commands/send.js";
 import services from "../commands/services/index.js";
 import sessions from "../commands/sessions/index.js";
+import stocks from "../commands/stocks/index.js";
 import swap from "../commands/swap.js";
 import transfer from "../commands/transfer/index.js";
 import tx from "../commands/tx.js";
@@ -34,6 +35,7 @@ export const commands: WalletCommand[] = [
   send,
   transfer,
   swap,
+  stocks,
   tx,
   fund,
   sessions,

@@ -41,6 +41,8 @@ describe("errorCodes", () => {
     ["E_NETWORK", 3, false],
     ["E_NOT_AUTHENTICATED", 4, false],
     ["E_NOT_FOUND", 2, false],
+    ["E_ONBOARDING_REQUIRED", 4, false],
+    ["E_ORDER_REJECTED", 4, false],
     ["E_PAYMENT", 4, false],
     ["E_PAYMENT_OUTCOME_UNKNOWN", 4, false],
     ["E_POLL_TIMEOUT", 3, true],

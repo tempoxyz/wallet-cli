@@ -17,6 +17,11 @@ export const defaultGracePeriodSeconds = 900;
 export const logQueryBlockRange = 50_000n;
 export const logScanDepth = 100_000n;
 export const logHeadMargin = 10n;
+/**
+ * The Tempo Stocks API that `tempo wallet stocks` uses unless `TEMPO_STOCKS_URL` replaces it. This is
+ * the dev deployment of tempo-stocks until a production one exists.
+ */
+export const defaultStocksUrl = "https://tempo-stocks.tempo-dev.workers.dev";
 
 /**
  * The incur and accounts SDK versions the CLI runs on: set by the bundler for a release build,

@@ -183,6 +183,23 @@ tempo wallet send <AMOUNT> <TOKEN> <RECIPIENT> --idempotency-key <KEY> --yes
 - Always run `--dry-run` first and preserve full token and recipient addresses in the approval request.
 - Use `send` for every token transfer. `tempo wallet transfer` is for `--mach` and `--credits` payments only; its token form is a deprecated alias of `send`.
 
+## Trade Stocks
+
+`tempo wallet stocks` trades tokenized US stocks (Dinari dShares) through Tempo Stocks (`TEMPO_STOCKS_URL`). The access key signs in; the user approves each order with their passkey in the browser.
+
+```bash
+# Estimate only: quote, estimated shares or cost, and fee. Creates nothing.
+tempo wallet stocks buy <USD> <SYMBOL> --dry-run
+
+# Create the order after the user approves the estimate, then send them approval_url.
+tempo wallet stocks buy <USD> <SYMBOL> --yes --no-browser --no-wait
+tempo wallet stocks orders
+```
+
+- A market buy's amount is USD; with `--shares` or `--limit-price` it is shares. `sell` always takes shares.
+- Without `--no-wait`, `buy` and `sell` wait up to 10 minutes for the approval. The approval link expires 15 minutes after it is created. Never rerun a `buy` or `sell` to retry: check `stocks orders` first.
+- `E_ONBOARDING_REQUIRED` means the user must finish onboarding at the Tempo Stocks site first. `E_ORDER_REJECTED` carries the reason.
+
 ## Retrying Transfers and Swaps
 
 - Pass `--idempotency-key <KEY>` (`idempotency-key` over MCP) on every `send` and `swap` you submit: a new unique key, such as a UUID, for each send the user approves. Pass it on the dry run too, and its `_next` carries it.
@@ -212,37 +229,44 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 
 <!-- generated:mcp-tools start -->
 
-| Tool              | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
-| ----------------- | -------------- | ----------------- | ---------------- | --------------- |
-| `address`         | true           | false             | true             | false           |
-| `balance`         | true           | false             | true             | true            |
-| `completions`     | true           | false             | true             | false           |
-| `config_get`      | true           | false             | true             | false           |
-| `config_set`      | false          | true              | true             | false           |
-| `config_unset`    | false          | true              | true             | false           |
-| `debug`           | true           | false             | true             | true            |
-| `doctor`          | true           | false             | true             | true            |
-| `fund`            | false          | false             | false            | true            |
-| `keys_list`       | true           | false             | true             | true            |
-| `keys_revoke`     | false          | true              | true             | true            |
-| `keys_update`     | false          | true              | false            | true            |
-| `login`           | false          | true              | false            | true            |
-| `login_status`    | false          | true              | true             | true            |
-| `logout`          | false          | true              | true             | true            |
-| `refresh`         | false          | true              | false            | true            |
-| `revoke`          | false          | true              | true             | true            |
-| `send`            | false          | true              | false            | true            |
-| `services`        | true           | false             | true             | true            |
-| `services_list`   | true           | false             | true             | true            |
-| `services_search` | true           | false             | true             | true            |
-| `services_show`   | true           | false             | true             | true            |
-| `sessions_close`  | false          | true              | false            | true            |
-| `sessions_list`   | false          | false             | true             | true            |
-| `sessions_sync`   | false          | true              | true             | true            |
-| `swap`            | false          | true              | false            | true            |
-| `transfer`        | false          | true              | false            | true            |
-| `tx_status`       | true           | false             | true             | true            |
-| `whoami`          | true           | false             | true             | true            |
+| Tool               | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
+| ------------------ | -------------- | ----------------- | ---------------- | --------------- |
+| `address`          | true           | false             | true             | false           |
+| `balance`          | true           | false             | true             | true            |
+| `completions`      | true           | false             | true             | false           |
+| `config_get`       | true           | false             | true             | false           |
+| `config_set`       | false          | true              | true             | false           |
+| `config_unset`     | false          | true              | true             | false           |
+| `debug`            | true           | false             | true             | true            |
+| `doctor`           | true           | false             | true             | true            |
+| `fund`             | false          | false             | false            | true            |
+| `keys_list`        | true           | false             | true             | true            |
+| `keys_revoke`      | false          | true              | true             | true            |
+| `keys_update`      | false          | true              | false            | true            |
+| `login`            | false          | true              | false            | true            |
+| `login_status`     | false          | true              | true             | true            |
+| `logout`           | false          | true              | true             | true            |
+| `refresh`          | false          | true              | false            | true            |
+| `revoke`           | false          | true              | true             | true            |
+| `send`             | false          | true              | false            | true            |
+| `services`         | true           | false             | true             | true            |
+| `services_list`    | true           | false             | true             | true            |
+| `services_search`  | true           | false             | true             | true            |
+| `services_show`    | true           | false             | true             | true            |
+| `sessions_close`   | false          | true              | false            | true            |
+| `sessions_list`    | false          | false             | true             | true            |
+| `sessions_sync`    | false          | true              | true             | true            |
+| `stocks_buy`       | false          | true              | false            | true            |
+| `stocks_cancel`    | false          | true              | true             | true            |
+| `stocks_list`      | true           | false             | true             | true            |
+| `stocks_orders`    | true           | false             | true             | true            |
+| `stocks_portfolio` | true           | false             | true             | true            |
+| `stocks_quote`     | true           | false             | true             | true            |
+| `stocks_sell`      | false          | true              | false            | true            |
+| `swap`             | false          | true              | false            | true            |
+| `transfer`         | false          | true              | false            | true            |
+| `tx_status`        | true           | false             | true             | true            |
+| `whoami`           | true           | false             | true             | true            |
 
 <!-- generated:mcp-tools end -->
 

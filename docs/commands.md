@@ -18,6 +18,13 @@ This list is generated from the mounted command schemas. Run `tempo wallet <comm
 - `send <amount> <token> <to>`: Send tokens to an address. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--address`.
 - `transfer [amount] [token] [to]`: Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--credits`, `--max-spend`, `--amount-cents`, `--to`, `--data`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
 - `swap <amount> <token-in> <token-out>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
+- `stocks list [symbols]`: List tokenized US stocks on Tempo Stocks.
+- `stocks quote <symbol>`: Show a stock's quote and whether the market is open.
+- `stocks portfolio`: Show stock holdings and cash on Tempo Stocks. Options: `--no-browser`.
+- `stocks orders`: List stock orders on Tempo Stocks. Options: `--no-browser`.
+- `stocks buy <amount> <symbol>`: Buy a stock: USD to spend at market, or shares with --shares or --limit-price. Options: `--limit-price`, `--dry-run`, `--yes`, `--no-browser`, `--no-wait`, `--shares`.
+- `stocks sell <shares> <symbol>`: Sell shares of a stock at market, or at --limit-price. Options: `--limit-price`, `--dry-run`, `--yes`, `--no-browser`, `--no-wait`.
+- `stocks cancel <order-id>`: Cancel an open stock order. Options: `--yes`.
 - `tx status <tx-hash>`: Show a transaction's status on chain.
 - `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--credits`, `--amount`, `--referral-code`.
 - `sessions`: Manage payment sessions. Options: `--orphaned`, `--all`.
