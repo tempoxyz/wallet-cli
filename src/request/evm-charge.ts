@@ -84,9 +84,7 @@ export async function payEvmAndRetry(
     deadlineSeconds < 1 &&
     (await destinationBalance(destination, payer.address).catch(() => 0n)) < requirement.amount
   )
-    throw paymentError(
-      "The payment challenge expires too soon to bridge funding before it; nothing was funded or paid. Retry the request for a fresh challenge.",
-    );
+    throw expiresTooSoonError();
   const funding = await crossChainFunding(offer, payer.address, request, options, stderr);
   const funders = funding?.funders ?? [];
   // Without a challenge expiry the policy leaves `deadlineSeconds` unset, so each funder applies
@@ -198,11 +196,12 @@ async function planAndFundFromEachSource(
   let refusal: unknown;
   for (const [index, funder] of funders.entries()) {
     let { policy } = options;
-    // Quoting the earlier tokens took time: a later one's bridge must still land before the
-    // challenge expires, so its deadline is measured again, and none starts once too little is left.
-    if (index > 0 && challenge.expires) {
+    // Reconciling earlier attempts and quoting earlier tokens take time: each bridge must still
+    // land before the challenge expires, so its deadline is measured as it starts, and none starts
+    // once too little is left.
+    if (challenge.expires) {
       const deadlineSeconds = fundingDeadlineSeconds(challenge.expires)!;
-      if (deadlineSeconds < 1) throw refusal;
+      if (deadlineSeconds < 1) throw refusal ?? expiresTooSoonError();
       policy = { ...policy, deadlineSeconds };
     }
     try {
@@ -219,6 +218,13 @@ async function planAndFundFromEachSource(
     }
   }
   return planAndFund(challenge, options);
+}
+
+/** E_PAYMENT for a challenge expiring before any bridge could deliver: nothing moved. */
+function expiresTooSoonError() {
+  return paymentError(
+    "The payment challenge expires too soon to bridge funding before it; nothing was funded or paid. Retry the request for a fresh challenge.",
+  );
 }
 
 /** Every route refused only because the source token could not cover its quote. */
