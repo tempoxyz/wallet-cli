@@ -478,6 +478,14 @@ export async function crossChainFunding(
     })),
     /** Forget the attempt once its funds were paid with. */
     settled: () => removeAttempt(attempt.attemptId),
+    /** Whether funding saved an operation for the attempt; an unreadable store counts as saved. */
+    claimed: () =>
+      Promise.resolve()
+        .then(() => store.get(attempt.attemptId))
+        .then(
+          (operation) => operation !== undefined,
+          () => true,
+        ),
   };
 }
 

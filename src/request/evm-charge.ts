@@ -1,10 +1,10 @@
 import { Errors } from "incur";
-import type { Policy } from "machine-fetch";
+import { Funder, type Policy } from "machine-fetch";
 import { evm, Mppx } from "mppx/client";
 import { Assets } from "mppx/evm";
 import { formatUnits, parseUnits } from "viem";
 
-import { fundingError, planAndFund } from "../payment/funding.js";
+import { fundingError, type FundingOptions, planAndFund } from "../payment/funding.js";
 import { evmReceiptTxHash, paymentReceipt } from "../payment/receipt.js";
 import { WalletRequiredError } from "../shared/require-wallet.js";
 import { destinationBalance } from "../shared/chains.js";
@@ -106,13 +106,11 @@ export async function payEvmAndRetry(
   try {
     // The attempt ID was saved before this; the payer travels with it, so funding refuses to
     // deliver to any other account (MF-17, MF-18).
-    prepared = await planAndFund(offer.challenge, {
-      policy,
-      funders,
-      payer: payer.address,
-      operationId: funding?.attemptId,
-      signal,
-    });
+    prepared = await planAndFundFromEachSource(
+      offer.challenge,
+      { policy, funders, payer: payer.address, operationId: funding?.attemptId, signal },
+      funding?.claimed ?? (async () => false),
+    );
   } catch (error) {
     // Keeps an attempt whose operation was saved, so a bridge already sent stays recoverable.
     await funding?.abandon().catch(() => undefined);
@@ -182,6 +180,43 @@ export async function payEvmAndRetry(
     if (error instanceof Errors.IncurError) throw error;
     throw paymentError(sanitizeText(error instanceof Error ? error.message : String(error)));
   }
+}
+
+/**
+ * Plans and funds with each cross-chain funder in turn, one per Tempo source token in preference
+ * order. machine-fetch funds with the first funder that matches, so a token that clears the
+ * `bridgeableSources` floor but cannot cover any route's real quote would otherwise fail a payment
+ * a later token could fund. Only that refusal moves on, and only while no operation was saved;
+ * any other failure, or the last token's, is final.
+ */
+async function planAndFundFromEachSource(
+  challenge: EvmOffer["challenge"],
+  options: FundingOptions,
+  claimed: () => Promise<boolean>,
+) {
+  const funders = options.funders ?? [];
+  for (const [index, funder] of funders.entries()) {
+    try {
+      return await planAndFund(challenge, { ...options, funders: [funder] });
+    } catch (error) {
+      if (
+        index === funders.length - 1 ||
+        options.signal?.aborted ||
+        !sourceShortfall(error) ||
+        (await claimed())
+      )
+        throw error;
+    }
+  }
+  return planAndFund(challenge, options);
+}
+
+/** Every route refused only because the source token could not cover its quote. */
+function sourceShortfall(error: unknown) {
+  return (
+    Funder.cheapestRefusal(error, Funder.SourceBalanceError) !== undefined &&
+    Funder.cheapestRefusal(error, Funder.FundingLimitError) === undefined
+  );
 }
 
 /** Seconds left to sign and send the credential once funding delivered. */
