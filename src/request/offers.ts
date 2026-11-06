@@ -30,16 +30,31 @@ export function evmOffers(response: Response, options: RequestOptions) {
   const table = destinations(requestNetwork(options).chainId);
   const offers: EvmOffer[] = [];
   const refused: string[] = [];
-  let challenges: Challenge.Challenge[];
+  // Parse each wire format on its own, so an offer's kind comes from the header it arrived in, never
+  // from its server-chosen id: a native challenge whose id mimics a synthesized x402 one would
+  // otherwise be checked by policy while a different PAYMENT-REQUIRED entry is signed.
+  let challenges: { challenge: Challenge.Challenge; kind: "mpp" | "x402" }[];
   try {
-    challenges = Transport.http().getChallenges(response) as Challenge.Challenge[];
+    challenges = [
+      ...wireChallenges(response, "www-authenticate").map((challenge) => ({
+        challenge,
+        kind: "mpp" as const,
+      })),
+      ...wireChallenges(response, X402.paymentRequiredHeader).map((challenge) => ({
+        challenge,
+        kind: "x402" as const,
+      })),
+    ];
   } catch {
     return { offers, refused: ["the payment challenges are malformed"] };
   }
-  for (const challenge of challenges) {
+  for (const { challenge, kind } of challenges) {
     if (challenge.method !== X402.paymentMethod || challenge.intent !== "charge") continue;
-    const kind = challenge.id.startsWith(X402.syntheticChallengeIdPrefix) ? "x402" : "mpp";
     const refuse = (reason: string) => refused.push(`${kind} offer: ${reason}`);
+    if (kind !== (challenge.id.startsWith(X402.syntheticChallengeIdPrefix) ? "x402" : "mpp")) {
+      refuse("its challenge id does not match the header it was offered in");
+      continue;
+    }
     let requirement: Payment.Requirement;
     try {
       requirement = MppxFetch.requirement(challenge);
@@ -90,6 +105,16 @@ export function evmOffers(response: Response, options: RequestOptions) {
     });
   }
   return { offers, refused };
+}
+
+/** The challenges a 402 offers in one header alone, as Mppx parses them. */
+function wireChallenges(response: Response, header: string) {
+  const value = response.headers.get(header);
+  if (!value) return [];
+  const headers = new Headers({ [header]: value });
+  return Transport.http().getChallenges(
+    new Response(null, { status: response.status, headers }),
+  ) as Challenge.Challenge[];
 }
 
 /** Whether a 402 offers a Tempo payment the existing Tempo path can consider. */

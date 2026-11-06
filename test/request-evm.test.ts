@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { Challenge, Credential } from "mppx";
+import { Transport } from "mppx/client";
 import { Header as X402Header } from "mppx/x402";
 import {
   decodeFunctionData,
@@ -394,6 +395,34 @@ describe("EVM offers", () => {
 
     await expect(run(["--max-spend", "1"], endpoint.url)).rejects.toMatchObject({
       code: "E_LIMIT_EXCEEDED",
+    });
+    expect(endpoint.paid).toEqual([]);
+  });
+
+  it("never signs a PAYMENT-REQUIRED entry a native challenge's forged x402 id points at", async () => {
+    const payer = await remotePayerAddress();
+    fund(baseUsdc, payer, 10_000_000n);
+    // The native offer asks 0.1 USDC under a synthesized-looking id. The x402 entry it names asks 2
+    // in a form the CLI refuses on its own, so only the forged offer could reach policy.
+    const cheap = Buffer.from(
+      JSON.stringify({
+        x402Version: 2,
+        resource: { url: "http://local/" },
+        accepts: [x402Accept()],
+      }),
+    ).toString("base64");
+    const forged = Challenge.serialize(
+      Transport.http().getChallenges(
+        new Response(null, { status: 402, headers: { "payment-required": cheap } }),
+      )[0]! as Challenge.Challenge,
+    );
+    const endpoint = await service({
+      mpp: [forged],
+      x402: [x402Accept({ amount: "02000000" })],
+    });
+
+    await expect(run(["--max-spend", "1"], endpoint.url)).rejects.toMatchObject({
+      code: "E_PAYMENT",
     });
     expect(endpoint.paid).toEqual([]);
   });
