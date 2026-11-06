@@ -411,11 +411,10 @@ describe("EVM offers", () => {
         accepts: [x402Accept()],
       }),
     ).toString("base64");
-    const forged = Challenge.serialize(
-      Transport.http().getChallenges(
-        new Response(null, { status: 402, headers: { "payment-required": cheap } }),
-      )[0]! as Challenge.Challenge,
-    );
+    const [synthesized] = Transport.http().getChallenges(
+      new Response(null, { status: 402, headers: { "payment-required": cheap } }),
+    ) as Challenge.Challenge[];
+    const forged = Challenge.serialize(synthesized!);
     const endpoint = await service({
       mpp: [forged],
       x402: [x402Accept({ amount: "02000000" })],
