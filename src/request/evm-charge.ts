@@ -86,7 +86,9 @@ export async function payEvmAndRetry(
   )
     throw expiresTooSoonError();
   const funding = await crossChainFunding(offer, payer.address, request, options, stderr);
-  const funders = funding?.funders ?? [];
+  // When the payer already held the USDC, nothing is bridged: no funder runs, so a balance spent
+  // since then is refused by `assertFunded` rather than bridged without the expiry guard.
+  const funders = funding?.bridges ? funding.funders : [];
   // Without a challenge expiry the policy leaves `deadlineSeconds` unset, so each funder applies
   // its own default: 300 s for a bridge, which outlasts machine-fetch's 30 s payment default. With
   // one, the bridge must deliver before it, or the payer would hold USDC for a challenge Mppx then
@@ -116,7 +118,11 @@ export async function payEvmAndRetry(
     if (signal?.aborted) throw timedOut();
     throw report(error);
   }
-  if (!funding) await assertFunded(offer, payer, options);
+  if (!funding?.bridges)
+    await assertFunded(offer, payer, options).catch(async (error: unknown) => {
+      await funding?.abandon().catch(() => undefined);
+      throw error;
+    });
   // Funding may have delivered; its attempt stays, so a rerun reuses that delivery.
   if (signal?.aborted) throw timedOut();
   try {
