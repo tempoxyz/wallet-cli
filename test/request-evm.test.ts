@@ -447,6 +447,28 @@ describe("EVM offers", () => {
     expect(endpoint.paid).toEqual([]);
   });
 
+  it("refuses a split EVM charge before funding it", async () => {
+    await remotePayerAddress();
+    const endpoint = await service({
+      mpp: [
+        evmOffer({
+          methodDetails: {
+            chainId: 8453,
+            decimals: 6,
+            credentialTypes: ["authorization"],
+            splits: [{ amount: "10000", recipient: seller }],
+          },
+        }),
+      ],
+    });
+
+    await expect(run(["--funding", "auto"], endpoint.url)).rejects.toMatchObject({
+      code: "E_PAYMENT",
+    });
+    expect(endpoint.paid).toEqual([]);
+    expect(await listAttempts()).toEqual([]);
+  });
+
   it("refuses an x402 v1 challenge as E_PAYMENT", async () => {
     const endpoint = await service({ x402: [x402Accept()], x402Version: 1 });
 

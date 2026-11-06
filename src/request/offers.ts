@@ -88,6 +88,12 @@ export function evmOffers(response: Response, options: RequestOptions) {
       refuse("missing a valid recipient address");
       continue;
     }
+    // The signer refuses split payments, so refuse them here, before any funding is bridged for them.
+    const splits = getRecord(getRecord(challenge.request).methodDetails).splits;
+    if (Array.isArray(splits) && splits.length > 0) {
+      refuse("it splits the payment across recipients, which the CLI cannot sign");
+      continue;
+    }
     if (
       challenge.expires &&
       (!Number.isFinite(Date.parse(challenge.expires)) ||
