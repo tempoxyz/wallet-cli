@@ -91,13 +91,14 @@ async function service(
   currency: string,
   amount = "10000",
   methodDetails: Record<string, unknown> = {},
+  intent = "charge",
 ) {
   const header = Challenge.serialize(
     Challenge.from({
       id: "funding",
       realm: "local",
       method: "tempo",
-      intent: "charge",
+      intent,
       request: {
         amount,
         currency,
@@ -314,6 +315,17 @@ describe("Tempo DEX funding", () => {
       payload: { cta: { commands: [{ command: "tempo wallet fund --network mainnet" }] } },
     });
     expect(credentialContexts).toEqual([]);
+  });
+
+  it("signs a subscription the wallet cannot yet cover, since it moves nothing now", async () => {
+    await wallet();
+    balances.set(usdcE, 0n).set(ousd, 0n).set(pathUsd, 0n);
+    const paid = await service(usdcE, "10000", {}, "subscription");
+
+    await run([], paid.url);
+
+    expect(paid.paid()).toBe(1);
+    expect(credentialContexts).toEqual([{ autoSwap: false }]);
   });
 
   it("reports the funder in a dry run without signing", async () => {
