@@ -383,6 +383,40 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     expect(swapped.size).toBe(3);
   });
 
+  it("keeps the first offer when its route simulates on the re-check", async () => {
+    vi.mocked(call).mockRejectedValueOnce(new Error("swapper reverted"));
+    const service = await server([first, second]);
+
+    const error = await runRequest(["--mach", "--max-spend", "0.015", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({ code: "E_PAYMENT", retryable: true });
+    expect(service.paid).toEqual([]);
+    expect(call).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a later offer's transient failure as retryable", async () => {
+    vi.mocked(call).mockImplementation(async (_client, parameters) => {
+      const data = (parameters as { calls: { data: `0x${string}` }[] }).calls[1]!.data;
+      const target = String(decodeFunctionData({ abi: swapAbi, data }).args[2]).toLowerCase();
+      if (target === unlistedToken.toLowerCase()) throw new Error("InsufficientLiquidity()");
+      throw new TimeoutError({ body: {}, url: "https://rpc.example" });
+    });
+    const service = await server([first, second]);
+
+    const error = await runRequest(["--mach", "--max-spend", "0.015", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({
+      code: "E_PAYMENT",
+      retryable: true,
+      message: expect.stringContaining("Try again shortly."),
+    });
+    expect(service.paid).toEqual([]);
+  });
+
   it("does not try another offer when the MACH balance is short", async () => {
     vi.mocked(readContract).mockResolvedValue(10_000n);
     emptyBooks(unlistedToken);
