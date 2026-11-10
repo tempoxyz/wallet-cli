@@ -232,11 +232,13 @@ async function machRouteError(options: {
     const causes = options.scoped
       ? "insufficient swapper liquidity, the access key's call scopes, or a transient RPC error"
       : "insufficient swapper liquidity or a transient RPC error";
-    return walletError({
-      code: "E_PAYMENT",
-      retryable,
-      message: `MACH settlement is unavailable: the MACH swap route for ${formatTokenAmount(amount)} MACH could not be simulated. Possible causes: ${causes}.${retryable ? " Try again shortly." : ""} ${noMachFallback}`,
-    });
+    return unsimulatedMachRoute(
+      walletError({
+        code: "E_PAYMENT",
+        retryable,
+        message: `MACH settlement is unavailable: the MACH swap route for ${formatTokenAmount(amount)} MACH could not be simulated. Possible causes: ${causes}.${retryable ? " Try again shortly." : ""} ${noMachFallback}`,
+      }),
+    );
   }
   const shortfall = `The MACH balance ${formatTokenAmount(balance)} is below the ${formatTokenAmount(amount)} MACH this charge needs.`;
   // Hosted MACH checkout is mainnet only.
@@ -256,6 +258,21 @@ async function machRouteError(options: {
       command,
     ),
   );
+}
+
+const unsimulatedMachRoutes = new WeakSet<object>();
+
+function unsimulatedMachRoute<T extends Error>(error: T) {
+  unsimulatedMachRoutes.add(error);
+  return error;
+}
+
+/**
+ * Whether `error` is the MACH route's failure to simulate. The route swaps MACH for the offer's
+ * settlement currency, so another machine-enabled offer in another currency may still settle.
+ */
+export function isUnsimulatedMachRoute(error: unknown) {
+  return typeof error === "object" && error !== null && unsimulatedMachRoutes.has(error);
 }
 
 /** Whether an RPC failure, or any error it wraps, is a transport failure or timeout. */

@@ -1,5 +1,5 @@
 import { Errors } from "incur";
-import { type Challenge, Credential } from "mppx";
+import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 import { machineTokenDeployments } from "mppx/tempo";
 import { formatUnits, parseUnits, type Address } from "viem";
@@ -27,6 +27,7 @@ import {
 import {
   type ChargeParameters,
   isMachPaymentToken,
+  isUnsimulatedMachRoute,
   machChargeParameters,
   type MachService,
   machService,
@@ -77,6 +78,72 @@ export async function payAndRetryRequest(
   if (options.paymentIntent === "session")
     throw paymentError("Server did not offer a compatible 'session' payment intent");
 
+  // An explicit MACH charge whose swap route does not simulate tries the server's next
+  // machine-enabled offer in another currency: the swapper buys each currency on the DEX, so one
+  // book running dry need not block the payment. Nothing is signed or sent for a failed route.
+  const tried: Challenge.Challenge[] = [];
+  let attempt = { challenge: selectedChallenge, response: challengeResponse };
+  let firstError: unknown;
+  for (;;) {
+    try {
+      return await payCharge(attempt.challenge, attempt.response, request, options);
+    } catch (error) {
+      if (!isMachPaymentToken(options.paymentToken) || !isUnsimulatedMachRoute(error)) throw error;
+      firstError ??= error;
+      tried.push(attempt.challenge);
+      const next = nextMachCharge(header, tried, selectedResponse, options, request.url);
+      if (!next) throw firstError;
+      attempt = next;
+    }
+  }
+}
+
+/**
+ * The server's next machine-enabled charge offer that passes the same validation as the first,
+ * settling in a currency none of the `tried` offers did, ready to pay; undefined when none is left.
+ */
+function nextMachCharge(
+  header: string | null,
+  tried: readonly Challenge.Challenge[],
+  selectedResponse: Response,
+  options: RequestOptions,
+  requestUrl: string,
+) {
+  if (!header) return undefined;
+  const currency = (challenge: Challenge.Challenge) =>
+    stringValue(challenge.request.currency).toLowerCase();
+  const triedCurrencies = new Set(tried.map(currency));
+  let offers: Challenge.Challenge[];
+  try {
+    offers = Challenge.deserializeList(header);
+  } catch {
+    return undefined;
+  }
+  for (const offer of offers) {
+    if (offer.intent !== "charge" || triedCurrencies.has(currency(offer))) continue;
+    const headers = new Headers(selectedResponse.headers);
+    headers.set("www-authenticate", Challenge.serialize(offer));
+    try {
+      const { challenge, response } = preparePaymentChallenge(
+        new Response(null, { status: selectedResponse.status, headers }),
+        { ...options, paymentIntent: "charge" },
+        requestUrl,
+      );
+      return { challenge, response: tempoPaymentChallengeResponse(response) };
+    } catch {
+      // An offer that fails validation is no alternative.
+    }
+  }
+  return undefined;
+}
+
+/** Pays `selectedChallenge` with a one-time charge and retries the request with its credential. */
+async function payCharge(
+  selectedChallenge: Challenge.Challenge,
+  challengeResponse: Response,
+  request: FetchPlan,
+  options: RequestOptions,
+) {
   try {
     const identity = await resolvePaymentIdentity(options);
     const getClient = identity.getClient;
