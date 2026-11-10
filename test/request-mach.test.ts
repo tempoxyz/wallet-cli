@@ -305,12 +305,17 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     "function swapTo(address inputToken,uint256 amount,address targetToken,address recipient,bytes32 memo)",
   ]);
   /** Fails every route simulation that swaps MACH into one of `dry`, as an empty DEX book does. */
+  /** Books for `dry` that cannot fill a swap of more than `depth` (none by default). */
   function emptyBooks(...dry: string[]) {
+    thinBooks(0n, ...dry);
+  }
+  function thinBooks(depth: bigint, ...dry: string[]) {
     vi.mocked(call).mockImplementation(async (_client, parameters) => {
       const calls = (parameters as { calls?: { data: `0x${string}` }[] }).calls;
       const swap = calls?.[1] && decodeFunctionData({ abi: swapAbi, data: calls[1].data });
       const target = String(swap?.args[2] ?? "").toLowerCase();
-      if (dry.some((token) => token.toLowerCase() === target))
+      const amount = BigInt(swap?.args[1] ?? 0n);
+      if (dry.some((token) => token.toLowerCase() === target) && amount > depth)
         throw new Error("InsufficientLiquidity()");
       return { data: "0x" };
     });
@@ -331,9 +336,9 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     expect(signTransaction).toHaveBeenCalledOnce();
   });
 
-  it("skips an offer in a currency whose route already failed", async () => {
+  it("skips an offer in a currency whose route already failed at that amount", async () => {
     emptyBooks(unlistedToken);
-    const sameCurrency = offer({ currency: unlistedToken, amount: "14000" }, { id: "same" });
+    const sameCurrency = offer({ currency: unlistedToken }, { id: "same" });
     const service = await server([first, sameCurrency, second]);
 
     await runRequest(["--mach", "--max-spend", "0.015", service.url], {
@@ -341,6 +346,18 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     });
 
     expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(second);
+  });
+
+  it("tries a cheaper offer in a currency whose route failed at a larger amount", async () => {
+    thinBooks(14_000n, unlistedToken);
+    const cheaper = offer({ currency: unlistedToken, amount: "14000" }, { id: "cheaper" });
+    const service = await server([first, cheaper, second]);
+
+    await runRequest(["--mach", "--max-spend", "0.015", service.url], {
+      stdout: { write: () => true },
+    });
+
+    expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(cheaper);
   });
 
   it("reports the first offer's failure, without signing, when no route simulates", async () => {

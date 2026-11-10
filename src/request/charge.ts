@@ -107,7 +107,9 @@ const maxMachChargeOffers = 3;
 
 /**
  * The server's next machine-enabled charge offer that passes the same validation as the first,
- * settling in a currency none of the `tried` offers did, ready to pay; undefined when none is left.
+ * ready to pay; undefined when none is left. An offer is skipped when a `tried` offer in its
+ * settlement currency failed at the same or a smaller amount: the swapper needs at least as much
+ * of that currency's book, so it would fail too. A cheaper one may still fit a thin book.
  */
 function nextMachCharge(
   header: string | null,
@@ -119,7 +121,23 @@ function nextMachCharge(
   if (!header) return undefined;
   const currency = (challenge: Challenge.Challenge) =>
     stringValue(challenge.request.currency).toLowerCase();
-  const triedCurrencies = new Set(tried.map(currency));
+  const amount = (challenge: Challenge.Challenge) => {
+    try {
+      return challengeAmount(challenge);
+    } catch {
+      return undefined;
+    }
+  };
+  const failedAtOrBelow = (offer: Challenge.Challenge) => {
+    const offered = amount(offer);
+    return tried.some((failed) => {
+      const failedAmount = amount(failed);
+      return (
+        currency(failed) === currency(offer) &&
+        (offered === undefined || failedAmount === undefined || failedAmount <= offered)
+      );
+    });
+  };
   let offers: Challenge.Challenge[];
   try {
     offers = Challenge.deserializeList(header);
@@ -127,7 +145,7 @@ function nextMachCharge(
     return undefined;
   }
   for (const offer of offers) {
-    if (offer.intent !== "charge" || triedCurrencies.has(currency(offer))) continue;
+    if (offer.intent !== "charge" || failedAtOrBelow(offer)) continue;
     const headers = new Headers(selectedResponse.headers);
     headers.set("www-authenticate", Challenge.serialize(offer));
     try {
