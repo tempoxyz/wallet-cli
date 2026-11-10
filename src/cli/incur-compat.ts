@@ -95,6 +95,8 @@ function takesValue(field: z.ZodType) {
  * Binds the target command's option values before incur extracts globals; see bindOptionValues.
  *
  * Upstream: https://github.com/wevm/incur/pull/258. Remove with `bindOptionValues`.
+ * `transfer --mach true/false` also binds its mode so the literal is not a positional argument.
+ * Remove that normalization once incur consumes explicit boolean values after long flags.
  */
 export function bindCommandOptions(args: readonly string[], commands: Map<string, unknown>) {
   const [name, subcommand] = commandTokens(args);
@@ -103,10 +105,18 @@ export function bindCommandOptions(args: readonly string[], commands: Map<string
   const command = isCommandGroup(entry)
     ? ((subcommand === undefined ? undefined : entry.commands.get(subcommand)) ?? entry.root)
     : entry;
-  return bindOptionValues(args, [
+  const bound = bindOptionValues(args, [
     ...(isRunnableCommand(command) ? [command] : []),
     { options: cliGlobals, alias: cliGlobalAlias },
   ]);
+  if (name !== "transfer" || process.env.COMPLETE) return bound;
+  for (let index = firstCommandIndex(bound)! + 1; index < bound.length; index++) {
+    if (bound[index] === "--") break;
+    const next = bound[index + 1];
+    if (bound[index] === "--mach" && (next === "true" || next === "false"))
+      bound.splice(index, 2, `--mach=${next}`);
+  }
+  return bound;
 }
 
 /**

@@ -1081,6 +1081,12 @@ describe("tempo wallet send and transfer", () => {
       })),
     ),
     {
+      name: "transfer --mach false keeps positional token arguments",
+      argv: ["transfer", ...tokens, "--mach", "false"],
+      refused: notReviewed,
+      requests: [],
+    },
+    {
       name: "transfer --mach without --yes settles as before",
       argv: mach,
       reached: "POST / eth_call",

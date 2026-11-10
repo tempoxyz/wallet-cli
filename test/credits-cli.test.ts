@@ -8,6 +8,7 @@ import { cliBundle } from "./cli-bundle.js";
 
 import { useTempHome, walletState, writeWalletState } from "./helpers.js";
 import { usdcToken } from "../src/shared/constants.js";
+import { shellQuote } from "../src/shared/next.js";
 import { transferOptions, transferOutput } from "../src/schemas/transfer.js";
 import { whoamiOptions, whoamiOutput } from "../src/schemas/whoami.js";
 import { fundOptions } from "../src/schemas/fund.js";
@@ -96,7 +97,27 @@ describe("removed credits", () => {
     ).toBe(false);
   });
 
-  it("keeps MACH challenge-file payments", async () => {
+  it.each([
+    ["--mach", "true", "1", usdcToken, recipient],
+    ["--mach", "true", "true"],
+    ["--mach", "--mpp-client-id", "--mach", "true"],
+  ])("still refuses positional arguments in %j", async (...args) => {
+    await useTempHome();
+    const result = await cli(["transfer", ...args]);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stdout)).toEqual({
+      code: "E_USAGE",
+      message: "Positional transfer arguments cannot be used with --mach; supply an MPP challenge",
+      retryable: false,
+    });
+  });
+
+  it.each([
+    { source: "transfer", mode: ["--mach"] },
+    { source: "transfer", mode: ["--mach=true"] },
+    { source: "transfer", mode: ["--mach", "true"] },
+    { source: "send", mode: ["--mach", "true"] },
+  ])("keeps MACH challenge-file payments from $source with $mode", async ({ source, mode }) => {
     const home = await useTempHome();
     await writeWalletState(walletState());
     const file = resolve(home, "challenge.txt");
@@ -112,7 +133,19 @@ describe("removed credits", () => {
       file,
       `WWW-Authenticate: Payment realm="example", method="tempo", intent="charge", id="abc123", expires="2099-01-01T00:00:00Z", request="${request}"`,
     );
-    const mach = await cli(["transfer", "--mach", "--mpp-challenge-file", file, "--dry-run"]);
+    const args = [...mode, "--mpp-challenge-file", file, "--dry-run"];
+    if (source === "send") {
+      const result = await cli([source, ...args]);
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.stdout).cta.commands).toEqual([
+        {
+          command: ["tempo", "wallet", "transfer", ...args, "--format", "json"]
+            .map(shellQuote)
+            .join(" "),
+        },
+      ]);
+    }
+    const mach = await cli(["transfer", ...args]);
     expect(mach.code).toBe(0);
     expect(JSON.parse(mach.stdout)).toMatchObject({
       token: "MACH",

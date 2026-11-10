@@ -68,7 +68,7 @@ describe("MCP tools", () => {
     await useTempHome();
   });
 
-  it.each([{ amount: "1" }, { token: usdc }, { to: testWallet }])(
+  it.each([{ amount: "1" }, { amount: "true" }, { token: usdc }, { to: testWallet }])(
     "refuses leftover direct-transfer arguments with MACH: %j",
     async (args) => {
       await writeWalletState(walletState());
