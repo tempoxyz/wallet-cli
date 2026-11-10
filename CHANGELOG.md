@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.2 (2026-11-10)
+
+### Patch Changes
+
+- `tempo request --mach` (and `--payment-token MACH`) now tries the service's next machine-enabled charge offer when the MACH swap route for the first one cannot be simulated, such as when the DEX book for that offer's settlement currency is empty. It tries at most three offers, skips offers that do not accept pull-mode credentials, only offers to the first offer's recipient for no more than its amount (so the payment stays within what --dry-run quoted), skips an offer whose currency already failed at the same or a smaller amount, signs and sends nothing for a failed route, and reports the first offer's "swap route could not be simulated" error only when no offer's route simulates. Before, it gave up after the first offer, so a service listing OUSD before USDC.e could not be paid with MACH while the USDC.e/OUSD book was empty. Only a route that reverts again on its re-check moves on: a transient RPC failure (a timeout, an HTTP error, or a node reporting itself overloaded or failing internally), or a route that simulates on the re-check, is still reported as retryable for that offer. Balance, spending-limit and call-scope failures still stop at the first offer.
+- Support direct-to-merchant MACH v2 sessions with `--mach --payment-intent session`, prefer affordable MACH sessions automatically, and use a separate gas token for session top-ups and closure. Existing `--mach` charge negotiation is unchanged.
+- Releases no longer ship a macOS Intel (darwin-amd64) build of `tempo-wallet` or `tempo-request`; Linux x64, Linux arm64 and Apple silicon Macs are still built. Release builds also run types and tests once instead of in every binary job, and build both binaries in one job per platform.
+
 ## 0.15.1 (2026-11-04)
 
 ### Patch Changes
