@@ -63,6 +63,8 @@ Replace the example URL with the service endpoint. `--payment-intent auto` prefe
 
 The dry-run quote reports the offered `amount` and `token`, plus `max_spend` and `within_budget`. For sessions it reports `session` (`open` or `reuse`) and the `deposit` to lock or top up. It also reports `chain_id`, `network`, and the payer's balance and access-key limit when readable; unavailable reads remain `null`. A subscription quote has `max_spend: null` and `within_budget: null`. A non-402 response instead reports `payment_required: false` and its HTTP status.
 
+A one-time charge is checked against the cap again immediately before it is signed, against the exact offer the CLI validated. When the wallet lacks the charged stablecoin (for example USDC.e or pathUSD), the charge swaps from OUSD in the same transaction, spending at most the missing amount plus 1% slippage; it never swaps from other tokens, and an explicit MACH payment never swaps.
+
 Use `--payment-token <symbol-or-address>` when a service offers multiple tokens. `--payment-intent auto` does not silently switch from a failed reusable session to a nonrefundable charge; retry explicitly with `--payment-intent charge` if you accept it. An over-cap refusal can suggest a higher cap, but inspect the offer before rerunning it. The CLI redacts credentials in suggested commands.
 
 A session locks a deposit. List sessions with `tempo wallet sessions list`. `tempo wallet sessions close <channel-id-or-origin>` requests a close; after the grace period, rerun it or use `--finalize` to withdraw the unspent deposit. Closing is irreversible and needs confirmation. `--cooperative` asks the service to close immediately when supported.
