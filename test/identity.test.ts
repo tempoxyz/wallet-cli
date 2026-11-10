@@ -1029,12 +1029,12 @@ limit = "100000000"
     );
   });
 
-  it("whoami --credits without a wallet throws E_USAGE", async () => {
+  it("whoami --mach without a wallet throws E_USAGE", async () => {
     await useTempHome();
 
     try {
-      await whoamiHandler({ credits: true });
-      expect.unreachable("expected whoami --credits to throw");
+      await whoamiHandler({ mach: true });
+      expect.unreachable("expected whoami --mach to throw");
     } catch (error) {
       expectUsageError(
         error,

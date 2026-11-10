@@ -34,7 +34,6 @@ import { whoamiHandler } from "../src/commands/whoami.js";
 import { loginHandler } from "../src/commands/login.js";
 import { listSessions } from "../src/commands/sessions/list.js";
 import { swapTokens } from "../src/commands/swap.js";
-import { transferCredits } from "../src/commands/transfer/credits.js";
 import { transferTokens } from "../src/commands/transfer/tokens.js";
 import { saveConfigValue } from "../src/wallet/config.js";
 import { loadWalletState, saveWalletState, type WalletState } from "../src/wallet/store.js";
@@ -244,13 +243,6 @@ const networkCommands = [
           getUserFeeToken: async () => null,
         },
       ),
-  },
-  {
-    command: "transfer --credits --dry-run",
-    run: (network?: string) =>
-      transferCredits({
-        options: { network, "amount-cents": 100, to: testWallet2, "dry-run": true },
-      }),
   },
   {
     command: "swap --dry-run",

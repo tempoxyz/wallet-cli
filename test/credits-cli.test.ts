@@ -1,13 +1,16 @@
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cliBundle } from "./cli-bundle.js";
 
-import { testWallet, useTempHome, walletState, writeWalletState } from "./helpers.js";
+import { useTempHome, walletState, writeWalletState } from "./helpers.js";
 import { usdcToken } from "../src/shared/constants.js";
-import { appUrl } from "../src/shared/network.js";
+import { transferOptions, transferOutput } from "../src/schemas/transfer.js";
+import { whoamiOptions, whoamiOutput } from "../src/schemas/whoami.js";
+import { fundOptions } from "../src/schemas/fund.js";
 
 const exec = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -27,42 +30,73 @@ async function cli(args: string[]) {
   }
 }
 
-describe("credits CLI compatibility", () => {
-  it.each([[], ["--mach"], ["--crypto"], ["--referral-code", "CODE"]].map((flags) => ({ flags })))(
-    "rejects credit funding even with %j and without login",
-    async ({ flags }) => {
-      await useTempHome();
-      const result = await cli(["fund", "--credits", ...flags]);
-      expect(result.code).toBe(2);
-      expect(result.stdout + result.stderr).toContain("MPP Credits can no longer be purchased");
-      expect(result.stdout + result.stderr).toContain("tempo wallet fund --mach");
-      expect(result.stdout + result.stderr).not.toContain(new URL("/agent", appUrl).toString());
-    },
-  );
+afterEach(() => vi.unstubAllEnvs());
 
-  it("routes --credits to legacy spending and warns only on stderr", async () => {
+describe("removed credits", () => {
+  it.each([
+    ["whoami", "--credits"],
+    ["whoami", "--mach", "--credits"],
+    ["fund", "--credits"],
+    ["fund", "--credits", "--mach"],
+    ["fund", "--credits", "--crypto"],
+    ["fund", "--credits", "--referral-code", "CODE"],
+    ["transfer", "--credits", "--amount-cents", "100", "--to", recipient],
+    ["transfer", "--credits", "--mpp-challenge", "ignored", "--dry-run"],
+    ["transfer", "--credits", "--mach", "--mpp-challenge", "ignored"],
+    ["transfer", "1", usdcToken, recipient, "--credits", "--yes"],
+    ["send", "1", usdcToken, recipient, "--credits=true", "--yes"],
+  ])("refuses %j before any request or fallback payment", async (...args) => {
     await useTempHome();
     await writeWalletState(walletState());
-    const result = await cli([
-      "transfer",
-      "--credits",
-      "--amount-cents",
-      "100",
-      "--to",
-      recipient,
-      "--dry-run",
-    ]);
-    expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      wallet: testWallet.toLowerCase(),
-      amount_cents: 100,
-      status: "dry_run",
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(`${request.method} ${request.url}`);
+      response.end("{}");
     });
-    expect(result.stderr.match(/--credits is deprecated/g)).toHaveLength(1);
-    expect(result.stderr).toContain("tempo wallet fund --mach");
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected listening address");
+    const url = `http://127.0.0.1:${address.port}`;
+    vi.stubEnv("TEMPO_AUTH_URL", url);
+    vi.stubEnv("TEMPO_RPC_URL", url);
+    try {
+      const result = await cli(args);
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.stdout)).toEqual({
+        code: "E_USAGE",
+        message: "--credits was removed. Use on-chain token balances and payments.",
+        retryable: false,
+      });
+      expect(result.stderr).toBe("");
+      expect(requests).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
-  it("keeps MACH and credits distinct for the same machine-enabled challenge file", async () => {
+  it("removes active options and output shapes", () => {
+    for (const schema of [whoamiOptions, fundOptions, transferOptions])
+      expect(schema.shape).not.toHaveProperty("credits");
+    for (const name of ["amount-cents", "to", "data"])
+      expect(transferOptions.shape).not.toHaveProperty(name);
+    expect(
+      whoamiOutput.safeParse({ credits: { wallet: recipient, balance: "1", rawBalance: "1" } })
+        .success,
+    ).toBe(false);
+    expect(
+      transferOutput.safeParse({
+        status: "dry_run",
+        wallet: recipient,
+        amount_cents: 100,
+        network: "mainnet",
+        chain_id: 4217,
+        to: recipient,
+        transaction_data: { type: "token", destination: recipient },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps MACH challenge-file payments", async () => {
     const home = await useTempHome();
     await writeWalletState(walletState());
     const file = resolve(home, "challenge.txt");
@@ -78,10 +112,6 @@ describe("credits CLI compatibility", () => {
       file,
       `WWW-Authenticate: Payment realm="example", method="tempo", intent="charge", id="abc123", expires="2099-01-01T00:00:00Z", request="${request}"`,
     );
-    const credits = await cli(["transfer", "--credits", "--mpp-challenge-file", file, "--dry-run"]);
-    expect(credits.code).toBe(0);
-    expect(JSON.parse(credits.stdout)).toMatchObject({ amount_cents: 100, status: "dry_run" });
-    expect(credits.stderr).toContain("--credits is deprecated");
     const mach = await cli(["transfer", "--mach", "--mpp-challenge-file", file, "--dry-run"]);
     expect(mach.code).toBe(0);
     expect(JSON.parse(mach.stdout)).toMatchObject({
@@ -89,23 +119,6 @@ describe("credits CLI compatibility", () => {
       raw_amount: "1000000",
       status: "dry_run",
     });
-    expect(mach.stderr).not.toContain("--credits is deprecated");
+    expect(mach.stderr).toBe("");
   });
-
-  it("rejects simultaneous spending selectors", async () => {
-    await useTempHome();
-    const result = await cli(["transfer", "--credits", "--mach", "--dry-run"]);
-    expect(result.code).toBe(2);
-    expect(result.stdout + result.stderr).toContain("Use only one of --credits and --mach");
-  });
-
-  it.each([["1"], ["1", usdcToken], ["1", usdcToken, recipient]])(
-    "rejects positional transfer arguments with credits: %j",
-    async (...args) => {
-      await useTempHome();
-      const result = await cli(["transfer", ...args, "--credits", "--mpp-challenge", "ignored"]);
-      expect(result.code).toBe(2);
-      expect(result.stdout + result.stderr).toContain("Positional amount, token, and recipient");
-    },
-  );
 });

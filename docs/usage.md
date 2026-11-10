@@ -19,8 +19,6 @@ The pending result includes `verification_url`, `user_code`, `expires_at`, and `
 
 `fund --no-browser --format json` returns the handoff URL for another device. `--address` can set a destination without a local login. MACH checkout accepts $5–$100 USD with at most two decimal places; general funding accepts a positive amount with up to six. The amount is an editable prefill, and a successful `fund` exit confirms only that the link was handed off. `--no-wait` and `--wait=false` remain no-op compatibility forms.
 
-`fund --credits` is unavailable. Existing MPP Credits remain spendable through `transfer --credits`, but new credits cannot be purchased. See [legacy credits](#legacy-credits).
-
 ## Sending and swapping
 
 Preview a transfer or swap before submitting it:
@@ -38,7 +36,7 @@ A key is scoped to the wallet and network. Reusing it with different transfer or
 
 The send preview shows the fee token, estimated fee, wallet balance, fee-token balance, and `sufficient_balance` (`null` when a needed lookup fails). The confirmed command pins its reviewed fee token. A swap preview pins `--min-amount-out`, or `--max-amount-in` for `--exact-out`; submission obtains a new quote and enforces that bound. An interactive send can use wallet-app approval when the access key cannot sign; agent runs need a usable key. A send or swap on a network other than the logged-in wallet's network is refused before submission.
 
-Token arguments accept a full address or a listed symbol on the selected network. A bridged token can also be named without `.e` (`USDC` resolves to `USDC.e`). `tempo wallet transfer <amount> <token> <to>` is a deprecated alias for `send`. `transfer --mach` settles a captured payment challenge; `transfer --credits` supports both captured challenges and direct legacy-credit payments.
+Token arguments accept a full address or a listed symbol on the selected network. A bridged token can also be named without `.e` (`USDC` resolves to `USDC.e`). `tempo wallet transfer <amount> <token> <to>` is a deprecated alias for `send`. `transfer --mach` settles a captured payment challenge.
 
 ### Balances and access keys
 
@@ -77,19 +75,11 @@ Saved payment metadata includes the `intent`, `amount`, `token`, `payer`, `chain
 
 For a JSON endpoint, use `tempo request -X POST --json '{"input":"hello"}' <url>`. The request is sent before a 402 challenge is evaluated, including with `--dry-run`; inspect the method's side effects first.
 
-For a one-time MACH charge, use `tempo request --mach --max-spend <amount> <url>` (or `--payment-token MACH`). Add `--payment-intent session` for a native MACH v2 session, which locks MACH in the channel and pays the merchant directly without a swapper; without it, `--mach` uses a MACH session only when the service offers no machine-enabled charge. MACH pays only services that accept it: the service must offer a native MACH session or a machine-enabled charge, and for a charge the MACH swapper must support its recipient. Otherwise the request fails with `E_PAYMENT`, "<host> doesn't accept MACH. Retry without --mach." (or without the `--payment-token` that selected MACH), before anything is signed; `tempo wallet transfer --mach` names the captured charge's realm and points to `tempo request` instead. Charges keep the SDK swapper route, so the merchant still receives its advertised settlement currency. Funding MACH does not convert legacy credits.
+For a one-time MACH charge, use `tempo request --mach --max-spend <amount> <url>` (or `--payment-token MACH`). Add `--payment-intent session` for a native MACH v2 session, which locks MACH in the channel and pays the merchant directly without a swapper; without it, `--mach` uses a MACH session only when the service offers no machine-enabled charge. MACH pays only services that accept it: the service must offer a native MACH session or a machine-enabled charge, and for a charge the MACH swapper must support its recipient. Otherwise the request fails with `E_PAYMENT`, "<host> doesn't accept MACH. Retry without --mach." (or without the `--payment-token` that selected MACH), before anything is signed; `tempo wallet transfer --mach` names the captured charge's realm and points to `tempo request` instead. Charges keep the SDK swapper route, so the merchant still receives its advertised settlement currency.
 
 Without an explicit token, the CLI prefers an offered MACH session when its deposit or top-up is covered, including reuse of a funded channel. Otherwise it uses a compatible advertised stablecoin session or charge. A MACH session that would exceed `--max-spend` returns `E_LIMIT_EXCEEDED` rather than switching offers. New deposits and top-ups must fit the access key’s remaining allowance. `--dry-run` uses the same selection and shows MACH as the session token. MACH cannot pay gas: session opens and top-ups use the advertised fee token, and unilateral close/finalize uses the network default fee token (USDC.e on mainnet).
 
 An explicit MACH selection does not fall back to a stablecoin and requires an explicit spending cap for payment. For charges, insufficient MACH returns `E_INSUFFICIENT_FUNDS`; an insufficient stored key limit returns `E_LIMIT_EXCEEDED` with a `keys update` continuation. An unreadable balance returns retryable `E_NETWORK`; call-scope or swap-route failures return `E_PAYMENT`. `tempo wallet transfer --mach` can settle a captured challenge, but it does not deliver the credential to the merchant; prefer `tempo request` for the full flow.
-
-## Legacy credits
-
-`tempo wallet whoami --credits` shows the existing Coinflow balance. `tempo wallet transfer --credits --amount-cents <cap> --mpp-challenge-file <headers>` can pay a captured, unexpired push-payment challenge. A direct legacy payment uses `--amount-cents` and `--to`. `--dry-run` shows the destination and calldata without spending. `TEMPO_MAX_SPEND` also caps credit payments; `--max-spend` is for MACH.
-
-Challenge payments require `--amount-cents` or `TEMPO_MAX_SPEND` as a cap, including quoted gas fees; a dry run needs no cap. Direct payments use whole USD cents. Challenge payments require push receipts and do not support splits. Do not mix `--mach` with `--credits`, positional token-transfer arguments with credits, or direct `--to`/`--data` with a challenge.
-
-Coinflow quotes fees and executes the legacy transaction. Its permit authorizes the credit debit without binding the recipient or calldata, so review the dry run. Credit payments are deprecated; use `tempo request` for a complete MPP request and payment when possible.
 
 ## Networks and settings
 

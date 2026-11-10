@@ -45,7 +45,7 @@ Provide:
 - Wallet status from `tempo wallet whoami` (`wallet`, `network`, and `balance`; include `key` fields when present).
 - `tempo wallet balance` lists the token `balances` the logged-in `wallet` can spend (`--token <SYMBOL_OR_ADDRESS>` for one); funds locked in sessions appear only in `whoami`. To receive tokens, give the user the address from `tempo wallet address`.
 - `ready: true` means the wallet can pay on the network. A `key.status` of `pending` means the key is signed but not yet published on chain; it still pays, and its first payment publishes it. Token amounts are decimal strings without padding (`"10"`, not `"10.000000"`), and addresses are lowercase. Read limits from `key.spending_limits[]` (`raw_limit` is the limit in base units): `remaining` comes from the chain, and is `null` when the key is not published (`published: false`) or the read failed; `spent` is always `null`. `key.spending_limit` is deprecated and will be removed in a future release.
-- Check MACH with `tempo wallet whoami --mach`. Fund with `tempo wallet fund --mach --amount <USD>`; MACH is an on-chain six-decimal token, not a legacy credit balance.
+- Check MACH with `tempo wallet whoami --mach`. Fund with `tempo wallet fund --mach --amount <USD>`; MACH is an on-chain six-decimal token.
 - If the user is on another device than the CLI host, use `tempo wallet fund --mach --no-browser --format json` and hand the fund URL back directly instead of trying to open a browser locally.
 - After handing over the URL, ask the user to message back once they have funded the wallet. Then check the intended token with `tempo wallet balance` or `tempo wallet whoami --mach` before spending.
 - 2-3 simple starter prompts tailored to currently available services.
@@ -74,7 +74,7 @@ tempo wallet services show <SERVICE_ID>
 
 - Select `SERVICE_ID` from search results that best matches user intent. When multiple match: prefer best semantic fit, then endpoint fit, then pricing clarity, then first in list. Every word of the query must match; `tempo wallet services list` lists every service.
 - **Anchor on `tempo wallet services show <SERVICE_ID>`** — it shows the exact URL, method, path, and pricing for every endpoint: `endpoints[].payment.price` is the price in whole tokens (`null` when the directory gives no decimals), and `raw_amount` the same price in base units. Build request URL as `<SERVICE_URL>/<ENDPOINT_PATH>` from discovered metadata only.
-- Use the endpoint's exact MPP challenge and an explicit `--max-spend` budget for payment. Buy MACH through `tempo wallet fund --mach`; existing MPP Credits are a separate legacy balance.
+- Use the endpoint's exact MPP challenge and an explicit `--max-spend` budget for payment. Buy MACH through `tempo wallet fund --mach`.
 - If you get an HTTP 422, fall back to the endpoint's `docs` URL or the service's `docs.llms_txt` for exact field names.
 - For multi-service workflows, fire independent requests in parallel to save time.
 
@@ -115,13 +115,7 @@ Hosted MACH checkout accepts $5–$100 USD with at most two decimal places. The 
 
 Use `tempo request --mach --max-spend <USD> <URL>` (or `--payment-token MACH`) for a machine-enabled one-time charge. Add `--payment-intent session` to require a native MACH v2 session; it locks MACH in the channel and pays the merchant directly without a swapper. Without it, `--mach` uses a MACH session only when no machine-enabled charge is offered. For charges, missing MACH funds, liquidity, or permissions fail without stablecoin fallback: `E_INSUFFICIENT_FUNDS` names `tempo wallet fund --mach` in its `cta` (mainnet), `E_LIMIT_EXCEEDED` names `tempo wallet keys update`, and a swap route that cannot be simulated returns `E_PAYMENT` with no `cta`; retry it later only when it is `retryable`. Use `--dry-run` to inspect an offer without spending. With no explicit token, prefer a MACH session when the wallet balance and remaining key allowance cover its deposit or top-up; otherwise use a compatible advertised stablecoin session or charge. A MACH session over the spending cap returns `E_LIMIT_EXCEEDED` rather than switching offers. A funded MACH channel can be reused without a new wallet deposit. Session opens and top-ups use the advertised gas token; unilateral close/finalize uses the network default gas token. MACH itself cannot pay gas.
 
-MACH charges use the canonical MPP SDK settlement route; MACH sessions use native channels without a swapper. Do not construct swap calldata or call legacy Coinflow redemption APIs. Do not infer MACH support from a service's hostname; inspect the actual MPP challenge and use the standard request flow.
-
-### Legacy MPP Credits
-
-Use `tempo wallet whoami --credits` to inspect existing off-chain MPP Credits and `tempo wallet transfer --credits` to spend them. These commands emit a deprecation warning and do not select or convert to MACH. `tempo request` does not automatically use legacy credits. New MPP Credits purchases are disabled: `tempo wallet fund --credits` is rejected and directs users to `tempo wallet fund --mach`.
-
-For credit payments, use `--amount-cents` as the direct payment amount or the maximum credit debit for an MPP challenge, including quoted gas fees; `TEMPO_MAX_SPEND` also caps the total debit in USD. Challenge spending requires one of those caps; `--dry-run` does not. Do not use positional transfer arguments with `--credits`, or combine `--to`, `--data`, or `--value` with `--mpp-challenge` or `--mpp-challenge-file`. Review the destination and calldata in `--dry-run` output (`status: "dry_run"`) before spending; a sent payment returns `status: "success"` with its `tx_hash`. Split-payment challenges are unsupported. Coinflow remains trusted to execute the submitted transaction; its legacy permit authorizes a credit debit rather than a specific recipient.
+MACH charges use the canonical MPP SDK settlement route; MACH sessions use native channels without a swapper. Do not construct swap calldata. Do not infer MACH support from a service's hostname; inspect the actual MPP challenge and use the standard request flow.
 
 ### Response Handling
 
@@ -181,7 +175,7 @@ tempo wallet send <AMOUNT> <TOKEN> <RECIPIENT> --idempotency-key <KEY> --yes
 - If `sufficient_balance` is false, report the shortfall and stop; offer `tempo wallet fund`.
 - A send goes out only on the network the wallet is logged in on. On another `--network`, it returns `E_USAGE` with a `tempo wallet login --network <NETWORK>` `cta`; run it, then rerun the send.
 - Always run `--dry-run` first and preserve full token and recipient addresses in the approval request.
-- Use `send` for every token transfer. `tempo wallet transfer` is for `--mach` and `--credits` payments only; its token form is a deprecated alias of `send`.
+- Use `send` for every token transfer. `tempo wallet transfer` is for `--mach` payments only; its token form is a deprecated alias of `send`.
 
 ## Retrying Transfers and Swaps
 
@@ -249,14 +243,14 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 - `readOnlyHint: true` only reads.
 - `destructiveHint: true` moves funds, changes or revokes a key, closes a session, deletes stored sessions, replaces or deletes the stored wallet or its network, or changes a saved setting. Get the user's approval before every call, after a `dry-run: true` call where the tool offers one.
 - These tools refuse to act without `yes: true` and return `E_USAGE`; pass it only after the user approves the reviewed dry run or change:
-  - `send`, and `transfer` when it sends tokens (without `mach` or `credits`)
+  - `send`, and `transfer` when it sends tokens (without `mach`)
   - `swap`
   - `keys_revoke`
   - `sessions_close`, when it selects a session to close
   - `config_set` and `config_unset`, when they change the saved value
   - `logout`, when it would revoke keys, or stored sessions on the networks it logs out of hold deposits or cannot be read
 - Tools take positional arguments under kebab-case keys, like options: `access-key` (`keys_update`, `keys_revoke`), `token-in` and `token-out` (`swap`), `tx-hash` (`tx_status`), `service-id` (`services_show`), and `target` (`sessions_close`).
-- Call `send` for token transfers and keep `transfer` for `mach` and `credits` payments; call `keys_revoke`, not the deprecated `revoke`, and `services_list`, `services_search`, or `services_show`, not the deprecated `services`.
+- Call `send` for token transfers and keep `transfer` for `mach` payments; call `keys_revoke`, not the deprecated `revoke`, and `services_list`, `services_search`, or `services_show`, not the deprecated `services`.
 
 ## Common Issues
 

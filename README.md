@@ -57,7 +57,7 @@ To add funds, run `tempo wallet fund`. It opens the wallet app and returns a lin
 | Diagnose setup              | `tempo wallet doctor`                                                 |
 | Make a paid HTTP request    | `tempo request <url>`                                                 |
 
-Use `tempo wallet <command> --help` or `tempo request --help` for options. The [command reference](docs/commands.md) lists every wallet command; the [usage guide](docs/usage.md) covers remote login, transfers, payment choices, sessions, MACH, and legacy credits.
+Use `tempo wallet <command> --help` or `tempo request --help` for options. The [command reference](docs/commands.md) lists every wallet command; the [usage guide](docs/usage.md) covers remote login, transfers, payment choices, sessions, and MACH.
 
 Preview a send or swap with `--dry-run`. Interactive sends ask for confirmation; every submitted swap needs `--yes`. Scripted sends, session closes, key revocations, and configuration changes also require `--yes`. Use a fresh `--idempotency-key` for each intended send or swap and reuse it on retries. If a payment or transaction reports `E_PAYMENT_OUTCOME_UNKNOWN`, check its status before trying again.
 

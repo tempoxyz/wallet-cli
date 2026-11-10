@@ -60,14 +60,6 @@ export function formatUnixTimestamp(value: number | undefined) {
   return new Date(value * 1000).toISOString().replace(".000Z", "Z");
 }
 
-export function formatCreditBalance(rawBalance: bigint) {
-  const divisor = 10_000n;
-  const whole = rawBalance / divisor;
-  const fractional = rawBalance % divisor;
-  if (fractional === 0n) return whole.toString();
-  return `${whole}.${fractional.toString().padStart(4, "0")}`;
-}
-
 export function isChannelId(value: string) {
   return /^0x[0-9a-fA-F]{64}$/.test(value);
 }
@@ -103,12 +95,6 @@ export function parseTokenAmount(value: string, decimals: number) {
       `Invalid amount: expected a positive decimal with at most ${decimals} decimals`,
     );
   return amount;
-}
-
-export function parseAmount(value: unknown) {
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
-  if (typeof value === "string" && /^\d+$/.test(value.trim())) return BigInt(value.trim());
-  return undefined;
 }
 
 export function safeNumber(value: unknown) {

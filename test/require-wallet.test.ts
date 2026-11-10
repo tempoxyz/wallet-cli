@@ -414,12 +414,6 @@ describe("wallet CLI login and access key checks", () => {
 
   it.each([
     {
-      name: "--credits, which the wallet app signs",
-      state: walletState({ accessKeys: [expiredKey] }),
-      argv: ["transfer", "--credits", "--amount-cents", "100", "--to", recipient, "--dry-run"],
-      env: {},
-    },
-    {
       name: "--mach paid by TEMPO_PRIVATE_KEY",
       state: walletState({ accounts: [] }),
       argv: [

@@ -6,10 +6,9 @@ import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 
 import type { RetiredFlag } from "../../cli/argv.js";
-import { CtaError } from "../../cli/incur-compat.js";
-import { commandError, paymentOutcomeUnknownError, usageError } from "../../shared/errors.js";
+import { paymentOutcomeUnknownError, usageError } from "../../shared/errors.js";
 import { networkFields } from "../../shared/network.js";
-import { nextStep, shellQuote } from "../../shared/next.js";
+import { nextStep } from "../../shared/next.js";
 import { escapeInvisible } from "../../shared/utils.js";
 import { parseRequestArgs } from "../../request/args.js";
 import { preparePaymentChallenge } from "../../request/challenge.js";
@@ -189,33 +188,3 @@ export const machAmountCentsFlag: RetiredFlag = {
         : ["transfer", ...args, "--max-spend", formatUnits(BigInt(value) * 10_000n, 6)],
   }),
 };
-
-/**
- * `--amount-cents` with `mach` over MCP, which parses options before the command runs. The `cta`
- * passes the same cap in USD, keeping the other options; with `max-spend` too, there is none.
- */
-export function machAmountCentsError(
-  flags: Parameters<typeof transferMach>[0]["options"],
-  cents: number,
-) {
-  const message = amountCentsMessage;
-  if (!Number.isSafeInteger(cents) || cents < 0 || flags["max-spend"] !== undefined)
-    return usageError(message);
-  const argv = [
-    "tempo",
-    "wallet",
-    "transfer",
-    "--mach",
-    "--max-spend",
-    formatUnits(BigInt(cents) * 10_000n, 6),
-    ...(flags["mpp-challenge"] !== undefined ? ["--mpp-challenge", flags["mpp-challenge"]] : []),
-    ...(flags["mpp-challenge-file"] !== undefined
-      ? ["--mpp-challenge-file", flags["mpp-challenge-file"]]
-      : []),
-    ...(flags["mpp-client-id"] !== undefined ? ["--mpp-client-id", flags["mpp-client-id"]] : []),
-    ...(flags.address !== undefined ? ["--address", flags.address] : []),
-    ...(flags["dry-run"] ? ["--dry-run"] : []),
-    ...(flags.network !== undefined ? ["--network", flags.network] : []),
-  ];
-  return new CtaError(commandError("E_USAGE", message, argv.map(shellQuote).join(" ")));
-}

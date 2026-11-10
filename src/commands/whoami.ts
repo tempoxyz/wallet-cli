@@ -35,7 +35,7 @@ import {
   type TokenBalance,
 } from "../wallet/key-output.js";
 import { queryMachBalance } from "../shared/mach.js";
-import { queryCreditBalance, warnCreditsDeprecated } from "./credits.js";
+import { creditsFlag } from "../shared/retired-flags.js";
 
 export default {
   command: Cli.create("whoami", {
@@ -50,6 +50,7 @@ export default {
     },
   }),
   annotations: { whoami: { ...readOnly, openWorldHint: true } },
+  retiredFlags: [creditsFlag],
 } satisfies WalletCommand;
 
 /** Whoami output when the active wallet already has a usable access key on `network`. */
@@ -73,7 +74,6 @@ export async function cachedLoginOutput(state: WalletState, network: Network) {
 
 export async function whoamiHandler(options: {
   network?: string | undefined;
-  credits?: boolean | undefined;
   mach?: boolean | undefined;
 }) {
   const state = await loadWalletState();
@@ -81,12 +81,9 @@ export async function whoamiHandler(options: {
   const walletAddress = activeAccount?.address ?? null;
   const network = await resolveNetwork(options.network, state);
 
-  if (options.credits && options.mach) throw usageError("Use only one of --credits and --mach");
-  if (options.credits) warnCreditsDeprecated();
-  if (options.credits || options.mach) {
+  if (options.mach) {
     if (!walletAddress)
       throw usageError("Configuration missing: No wallet configured. Run 'tempo wallet login'.");
-    if (options.credits) return { credits: await queryCreditBalance({ walletAddress }) };
     return { mach: await queryMachBalance({ chainId: network.chainId, walletAddress }) };
   }
 

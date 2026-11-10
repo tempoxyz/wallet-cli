@@ -8,7 +8,7 @@ This list is generated from the mounted command schemas. Run `tempo wallet <comm
 - `login status`: Wait for a pending login's approval and finish it. Options: `--interval`, `--max-attempts`.
 - `refresh`: Refresh your access key without logging out. Options: `--no-browser`.
 - `logout`: Log out of every network, or of one with --network. Options: `--revoke`, `--yes`, `--no-browser`.
-- `whoami`: Show who you are: wallet, balances, keys (key.spending_limit is deprecated; use key.spending_limits). Options: `--mach`, `--credits`.
+- `whoami`: Show who you are: wallet, balances, keys (key.spending_limit is deprecated; use key.spending_limits). Options: `--mach`.
 - `balance`: Show the wallet's token balances. Options: `--token`.
 - `address`: Show the wallet address. Options: `--qr`.
 - `keys list`: List keys and their spending limits (spending_limit is deprecated; use spending_limits).
@@ -16,10 +16,10 @@ This list is generated from the mounted command schemas. Run `tempo wallet <comm
 - `keys revoke <access-key>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
 - `revoke <access-key>`: Deprecated: use 'keys revoke'. Options: `--dry-run`, `--yes`, `--no-browser`.
 - `send <amount> <token> <to>`: Send tokens to an address. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--address`.
-- `transfer [amount] [token] [to]`: Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--credits`, `--max-spend`, `--amount-cents`, `--to`, `--data`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
+- `transfer [amount] [token] [to]`: Pay an MPP challenge with --mach. Token transfers moved to 'send'. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--max-spend`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
 - `swap <amount> <token-in> <token-out>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
 - `tx status <tx-hash>`: Show a transaction's status on chain.
-- `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--credits`, `--amount`, `--referral-code`.
+- `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--amount`, `--referral-code`.
 - `sessions`: Manage payment sessions. Options: `--orphaned`, `--all`.
 - `sessions list`: List payment sessions. Options: `--orphaned`, `--all`.
 - `sessions close [target]`: Request a session close, then withdraw after the grace period with --finalize. Options: `--all`, `--orphaned`, `--finalize`, `--cooperative`, `--dry-run`, `--yes`.

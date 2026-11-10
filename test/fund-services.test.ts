@@ -22,22 +22,12 @@ describe("fundAction", () => {
     expect(fundAction({})).toBe("fund");
   });
 
-  it("rejects credit funding and points to MACH", () => {
-    expect(() => fundAction({ credits: true })).toThrow("tempo wallet fund --mach");
-  });
-
   it('returns "crypto" when crypto is set', () => {
     expect(fundAction({ crypto: true })).toBe("crypto");
   });
 
   it('returns "claim" when a referral code is provided', () => {
     expect(fundAction({ referralCode: "ABC" })).toBe("claim");
-  });
-
-  it("rejects credits even when another funding flag is provided", () => {
-    expect(() => fundAction({ credits: true, crypto: true, referralCode: "ABC" })).toThrow(
-      "can no longer be purchased",
-    );
   });
 
   it("prioritizes crypto over referral code", () => {

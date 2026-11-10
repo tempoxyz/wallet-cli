@@ -7,6 +7,7 @@ import { transferOptions } from "../schemas/transfer.js";
 import { cliGlobals, globalAlias } from "../schemas/shared.js";
 import type { CommandContext } from "../shared/errors.js";
 import { canPrompt } from "../shared/process.js";
+import { creditsFlag } from "../shared/retired-flags.js";
 import { withWallet } from "../shared/require-wallet.js";
 import { transferNetworkRefusal, transferTokens } from "./transfer/tokens.js";
 import { deferredKeyRefusal, defersKeyCheck } from "./tx.js";
@@ -60,10 +61,10 @@ export const sendCommand = {
 export const sendAnnotations = { ...destructive, idempotentHint: false, openWorldHint: true };
 
 /**
- * `send` takes no `transfer` mode: `--mach` and `--credits` pay with `transfer` instead, which the
+ * `send` takes no `transfer` mode: `--mach` pays with `transfer` instead, which the
  * `cta` runs with the arguments as given. An explicit false selects no mode, so `send` runs.
  */
-function transferMode(flag: "--mach" | "--credits", purpose: string): RetiredFlag {
+function transferMode(flag: "--mach", purpose: string): RetiredFlag {
   return {
     flag,
     replacement: ({ given }) => ({
@@ -73,8 +74,8 @@ function transferMode(flag: "--mach" | "--credits", purpose: string): RetiredFla
   };
 }
 
-// A run with `--credits` or `--mach` pays with `transfer`, whose own checks name what applies.
-const paymentModes = ["--credits", "--mach"] as const;
+// A run with `--mach` pays with `transfer`, whose own checks name what applies.
+const paymentModes = ["--mach"] as const;
 
 /**
  * The options `transfer` takes and `send` does not, such as `--max-spend`. A mode left in a token
@@ -99,14 +100,13 @@ export function sendArgv(args: readonly string[]) {
 }
 
 /**
- * The MPP Credits options of `transfer`, which a token transfer never took. With the amount and
+ * Removed transfer options. With the amount and
  * token given, the `cta` of `--to` passes the recipient after them.
  */
-export const creditsOnlyFlags: RetiredFlag[] = [
+export const removedTransferFlags: RetiredFlag[] = [
   {
     flag: "--to",
     takesValue: true,
-    unless: paymentModes,
     replacement: ({ args, value }) => {
       // A `true` or `false` after a flag is that flag's value, not an argument.
       const operands = operandIndexes(args).filter(
@@ -115,7 +115,7 @@ export const creditsOnlyFlags: RetiredFlag[] = [
       const token = operands.length === 2 ? operands[1]! + 1 : undefined;
       return {
         message:
-          "--to sets the MPP Credits recipient of 'tempo wallet transfer --credits'; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
+          "--to was removed; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
         argv:
           token === undefined || value === undefined
             ? undefined
@@ -126,26 +126,26 @@ export const creditsOnlyFlags: RetiredFlag[] = [
   {
     flag: "--data",
     takesValue: true,
-    unless: paymentModes,
+    mcp: true,
     replacement: () => ({
-      message:
-        "--data sets the MPP Credits calldata of 'tempo wallet transfer --credits'; a token transfer sends no calldata.",
+      message: "--data was removed; a token transfer sends no calldata.",
     }),
   },
   {
     flag: "--amount-cents",
     takesValue: true,
     unless: paymentModes,
+    mcp: true,
     replacement: () => ({
       message:
-        "--amount-cents sets the MPP Credits amount of 'tempo wallet transfer --credits'; pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
+        "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
     }),
   },
 ];
 
 /**
- * `--value`, the ETH value of an MPP Credits redemption, which had to be zero. A zero value changed
- * nothing, so its `cta` is the same run without it, as `command` builds it from the arguments.
+ * `--value` had to be zero. Its `cta` is the same run without it, as `command` builds it
+ * from the arguments.
  */
 export function valueFlag(command: (args: string[]) => string[] | undefined): RetiredFlag {
   return {
@@ -163,8 +163,8 @@ export default {
   annotations: { send: sendAnnotations },
   retiredFlags: [
     transferMode("--mach", "pay an MPP challenge with MACH"),
-    transferMode("--credits", "spend legacy MPP Credits"),
-    ...creditsOnlyFlags,
+    creditsFlag,
+    ...removedTransferFlags,
     valueFlag(sendArgv),
   ],
 } satisfies WalletCommand;

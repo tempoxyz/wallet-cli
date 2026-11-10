@@ -7,17 +7,6 @@ import { globalOptionShape, networkOutputShape } from "./shared.js";
 export const whoamiOptions = z.object({
   ...globalOptionShape,
   mach: z.boolean().optional().describe("Show on-chain MACH balance"),
-  credits: z.boolean().optional().describe("Show existing MPP Credits balance (deprecated)"),
-});
-
-export const creditsOutput = z.object({
-  credits: z
-    .object({
-      wallet: z.string(),
-      balance: z.string(),
-      rawBalance: z.string().register(displayMeta, { hidden: true }),
-    })
-    .nullable(),
 });
 
 export const machOutput = z.object({
@@ -66,5 +55,4 @@ export const whoamiOutput = z.union([
     key: accessKeyOutput.omit({ wallet: true }).nullable(),
   }),
   machOutput,
-  creditsOutput,
 ]);

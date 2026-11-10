@@ -45,6 +45,13 @@ describe("generated CLI metadata", () => {
     expect(output).not.toContain("--search");
   });
 
+  it("omits legacy credit flags from help and command discovery", async () => {
+    for (const name of ["whoami", "fund", "send", "transfer"])
+      expect(await walletCli([name, "--help"])).not.toContain("--credits");
+    const description = await walletCli(["--describe"]);
+    expect(description).not.toMatch(/--credits|credits_to|--amount-cents/);
+  });
+
   it("documents access key limit updates", async () => {
     const output = await walletCli(["keys", "update", "--help"]);
 
@@ -400,7 +407,7 @@ describe("generated CLI metadata", () => {
     const transfer = manifest.subcommands.find((command) => command.name === "transfer");
     expect(send?.about).toBe("Send tokens to an address");
     expect(transfer?.about).toBe(
-      "Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'.",
+      "Pay an MPP challenge with --mach. Token transfers moved to 'send'.",
     );
     // `send` takes the token transfer options and none of the payment modes of `transfer`.
     expect(send?.args?.flatMap((arg) => arg.long ?? [])).toEqual([

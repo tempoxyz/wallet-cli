@@ -153,11 +153,6 @@ describe("retireFlags", () => {
       message:
         "'send' sends tokens only; to pay an MPP challenge with MACH, use 'tempo wallet transfer --mach'.",
     },
-    {
-      flag: "--credits",
-      message:
-        "'send' sends tokens only; to spend legacy MPP Credits, use 'tempo wallet transfer --credits'.",
-    },
   ])("points send $flag at transfer $flag", ({ flag, message }) => {
     expect(retireFlags(["send", flag, "--dry-run", "-n", "testnet"], commands)).toEqual({
       args: ["send", "--dry-run", "-n", "testnet"],
@@ -178,18 +173,8 @@ describe("retireFlags", () => {
     });
   });
 
-  it.each([
-    // `--credits` keeps its recipient, calldata, and amount.
-    ["transfer", "--credits", "--to=0xabc", "--data=0x12", "--amount-cents=100"],
-    ["transfer", "--amount-cents=100", "--to=0xabc", "--credits=true"],
-    // MACH refuses these itself, naming its own replacements.
-    ["transfer", "--mach", "--to=0xabc", "--data=0x12"],
-  ])("leaves %j to the command", (...args) => {
-    expect(retireFlags(args, commands)).toEqual({ args });
-  });
-
   // An explicit false selects no mode, so the run is a token transfer.
-  it.each([["--credits=false"], ["--mach", "false"]])(
+  it.each([["--mach=false"], ["--mach", "false"]])(
     "refuses a token transfer's --to with %j",
     (...mode) => {
       expect(retireFlags(["transfer", "1", "USDC.e", "--to", "0xabc", ...mode], commands)).toEqual({
@@ -197,7 +182,7 @@ describe("retireFlags", () => {
         error: {
           ...usage,
           message:
-            "--to sets the MPP Credits recipient of 'tempo wallet transfer --credits'; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
+            "--to was removed; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
           ...cta(`tempo wallet send 1 USDC.e 0xabc ${mode.join(" ")}`),
         },
       });
@@ -215,7 +200,7 @@ describe("retireFlags", () => {
     {
       args: ["transfer", "1", "USDC.e", "0xabc", "--amount-cents=2", "--mach=false"],
       message:
-        "--amount-cents sets the MPP Credits amount of 'tempo wallet transfer --credits'; pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
+        "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
       command: undefined,
     },
   ])("refuses $args with the replacement for its mode", ({ args, message, command }) => {
@@ -238,8 +223,8 @@ describe("retireFlags", () => {
     });
   });
 
-  it("leaves transfer --mach and --credits to transfer", () => {
-    for (const flag of ["--mach", "--credits"])
+  it("leaves transfer --mach to transfer", () => {
+    for (const flag of ["--mach"])
       expect(retireFlags(["transfer", flag], commands)).toEqual({ args: ["transfer", flag] });
   });
 });

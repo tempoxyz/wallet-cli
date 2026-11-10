@@ -1081,11 +1081,6 @@ describe("tempo wallet send and transfer", () => {
       })),
     ),
     {
-      name: "transfer --credits without --yes redeems as before",
-      argv: ["transfer", "--credits", "--amount-cents", "100", "--to", recipient],
-      reached: "POST /api/coinflow/redeem/auth-msg",
-    },
-    {
       name: "transfer --mach without --yes settles as before",
       argv: mach,
       reached: "POST / eth_call",
@@ -1159,11 +1154,9 @@ describe("tempo wallet send and transfer", () => {
     30_000,
   );
 
-  // `send` sends tokens only; MACH and MPP Credits payments keep their `transfer` form.
+  // `send` sends tokens only; MACH payments keep their `transfer` form.
   const machMessage =
     "'send' sends tokens only; to pay an MPP challenge with MACH, use 'tempo wallet transfer --mach'.";
-  const creditsMessage =
-    "'send' sends tokens only; to spend legacy MPP Credits, use 'tempo wallet transfer --credits'.";
 
   // The `cta` runs the arguments as given under `transfer`; an explicit false selects no mode, so
   // the run is a token send, which without --yes sends nothing.
@@ -1172,10 +1165,8 @@ describe("tempo wallet send and transfer", () => {
       argv: ["--mach", "--max-spend", "1", "--mpp-challenge", machChallenge],
       message: machMessage,
     },
-    { argv: ["--amount-cents", "100", "--to", recipient, "--credits"], message: creditsMessage },
     { argv: [...tokens, "--mach=true", "--yes"], message: machMessage },
     { argv: [...tokens, "--mach", "true", "--yes"], message: machMessage },
-    { argv: [...tokens, "--credits=true"], message: creditsMessage },
     { argv: [...tokens, "--mach=false"], message: undefined },
     { argv: [...tokens, "--mach", "false"], message: undefined },
     { argv: [...tokens, "--credits=false"], message: undefined },
@@ -1209,10 +1200,10 @@ describe("tempo wallet send and transfer", () => {
   // Each legacy flag fails with what replaces it before the command parses its options or runs,
   // and its `cta` is the equivalent command when the run's arguments give one.
   const retired = {
-    to: "--to sets the MPP Credits recipient of 'tempo wallet transfer --credits'; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
-    data: "--data sets the MPP Credits calldata of 'tempo wallet transfer --credits'; a token transfer sends no calldata.",
+    to: "--to was removed; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
+    data: "--data was removed; a token transfer sends no calldata.",
     cents:
-      "--amount-cents sets the MPP Credits amount of 'tempo wallet transfer --credits'; pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
+      "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
     value: "--value was removed: transfers carry no ETH value.",
     machCents:
       "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
@@ -1248,20 +1239,11 @@ describe("tempo wallet send and transfer", () => {
       message: retired.value,
       command: cta("send", ...tokens, "--yes", ...json),
     },
+    { argv: ["transfer", ...tokens, "--value", "1"], message: retired.value },
     {
       argv: ["send", ...tokens, "--value=0x0", "--yes"],
       message: retired.value,
       command: cta("send", ...tokens, "--yes", ...json),
-    },
-    {
-      argv: ["transfer", "--credits", "--amount-cents", "100", "--to", recipient, "--value", "0"],
-      message: retired.value,
-      command: cta("transfer", "--credits", "--amount-cents=100", `--to=${recipient}`, ...json),
-    },
-    // A nonzero value has no equivalent.
-    {
-      argv: ["transfer", "--credits", "--amount-cents", "100", "--to", recipient, "--value", "1"],
-      message: retired.value,
     },
     {
       argv: ["transfer", "--mach", "--amount-cents", "2", "--mpp-challenge", machChallenge],
@@ -1339,20 +1321,6 @@ describe("tempo wallet send and transfer", () => {
     });
     expect(result.stderr).toBe("");
     expect(requests).toEqual([]);
-  });
-
-  // `--credits` still takes its recipient, calldata, and amount.
-  it("transfer --credits keeps --to, --data, and --amount-cents", async () => {
-    const home = await useTempHome();
-    await writeWalletState(walletState());
-
-    const result = await walletCli(
-      ["transfer", "--credits", "--amount-cents", "100", "--to", recipient, "--data", "0x12"],
-      { home, terminal: undefined, input: "" },
-    );
-
-    expect(requests).toContain("POST /api/coinflow/redeem/auth-msg");
-    expect(result.stdout).not.toContain("E_USAGE");
   });
 
   /**

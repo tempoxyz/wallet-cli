@@ -458,12 +458,10 @@ it("reports every address in lowercase", async () => {
     scopes: [{ address: usdc, recipients: [testWallet2] }],
   };
   mocks.getKey.mockResolvedValue({ ...published, address: testAccessKey2 });
-  mocks.fetch.mockImplementation(async (url) =>
-    String(url).includes("/api/assets")
-      ? Response.json([
-          { address: usdc, balance: "1000000", decimals: 6, symbol: "USDC.e", verified: true },
-        ])
-      : Response.json({ credits: { rawAmount: "1" } }),
+  mocks.fetch.mockResolvedValue(
+    Response.json([
+      { address: usdc, balance: "1000000", decimals: 6, symbol: "USDC.e", verified: true },
+    ]),
   );
   await writeWalletState(walletState({ accessKeys: [mixedCaseKey] }));
 
@@ -471,7 +469,6 @@ it("reports every address in lowercase", async () => {
     await whoami([mixedCaseKey]),
     await currentKeysOutput({ walletAddress: testWallet, accessKeys: [mixedCaseKey] }),
     await whoamiHandler({ mach: true }),
-    await whoamiHandler({ credits: true }),
   ];
 
   const shown = addresses(outputs);

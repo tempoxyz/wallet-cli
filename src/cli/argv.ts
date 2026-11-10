@@ -175,7 +175,7 @@ export type RetiredFlag = {
    * stripped without an error.
    */
   takesValue?: boolean | undefined;
-  /** Flags under which the command still takes it, as `--credits` keeps the credits `--to`. */
+  /** Flags under which the command handles it separately, such as `--mach`. */
   unless?: readonly `--${string}`[] | undefined;
   /** Flags under which alone it is retired, as `--amount-cents` is with `--mach`. */
   when?: readonly `--${string}`[] | undefined;

@@ -14,6 +14,7 @@ import {
   requireWalletAddress,
 } from "../shared/mach.js";
 import { openExternal } from "../shared/process.js";
+import { creditsFlag } from "../shared/retired-flags.js";
 import { tokenSymbol } from "../shared/tokens.js";
 import { loadWalletState } from "../wallet/store.js";
 
@@ -27,7 +28,6 @@ export default {
     async run({ globals, options }) {
       return runFundingFlow({
         action: fundAction({
-          credits: options.credits,
           mach: options.mach,
           crypto: options.crypto,
           referralCode: options["referral-code"],
@@ -45,6 +45,7 @@ export default {
     fund: { ...nonDestructive, idempotentHint: false, openWorldHint: true },
   },
   retiredFlags: [
+    creditsFlag,
     {
       flag: "--wait",
       mcp: true,
@@ -87,7 +88,7 @@ export default {
   ],
 } satisfies WalletCommand;
 
-export type FundAction = "fund" | "mach" | "crypto" | "credits" | "claim";
+export type FundAction = "fund" | "mach" | "crypto" | "claim";
 
 /** Opens or returns the funding URL without reading balances or tracking a checkout. */
 export async function runFundingFlow(options: {
@@ -98,7 +99,6 @@ export async function runFundingFlow(options: {
   network?: string | undefined;
   noBrowser?: boolean | undefined;
 }) {
-  if (options.action === "credits") throw creditsFundingError();
   const action = options.action;
   const state = await loadWalletState();
   const network = await resolveNetwork(options.network, state);
@@ -140,11 +140,9 @@ export async function runFundingFlow(options: {
 
 export function fundAction(options: {
   mach?: boolean | undefined;
-  credits?: boolean | undefined;
   crypto?: boolean | undefined;
   referralCode?: string | undefined;
 }): FundAction {
-  if (options.credits) throw creditsFundingError();
   if (options.mach && (options.crypto || options.referralCode))
     throw usageError("--mach cannot be combined with --crypto or --referral-code");
   if (options.mach) return "mach";
@@ -163,7 +161,6 @@ export function fundUrl(
     code?: string | undefined;
   } = {},
 ) {
-  if (action === "credits") throw creditsFundingError();
   const url = new URL("/agent", appUrl);
   if (action === "claim" && options.code) url.searchParams.set("claim", options.code);
   else {
@@ -182,10 +179,4 @@ export function fundUrl(
     url.searchParams.set("amount", options.amount);
   }
   return url.toString();
-}
-
-function creditsFundingError() {
-  return usageError(
-    "MPP Credits can no longer be purchased. Use 'tempo wallet fund --mach' to buy MACH instead.",
-  );
 }

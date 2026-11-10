@@ -38,19 +38,6 @@ afterEach(() => {
 });
 
 describe("MACH funding", () => {
-  it("rejects legacy credit funding before wallet, RPC, or browser access", async () => {
-    mocks.state.mockClear();
-    const fetch = vi.spyOn(globalThis, "fetch");
-    await expect(runFundingFlow({ action: "credits" })).rejects.toMatchObject({
-      code: "E_USAGE",
-      message: expect.stringContaining("tempo wallet fund --mach"),
-    });
-    expect(() => fundUrl("credits")).toThrow("tempo wallet fund --mach");
-    expect(mocks.state).not.toHaveBeenCalled();
-    expect(mocks.readContract).not.toHaveBeenCalled();
-    expect(mocks.open).not.toHaveBeenCalled();
-    expect(fetch).not.toHaveBeenCalled();
-  });
   it.each(["4.99", "100.01", "5.001"])(
     "rejects unsupported MACH checkout amount %s",
     async (amount) => {

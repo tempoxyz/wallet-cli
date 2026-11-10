@@ -9,7 +9,6 @@ export const fundOptions = z.object({
   browser: browserOption,
   crypto: z.boolean().optional().describe("Open the direct crypto funding flow"),
   mach: z.boolean().optional().describe("Open the MACH funding flow"),
-  credits: z.boolean().optional().describe("Unavailable; use --mach to buy MACH"),
   amount: z
     .string()
     .optional()

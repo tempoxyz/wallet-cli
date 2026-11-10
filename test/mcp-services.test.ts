@@ -68,41 +68,26 @@ describe("MCP tools", () => {
     await useTempHome();
   });
 
-  it("accepts a direct credits recipient through MCP", async () => {
-    await useTempHome();
-    await writeWalletState(walletState());
-    const response = await mcpCall({
-      name: "transfer",
-      arguments: {
-        credits: true,
-        "amount-cents": 1,
-        to: testWallet,
-        "dry-run": true,
-      },
-    });
-
-    expect(response.error).toBeUndefined();
-    expect(response.result.isError).not.toBe(true);
-    expect(JSON.parse(firstToolText(response))).toMatchObject({
-      wallet: testWallet.toLowerCase(),
-      amount_cents: 1,
-      to: testWallet.toLowerCase(),
-      status: "dry_run",
-    });
-  });
-
-  it.each([{ amount: "1" }, { token: "0x1111111111111111111111111111111111111111" }])(
-    "rejects token transfer arguments with credits through MCP: %j",
+  it.each([{ amount: "1" }, { token: usdc }, { to: testWallet }])(
+    "refuses leftover direct-transfer arguments with MACH: %j",
     async (args) => {
-      await useTempHome();
-      const response = await mcpCall({
-        name: "transfer",
-        arguments: { credits: true, "amount-cents": 1, to: testWallet, "dry-run": true, ...args },
-      });
-
-      expect(response.error).toBeUndefined();
-      expect(response.result.isError).toBe(true);
-      expect(firstToolText(response)).toContain("Positional amount, token, and recipient");
+      await writeWalletState(walletState());
+      const host = await recordingHost();
+      vi.stubEnv("TEMPO_AUTH_URL", host.url);
+      vi.stubEnv("TEMPO_RPC_URL", host.url);
+      try {
+        const response = await mcpCall({
+          name: "transfer",
+          arguments: { mach: true, "mpp-challenge": "ignored", "max-spend": "1", ...args },
+        });
+        expect(response.result.isError).toBe(true);
+        expect(firstToolText(response)).toContain(
+          "Positional transfer arguments cannot be used with --mach; supply an MPP challenge",
+        );
+        expect(host.requests).toEqual([]);
+      } finally {
+        await host.close();
+      }
     },
   );
 
@@ -139,7 +124,7 @@ describe("MCP tools", () => {
     const transfer = tool("transfer")!.inputSchema;
     expect(tool("send")?.description).toBe("Send tokens to an address");
     expect(tool("transfer")?.description).toBe(
-      "Pay an MPP challenge with --mach or --credits. Token transfers moved to 'send'.",
+      "Pay an MPP challenge with --mach. Token transfers moved to 'send'.",
     );
     expect(send.required).toEqual(["amount", "token", "to"]);
     expect(transfer.required).toBeUndefined();
@@ -165,6 +150,21 @@ describe("MCP tools", () => {
 
   // A retired argument stays in its tool's schema for a release, refused with the CLI's message.
   it.each([
+    ...["fund", "whoami", "transfer", "send"].map((name) => ({
+      name,
+      arguments: { credits: true, amount: "1", token: usdc, to: testWallet, yes: true },
+      message: "--credits was removed. Use on-chain token balances and payments.",
+    })),
+    {
+      name: "transfer",
+      arguments: { credits: true, "amount-cents": 1, to: testWallet, "dry-run": true },
+      message: "--credits was removed. Use on-chain token balances and payments.",
+    },
+    {
+      name: "transfer",
+      arguments: { credits: true, mach: true, "mpp-challenge": "x", "max-spend": "1" },
+      message: "--credits was removed. Use on-chain token balances and payments.",
+    },
     {
       name: "fund",
       arguments: { wait: true, browser: false },
@@ -179,7 +179,7 @@ describe("MCP tools", () => {
     },
     {
       name: "transfer",
-      arguments: { credits: true, "amount-cents": 1, to: testWallet, value: "0" },
+      arguments: { amount: "1", token: usdc, to: testWallet, value: "0" },
       message: "--value was removed: transfers carry no ETH value.",
     },
     {
@@ -192,20 +192,20 @@ describe("MCP tools", () => {
       name: "transfer",
       arguments: { mach: true, "amount-cents": 2, "mpp-challenge": "x", "dry-run": true },
       message:
-        "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
+        "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
     },
     {
       name: "transfer",
       arguments: { mach: true, "amount-cents": 1, "max-spend": "100", "mpp-challenge": "x" },
       message:
-        "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
+        "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
       // The caps conflict, so no command picks one.
       cta: false,
     },
     // A value-taking argument is refused whatever its value, false included.
     {
       name: "transfer",
-      arguments: { credits: true, "amount-cents": 1, to: testWallet, value: false },
+      arguments: { amount: "1", token: usdc, to: testWallet, value: false },
       message: "--value was removed: transfers carry no ETH value.",
     },
     {
@@ -214,18 +214,17 @@ describe("MCP tools", () => {
       message:
         "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
     },
-    // A token transfer takes none of the credits options it used to ignore.
+    // A token transfer refuses removed payment options instead of ignoring them.
     {
       name: "transfer",
       arguments: { amount: "1", token: "USDC.e", to: testWallet, data: "0x12", yes: true },
-      message:
-        "--data sets the MPP Credits calldata of 'tempo wallet transfer --credits'; a token transfer sends no calldata.",
+      message: "--data was removed; a token transfer sends no calldata.",
     },
     {
       name: "transfer",
       arguments: { amount: "1", token: "USDC.e", to: testWallet, "amount-cents": 100, yes: true },
       message:
-        "--amount-cents sets the MPP Credits amount of 'tempo wallet transfer --credits'; pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
+        "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
     },
   ])("refuses $name $arguments and sends nothing", async ({ name, arguments: args, ...row }) => {
     await writeWalletState(walletState());
@@ -287,6 +286,10 @@ describe("MCP tools", () => {
 
     const property = (tool: string, name: string) =>
       response.result.tools.find((item) => item.name === tool)?.inputSchema.properties[name];
+    for (const tool of ["fund", "whoami", "transfer", "send"])
+      expect(property(tool, "credits")?.description).toBe(
+        "Removed: --credits was removed. Use on-chain token balances and payments.",
+      );
     expect(property("transfer", "value")?.description).toBe(
       "Removed: --value was removed: transfers carry no ETH value.",
     );
