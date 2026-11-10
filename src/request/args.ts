@@ -9,6 +9,7 @@ import { explicitNetwork } from "../shared/network.js";
 import { listedSymbol, resolveTokenAddress } from "../shared/tokens.js";
 import { privateKeySigner, requestNetwork } from "./identity.js";
 import { isMachPaymentToken } from "./mach.js";
+import { fundingSetting, parseMaxSlippageBps } from "./funding-mode.js";
 import type { PaymentIntent, RequestOptions } from "./options.js";
 import { resolveMaxSpend } from "./spend.js";
 
@@ -55,6 +56,18 @@ export function parseRequestArgs(argv: readonly string[]): RequestOptions {
         break;
       case "--mach":
         options.mach = true;
+        break;
+      case "--funding":
+        options.funding = requireValue(argv, ++index, arg);
+        break;
+      case "--max-funding-spend":
+        options.maxFundingSpend = requireValue(argv, ++index, arg);
+        break;
+      case "--payment-network":
+        options.paymentNetwork = requireValue(argv, ++index, arg);
+        break;
+      case "--max-slippage-bps":
+        options.maxSlippageBps = Number(requireValue(argv, ++index, arg));
         break;
       case "--payment-token":
         options.paymentToken = requireValue(argv, ++index, arg);
@@ -215,6 +228,12 @@ export function validateRequestOptions(options: RequestOptions) {
   validateUrl(options.url);
   options.network = explicitNetwork(options.network)?.name;
   options.maxSpend = resolveMaxSpend(options.maxSpend);
+  fundingSetting(options.funding);
+  if (options.maxFundingSpend !== undefined && !/^\d+(?:\.\d{1,6})?$/.test(options.maxFundingSpend))
+    throw usageError(
+      "--max-funding-spend must be a non-negative amount with at most 6 decimal places",
+    );
+  parseMaxSlippageBps(options.maxSlippageBps);
   privateKeySigner(options);
   if (options.mach) {
     if (options.paymentToken !== undefined && !isMachPaymentToken(options.paymentToken))

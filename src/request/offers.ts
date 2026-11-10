@@ -1,0 +1,176 @@
+import type { Payment } from "machine-fetch";
+import { MppxFetch } from "machine-fetch/mppx";
+import { Challenge } from "mppx";
+import { Transport } from "mppx/client";
+import { Header as X402Header, Types as X402 } from "mppx/x402";
+import { isAddress } from "viem";
+
+import { type Destination, destinations } from "../shared/chains.js";
+import { escapeInvisible, getRecord, stringValue } from "../shared/utils.js";
+import { requestNetwork } from "./identity.js";
+import type { RequestOptions } from "./options.js";
+
+/**
+ * A payable EVM offer (Phase 3): a native MPP `evm` charge or an x402 `exact` payment, on a chain in
+ * the destination table and in that chain's USDC. Server-supplied fields never add a chain or a
+ * token: an offer anywhere else is refused, with the reason in `refused`.
+ */
+export type EvmOffer = {
+  kind: "mpp" | "x402";
+  /** The offer as Mppx parses it; x402 offers are Mppx's synthesized challenges. */
+  challenge: Challenge.Challenge;
+  destination: Destination;
+  requirement: Payment.Requirement;
+  /** A 402 response carrying exactly this offer, for credential creation. */
+  response: Response;
+};
+
+/** The EVM offers in a 402, and why each other EVM or x402 offer cannot be paid. */
+export function evmOffers(response: Response, options: RequestOptions) {
+  const table = destinations(requestNetwork(options).chainId);
+  const offers: EvmOffer[] = [];
+  const refused: string[] = [];
+  // Parse each wire format on its own, so an offer's kind comes from the header it arrived in, never
+  // from its server-chosen id: a native challenge whose id mimics a synthesized x402 one would
+  // otherwise be checked by policy while a different PAYMENT-REQUIRED entry is signed.
+  let challenges: { challenge: Challenge.Challenge; kind: "mpp" | "x402" }[];
+  try {
+    challenges = [
+      ...wireChallenges(response, "www-authenticate").map((challenge) => ({
+        challenge,
+        kind: "mpp" as const,
+      })),
+      ...wireChallenges(response, X402.paymentRequiredHeader).map((challenge) => ({
+        challenge,
+        kind: "x402" as const,
+      })),
+    ];
+  } catch {
+    return { offers, refused: ["the payment challenges are malformed"] };
+  }
+  for (const { challenge, kind } of challenges) {
+    if (challenge.method !== X402.paymentMethod || challenge.intent !== "charge") continue;
+    const refuse = (reason: string) => refused.push(`${kind} offer: ${reason}`);
+    if (kind !== (challenge.id.startsWith(X402.syntheticChallengeIdPrefix) ? "x402" : "mpp")) {
+      refuse("its challenge id does not match the header it was offered in");
+      continue;
+    }
+    let requirement: Payment.Requirement;
+    try {
+      requirement = MppxFetch.requirement(challenge);
+    } catch (error) {
+      refuse(error instanceof Error ? error.message : "malformed");
+      continue;
+    }
+    if (kind === "x402" && requirement.method !== "exact") {
+      refuse(`unsupported x402 scheme ${escapeInvisible(requirement.method)}`);
+      continue;
+    }
+    const destination = table.find((entry) => entry.network === requirement.network);
+    if (!destination) {
+      refuse(`${escapeInvisible(requirement.network)} is not a chain the CLI pays on`);
+      continue;
+    }
+    if (requirement.asset.toLowerCase() !== destination.usdc.address.toLowerCase()) {
+      refuse(`${escapeInvisible(requirement.asset)} is not USDC on ${destination.name}`);
+      continue;
+    }
+    // x402 signs the EIP-3009 domain the server names; only the token's own domain is signed.
+    const extra = getRecord(getRecord(requirement.metadata).extra);
+    if (
+      kind === "x402" &&
+      (extra.name !== destination.usdc.name || extra.version !== destination.usdc.version)
+    ) {
+      refuse(`its EIP-3009 domain is not ${destination.name} USDC's`);
+      continue;
+    }
+    if (!requirement.recipient || !isAddress(requirement.recipient, { strict: false })) {
+      refuse("missing a valid recipient address");
+      continue;
+    }
+    // Refuse what the signer cannot sign here, before any funding is bridged for it.
+    const methodDetails = getRecord(getRecord(challenge.request).methodDetails);
+    if (Array.isArray(methodDetails.splits) && methodDetails.splits.length > 0) {
+      refuse("it splits the payment across recipients, which the CLI cannot sign");
+      continue;
+    }
+    if (
+      kind === "mpp" &&
+      !(
+        Array.isArray(methodDetails.credentialTypes) &&
+        methodDetails.credentialTypes.includes("authorization")
+      )
+    ) {
+      refuse("it does not accept an EIP-3009 authorization, the only credential the CLI signs");
+      continue;
+    }
+    if (kind === "x402" && (extra.assetTransferMethod ?? "eip3009") !== "eip3009") {
+      refuse(
+        `it uses ${escapeInvisible(String(extra.assetTransferMethod))}, but the CLI signs only EIP-3009`,
+      );
+      continue;
+    }
+    if (
+      challenge.expires &&
+      (!Number.isFinite(Date.parse(challenge.expires)) ||
+        Date.parse(challenge.expires) <= Date.now())
+    ) {
+      refuse("expired or has an invalid expiry");
+      continue;
+    }
+    offers.push({
+      kind,
+      challenge,
+      destination,
+      requirement,
+      response: offerResponse(response, challenge, kind),
+    });
+  }
+  return { offers, refused };
+}
+
+/** The challenges a 402 offers in one header alone, as Mppx parses them. */
+function wireChallenges(response: Response, header: string) {
+  const value = response.headers.get(header);
+  if (!value) return [];
+  const headers = new Headers({ [header]: value });
+  return Transport.http().getChallenges(
+    new Response(null, { status: response.status, headers }),
+  ) as Challenge.Challenge[];
+}
+
+/** Whether a 402 offers a Tempo payment the existing Tempo path can consider. */
+export function offersTempo(response: Response) {
+  const header = response.headers.get("www-authenticate");
+  if (!header) return false;
+  try {
+    return Challenge.deserializeList(header).some((challenge) => challenge.method === "tempo");
+  } catch {
+    return false;
+  }
+}
+
+/** A 402 carrying only `challenge`, in the wire format it was offered in. */
+function offerResponse(response: Response, challenge: Challenge.Challenge, kind: "mpp" | "x402") {
+  const headers = new Headers();
+  if (kind === "mpp") headers.set("www-authenticate", Challenge.serialize(challenge));
+  else {
+    const envelope = X402Header.decodePaymentRequiredEnvelope(
+      response.headers.get(X402.paymentRequiredHeader) ?? "",
+    );
+    const index = Number(challenge.id.slice(X402.syntheticChallengeIdPrefix.length));
+    headers.set(
+      X402.paymentRequiredHeader,
+      X402Header.encodePaymentRequired({
+        ...envelope,
+        accepts: [envelope.accepts[index]],
+      } as never),
+    );
+  }
+  return new Response(null, { status: 402, headers });
+}
+
+/** The header a credential for `offer` is sent in. */
+export function credentialHeader(offer: Pick<EvmOffer, "kind">) {
+  return offer.kind === "x402" ? X402.paymentSignatureHeader : "authorization";
+}
