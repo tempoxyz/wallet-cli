@@ -327,6 +327,13 @@ describe("a MACH route that does not simulate for the first offer's currency", (
       return { data: "0x" };
     });
   }
+  /** The currency each simulated MACH route swapped into, in order. */
+  function simulatedTargets() {
+    return vi.mocked(call).mock.calls.map(([, parameters]) => {
+      const data = (parameters as { calls: { data: `0x${string}` }[] }).calls[1]!.data;
+      return String(decodeFunctionData({ abi: swapAbi, data }).args[2]).toLowerCase();
+    });
+  }
   const first = offer({ currency: unlistedToken }, { id: "first" });
   const second = offer({}, { id: "second" });
 
@@ -353,6 +360,11 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     });
 
     expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(second);
+    // The first offer's route is simulated by the SDK and re-checked once; the same-currency
+    // offer is never simulated.
+    expect(
+      simulatedTargets().filter((target) => target === unlistedToken.toLowerCase()),
+    ).toHaveLength(2);
   });
 
   it("tries a cheaper offer in a currency whose route failed at a larger amount", async () => {
@@ -402,15 +414,18 @@ describe("a MACH route that does not simulate for the first offer's currency", (
 
   it("reports the first offer's failure, without signing, when no route simulates", async () => {
     emptyBooks(unlistedToken, usdcToken);
-    const service = await server([first, second]);
+    const cheaper = offer({ amount: "14000" }, { id: "cheaper" });
+    const service = await server([first, cheaper]);
 
     const error = await runRequest(["--mach", "--max-spend", "0.015", service.url]).catch(
       (value: unknown) => value,
     );
 
+    // The second offer was tried, but the error is the first offer's, for its 0.015 MACH.
+    expect(simulatedTargets()).toContain(usdcToken.toLowerCase());
     expect(error).toMatchObject({
       code: "E_PAYMENT",
-      message: expect.stringContaining("could not be simulated"),
+      message: expect.stringContaining("swap route for 0.015 MACH could not be simulated"),
     });
     expect(service.paid).toEqual([]);
     expect(signTransaction).not.toHaveBeenCalled();
@@ -485,6 +500,11 @@ describe("a MACH route that does not simulate for the first offer's currency", (
 
     expect(error).toMatchObject({ code: "E_INSUFFICIENT_FUNDS" });
     expect(service.paid).toEqual([]);
+    // One offer's reads (the SDK's and the CLI's): the shortfall stops the search there.
+    const balanceReads = vi
+      .mocked(readContract)
+      .mock.calls.filter(([, parameters]) => parameters.functionName === "balanceOf");
+    expect(balanceReads).toHaveLength(2);
   });
 });
 
