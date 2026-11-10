@@ -173,8 +173,22 @@ describe("retireFlags", () => {
     });
   });
 
+  it.each([["--mach"], ["--mach=true"], ["--mach", "true"]])(
+    "refuses transfer --to with %j without suggesting a token send",
+    (...mode) => {
+      expect(retireFlags(["transfer", ...mode, "1", "USDC.e", "--to", "0xabc"], commands)).toEqual({
+        args: ["transfer", ...mode, "1", "USDC.e"],
+        error: {
+          ...usage,
+          message:
+            "--to was removed; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
+        },
+      });
+    },
+  );
+
   // An explicit false selects no mode, so the run is a token transfer.
-  it.each([["--mach=false"], ["--mach", "false"]])(
+  it.each([["--mach=false"], ["--mach", "false"], ["--no-mach"]])(
     "refuses a token transfer's --to with %j",
     (...mode) => {
       expect(retireFlags(["transfer", "1", "USDC.e", "--to", "0xabc", ...mode], commands)).toEqual({

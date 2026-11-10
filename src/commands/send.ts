@@ -1,6 +1,6 @@
 import { Cli, type z } from "incur";
 
-import { operandIndexes, type RetiredFlag } from "../cli/argv.js";
+import { flagSet, operandIndexes, type RetiredFlag } from "../cli/argv.js";
 import { destructive, type WalletCommand } from "../cli/command.js";
 import { sendArgs, sendOptions, sendOutput } from "../schemas/send.js";
 import { transferOptions } from "../schemas/transfer.js";
@@ -87,10 +87,11 @@ const transferOnly = Object.keys(transferOptions.shape)
   .filter((flag) => !(paymentModes as readonly string[]).includes(flag));
 
 /**
- * `send` with `args`, or `undefined` when they hold an option only `transfer` takes, so a `cta`
- * is never a `send` that fails on an unknown flag.
+ * `send` with `args`, or `undefined` when they select a mode or option only `transfer` takes,
+ * so a `cta` is never a `send` that refuses the given flags.
  */
 export function sendArgv(args: readonly string[]) {
+  if (flagSet(args, "--mach")) return undefined;
   const transferOption = args.some((arg) =>
     transferOnly.some(
       (flag) => arg === flag || arg.startsWith(`${flag}=`) || arg === `--no-${flag.slice(2)}`,
