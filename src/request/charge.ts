@@ -140,6 +140,12 @@ function nextMachCharge(
       );
     });
   };
+  // `tempo request` always signs pull-mode credentials, which the SDK refuses for an offer whose
+  // supportedModes leave pull out.
+  const supportsPull = (offer: Challenge.Challenge) => {
+    const modes = getRecord(offer.request.methodDetails).supportedModes;
+    return !Array.isArray(modes) || modes.includes("pull");
+  };
   const [first] = tried;
   const recipient = (challenge: Challenge.Challenge) =>
     stringValue(challenge.request.recipient).toLowerCase();
@@ -161,7 +167,13 @@ function nextMachCharge(
     return undefined;
   }
   for (const offer of offers) {
-    if (offer.intent !== "charge" || failedAtOrBelow(offer) || !withinFirst(offer)) continue;
+    if (
+      offer.intent !== "charge" ||
+      !supportsPull(offer) ||
+      failedAtOrBelow(offer) ||
+      !withinFirst(offer)
+    )
+      continue;
     const headers = new Headers(selectedResponse.headers);
     headers.set("www-authenticate", Challenge.serialize(offer));
     try {

@@ -382,6 +382,24 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     expect(service.paid).toEqual([]);
   });
 
+  it("skips a push-only offer for a later one the CLI can pay", async () => {
+    emptyBooks(unlistedToken);
+    const pushOnly = offer(
+      {
+        currency: moderatoToken,
+        methodDetails: { chainId: 4217, machineTokenEnabled: true, supportedModes: ["push"] },
+      },
+      { id: "push-only" },
+    );
+    const service = await server([first, pushOnly, second]);
+
+    await runRequest(["--mach", "--max-spend", "0.015", service.url], {
+      stdout: { write: () => true },
+    });
+
+    expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(second);
+  });
+
   it("reports the first offer's failure, without signing, when no route simulates", async () => {
     emptyBooks(unlistedToken, usdcToken);
     const service = await server([first, second]);
