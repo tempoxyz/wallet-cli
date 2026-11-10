@@ -14,7 +14,6 @@ import {
   requireWalletAddress,
 } from "../shared/mach.js";
 import { openExternal } from "../shared/process.js";
-import { creditsFlag } from "../shared/retired-flags.js";
 import { tokenSymbol } from "../shared/tokens.js";
 import { loadWalletState } from "../wallet/store.js";
 
@@ -45,7 +44,6 @@ export default {
     fund: { ...nonDestructive, idempotentHint: false, openWorldHint: true },
   },
   retiredFlags: [
-    creditsFlag,
     {
       flag: "--wait",
       mcp: true,

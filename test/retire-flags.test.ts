@@ -147,81 +147,24 @@ describe("retireFlags", () => {
     expect(retireFlags(["demo", "--gone"], demo)).toEqual({ args: ["demo", "--gone"] });
   });
 
-  it.each([
-    {
-      flag: "--mach",
-      message:
-        "'send' sends tokens only; to pay an MPP challenge with MACH, use 'tempo wallet transfer --mach'.",
-    },
-  ])("points send $flag at transfer $flag", ({ flag, message }) => {
-    expect(retireFlags(["send", flag, "--dry-run", "-n", "testnet"], commands)).toEqual({
-      args: ["send", "--dry-run", "-n", "testnet"],
-      error: { ...usage, message, ...cta(`tempo wallet transfer ${flag} --dry-run -n testnet`) },
-    });
-  });
-
-  it.each([
-    ["--mach=false"],
-    ["--mach", "false"],
-    ["--no-mach"],
-    ["--credits=false"],
-    ["--credits", "false"],
-    ["--no-credits"],
-  ])("runs send %j as a token send", (...flag) => {
-    expect(retireFlags(["send", "1", "USDC.e", "0xabc", ...flag, "--yes"], commands)).toEqual({
-      args: ["send", "1", "USDC.e", "0xabc", "--yes"],
-    });
-  });
-
-  it.each([["--mach"], ["--mach=true"], ["--mach", "true"]])(
-    "refuses transfer --to with %j without suggesting a token send",
-    (...mode) => {
-      expect(retireFlags(["transfer", ...mode, "1", "USDC.e", "--to", "0xabc"], commands)).toEqual({
-        args: ["transfer", ...mode, "1", "USDC.e"],
-        error: {
-          ...usage,
-          message:
-            "--to was removed; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
-        },
-      });
-    },
-  );
-
-  // An explicit false selects no mode, so the run is a token transfer.
-  it.each([["--mach=false"], ["--mach", "false"], ["--no-mach"]])(
-    "refuses a token transfer's --to with %j",
-    (...mode) => {
-      expect(retireFlags(["transfer", "1", "USDC.e", "--to", "0xabc", ...mode], commands)).toEqual({
-        args: ["transfer", "1", "USDC.e", ...mode],
-        error: {
-          ...usage,
-          message:
-            "--to was removed; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
-          ...cta(`tempo wallet send 1 USDC.e 0xabc ${mode.join(" ")}`),
-        },
-      });
-    },
-  );
-
-  // `--amount-cents` is the MACH cap only with `--mach`, and a token amount otherwise.
-  it.each([
-    {
-      args: ["transfer", "--mach", "--amount-cents=2"],
-      message:
-        "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
-      command: "tempo wallet transfer --mach --max-spend 0.02",
-    },
-    {
-      args: ["transfer", "1", "USDC.e", "0xabc", "--amount-cents=2", "--mach=false"],
-      message:
-        "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
-      command: undefined,
-    },
-  ])("refuses $args with the replacement for its mode", ({ args, message, command }) => {
-    expect(retireFlags(args, commands)).toEqual({
-      args: args.filter((arg) => arg !== "--amount-cents=2"),
-      error: { ...usage, message, ...(command ? cta(command) : {}) },
-    });
+  it.each(["send", "transfer"])("leaves %s options to the command parser", (command) => {
+    for (const flags of [
+      ["--mach"],
+      ["--mach=false"],
+      ["--mach", "false"],
+      ["--no-mach"],
+      ["--credits"],
+      ["--credits=false"],
+      ["--credits", "false"],
+      ["--no-credits"],
+      ["--to", "0xabc"],
+      ["--data", "0x12"],
+      ["--amount-cents", "2"],
+      ["--value", "0"],
+    ]) {
+      const args = [command, ...flags];
+      expect(retireFlags(args, commands)).toEqual({ args });
+    }
   });
 
   // A retired flag's value is no subcommand, though it is named like one.
@@ -235,10 +178,5 @@ describe("retireFlags", () => {
         ...cta("tempo wallet fund --referral-code status"),
       },
     });
-  });
-
-  it("leaves transfer --mach to transfer", () => {
-    for (const flag of ["--mach"])
-      expect(retireFlags(["transfer", flag], commands)).toEqual({ args: ["transfer", flag] });
   });
 });

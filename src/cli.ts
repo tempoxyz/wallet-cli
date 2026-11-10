@@ -12,6 +12,7 @@ import {
   ctaErrors,
   humanRun,
   retiredFundStatusError,
+  transferArgumentsError,
   serveHuman,
 } from "./cli/incur-compat.js";
 import { serveMcp } from "./cli/mcp.js";
@@ -64,7 +65,7 @@ async function main() {
     normalizeServicesArgs(expandHelp(bindCommandOptions(rawArgs, mounted))),
     commands,
   );
-  const error = retiredFlagError ?? retiredFundStatusError(args);
+  const error = retiredFlagError ?? retiredFundStatusError(args) ?? transferArgumentsError(args);
 
   if (handleBuiltinSchema(args)) process.exit(0);
 

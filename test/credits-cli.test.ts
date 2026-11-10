@@ -8,7 +8,6 @@ import { cliBundle } from "./cli-bundle.js";
 
 import { useTempHome, walletState, writeWalletState } from "./helpers.js";
 import { usdcToken } from "../src/shared/constants.js";
-import { shellQuote } from "../src/shared/next.js";
 import { transferOptions, transferOutput } from "../src/schemas/transfer.js";
 import { whoamiOptions, whoamiOutput } from "../src/schemas/whoami.js";
 import { fundOptions } from "../src/schemas/fund.js";
@@ -36,15 +35,15 @@ afterEach(() => vi.unstubAllEnvs());
 describe("removed credits", () => {
   it.each([
     ["whoami", "--credits"],
-    ["whoami", "--mach", "--credits"],
     ["fund", "--credits"],
-    ["fund", "--credits", "--mach"],
     ["fund", "--credits", "--crypto"],
     ["fund", "--credits", "--referral-code", "CODE"],
-    ["transfer", "--credits", "--amount-cents", "100", "--to", recipient],
+    ["transfer", "--credits", "--mpp-challenge", "ignored"],
     ["transfer", "--credits", "--mpp-challenge", "ignored", "--dry-run"],
-    ["transfer", "--credits", "--mach", "--mpp-challenge", "ignored"],
-    ["transfer", "1", usdcToken, recipient, "--credits", "--yes"],
+    ["transfer", "--mach=false", "--mpp-challenge", "ignored"],
+    ["transfer", "--mach", "false", "--mpp-challenge", "ignored"],
+    ["transfer", "--no-mach", "--mpp-challenge", "ignored"],
+    ["transfer", "--credits=false", "--mpp-challenge", "ignored"],
     ["send", "1", usdcToken, recipient, "--credits=true", "--yes"],
   ])("refuses %j before any request or fallback payment", async (...args) => {
     await useTempHome();
@@ -62,12 +61,8 @@ describe("removed credits", () => {
     vi.stubEnv("TEMPO_RPC_URL", url);
     try {
       const result = await cli(args);
-      expect(result.code).toBe(2);
-      expect(JSON.parse(result.stdout)).toEqual({
-        code: "E_USAGE",
-        message: "--credits was removed. Use on-chain token balances and payments.",
-        retryable: false,
-      });
+      expect(result.code).not.toBe(0);
+      expect(JSON.parse(result.stdout).code).toMatch(/^(UNKNOWN|E_USAGE)$/);
       expect(result.stderr).toBe("");
       expect(requests).toEqual([]);
     } finally {
@@ -97,27 +92,14 @@ describe("removed credits", () => {
     ).toBe(false);
   });
 
-  it.each([
-    ["--mach", "true", "1", usdcToken, recipient],
-    ["--mach", "true", "true"],
-    ["--mach", "--mpp-client-id", "--mach", "true"],
-  ])("still refuses positional arguments in %j", async (...args) => {
+  it("refuses positional token arguments instead of selecting another payment mode", async () => {
     await useTempHome();
-    const result = await cli(["transfer", ...args]);
+    const result = await cli(["transfer", "1", usdcToken, recipient, "--mpp-challenge", "ignored"]);
     expect(result.code).toBe(2);
-    expect(JSON.parse(result.stdout)).toEqual({
-      code: "E_USAGE",
-      message: "Positional transfer arguments cannot be used with --mach; supply an MPP challenge",
-      retryable: false,
-    });
+    expect(JSON.parse(result.stdout).message).toContain("use 'tempo wallet send'");
   });
 
-  it.each([
-    { source: "transfer", mode: ["--mach"] },
-    { source: "transfer", mode: ["--mach=true"] },
-    { source: "transfer", mode: ["--mach", "true"] },
-    { source: "send", mode: ["--mach", "true"] },
-  ])("keeps MACH challenge-file payments from $source with $mode", async ({ source, mode }) => {
+  it("pays MACH challenges without a mode flag", async () => {
     const home = await useTempHome();
     await writeWalletState(walletState());
     const file = resolve(home, "challenge.txt");
@@ -133,18 +115,7 @@ describe("removed credits", () => {
       file,
       `WWW-Authenticate: Payment realm="example", method="tempo", intent="charge", id="abc123", expires="2099-01-01T00:00:00Z", request="${request}"`,
     );
-    const args = [...mode, "--mpp-challenge-file", file, "--dry-run"];
-    if (source === "send") {
-      const result = await cli([source, ...args]);
-      expect(result.code).toBe(2);
-      expect(JSON.parse(result.stdout).cta.commands).toEqual([
-        {
-          command: ["tempo", "wallet", "transfer", ...args, "--format", "json"]
-            .map(shellQuote)
-            .join(" "),
-        },
-      ]);
-    }
+    const args = ["--mpp-challenge-file", file, "--max-spend", "1", "--dry-run"];
     const mach = await cli(["transfer", ...args]);
     expect(mach.code).toBe(0);
     expect(JSON.parse(mach.stdout)).toMatchObject({
@@ -153,5 +124,6 @@ describe("removed credits", () => {
       status: "dry_run",
     });
     expect(mach.stderr).toBe("");
+    expect(JSON.parse(mach.stdout)._next.argv).not.toContain("--mach");
   });
 });

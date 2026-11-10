@@ -277,10 +277,9 @@ const machChallenge = `Payment realm="example", method="tempo", intent="charge",
 // Payments sign with the local access key, so agent runs need a usable one.
 const keyCommands = [
   { command: "send", argv: ["send", "1", usdcToken, recipient, "--dry-run"] },
-  { command: "transfer", argv: ["transfer", "1", usdcToken, recipient, "--dry-run"] },
   {
-    command: "transfer --mach",
-    argv: ["transfer", "--mach", "--max-spend", "1", "--mpp-challenge", machChallenge, "--dry-run"],
+    command: "transfer",
+    argv: ["transfer", "--max-spend", "1", "--mpp-challenge", machChallenge, "--dry-run"],
   },
   { command: "swap", argv: ["swap", "1", usdcToken, moderatoToken, "--dry-run"] },
 ];
@@ -414,17 +413,9 @@ describe("wallet CLI login and access key checks", () => {
 
   it.each([
     {
-      name: "--mach paid by TEMPO_PRIVATE_KEY",
+      name: "paid by TEMPO_PRIVATE_KEY",
       state: walletState({ accounts: [] }),
-      argv: [
-        "transfer",
-        "--mach",
-        "--max-spend",
-        "1",
-        "--mpp-challenge",
-        machChallenge,
-        "--dry-run",
-      ],
+      argv: ["transfer", "--max-spend", "1", "--mpp-challenge", machChallenge, "--dry-run"],
       env: { TEMPO_PRIVATE_KEY: testPrivateKey2 },
     },
   ])("does not require a usable key for transfer $name", async ({ state, argv, env }) => {
@@ -465,11 +456,11 @@ describe("wallet CLI login and access key checks", () => {
 
   // Interactive runs fall back to approving in the wallet app; agent runs above fail fast.
   it.each([
-    ...["send", "transfer"].map((command) => ({
-      command,
-      argv: [command, "1", usdcToken, recipient, "--dry-run"],
+    {
+      command: "send",
+      argv: ["send", "1", usdcToken, recipient, "--dry-run"],
       ran: { code: 0 },
-    })),
+    },
     // The quote's first RPC call means the swap ran past the check.
     {
       command: "swap",
@@ -519,12 +510,12 @@ describe("wallet CLI login and access key checks", () => {
       },
     ].flatMap((row) => [
       { ...row, command: "swap", argv: ["swap", "1", "pathUSD", "USDC.e"], noun: "swap" },
-      ...["send", "transfer"].map((command) => ({
+      {
         ...row,
-        command,
-        argv: [command, "1", "pathUSD", recipient],
+        command: "send",
+        argv: ["send", "1", "pathUSD", recipient],
         noun: "transfer",
-      })),
+      },
     ]),
   )(
     "$command --network $network $name over another login returns a login cta (interactive: $interactive)",
@@ -561,20 +552,18 @@ describe("wallet CLI login and access key checks", () => {
 
   // A key there would not let a transfer on another network through, so an agent run gets the
   // login it needs rather than a refresh for that key.
-  it.each(
-    [
-      { network: "testnet", state: walletState({ accessKeys: [key] }) },
-      { network: "mainnet", state: walletState({ chainId: 42431, accessKeys: [testnetKey] }) },
-    ].flatMap((row) => ["send", "transfer"].map((command) => ({ ...row, command }))),
-  )(
-    "agent $command --network $network without a key there over another login returns a login cta",
-    async ({ command: name, network, state }) => {
+  it.each([
+    { network: "testnet", state: walletState({ accessKeys: [key] }) },
+    { network: "mainnet", state: walletState({ chainId: 42431, accessKeys: [testnetKey] }) },
+  ])(
+    "agent send --network $network without a key there over another login returns a login cta",
+    async ({ network, state }) => {
       const home = await useTempHome();
       await writeWalletState(state);
       requests.length = 0;
 
       const result = await wallet(
-        [name, "1", "pathUSD", recipient, "--network", network, "--yes"],
+        ["send", "1", "pathUSD", recipient, "--network", network, "--yes"],
         { HOME: home, TEMPO_AUTH_URL: origin, TEMPO_RPC_URL: origin },
       );
 

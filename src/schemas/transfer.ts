@@ -1,17 +1,11 @@
 import { z } from "incur";
 
 import { displayMeta } from "../cli/render.js";
-import { sendArgs, sendOptions, sendOutput } from "./send.js";
-import { describeMeta, networkOutputShape, nextOutputShape } from "./shared.js";
-
-// A token transfer is `send` under its former name, so it takes the same arguments and options.
-export const transferArgs = sendArgs.partial();
-
-const { address, ...sendOptionShape } = sendOptions.shape;
+import { describeMeta, globalOptionShape, networkOutputShape, nextOutputShape } from "./shared.js";
 
 export const transferOptions = z.object({
-  ...sendOptionShape,
-  mach: z.boolean().optional().describe("Pay with on-chain MACH"),
+  ...globalOptionShape,
+  "dry-run": z.boolean().optional().describe("Review the MACH payment without sending"),
   "max-spend": z
     .string()
     .optional()
@@ -23,13 +17,16 @@ export const transferOptions = z.object({
     .optional()
     .describe("File containing an MPP WWW-Authenticate challenge"),
   "mpp-client-id": z.string().optional().describe("Optional client ID for MPP attribution memo"),
-  address: address.describe("Guard: refuse unless this is the paying wallet's address"),
+  address: z
+    .string()
+    .optional()
+    .describe("Guard: refuse unless this is the paying wallet's address"),
 });
 
 /** A MACH payment: reviewed with `--dry-run`, else sent. */
 const paymentStatus = z.enum(["dry_run", "success"]);
 
-export const spendMachOutput = z.object({
+export const transferOutput = z.object({
   status: paymentStatus,
   wallet: z.string().optional(),
   amount: z.string().register(displayMeta, { amount: "token" }),
@@ -45,5 +42,3 @@ export const spendMachOutput = z.object({
   tx_hash: z.string().optional(),
   ...nextOutputShape,
 });
-
-export const transferOutput = z.union([...sendOutput.options, spendMachOutput]);

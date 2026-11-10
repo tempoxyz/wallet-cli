@@ -163,8 +163,8 @@ function normalizeServicesOutputAliases(args: readonly string[]) {
 }
 
 /**
- * A flag a command does not take, though an earlier form of it did, such as `--mach` on `send`,
- * which `transfer` takes. `retireFlags` strips it from argv so incur does not report an unknown
+ * A flag a command does not take, though an earlier form of it did, such as `--claim` on `fund`.
+ * `retireFlags` strips it from argv so incur does not report an unknown
  * flag, and the run fails with `E_USAGE` naming what replaces it.
  */
 export type RetiredFlag = {

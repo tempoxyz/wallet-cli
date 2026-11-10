@@ -211,11 +211,11 @@ describe("tempo wallet tx status", () => {
     { tx_hash: null, command: "tempo wallet whoami --network mainnet" },
     { tx_hash: hash, command: `tempo wallet tx status ${hash} --network mainnet` },
   ])(
-    "returns a transfer's unknown outcome with its cta (recorded hash: $tx_hash)",
+    "returns a send's unknown outcome with its cta (recorded hash: $tx_hash)",
     async ({ tx_hash, command }) => {
       const home = await useTempHome();
       await writeWalletState(walletState());
-      // A transfer that stopped after claiming its key.
+      // A token send that stopped after claiming its key, with the persisted transfer identity.
       await createIdempotencyRecord({
         key: "k1",
         wallet: sender,
@@ -234,7 +234,7 @@ describe("tempo wallet tx status", () => {
       });
 
       const result = await walletCli(
-        ["transfer", "1", "pathUSD", recipient, "--yes", "--idempotency-key", "k1"],
+        ["send", "1", "pathUSD", recipient, "--yes", "--idempotency-key", "k1"],
         home,
       );
 
@@ -248,22 +248,25 @@ describe("tempo wallet tx status", () => {
     },
   );
 
-  it("refuses --idempotency-key outside token transfers", async () => {
+  it("rejects --idempotency-key as an unknown option for MACH transfer", async () => {
     const home = await useTempHome();
 
     const result = await walletCli(
-      ["transfer", "--mach", "--max-spend", "1", "--mpp-challenge", "x", "--idempotency-key", "k1"],
+      ["transfer", "--max-spend", "1", "--mpp-challenge", "x", "--idempotency-key=k1"],
       home,
     );
 
-    expect(result.code).toBe(2);
-    expect(result.stdout).toContain("--idempotency-key applies only to token transfers");
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "UNKNOWN",
+      message: expect.stringContaining("--idempotency-key"),
+    });
     expect(methods).toEqual([]);
   });
 });
 
 describe("keyed agent sends with an expired access key", () => {
-  // `send` makes the request `transfer` recorded, so a key either one used replays under both.
+  // `send` keeps the persisted transfer request identity so existing keys still replay.
   const transferRequest = {
     command: "transfer",
     amount: "1000000",
@@ -274,10 +277,6 @@ describe("keyed agent sends with an expired access key", () => {
   const sends = {
     send: {
       argv: ["send", "1", "pathUSD", recipient, "--yes", "--idempotency-key", "k1"],
-      request: transferRequest,
-    },
-    transfer: {
-      argv: ["transfer", "1", "pathUSD", recipient, "--yes", "--idempotency-key", "k1"],
       request: transferRequest,
     },
     swap: {
@@ -300,7 +299,7 @@ describe("keyed agent sends with an expired access key", () => {
   };
 
   it.each(
-    (["send", "transfer", "swap"] as const).flatMap((command) => [
+    (["send", "swap"] as const).flatMap((command) => [
       { command, recorded: true, dryRun: false },
       { command, recorded: false, dryRun: false },
       { command, recorded: false, dryRun: true },

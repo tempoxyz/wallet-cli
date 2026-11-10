@@ -75,13 +75,13 @@ it("rejects an unknown network as a usage error", async () => {
 // incur extracts globals from the whole argv, so option values that look like `--network`
 // must stay bound to their option.
 it.each(["-n", "--network", "--network=testnet"])(
-  "keeps `%s` as the transfer --fee-token value",
+  "keeps `%s` as the send --fee-token value",
   async (value) => {
     await useTempHome();
     await writeWalletState(walletState());
 
     const error = await walletJson([
-      "transfer",
+      "send",
       "--dry-run",
       "--fee-token",
       value,

@@ -992,8 +992,6 @@ describe("tempo wallet send and transfer", () => {
 
   const tokens = ["1", usdcToken, recipient];
   const prompt = "Send this transfer? [y/N] ";
-  const notice =
-    "Warning: 'tempo wallet transfer <amount> <token> <to>' is deprecated; use 'tempo wallet send <amount> <token> <to>'.\n";
   // A token transfer is sent through the wallet provider. Its transaction fill fails against this
   // fixture, so it falls back to the wallet app and registers a device, which fails too.
   const sent = /device-code \/register returned status 500/;
@@ -1007,8 +1005,6 @@ describe("tempo wallet send and transfer", () => {
     refused?: string;
     requests?: string[];
     reached?: string | RegExp;
-    /** Whether stderr notes that the token form of `transfer` is deprecated. */
-    deprecated?: boolean;
   };
 
   const tokenRuns: Run[] = [
@@ -1068,46 +1064,24 @@ describe("tempo wallet send and transfer", () => {
     },
   ];
 
-  const mach = ["transfer", "--mach", "--max-spend", "1", "--mpp-challenge", machChallenge];
+  const mach = ["transfer", "--max-spend", "1", "--mpp-challenge", machChallenge];
 
   it.each<Run>([
-    // `transfer` runs `send` for a token transfer, noting on a terminal that it is deprecated.
-    ...(["send", "transfer"] as const).flatMap((command) =>
-      tokenRuns.map((run) => ({
-        ...run,
-        name: `${command}: ${run.name}`,
-        argv: [command, ...run.argv],
-        deprecated: command === "transfer" && run.terminal !== undefined,
-      })),
-    ),
+    ...tokenRuns.map((run) => ({ ...run, name: `send: ${run.name}`, argv: ["send", ...run.argv] })),
     {
-      name: "transfer --mach false keeps positional token arguments",
-      argv: ["transfer", ...tokens, "--mach", "false"],
-      refused: notReviewed,
-      requests: [],
-    },
-    {
-      name: "transfer --mach without --yes settles as before",
+      name: "transfer pays with MACH without a mode flag or token confirmation",
       argv: mach,
       reached: "POST / eth_call",
     },
     {
-      name: "transfer --mach on a terminal settles without the token notice",
+      name: "transfer pays with MACH on a terminal without a token prompt",
       argv: mach,
       terminal: "stdout",
       reached: "POST / eth_call",
     },
   ])(
     "$name",
-    async ({
-      argv,
-      terminal,
-      input = "",
-      prompted = false,
-      refused,
-      deprecated = false,
-      ...expected
-    }) => {
+    async ({ argv, terminal, input = "", prompted = false, refused, ...expected }) => {
       const home = await useTempHome();
       await writeWalletState(walletState());
       requests.length = 0;
@@ -1116,7 +1090,7 @@ describe("tempo wallet send and transfer", () => {
 
       expect(result.stderr).not.toContain("blocked outbound connection");
       expect(result.stderr.includes(prompt), JSON.stringify(result)).toBe(prompted);
-      expect(result.stderr.includes(notice), JSON.stringify(result)).toBe(deprecated);
+      expect(result.stderr).not.toContain("deprecated");
       if (prompted)
         expect(result.stderr).toContain(
           `Send 1 USDC.e (${usdcToken})\n  to:        ${recipient}\n  network:   mainnet (chain 4217)\n  fee token: USDC.e (${usdcToken})\n`,
@@ -1138,180 +1112,195 @@ describe("tempo wallet send and transfer", () => {
   );
 
   it.each([undefined, "stdout"] as const)(
-    "transfer returns what send does for a token dry run (terminal: %s)",
+    "send reviews tokens without submitting (terminal: %s)",
     async (terminal) => {
       const home = await useTempHome();
       await writeWalletState(walletState());
+      requests.length = 0;
 
-      const [send, transfer] = await Promise.all(
-        ["send", "transfer"].map((command) =>
-          walletCli([command, ...tokens, "--dry-run"], { home, terminal, input: "" }),
-        ),
-      );
+      const result = await walletCli(["send", ...tokens, "--dry-run"], {
+        home,
+        terminal,
+        input: "",
+      });
 
-      expect(send!.code).toBe(0);
-      expect(transfer!.stdout).toBe(send!.stdout);
-      expect(send!.stdout).toContain(
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain(
         `tempo wallet send 1 ${usdcToken} ${recipient} --fee-token ${usdcToken} --yes --network mainnet`,
       );
-      expect(send!.stderr).toBe("");
-      expect(transfer!.stderr).toBe(terminal ? notice : "");
+      expect(result.stderr).toBe("");
+      expect(requests).not.toContain("POST / eth_fillTransaction");
+      expect(requests).not.toContain("POST / eth_sendRawTransaction");
+      expect(requests).not.toContain("POST /register");
     },
     30_000,
   );
 
-  // `send` sends tokens only; MACH payments keep their `transfer` form.
-  const machMessage =
-    "'send' sends tokens only; to pay an MPP challenge with MACH, use 'tempo wallet transfer --mach'.";
-
-  // The `cta` runs the arguments as given under `transfer`; an explicit false selects no mode, so
-  // the run is a token send, which without --yes sends nothing.
-  it.each([
-    {
-      argv: ["--mach", "--max-spend", "1", "--mpp-challenge", machChallenge],
-      message: machMessage,
-    },
-    { argv: [...tokens, "--mach=true", "--yes"], message: machMessage },
-    { argv: [...tokens, "--mach", "true", "--yes"], message: machMessage },
-    { argv: [...tokens, "--mach=false"], message: undefined },
-    { argv: [...tokens, "--mach", "false"], message: undefined },
-    { argv: [...tokens, "--credits=false"], message: undefined },
-    { argv: [...tokens, "--credits", "false"], message: undefined },
-    { argv: [...tokens, "--no-mach"], message: undefined },
-    { argv: [...tokens, "--no-credits"], message: undefined },
-  ])("send $argv sends nothing", async ({ argv, message }) => {
+  it.each([false, true])("transfer reviews MACH without a mode flag (cap: %s)", async (capped) => {
     const home = await useTempHome();
     await writeWalletState(walletState());
     requests.length = 0;
 
-    const result = await walletCli(["send", ...argv], { home, terminal: undefined, input: "" });
-
-    const command = ["tempo", "wallet", "transfer", ...argv, "--format", "json"]
-      .map(shellQuote)
-      .join(" ");
-    expect(result.code).toBe(2);
-    expect(JSON.parse(result.stdout)).toEqual(
-      message
-        ? {
-            code: "E_USAGE",
-            message,
-            retryable: false,
-            cta: { description: "Suggested command:", commands: [{ command }] },
-          }
-        : { code: "E_USAGE", message: notReviewed, retryable: false },
+    const result = await walletCli(
+      [
+        "transfer",
+        "--mpp-challenge",
+        machChallenge,
+        "--dry-run",
+        ...(capped ? ["--max-spend", "1"] : []),
+      ],
+      { home, terminal: undefined, input: "" },
     );
+
+    expect(result.code).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output).toMatchObject({
+      status: "dry_run",
+      amount: "1",
+      raw_amount: "1000000",
+      token: "MACH",
+      settlement_currency: usdcToken,
+      chain_id: 4217,
+      network: "tempo",
+      challenge_id: "abc123",
+      max_spend: capped ? "1" : null,
+    });
+    if (capped)
+      expect(output._next.argv).toEqual([
+        "tempo",
+        "wallet",
+        "transfer",
+        "--max-spend",
+        "1",
+        "--mpp-challenge",
+        machChallenge,
+        "--network",
+        "mainnet",
+      ]);
+    else expect(output).not.toHaveProperty("_next");
+    expect(output).not.toHaveProperty("tx_hash");
+    expect(result.stderr).toBe("");
     expect(requests).toEqual([]);
   });
 
-  // Each legacy flag fails with what replaces it before the command parses its options or runs,
-  // and its `cta` is the equivalent command when the run's arguments give one.
-  const retired = {
-    to: "--to was removed; pass a token transfer's recipient as the third argument: 'tempo wallet send <amount> <token> <to>'.",
-    data: "--data was removed; a token transfer sends no calldata.",
-    cents:
-      "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
-    value: "--value was removed: transfers carry no ETH value.",
-    machCents:
-      "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.",
-    claim:
-      "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
+  it.each([{ flags: [] }, { flags: ["--dry-run"] }, { flags: ["--max-spend", "1"] }])(
+    "transfer $flags requires an MPP challenge instead of falling back to a token send",
+    async ({ flags }) => {
+      const home = await useTempHome();
+      await writeWalletState(walletState());
+      requests.length = 0;
+
+      const result = await walletCli(["transfer", ...flags], {
+        home,
+        terminal: undefined,
+        input: "",
+      });
+
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.stdout)).toEqual({
+        code: "E_USAGE",
+        message: "MACH transfer requires --mpp-challenge or --mpp-challenge-file",
+        retryable: false,
+      });
+      expect(requests).toEqual([]);
+    },
+  );
+
+  const positionalError = {
+    code: "E_USAGE",
+    message:
+      "'tempo wallet transfer' pays MPP challenges with MACH; use 'tempo wallet send' for token transfers.",
+    retryable: false,
   };
+
+  it.each([
+    { argv: ["transfer", ...tokens] },
+    { argv: ["transfer", ...tokens, "--dry-run"] },
+    { argv: [...mach, ...tokens] },
+    { argv: [...mach, "--", ...tokens] },
+  ])("refuses positional transfer arguments in $argv without sending", async ({ argv }) => {
+    const home = await useTempHome();
+    await writeWalletState(walletState());
+    requests.length = 0;
+
+    const result = await walletCli(argv, { home, terminal: undefined, input: "" });
+
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stdout)).toEqual(positionalError);
+    expect(requests).toEqual([]);
+  });
+
+  // Unknown options must fail even when explicitly false, before either payment path runs.
+  it.each(
+    ["send", "transfer"].flatMap((command) =>
+      [
+        ["--mach"],
+        ["--mach=true"],
+        ["--mach", "true"],
+        ["--mach=false"],
+        ["--mach", "false"],
+        ["--no-mach"],
+        ["--credits"],
+        ["--credits=true"],
+        ["--credits", "true"],
+        ["--credits=false"],
+        ["--credits", "false"],
+        ["--no-credits"],
+        ["--to", recipient],
+        [`--to=${recipient}`],
+        ["--data", "0x12"],
+        ["--data=0x12"],
+        ["--amount-cents", "100"],
+        ["--amount-cents=100"],
+        ["--value", "0"],
+        ["--value=0"],
+      ].map((flags) => ({ command, flags })),
+    ),
+  )("$command refuses removed $flags without sending", async ({ command, flags }) => {
+    const home = await useTempHome();
+    await writeWalletState(walletState());
+    requests.length = 0;
+
+    const result = await walletCli(
+      [...(command === "send" ? ["send", ...tokens, "--yes"] : mach), ...flags],
+      { home, terminal: undefined, input: "" },
+    );
+
+    // With a separate value, transfer's positional guard refuses before option parsing.
+    const positional = command === "transfer" && flags.length > 1;
+    expect(result.code).toBe(positional ? 2 : 1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      positional
+        ? positionalError
+        : { code: "UNKNOWN", message: `Unknown flag: ${flags[0]!.split("=")[0]}` },
+    );
+    expect(result.stderr).toBe("");
+    expect(requests).toEqual([]);
+  });
+
+  const claimMessage =
+    "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.";
   const cta = (...argv: string[]) => ["tempo", "wallet", ...argv].map(shellQuote).join(" ");
   const json = ["--format", "json"];
 
-  it.each<{ argv: string[]; message: string; command?: string }>([
-    {
-      argv: ["transfer", "1", usdcToken, "--to", recipient],
-      message: retired.to,
-      command: cta("send", "1", usdcToken, recipient, ...json),
-    },
-    {
-      argv: ["transfer", "1", usdcToken, `--to=${recipient}`, "--yes"],
-      message: retired.to,
-      command: cta("send", "1", usdcToken, recipient, "--yes", ...json),
-    },
-    {
-      argv: ["send", "1", usdcToken, "--to", recipient, "--dry-run"],
-      message: retired.to,
-      command: cta("send", "1", usdcToken, recipient, "--dry-run", ...json),
-    },
-    { argv: ["send", "--to", recipient], message: retired.to },
-    { argv: ["transfer", ...tokens, "--data", "0x12", "--yes"], message: retired.data },
-    { argv: ["send", ...tokens, "--data", "0x12", "--yes"], message: retired.data },
-    { argv: ["transfer", "--amount-cents", "100", "--to", recipient], message: retired.cents },
-    { argv: ["send", ...tokens, "--amount-cents", "100", "--yes"], message: retired.cents },
-    {
-      argv: ["transfer", ...tokens, "--value", "0", "--yes"],
-      message: retired.value,
-      command: cta("send", ...tokens, "--yes", ...json),
-    },
-    { argv: ["transfer", ...tokens, "--value", "1"], message: retired.value },
-    {
-      argv: ["send", ...tokens, "--value=0x0", "--yes"],
-      message: retired.value,
-      command: cta("send", ...tokens, "--yes", ...json),
-    },
-    {
-      argv: ["transfer", "--mach", "--amount-cents", "2", "--mpp-challenge", machChallenge],
-      message: retired.machCents,
-      command: cta(
-        "transfer",
-        "--mach",
-        `--mpp-challenge=${machChallenge}`,
-        ...json,
-        "--max-spend",
-        "0.02",
-      ),
-    },
-    // Any value is refused, though only whole cents have a USD equivalent.
-    {
-      argv: ["transfer", "--mach", "--amount-cents", "abc", "--mpp-challenge", machChallenge],
-      message: retired.machCents,
-    },
-    {
-      // Two caps conflict, so there is no cta to pick one.
-      argv: ["transfer", "--mach", "--amount-cents", "1", "--max-spend", "100"],
-      message: retired.machCents,
-    },
-    // `send` takes no option only `transfer` takes, so a cta that would carry one is left out.
-    {
-      argv: ["transfer", "1", usdcToken, "--to", recipient, "--max-spend", "5"],
-      message: retired.to,
-    },
-    {
-      argv: ["transfer", ...tokens, "--value", "0", "--mpp-client-id", "x"],
-      message: retired.value,
-    },
+  it.each<{ argv: string[]; command?: string }>([
     // A code named like the `status` subcommand is still the retired flag's value.
     {
       argv: ["fund", "--claim", "status"],
-      message: retired.claim,
       command: cta("fund", ...json, "--referral-code", "status"),
     },
     // A retired flag keeps the token after it as its value, so `--mcp` starts no MCP server.
-    { argv: ["fund", "--claim", "--mcp"], message: retired.claim },
-    { argv: ["send", ...tokens.slice(0, 2), "--to", "--mcp"], message: retired.to },
-    // Each replacement covers only its own flag, so several retired flags get no cta.
-    {
-      argv: ["transfer", "1", usdcToken, "--value", "0", "--to", recipient],
-      message: retired.value,
-    },
-    {
-      argv: ["send", "1", usdcToken, "--to", recipient, "--data", "0x12", "--yes"],
-      message: retired.to,
-    },
+    { argv: ["fund", "--claim", "--mcp"] },
     {
       argv: ["fund", "--claim", "CODE", "--no-browser"],
-      message: retired.claim,
       command: cta("fund", "--no-browser", ...json, "--referral-code", "CODE"),
     },
     // `--referral-code` won over `--claim`, so the run is the same without `--claim`.
     {
       argv: ["fund", "--claim", "OLD", "--referral-code", "NEW"],
-      message: retired.claim,
       command: cta("fund", "--referral-code=NEW", ...json),
     },
-  ])("$argv fails with its replacement and sends nothing", async ({ argv, message, command }) => {
+  ])("$argv fails with its replacement and sends nothing", async ({ argv, command }) => {
     const home = await useTempHome();
     await writeWalletState(walletState());
     requests.length = 0;
@@ -1321,7 +1310,7 @@ describe("tempo wallet send and transfer", () => {
     expect(result.code).toBe(2);
     expect(JSON.parse(result.stdout)).toEqual({
       code: "E_USAGE",
-      message,
+      message: claimMessage,
       retryable: false,
       ...(command ? { cta: { description: "Suggested command:", commands: [{ command }] } } : {}),
     });

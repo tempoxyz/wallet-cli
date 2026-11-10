@@ -1,8 +1,9 @@
 /**
  * Workarounds for incur bugs. `patches/incur@0.7.1.patch` is another: it keeps a cta naming the
  * program of a multi-word CLI (`tempo wallet ...` from `tempo request`) unprefixed. Upstream:
- * https://github.com/wevm/incur/pull/252, merged but unreleased. Remove the patch and its
- * `pnpm-workspace.yaml` entry once incur > 0.7.1 includes wevm/incur#252.
+ * https://github.com/wevm/incur/pull/252, merged but unreleased. Remove the patch's
+ * CTA hunk once incur > 0.7.1 includes wevm/incur#252. The MCP hunk refuses unknown
+ * arguments instead of silently dropping them; remove it once incur uses strict input schemas.
  */
 import { Errors, z, type Cli } from "incur";
 
@@ -95,8 +96,6 @@ function takesValue(field: z.ZodType) {
  * Binds the target command's option values before incur extracts globals; see bindOptionValues.
  *
  * Upstream: https://github.com/wevm/incur/pull/258. Remove with `bindOptionValues`.
- * `transfer --mach true/false` also binds its mode so the literal is not a positional argument.
- * Remove that normalization once incur consumes explicit boolean values after long flags.
  */
 export function bindCommandOptions(args: readonly string[], commands: Map<string, unknown>) {
   const [name, subcommand] = commandTokens(args);
@@ -105,18 +104,10 @@ export function bindCommandOptions(args: readonly string[], commands: Map<string
   const command = isCommandGroup(entry)
     ? ((subcommand === undefined ? undefined : entry.commands.get(subcommand)) ?? entry.root)
     : entry;
-  const bound = bindOptionValues(args, [
+  return bindOptionValues(args, [
     ...(isRunnableCommand(command) ? [command] : []),
     { options: cliGlobals, alias: cliGlobalAlias },
   ]);
-  if (name !== "transfer" || process.env.COMPLETE) return bound;
-  for (let index = firstCommandIndex(bound)! + 1; index < bound.length; index++) {
-    if (bound[index] === "--") break;
-    const next = bound[index + 1];
-    if (bound[index] === "--mach" && (next === "true" || next === "false"))
-      bound.splice(index, 2, `--mach=${next}`);
-  }
-  return bound;
 }
 
 /**
@@ -136,6 +127,21 @@ export function retiredFundStatusError(args: readonly string[]) {
     ...errorCodes.E_USAGE,
     message:
       "'tempo wallet fund status' was removed. Complete funding in the wallet app and check the destination wallet's balance before spending.",
+  };
+}
+
+/**
+ * incur ignores surplus arguments, even when the command takes none. Refuse them before
+ * a challenge can be paid. Remove once incur rejects surplus arguments (wevm/incur#240).
+ */
+export function transferArgumentsError(args: readonly string[]) {
+  const [name, ...operands] = commandTokens(args);
+  if (name !== "transfer" || operands.length === 0) return;
+  return {
+    code: "E_USAGE",
+    ...errorCodes.E_USAGE,
+    message:
+      "'tempo wallet transfer' pays MPP challenges with MACH; use 'tempo wallet send' for token transfers.",
   };
 }
 

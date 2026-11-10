@@ -239,7 +239,6 @@ const continuations: {
     argv: [
       "wallet",
       "transfer",
-      "--mach",
       "--max-spend",
       "0.02",
       "--mpp-challenge",

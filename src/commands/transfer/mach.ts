@@ -5,7 +5,6 @@ import { Errors } from "incur";
 import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 
-import type { RetiredFlag } from "../../cli/argv.js";
 import { paymentOutcomeUnknownError, usageError } from "../../shared/errors.js";
 import { networkFields } from "../../shared/network.js";
 import { nextStep } from "../../shared/next.js";
@@ -41,18 +40,12 @@ export async function transferMach(options: {
     address?: string | undefined;
     "dry-run"?: boolean | undefined;
     "max-spend"?: string | undefined;
-    to?: string | undefined;
-    data?: string | undefined;
     "mpp-challenge"?: string | undefined;
     "mpp-challenge-file"?: string | undefined;
     "mpp-client-id"?: string | undefined;
   };
 }) {
   const flags = options.options;
-  if (flags.to !== undefined || flags.data !== undefined)
-    throw usageError(
-      "MACH does not support direct calldata transfers. Supply a machine-enabled Tempo charge with --mpp-challenge, or use 'tempo request --payment-token MACH --max-spend <amount> <url>'.",
-    );
   if (flags["mpp-challenge"] && flags["mpp-challenge-file"])
     throw usageError("Use only one of --mpp-challenge and --mpp-challenge-file");
   const input =
@@ -82,7 +75,7 @@ export async function transferMach(options: {
       .find((line) => /^www-authenticate:/i.test(line))
       ?.replace(/^www-authenticate:\s*/i, "") ?? input.trim();
   // A captured challenge has no URL; its realm names the service. Without MACH, it is paid
-  // through a request to the service, since `transfer` without --mach sends tokens instead.
+  // through a request to the service with its advertised settlement token.
   const service = (realm: string) => ({ host: realm, retry: transferRetry });
   const { challenge, response } = preparePaymentChallenge(
     new Response(null, { status: 402, headers: { "www-authenticate": header } }),
@@ -109,7 +102,6 @@ export async function transferMach(options: {
             [
               "wallet",
               "transfer",
-              "--mach",
               "--max-spend",
               output.max_spend,
               "--mpp-challenge",
@@ -165,26 +157,3 @@ export async function transferMach(options: {
     tx_hash: payload.hash,
   };
 }
-
-const amountCentsMessage =
-  "--amount-cents was removed from --mach; pass the spending cap in USD with --max-spend.";
-
-/**
- * `--amount-cents` capped MACH spending in USD cents before `--max-spend`. The CLI refuses it
- * before parsing, so any value is refused; the `cta` passes a whole number of cents in USD. With
- * `--max-spend` too, the caps conflict, so there is no `cta` to pick one.
- */
-export const machAmountCentsFlag: RetiredFlag = {
-  flag: "--amount-cents",
-  takesValue: true,
-  when: ["--mach"],
-  replacement: ({ args, value }) => ({
-    message: amountCentsMessage,
-    argv:
-      value === undefined ||
-      !/^\d+$/.test(value) ||
-      args.some((arg) => arg === "--max-spend" || arg.startsWith("--max-spend="))
-        ? undefined
-        : ["transfer", ...args, "--max-spend", formatUnits(BigInt(value) * 10_000n, 6)],
-  }),
-};

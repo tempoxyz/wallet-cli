@@ -81,7 +81,7 @@ describe("generated CLI metadata", () => {
     );
   });
 
-  it.each(["swap", "send", "transfer"])(
+  it.each(["swap", "send"])(
     "documents --dry-run review and --yes submission for %s",
     async (name) => {
       const help = await walletCli([name, "--help"]);
@@ -375,7 +375,6 @@ describe("generated CLI metadata", () => {
       "Usage: tempo wallet tx status <tx-hash> [options]",
     );
     expect(await walletCli(["send", "--help"])).toContain("--idempotency-key <string>");
-    expect(await walletCli(["transfer", "--help"])).toContain("--idempotency-key <string>");
 
     const manifest = JSON.parse(await walletCli(["--describe"])) as {
       subcommands: { name: string; subcommands?: unknown[] | undefined }[];
@@ -400,16 +399,14 @@ describe("generated CLI metadata", () => {
     expect(hasNextStep(schema.output)).toBe(true);
   });
 
-  it("documents send and the token form of transfer it replaces", async () => {
+  it("documents send for tokens and transfer for MACH payments", async () => {
     type Command = { name: string; about: string; args?: { long?: string | undefined }[] };
     const manifest = JSON.parse(await walletCli(["--describe"])) as { subcommands: Command[] };
     const send = manifest.subcommands.find((command) => command.name === "send");
     const transfer = manifest.subcommands.find((command) => command.name === "transfer");
     expect(send?.about).toBe("Send tokens to an address");
-    expect(transfer?.about).toBe(
-      "Pay an MPP challenge with --mach. Token transfers moved to 'send'.",
-    );
-    // `send` takes the token transfer options and none of the payment modes of `transfer`.
+    expect(transfer?.about).toContain("MACH");
+    expect(transfer?.about).not.toMatch(/--mach|moved|deprecated/);
     expect(send?.args?.flatMap((arg) => arg.long ?? [])).toEqual([
       "--fee-token",
       "--dry-run",
@@ -417,20 +414,34 @@ describe("generated CLI metadata", () => {
       "--idempotency-key",
       "--address",
     ]);
+    // Every transfer argument is an option; there is no token-send form or mode switch.
+    expect(transfer?.args?.map((arg) => arg.long).sort()).toEqual([
+      "--address",
+      "--dry-run",
+      "--max-spend",
+      "--mpp-challenge",
+      "--mpp-challenge-file",
+      "--mpp-client-id",
+    ]);
 
     expect(await walletCli(["--help"])).toMatch(/send\s+Send tokens to an address/);
     expect(await walletCli(["send", "--help"])).toContain(
       "Usage: tempo wallet send <amount> <token> <to> [options]",
     );
-    // A token transfer returns what `send` does.
-    type Schema = { output: { anyOf: unknown[] } };
-    const [sendSchema, transferSchema] = await Promise.all(
-      ["send", "transfer"].map(
-        async (name) =>
-          JSON.parse(await walletCli([name, "--schema", "--format", "json"])) as Schema,
-      ),
-    );
-    expect(transferSchema!.output.anyOf.slice(0, 3)).toEqual(sendSchema!.output.anyOf);
+    const transferHelp = await walletCli(["transfer", "--help"]);
+    expect(transferHelp).toContain("Usage: tempo wallet transfer [options]");
+    for (const flag of ["--mach", "--credits", "--yes", "--fee-token", "--idempotency-key"])
+      expect(transferHelp).not.toContain(flag);
+
+    const schema = JSON.parse(await walletCli(["transfer", "--schema", "--format", "json"]));
+    expect(schema.args?.properties ?? {}).toEqual({});
+    expect(schema.output).not.toHaveProperty("anyOf");
+    expect(schema.output.properties.token.const).toBe("MACH");
+    expect(schema.output.properties.status.enum).toEqual(["dry_run", "success"]);
+    expect(schema.output.properties).toHaveProperty("challenge_id");
+    expect(schema.output.properties).not.toHaveProperty("from");
+    for (const option of ["mach", "credits", "yes", "fee-token", "idempotency-key"])
+      expect(schema.options.properties).not.toHaveProperty(option);
   });
 
   it("documents doctor and its deprecated debug alias", async () => {
@@ -517,7 +528,6 @@ describe("generated CLI metadata", () => {
     { command: ["sessions", "close"], flags: ["--dry-run", "--yes"] },
     { command: ["services"], flags: ["--refresh"] },
     { command: ["send"], flags: ["--idempotency-key"] },
-    { command: ["transfer"], flags: ["--idempotency-key"] },
     { command: ["swap"], flags: ["--idempotency-key"] },
   ])("describes $flags for $command", async ({ command, flags }) => {
     type Command = {

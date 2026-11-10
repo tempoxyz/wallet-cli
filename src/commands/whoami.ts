@@ -35,7 +35,6 @@ import {
   type TokenBalance,
 } from "../wallet/key-output.js";
 import { queryMachBalance } from "../shared/mach.js";
-import { creditsFlag } from "../shared/retired-flags.js";
 
 export default {
   command: Cli.create("whoami", {
@@ -50,7 +49,6 @@ export default {
     },
   }),
   annotations: { whoami: { ...readOnly, openWorldHint: true } },
-  retiredFlags: [creditsFlag],
 } satisfies WalletCommand;
 
 /** Whoami output when the active wallet already has a usable access key on `network`. */

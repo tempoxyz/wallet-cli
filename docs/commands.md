@@ -16,7 +16,7 @@ This list is generated from the mounted command schemas. Run `tempo wallet <comm
 - `keys revoke <access-key>`: Revoke an access key. Options: `--dry-run`, `--yes`, `--no-browser`.
 - `revoke <access-key>`: Deprecated: use 'keys revoke'. Options: `--dry-run`, `--yes`, `--no-browser`.
 - `send <amount> <token> <to>`: Send tokens to an address. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--address`.
-- `transfer [amount] [token] [to]`: Pay an MPP challenge with --mach. Token transfers moved to 'send'. Options: `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`, `--mach`, `--max-spend`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
+- `transfer`: Pay an MPP challenge with MACH. Options: `--dry-run`, `--max-spend`, `--mpp-challenge`, `--mpp-challenge-file`, `--mpp-client-id`, `--address`.
 - `swap <amount> <token-in> <token-out>`: Swap TIP-20 tokens on the Tempo Stablecoin DEX. Options: `--exact-out`, `--slippage-bps`, `--min-amount-out`, `--max-amount-in`, `--fee-token`, `--dry-run`, `--yes`, `--idempotency-key`.
 - `tx status <tx-hash>`: Show a transaction's status on chain.
 - `fund`: Open add-funds flows in the wallet app. Options: `--address`, `--no-browser`, `--crypto`, `--mach`, `--amount`, `--referral-code`.

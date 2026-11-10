@@ -61,7 +61,6 @@ afterEach(async () => {
 it("tempo wallet returns the cta", async () => {
   const result = await run(cliBundle("wallet"), [
     "transfer",
-    "--mach",
     "--max-spend",
     "0.015",
     "--mpp-challenge",
@@ -111,7 +110,7 @@ it("tempo request returns the tempo wallet cta without its own prefix", async ()
 it("an MCP tool error carries the cta", async () => {
   const result = await mcpToolCall({
     name: "transfer",
-    arguments: { mach: true, "max-spend": "0.015", "mpp-challenge": challenge },
+    arguments: { "max-spend": "0.015", "mpp-challenge": challenge },
   });
 
   expect(result).toEqual({

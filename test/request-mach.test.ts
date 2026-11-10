@@ -508,7 +508,7 @@ describe.each([
     },
   },
   {
-    via: "tempo wallet transfer --mach",
+    via: "tempo wallet transfer",
     pay: async (network: string) => {
       const testnet = network === "testnet";
       const challenge = offer({
@@ -773,14 +773,6 @@ describe("transferMach", () => {
     expect(readContract).not.toHaveBeenCalled();
     expect(signTransaction).not.toHaveBeenCalled();
   });
-  it.each([{ to: recipient }, { data: "0x1234" }])(
-    "rejects unsupported direct transfer flags",
-    async (flags) => {
-      await expect(transferMach({ options: { ...flags, "dry-run": true } })).rejects.toThrow(
-        "does not support direct calldata",
-      );
-    },
-  );
   it("requires an explicit cap for standalone challenge settlement", async () => {
     await expect(
       transferMach({ options: { "mpp-challenge": Challenge.serialize(offer()) } }),

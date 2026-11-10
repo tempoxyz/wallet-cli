@@ -14,3 +14,15 @@ index 0ac7926ecf3796cc86636cc5740c398a8a8a38c7..059fc95f2d2c0a6967856844d3a6b34e
      let cmd = `${prefix}${cta.command}`;
      if (cta.args)
          for (const [key, value] of Object.entries(cta.args))
+diff --git a/dist/Mcp.js b/dist/Mcp.js
+--- a/dist/Mcp.js
++++ b/dist/Mcp.js
+@@ -130,7 +130,7 @@ function registerDirectTool(server, tool, options) {
+     const hasInput = Object.keys(mergedShape).length > 0;
+     server.registerTool(tool.name, {
+         ...(tool.description ? { description: tool.description } : undefined),
+-        ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
++        ...(hasInput ? { inputSchema: z.strictObject(mergedShape) } : undefined),
+         ...(tool.outputSchema
+             ? { outputSchema: options.fromJsonSchema(tool.outputSchema) }
+             : undefined),

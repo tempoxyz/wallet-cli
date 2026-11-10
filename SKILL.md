@@ -175,7 +175,7 @@ tempo wallet send <AMOUNT> <TOKEN> <RECIPIENT> --idempotency-key <KEY> --yes
 - If `sufficient_balance` is false, report the shortfall and stop; offer `tempo wallet fund`.
 - A send goes out only on the network the wallet is logged in on. On another `--network`, it returns `E_USAGE` with a `tempo wallet login --network <NETWORK>` `cta`; run it, then rerun the send.
 - Always run `--dry-run` first and preserve full token and recipient addresses in the approval request.
-- Use `send` for every token transfer. `tempo wallet transfer` is for `--mach` payments only; its token form is a deprecated alias of `send`.
+- Use `send` for every token transfer. `tempo wallet transfer` pays MPP challenges with MACH; it takes no mode flag.
 
 ## Retrying Transfers and Swaps
 
@@ -243,14 +243,14 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 - `readOnlyHint: true` only reads.
 - `destructiveHint: true` moves funds, changes or revokes a key, closes a session, deletes stored sessions, replaces or deletes the stored wallet or its network, or changes a saved setting. Get the user's approval before every call, after a `dry-run: true` call where the tool offers one.
 - These tools refuse to act without `yes: true` and return `E_USAGE`; pass it only after the user approves the reviewed dry run or change:
-  - `send`, and `transfer` when it sends tokens (without `mach`)
+  - `send`
   - `swap`
   - `keys_revoke`
   - `sessions_close`, when it selects a session to close
   - `config_set` and `config_unset`, when they change the saved value
   - `logout`, when it would revoke keys, or stored sessions on the networks it logs out of hold deposits or cannot be read
 - Tools take positional arguments under kebab-case keys, like options: `access-key` (`keys_update`, `keys_revoke`), `token-in` and `token-out` (`swap`), `tx-hash` (`tx_status`), `service-id` (`services_show`), and `target` (`sessions_close`).
-- Call `send` for token transfers and keep `transfer` for `mach` payments; call `keys_revoke`, not the deprecated `revoke`, and `services_list`, `services_search`, or `services_show`, not the deprecated `services`.
+- Call `send` for token transfers and keep `transfer` for MACH payments; call `keys_revoke`, not the deprecated `revoke`, and `services_list`, `services_search`, or `services_show`, not the deprecated `services`.
 
 ## Common Issues
 

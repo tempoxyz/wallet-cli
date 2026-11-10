@@ -2,4 +2,4 @@
 wallet-cli: minor
 ---
 
-Remove legacy off-chain credit balance lookups and payments from `tempo wallet`. Its `--credits` options and equivalent Model Context Protocol (MCP) tool arguments now return `E_USAGE` before making network requests. On-chain balances, token transfers, and MACH token payments are unchanged.
+Remove legacy off-chain credit balances and payments. `tempo wallet transfer` now always pays MPP challenges with MACH, without a mode flag. Use `tempo wallet send` for token transfers. Removed flags and unknown MCP arguments are rejected instead of selecting another payment flow.

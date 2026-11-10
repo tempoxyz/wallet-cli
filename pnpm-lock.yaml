@@ -16,7 +16,7 @@ overrides:
   zod@>=4.0.0 <4.6.6: 4.6.7
 
 patchedDependencies:
-  incur@0.7.1: ce9f4f28b7cb426f7ad6048b002752028a94ba5d9f22643b1fb0b254ffb2dcc1
+  incur@0.7.1: 2410892f9dc45935511e22f279e794e8d1515fcaec32c5cabb4c0791c2ca42fc
 
 importers:
 
@@ -27,7 +27,7 @@ importers:
         version: 0.21.0(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7))
       incur:
         specifier: 0.7.1
-        version: 0.7.1(patch_hash=ce9f4f28b7cb426f7ad6048b002752028a94ba5d9f22643b1fb0b254ffb2dcc1)
+        version: 0.7.1(patch_hash=2410892f9dc45935511e22f279e794e8d1515fcaec32c5cabb4c0791c2ca42fc)
       mppx:
         specifier: 0.12.0
         version: 0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7))
@@ -3314,7 +3314,7 @@ snapshots:
       yaml: 2.9.0
       zod: 4.6.7
 
-  incur@0.7.1(patch_hash=ce9f4f28b7cb426f7ad6048b002752028a94ba5d9f22643b1fb0b254ffb2dcc1):
+  incur@0.7.1(patch_hash=2410892f9dc45935511e22f279e794e8d1515fcaec32c5cabb4c0791c2ca42fc):
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/server': 2.0.0-alpha.4

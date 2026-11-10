@@ -78,12 +78,10 @@ describe("MCP tools", () => {
       try {
         const response = await mcpCall({
           name: "transfer",
-          arguments: { mach: true, "mpp-challenge": "ignored", "max-spend": "1", ...args },
+          arguments: { "mpp-challenge": "ignored", "max-spend": "1", ...args },
         });
         expect(response.result.isError).toBe(true);
-        expect(firstToolText(response)).toContain(
-          "Positional transfer arguments cannot be used with --mach; supply an MPP challenge",
-        );
+        expect(firstToolText(response)).toContain("Unrecognized key");
         expect(host.requests).toEqual([]);
       } finally {
         await host.close();
@@ -91,9 +89,9 @@ describe("MCP tools", () => {
     },
   );
 
-  it("returns the login command for a transfer without a wallet", async () => {
+  it("returns the login command for a send without a wallet", async () => {
     const response = await mcpCall({
-      name: "transfer",
+      name: "send",
       arguments: { amount: "1", token: usdc, to: testWallet, "dry-run": true, network: "testnet" },
     });
 
@@ -108,8 +106,7 @@ describe("MCP tools", () => {
     );
   });
 
-  // `transfer` still sends tokens under its deprecated token form, for existing clients.
-  it("exposes send and the transfer tool with the same token arguments", async () => {
+  it("exposes token sending separately from MACH challenge payments", async () => {
     const response = await mcpRequest<{
       tools: {
         name: string;
@@ -123,48 +120,74 @@ describe("MCP tools", () => {
     const send = tool("send")!.inputSchema;
     const transfer = tool("transfer")!.inputSchema;
     expect(tool("send")?.description).toBe("Send tokens to an address");
-    expect(tool("transfer")?.description).toBe(
-      "Pay an MPP challenge with --mach. Token transfers moved to 'send'.",
-    );
+    expect(tool("transfer")?.description).toBe("Pay an MPP challenge with MACH");
     expect(send.required).toEqual(["amount", "token", "to"]);
     expect(transfer.required).toBeUndefined();
-    for (const name of ["amount", "token", "fee-token", "dry-run", "yes", "idempotency-key"])
-      expect(transfer.properties[name], name).toEqual(send.properties[name]);
+    for (const name of [
+      "amount",
+      "token",
+      "to",
+      "mach",
+      "credits",
+      "fee-token",
+      "yes",
+      "idempotency-key",
+    ])
+      expect(transfer.properties[name], name).toBeUndefined();
+    expect(transfer.properties).toHaveProperty("mpp-challenge");
   });
 
-  it("returns the same token dry run from transfer as from send", async () => {
+  it("returns a token send dry run", async () => {
     await writeWalletState(walletState());
-    const args = { amount: "1", token: usdc, to: testWallet, "dry-run": true, network: "mainnet" };
-
-    const [send, transfer] = await Promise.all(
-      ["send", "transfer"].map((name) => mcpCall({ name, arguments: args })),
-    );
-
-    expect(send!.result.isError).not.toBe(true);
-    expect(transfer!.result).toEqual(send!.result);
-    expect(JSON.parse(firstToolText(send!))).toMatchObject({
+    const response = await mcpCall({
+      name: "send",
+      arguments: { amount: "1", token: usdc, to: testWallet, "dry-run": true, network: "mainnet" },
+    });
+    expect(response.result.isError).not.toBe(true);
+    expect(JSON.parse(firstToolText(response))).toMatchObject({
       status: "dry_run",
       _next: { command: expect.stringMatching(/^tempo wallet send 1 /) },
     });
   });
 
-  // A retired argument stays in its tool's schema for a release, refused with the CLI's message.
   it.each([
-    ...["fund", "whoami", "transfer", "send"].map((name) => ({
-      name,
-      arguments: { credits: true, amount: "1", token: usdc, to: testWallet, yes: true },
-      message: "--credits was removed. Use on-chain token balances and payments.",
+    ...["fund", "whoami", "transfer"].flatMap((name) =>
+      [true, false].map((credits) => ({ name, arguments: { credits } })),
+    ),
+    ...[true, false].map((credits) => ({
+      name: "send",
+      arguments: { amount: "1", token: usdc, to: testWallet, yes: true, credits },
     })),
-    {
+    ...[true, false].map((mach) => ({
       name: "transfer",
-      arguments: { credits: true, "amount-cents": 1, to: testWallet, "dry-run": true },
-      message: "--credits was removed. Use on-chain token balances and payments.",
-    },
+      arguments: { "mpp-challenge": "ignored", "max-spend": "1", mach },
+    })),
+    { name: "transfer", arguments: { "mpp-challenge": "ignored", "amount-cents": 1 } },
+    { name: "transfer", arguments: { "mpp-challenge": "ignored", data: "0x12" } },
     {
-      name: "transfer",
-      arguments: { credits: true, mach: true, "mpp-challenge": "x", "max-spend": "1" },
-      message: "--credits was removed. Use on-chain token balances and payments.",
+      name: "send",
+      arguments: { amount: "1", token: usdc, to: testWallet, yes: true, unknown: true },
     },
+  ])(
+    "refuses unknown $name arguments without a fallback payment: $arguments",
+    async ({ name, arguments: args }) => {
+      await writeWalletState(walletState());
+      const host = await recordingHost();
+      vi.stubEnv("TEMPO_AUTH_URL", host.url);
+      vi.stubEnv("TEMPO_RPC_URL", host.url);
+      try {
+        const response = await mcpCall({ name, arguments: args });
+        expect(response.result.isError).toBe(true);
+        expect(firstToolText(response)).toContain("Unrecognized key");
+        expect(host.requests).toEqual([]);
+      } finally {
+        await host.close();
+      }
+    },
+  );
+
+  // Unrelated funding migrations still explain their replacement.
+  it.each([
     {
       name: "fund",
       arguments: { wait: true, browser: false },
@@ -178,53 +201,16 @@ describe("MCP tools", () => {
         "--timeout was removed; 'tempo wallet fund' only opens the funding page and does not wait for deposits.",
     },
     {
-      name: "transfer",
-      arguments: { amount: "1", token: usdc, to: testWallet, value: "0" },
-      message: "--value was removed: transfers carry no ETH value.",
-    },
-    {
       name: "fund",
       arguments: { claim: "CODE", browser: false },
       message:
         "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
     },
     {
-      name: "transfer",
-      arguments: { mach: true, "amount-cents": 2, "mpp-challenge": "x", "dry-run": true },
-      message:
-        "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
-    },
-    {
-      name: "transfer",
-      arguments: { mach: true, "amount-cents": 1, "max-spend": "100", "mpp-challenge": "x" },
-      message:
-        "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
-      // The caps conflict, so no command picks one.
-      cta: false,
-    },
-    // A value-taking argument is refused whatever its value, false included.
-    {
-      name: "transfer",
-      arguments: { amount: "1", token: usdc, to: testWallet, value: false },
-      message: "--value was removed: transfers carry no ETH value.",
-    },
-    {
       name: "fund",
       arguments: { claim: false, browser: false },
       message:
         "--claim was removed; pass the referral code with --referral-code: 'tempo wallet fund --referral-code <code>'.",
-    },
-    // A token transfer refuses removed payment options instead of ignoring them.
-    {
-      name: "transfer",
-      arguments: { amount: "1", token: "USDC.e", to: testWallet, data: "0x12", yes: true },
-      message: "--data was removed; a token transfer sends no calldata.",
-    },
-    {
-      name: "transfer",
-      arguments: { amount: "1", token: "USDC.e", to: testWallet, "amount-cents": 100, yes: true },
-      message:
-        "--amount-cents was removed; use --max-spend with --mach, or pass a token transfer's amount in token units as the first argument: 'tempo wallet send <amount> <token> <to>'.",
     },
   ])("refuses $name $arguments and sends nothing", async ({ name, arguments: args, ...row }) => {
     await writeWalletState(walletState());
@@ -287,12 +273,9 @@ describe("MCP tools", () => {
     const property = (tool: string, name: string) =>
       response.result.tools.find((item) => item.name === tool)?.inputSchema.properties[name];
     for (const tool of ["fund", "whoami", "transfer", "send"])
-      expect(property(tool, "credits")?.description).toBe(
-        "Removed: --credits was removed. Use on-chain token balances and payments.",
-      );
-    expect(property("transfer", "value")?.description).toBe(
-      "Removed: --value was removed: transfers carry no ETH value.",
-    );
+      expect(property(tool, "credits")).toBeUndefined();
+    for (const flag of ["mach", "value", "data", "amount-cents"])
+      expect(property("transfer", flag)).toBeUndefined();
     expect(property("fund", "claim")?.description).toMatch(/^Removed: --claim was removed;/);
     for (const flag of ["wait", "timeout"]) {
       expect(property("fund", flag)?.description).toMatch(/^Removed:/);
@@ -417,7 +400,7 @@ describe("MCP tools", () => {
       arguments: { target: `0x${"a".repeat(64)}` },
       message: "Closing a session cannot be undone, so it needs confirmation.",
     },
-    ...["send", "transfer"].map((name) => ({
+    ...["send"].map((name) => ({
       name,
       arguments: { amount: "1", token: "USDC.e", to: testWallet },
       message: "Transfer not sent: review it with --dry-run, then pass --yes",
