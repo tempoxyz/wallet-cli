@@ -2,8 +2,12 @@ import type { tempo } from "mppx/client";
 import { machineTokenDeployments } from "mppx/tempo";
 import {
   erc20Abi,
+  ExecutionRevertedError,
   HttpRequestError,
+  InternalRpcError,
+  LimitExceededRpcError,
   parseAbi,
+  ResourceUnavailableRpcError,
   TimeoutError,
   toFunctionSelector,
   type Address,
@@ -232,11 +236,14 @@ async function machRouteError(options: {
     const causes = options.scoped
       ? "insufficient swapper liquidity, the access key's call scopes, or a transient RPC error"
       : "insufficient swapper liquidity or a transient RPC error";
-    return walletError({
+    const error = walletError({
       code: "E_PAYMENT",
       retryable,
       message: `MACH settlement is unavailable: the MACH swap route for ${formatTokenAmount(amount)} MACH could not be simulated. Possible causes: ${causes}.${retryable ? " Try again shortly." : ""} ${noMachFallback}`,
     });
+    // Only a route that reverted again lets the caller try another offer: one that simulates now,
+    // or failed on transport, may settle this offer on a retry.
+    return retryable ? error : unsimulatedMachRoute(error);
   }
   const shortfall = `The MACH balance ${formatTokenAmount(balance)} is below the ${formatTokenAmount(amount)} MACH this charge needs.`;
   // Hosted MACH checkout is mainnet only.
@@ -258,11 +265,38 @@ async function machRouteError(options: {
   );
 }
 
+const unsimulatedMachRoutes = new WeakSet<object>();
+
+function unsimulatedMachRoute<T extends Error>(error: T) {
+  unsimulatedMachRoutes.add(error);
+  return error;
+}
+
+/**
+ * Whether `error` is the MACH route's failure to simulate, reverting on its re-check too. The route
+ * swaps MACH for the offer's settlement currency, so another machine-enabled offer in another
+ * currency may still settle. A transient or one-off failure is not one: it is retried as is.
+ */
+export function isUnsimulatedMachRoute(error: unknown) {
+  return typeof error === "object" && error !== null && unsimulatedMachRoutes.has(error);
+}
+
 /** Whether an RPC failure, or any error it wraps, is a transport failure or timeout. */
 function isTransientRpcError(error: unknown) {
-  for (let cause = error; cause instanceof Error; cause = cause.cause)
+  let overloaded = false;
+  for (let cause = error; cause instanceof Error; cause = cause.cause) {
     if (cause instanceof HttpRequestError || cause instanceof TimeoutError) return true;
-  return false;
+    // A node can say it is overloaded or failed internally in an HTTP 200 JSON-RPC response; that
+    // is transient unless viem also read it as a revert, which some nodes report as -32603.
+    if (cause instanceof ExecutionRevertedError) return false;
+    if (
+      cause instanceof LimitExceededRpcError ||
+      cause instanceof ResourceUnavailableRpcError ||
+      cause instanceof InternalRpcError
+    )
+      overloaded = true;
+  }
+  return overloaded;
 }
 
 /** Whether a charge credential's signed transaction approves and swaps MACH, the MACH route. */

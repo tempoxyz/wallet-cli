@@ -2,7 +2,14 @@ import { createServer } from "node:http";
 import { Errors } from "incur";
 import { Challenge, Credential } from "mppx";
 import { machineTokenDeployments } from "mppx/tempo";
-import { decodeFunctionData, parseAbi, TimeoutError } from "viem";
+import {
+  decodeFunctionData,
+  ExecutionRevertedError,
+  InternalRpcError,
+  LimitExceededRpcError,
+  parseAbi,
+  TimeoutError,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   call,
@@ -300,6 +307,207 @@ it("runs the actual SDK MACH route and sends only the validated credential", asy
   expect(sendTransactionSync).not.toHaveBeenCalled();
 });
 
+describe("a MACH route that does not simulate for the first offer's currency", () => {
+  const swapAbi = parseAbi([
+    "function swapTo(address inputToken,uint256 amount,address targetToken,address recipient,bytes32 memo)",
+  ]);
+  /** Fails every route simulation that swaps MACH into one of `dry`, as an empty DEX book does. */
+  /** Books for `dry` that cannot fill a swap of more than `depth` (none by default). */
+  function emptyBooks(...dry: string[]) {
+    thinBooks(0n, ...dry);
+  }
+  function thinBooks(depth: bigint, ...dry: string[]) {
+    vi.mocked(call).mockImplementation(async (_client, parameters) => {
+      const calls = (parameters as { calls?: { data: `0x${string}` }[] }).calls;
+      const swap = calls?.[1] && decodeFunctionData({ abi: swapAbi, data: calls[1].data });
+      const target = String(swap?.args[2] ?? "").toLowerCase();
+      const amount = BigInt(swap?.args[1] ?? 0n);
+      if (dry.some((token) => token.toLowerCase() === target) && amount > depth)
+        throw new Error("InsufficientLiquidity()");
+      return { data: "0x" };
+    });
+  }
+  /** The currency each simulated MACH route swapped into, in order. */
+  function simulatedTargets() {
+    return vi.mocked(call).mock.calls.map(([, parameters]) => {
+      const data = (parameters as { calls: { data: `0x${string}` }[] }).calls[1]!.data;
+      return String(decodeFunctionData({ abi: swapAbi, data }).args[2]).toLowerCase();
+    });
+  }
+  const first = offer({ currency: unlistedToken }, { id: "first" });
+  const second = offer({}, { id: "second" });
+
+  it("pays the next machine-enabled offer in another currency", async () => {
+    emptyBooks(unlistedToken);
+    const service = await server([first, second]);
+
+    await runRequest(["--mach", "--max-spend", "0.015", service.url], {
+      stdout: { write: () => true },
+    });
+
+    expect(service.paid).toHaveLength(1);
+    expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(second);
+    expect(signTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("skips an offer in a currency whose route already failed at that amount", async () => {
+    emptyBooks(unlistedToken);
+    const sameCurrency = offer({ currency: unlistedToken }, { id: "same" });
+    const service = await server([first, sameCurrency, second]);
+
+    await runRequest(["--mach", "--max-spend", "0.015", service.url], {
+      stdout: { write: () => true },
+    });
+
+    expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(second);
+    // The first offer's route is simulated by the SDK and re-checked once; the same-currency
+    // offer is never simulated.
+    expect(
+      simulatedTargets().filter((target) => target === unlistedToken.toLowerCase()),
+    ).toHaveLength(2);
+  });
+
+  it("tries a cheaper offer in a currency whose route failed at a larger amount", async () => {
+    thinBooks(14_000n, unlistedToken);
+    const cheaper = offer({ currency: unlistedToken, amount: "14000" }, { id: "cheaper" });
+    const service = await server([first, cheaper, second]);
+
+    await runRequest(["--mach", "--max-spend", "0.015", service.url], {
+      stdout: { write: () => true },
+    });
+
+    expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(cheaper);
+  });
+
+  it.each([
+    ["a larger amount", { amount: "15001" }],
+    ["another recipient", { recipient: "0x2222222222222222222222222222222222222222" }],
+  ])("does not fall through to an offer for %s than the first", async (_name, request) => {
+    emptyBooks(unlistedToken);
+    const service = await server([first, offer(request, { id: "other" })]);
+
+    const error = await runRequest(["--mach", "--max-spend", "0.02", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({ message: expect.stringContaining("could not be simulated") });
+    expect(service.paid).toEqual([]);
+  });
+
+  it("skips a push-only offer for a later one the CLI can pay", async () => {
+    emptyBooks(unlistedToken);
+    const pushOnly = offer(
+      {
+        currency: moderatoToken,
+        methodDetails: { chainId: 4217, machineTokenEnabled: true, supportedModes: ["push"] },
+      },
+      { id: "push-only" },
+    );
+    const service = await server([first, pushOnly, second]);
+
+    await runRequest(["--mach", "--max-spend", "0.015", service.url], {
+      stdout: { write: () => true },
+    });
+
+    expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(second);
+  });
+
+  it("reports the first offer's failure, without signing, when no route simulates", async () => {
+    emptyBooks(unlistedToken, usdcToken);
+    const cheaper = offer({ amount: "14000" }, { id: "cheaper" });
+    const service = await server([first, cheaper]);
+
+    const error = await runRequest(["--mach", "--max-spend", "0.015", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    // The second offer was tried, but the error is the first offer's, for its 0.015 MACH.
+    expect(simulatedTargets()).toContain(usdcToken.toLowerCase());
+    expect(error).toMatchObject({
+      code: "E_PAYMENT",
+      message: expect.stringContaining("swap route for 0.015 MACH could not be simulated"),
+    });
+    expect(service.paid).toEqual([]);
+    expect(signTransaction).not.toHaveBeenCalled();
+  });
+
+  it("tries at most three offers", async () => {
+    const currencies = [unlistedToken, ...[2, 3, 4].map((n) => `0x${String(n).repeat(40)}`)];
+    emptyBooks(...currencies);
+    const offers = [
+      ...currencies.map((currency, index) => offer({ currency }, { id: `dry-${index}` })),
+      second,
+    ];
+    const service = await server(offers);
+
+    const error = await runRequest(["--mach", "--max-spend", "0.015", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({ message: expect.stringContaining("could not be simulated") });
+    expect(service.paid).toEqual([]);
+    const swapped = new Set(
+      vi.mocked(call).mock.calls.map(([, parameters]) => {
+        const data = (parameters as { calls: { data: `0x${string}` }[] }).calls[1]!.data;
+        return String(decodeFunctionData({ abi: swapAbi, data }).args[2]).toLowerCase();
+      }),
+    );
+    expect(swapped.size).toBe(3);
+  });
+
+  it("keeps the first offer when its route simulates on the re-check", async () => {
+    vi.mocked(call).mockRejectedValueOnce(new Error("swapper reverted"));
+    const service = await server([first, second]);
+
+    const error = await runRequest(["--mach", "--max-spend", "0.015", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({ code: "E_PAYMENT", retryable: true });
+    expect(service.paid).toEqual([]);
+    expect(call).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a later offer's transient failure as retryable", async () => {
+    vi.mocked(call).mockImplementation(async (_client, parameters) => {
+      const data = (parameters as { calls: { data: `0x${string}` }[] }).calls[1]!.data;
+      const target = String(decodeFunctionData({ abi: swapAbi, data }).args[2]).toLowerCase();
+      if (target === unlistedToken.toLowerCase()) throw new Error("InsufficientLiquidity()");
+      throw new TimeoutError({ body: {}, url: "https://rpc.example" });
+    });
+    const service = await server([first, second]);
+
+    const error = await runRequest(["--mach", "--max-spend", "0.015", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({
+      code: "E_PAYMENT",
+      retryable: true,
+      message: expect.stringContaining("Try again shortly."),
+    });
+    expect(service.paid).toEqual([]);
+  });
+
+  it("does not try another offer when the MACH balance is short", async () => {
+    vi.mocked(readContract).mockResolvedValue(10_000n);
+    emptyBooks(unlistedToken);
+    const service = await server([first, second]);
+
+    const error = await runRequest(["--mach", "--max-spend", "0.015", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({ code: "E_INSUFFICIENT_FUNDS" });
+    expect(service.paid).toEqual([]);
+    // One offer's reads (the SDK's and the CLI's): the shortfall stops the search there.
+    const balanceReads = vi
+      .mocked(readContract)
+      .mock.calls.filter(([, parameters]) => parameters.functionName === "balanceOf");
+    expect(balanceReads).toHaveLength(2);
+  });
+});
+
 const payer = privateKeyToAccount(`0x${"1".repeat(64)}`).address.toLowerCase();
 const noFallback = "No stablecoin fallback was authorized.";
 const fundMach = `tempo wallet fund --mach --address ${payer} --network mainnet`;
@@ -426,6 +634,37 @@ const machRouteFailures: MachRouteFailure[] = [
         "insufficient swapper liquidity or a transient RPC error",
         " Try again shortly.",
       ),
+    },
+  },
+  {
+    cause: "a route simulation the node refuses as overloaded",
+    simulation: {
+      error: new Error("call failed", {
+        cause: new LimitExceededRpcError(new Error("rate limited")),
+      }),
+    },
+    error: { code: "E_PAYMENT", retryable: true, message: expect.stringContaining("Try again") },
+  },
+  {
+    cause: "a route simulation that fails inside the node",
+    simulation: {
+      error: new Error("call failed", { cause: new InternalRpcError(new Error("internal")) }),
+    },
+    error: { code: "E_PAYMENT", retryable: true, message: expect.stringContaining("Try again") },
+  },
+  {
+    cause: "a route simulation that reverts with an internal error code",
+    simulation: {
+      error: new Error("call failed", {
+        cause: new ExecutionRevertedError({
+          cause: new InternalRpcError(new Error("execution reverted")),
+        }),
+      }),
+    },
+    error: {
+      code: "E_PAYMENT",
+      retryable: false,
+      message: expect.not.stringContaining("Try again"),
     },
   },
   {

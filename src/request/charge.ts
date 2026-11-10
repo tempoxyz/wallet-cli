@@ -1,5 +1,5 @@
 import { Errors } from "incur";
-import { type Challenge, Credential } from "mppx";
+import { Challenge, Credential } from "mppx";
 import { Mppx, tempo } from "mppx/client";
 import { machineTokenDeployments } from "mppx/tempo";
 import { formatUnits, parseUnits, type Address } from "viem";
@@ -27,6 +27,7 @@ import {
 import {
   type ChargeParameters,
   isMachPaymentToken,
+  isUnsimulatedMachRoute,
   machChargeParameters,
   type MachService,
   machService,
@@ -77,6 +78,125 @@ export async function payAndRetryRequest(
   if (options.paymentIntent === "session")
     throw paymentError("Server did not offer a compatible 'session' payment intent");
 
+  // An explicit MACH charge whose swap route does not simulate tries the server's next
+  // machine-enabled offer in another currency: the swapper buys each currency on the DEX, so one
+  // book running dry need not block the payment. Nothing is signed or sent for a failed route.
+  // At most `maxMachChargeOffers` offers are tried, since each failed route costs several RPC reads.
+  const tried: Challenge.Challenge[] = [];
+  let attempt = { challenge: selectedChallenge, response: challengeResponse };
+  let firstError: unknown;
+  for (;;) {
+    try {
+      return await payCharge(attempt.challenge, attempt.response, request, options);
+    } catch (error) {
+      if (!isMachPaymentToken(options.paymentToken) || !isUnsimulatedMachRoute(error)) throw error;
+      firstError ??= error;
+      tried.push(attempt.challenge);
+      const next =
+        tried.length < maxMachChargeOffers
+          ? nextMachCharge(header, tried, selectedResponse, options, request.url)
+          : undefined;
+      if (!next) throw firstError;
+      attempt = next;
+    }
+  }
+}
+
+/** How many machine-enabled charge offers, in distinct currencies, an explicit MACH charge tries. */
+const maxMachChargeOffers = 3;
+
+/**
+ * The server's next machine-enabled charge offer that passes the same validation as the first,
+ * ready to pay; undefined when none is left. An offer is skipped when a `tried` offer in its
+ * settlement currency failed at the same or a smaller amount: the swapper needs at least as much
+ * of that currency's book, so it would fail too. A cheaper one may still fit a thin book. Only an
+ * offer to the first offer's recipient, for no more than its amount, is an alternative, so the
+ * payment stays within what a `--dry-run` of the same 402 quoted.
+ */
+function nextMachCharge(
+  header: string | null,
+  tried: readonly Challenge.Challenge[],
+  selectedResponse: Response,
+  options: RequestOptions,
+  requestUrl: string,
+) {
+  if (!header) return undefined;
+  const currency = (challenge: Challenge.Challenge) =>
+    stringValue(challenge.request.currency).toLowerCase();
+  const amount = (challenge: Challenge.Challenge) => {
+    try {
+      return challengeAmount(challenge);
+    } catch {
+      return undefined;
+    }
+  };
+  const failedAtOrBelow = (offer: Challenge.Challenge) => {
+    const offered = amount(offer);
+    return tried.some((failed) => {
+      const failedAmount = amount(failed);
+      return (
+        currency(failed) === currency(offer) &&
+        (offered === undefined || failedAmount === undefined || failedAmount <= offered)
+      );
+    });
+  };
+  // `tempo request` always signs pull-mode credentials, which the SDK refuses for an offer whose
+  // supportedModes leave pull out.
+  const supportsPull = (offer: Challenge.Challenge) => {
+    const modes = getRecord(offer.request.methodDetails).supportedModes;
+    return !Array.isArray(modes) || modes.includes("pull");
+  };
+  const [first] = tried;
+  const recipient = (challenge: Challenge.Challenge) =>
+    stringValue(challenge.request.recipient).toLowerCase();
+  const withinFirst = (offer: Challenge.Challenge) => {
+    const offered = amount(offer);
+    const firstAmount = first && amount(first);
+    return (
+      first !== undefined &&
+      recipient(offer) === recipient(first) &&
+      offered !== undefined &&
+      firstAmount !== undefined &&
+      offered <= firstAmount
+    );
+  };
+  let offers: Challenge.Challenge[];
+  try {
+    offers = Challenge.deserializeList(header);
+  } catch {
+    return undefined;
+  }
+  for (const offer of offers) {
+    if (
+      offer.intent !== "charge" ||
+      !supportsPull(offer) ||
+      failedAtOrBelow(offer) ||
+      !withinFirst(offer)
+    )
+      continue;
+    const headers = new Headers(selectedResponse.headers);
+    headers.set("www-authenticate", Challenge.serialize(offer));
+    try {
+      const { challenge, response } = preparePaymentChallenge(
+        new Response(null, { status: selectedResponse.status, headers }),
+        { ...options, paymentIntent: "charge" },
+        requestUrl,
+      );
+      return { challenge, response: tempoPaymentChallengeResponse(response) };
+    } catch {
+      // An offer that fails validation is no alternative.
+    }
+  }
+  return undefined;
+}
+
+/** Pays `selectedChallenge` with a one-time charge and retries the request with its credential. */
+async function payCharge(
+  selectedChallenge: Challenge.Challenge,
+  challengeResponse: Response,
+  request: FetchPlan,
+  options: RequestOptions,
+) {
   try {
     const identity = await resolvePaymentIdentity(options);
     const getClient = identity.getClient;
