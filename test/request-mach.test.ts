@@ -359,6 +359,30 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     expect(signTransaction).not.toHaveBeenCalled();
   });
 
+  it("tries at most three offers", async () => {
+    const currencies = [unlistedToken, ...[2, 3, 4].map((n) => `0x${String(n).repeat(40)}`)];
+    emptyBooks(...currencies);
+    const offers = [
+      ...currencies.map((currency, index) => offer({ currency }, { id: `dry-${index}` })),
+      second,
+    ];
+    const service = await server(offers);
+
+    const error = await runRequest(["--mach", "--max-spend", "0.015", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({ message: expect.stringContaining("could not be simulated") });
+    expect(service.paid).toEqual([]);
+    const swapped = new Set(
+      vi.mocked(call).mock.calls.map(([, parameters]) => {
+        const data = (parameters as { calls: { data: `0x${string}` }[] }).calls[1]!.data;
+        return String(decodeFunctionData({ abi: swapAbi, data }).args[2]).toLowerCase();
+      }),
+    );
+    expect(swapped.size).toBe(3);
+  });
+
   it("does not try another offer when the MACH balance is short", async () => {
     vi.mocked(readContract).mockResolvedValue(10_000n);
     emptyBooks(unlistedToken);

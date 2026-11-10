@@ -81,6 +81,7 @@ export async function payAndRetryRequest(
   // An explicit MACH charge whose swap route does not simulate tries the server's next
   // machine-enabled offer in another currency: the swapper buys each currency on the DEX, so one
   // book running dry need not block the payment. Nothing is signed or sent for a failed route.
+  // At most `maxMachChargeOffers` offers are tried, since each failed route costs several RPC reads.
   const tried: Challenge.Challenge[] = [];
   let attempt = { challenge: selectedChallenge, response: challengeResponse };
   let firstError: unknown;
@@ -91,12 +92,18 @@ export async function payAndRetryRequest(
       if (!isMachPaymentToken(options.paymentToken) || !isUnsimulatedMachRoute(error)) throw error;
       firstError ??= error;
       tried.push(attempt.challenge);
-      const next = nextMachCharge(header, tried, selectedResponse, options, request.url);
+      const next =
+        tried.length < maxMachChargeOffers
+          ? nextMachCharge(header, tried, selectedResponse, options, request.url)
+          : undefined;
       if (!next) throw firstError;
       attempt = next;
     }
   }
 }
+
+/** How many machine-enabled charge offers, in distinct currencies, an explicit MACH charge tries. */
+const maxMachChargeOffers = 3;
 
 /**
  * The server's next machine-enabled charge offer that passes the same validation as the first,
