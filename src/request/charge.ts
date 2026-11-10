@@ -109,7 +109,9 @@ const maxMachChargeOffers = 3;
  * The server's next machine-enabled charge offer that passes the same validation as the first,
  * ready to pay; undefined when none is left. An offer is skipped when a `tried` offer in its
  * settlement currency failed at the same or a smaller amount: the swapper needs at least as much
- * of that currency's book, so it would fail too. A cheaper one may still fit a thin book.
+ * of that currency's book, so it would fail too. A cheaper one may still fit a thin book. Only an
+ * offer to the first offer's recipient, for no more than its amount, is an alternative, so the
+ * payment stays within what a `--dry-run` of the same 402 quoted.
  */
 function nextMachCharge(
   header: string | null,
@@ -138,6 +140,20 @@ function nextMachCharge(
       );
     });
   };
+  const [first] = tried;
+  const recipient = (challenge: Challenge.Challenge) =>
+    stringValue(challenge.request.recipient).toLowerCase();
+  const withinFirst = (offer: Challenge.Challenge) => {
+    const offered = amount(offer);
+    const firstAmount = first && amount(first);
+    return (
+      first !== undefined &&
+      recipient(offer) === recipient(first) &&
+      offered !== undefined &&
+      firstAmount !== undefined &&
+      offered <= firstAmount
+    );
+  };
   let offers: Challenge.Challenge[];
   try {
     offers = Challenge.deserializeList(header);
@@ -145,7 +161,7 @@ function nextMachCharge(
     return undefined;
   }
   for (const offer of offers) {
-    if (offer.intent !== "charge" || failedAtOrBelow(offer)) continue;
+    if (offer.intent !== "charge" || failedAtOrBelow(offer) || !withinFirst(offer)) continue;
     const headers = new Headers(selectedResponse.headers);
     headers.set("www-authenticate", Challenge.serialize(offer));
     try {

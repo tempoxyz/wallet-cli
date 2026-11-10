@@ -2,7 +2,14 @@ import { createServer } from "node:http";
 import { Errors } from "incur";
 import { Challenge, Credential } from "mppx";
 import { machineTokenDeployments } from "mppx/tempo";
-import { decodeFunctionData, parseAbi, TimeoutError } from "viem";
+import {
+  decodeFunctionData,
+  ExecutionRevertedError,
+  InternalRpcError,
+  LimitExceededRpcError,
+  parseAbi,
+  TimeoutError,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   call,
@@ -360,6 +367,21 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(cheaper);
   });
 
+  it.each([
+    ["a larger amount", { amount: "15001" }],
+    ["another recipient", { recipient: "0x2222222222222222222222222222222222222222" }],
+  ])("does not fall through to an offer for %s than the first", async (_name, request) => {
+    emptyBooks(unlistedToken);
+    const service = await server([first, offer(request, { id: "other" })]);
+
+    const error = await runRequest(["--mach", "--max-spend", "0.02", service.url]).catch(
+      (value: unknown) => value,
+    );
+
+    expect(error).toMatchObject({ message: expect.stringContaining("could not be simulated") });
+    expect(service.paid).toEqual([]);
+  });
+
   it("reports the first offer's failure, without signing, when no route simulates", async () => {
     emptyBooks(unlistedToken, usdcToken);
     const service = await server([first, second]);
@@ -574,6 +596,37 @@ const machRouteFailures: MachRouteFailure[] = [
         "insufficient swapper liquidity or a transient RPC error",
         " Try again shortly.",
       ),
+    },
+  },
+  {
+    cause: "a route simulation the node refuses as overloaded",
+    simulation: {
+      error: new Error("call failed", {
+        cause: new LimitExceededRpcError(new Error("rate limited")),
+      }),
+    },
+    error: { code: "E_PAYMENT", retryable: true, message: expect.stringContaining("Try again") },
+  },
+  {
+    cause: "a route simulation that fails inside the node",
+    simulation: {
+      error: new Error("call failed", { cause: new InternalRpcError(new Error("internal")) }),
+    },
+    error: { code: "E_PAYMENT", retryable: true, message: expect.stringContaining("Try again") },
+  },
+  {
+    cause: "a route simulation that reverts with an internal error code",
+    simulation: {
+      error: new Error("call failed", {
+        cause: new ExecutionRevertedError({
+          cause: new InternalRpcError(new Error("execution reverted")),
+        }),
+      }),
+    },
+    error: {
+      code: "E_PAYMENT",
+      retryable: false,
+      message: expect.not.stringContaining("Try again"),
     },
   },
   {

@@ -2,8 +2,12 @@ import type { tempo } from "mppx/client";
 import { machineTokenDeployments } from "mppx/tempo";
 import {
   erc20Abi,
+  ExecutionRevertedError,
   HttpRequestError,
+  InternalRpcError,
+  LimitExceededRpcError,
   parseAbi,
+  ResourceUnavailableRpcError,
   TimeoutError,
   toFunctionSelector,
   type Address,
@@ -279,9 +283,20 @@ export function isUnsimulatedMachRoute(error: unknown) {
 
 /** Whether an RPC failure, or any error it wraps, is a transport failure or timeout. */
 function isTransientRpcError(error: unknown) {
-  for (let cause = error; cause instanceof Error; cause = cause.cause)
+  let overloaded = false;
+  for (let cause = error; cause instanceof Error; cause = cause.cause) {
     if (cause instanceof HttpRequestError || cause instanceof TimeoutError) return true;
-  return false;
+    // A node can say it is overloaded or failed internally in an HTTP 200 JSON-RPC response; that
+    // is transient unless viem also read it as a revert, which some nodes report as -32603.
+    if (cause instanceof ExecutionRevertedError) return false;
+    if (
+      cause instanceof LimitExceededRpcError ||
+      cause instanceof ResourceUnavailableRpcError ||
+      cause instanceof InternalRpcError
+    )
+      overloaded = true;
+  }
+  return overloaded;
 }
 
 /** Whether a charge credential's signed transaction approves and swaps MACH, the MACH route. */
