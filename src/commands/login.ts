@@ -338,11 +338,11 @@ function statusArgv(options: PollOptions) {
   ];
 }
 
-/** The code and URL to show the user; both come from the wallet server. */
 /**
  * `url` with `tempo_id`, which has the wallet app's approval page sign in with Tempo ID instead of
- * a passkey, on any network. The saved registration keeps it, so `login status` and a
- * `--no-wait` login print the same link. A value that isn't a URL is returned as it is.
+ * a passkey, on any network. The saved registration keeps it, so a `--no-wait` login's
+ * `verification_url` carries it, and `login status` retries a failed login with --id. A value that
+ * isn't a URL is returned as it is.
  */
 function withTempoId(url: unknown) {
   if (typeof url !== "string" || !URL.canParse(url)) return url;
@@ -358,6 +358,7 @@ function askedTempoId(pending: PendingLogin) {
   return typeof url === "string" && URL.canParse(url) && new URL(url).searchParams.has("tempo_id");
 }
 
+/** The code and URL to show the user; both come from the wallet server. */
 function loginPrompt(pending: PendingLogin) {
   const { registration } = pending;
   return {
