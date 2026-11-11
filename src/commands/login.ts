@@ -90,6 +90,8 @@ type PollOptions = {
 export async function loginHandler(options: {
   network?: string | undefined;
   browser?: boolean | undefined;
+  /** Has the wallet app sign in with Tempo ID instead of a passkey. */
+  id?: boolean | undefined;
   wait: boolean;
 }) {
   const state = await loadWalletState();
@@ -97,7 +99,7 @@ export async function loginHandler(options: {
   const cached = await cachedLoginOutput(state, network);
   if (cached) return cached;
 
-  const pending = await startLogin(network);
+  const pending = await startLogin(network, { id: options.id });
   const { code, url } = loginPrompt(pending);
   console.error(`Device confirmation code: ${code}`);
   console.error(`Continue at: ${url}`);
@@ -130,7 +132,7 @@ export async function loginStatusHandler(options: { network?: string | undefined
  * to authorize. The SDK reveals the verifier only in its `/token` polls, so the exchange stops at
  * the first poll, before it is sent. A new login replaces any pending one.
  */
-async function startLogin(network: Network) {
+async function startLogin(network: Network, options: { id?: boolean | undefined } = {}) {
   const keystore = Keystore.webCryptoP256({ extractable: true });
   const started: {
     accessKey?: Keystore.createKey.ReturnType;
@@ -163,6 +165,9 @@ async function startLogin(network: Network) {
   });
 
   const registration = getRecord(started.registration);
+  if (options.id)
+    for (const key of ["verification_uri", "verification_uri_complete"])
+      if (key in registration) registration[key] = withTempoId(registration[key]);
   const pending = parsePendingLogin({
     network: network.name,
     registration,
@@ -330,6 +335,18 @@ function statusArgv(options: PollOptions) {
 }
 
 /** The code and URL to show the user; both come from the wallet server. */
+/**
+ * `url` with `tempo_id`, which has the wallet app's approval page sign in with Tempo ID instead of
+ * a passkey, on any network. The saved registration keeps it, so `login status` and a
+ * `--no-wait` login print the same link. A value that isn't a URL is returned as it is.
+ */
+function withTempoId(url: unknown) {
+  if (typeof url !== "string" || !URL.canParse(url)) return url;
+  const next = new URL(url);
+  next.searchParams.set("tempo_id", "true");
+  return next.toString();
+}
+
 function loginPrompt(pending: PendingLogin) {
   const { registration } = pending;
   return {

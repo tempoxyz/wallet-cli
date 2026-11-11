@@ -97,6 +97,30 @@ describe("login", () => {
     expect((await stat(pendingLoginPath())).mode & 0o777).toBe(0o600);
   });
 
+  it.each(["mainnet", "testnet"])(
+    "asks the wallet app for a Tempo ID sign-in on %s with --id, and keeps the link for login status",
+    async (network) => {
+      await useTempHome();
+      const host = useHost(["approve"]);
+      const url = `${appUrl}/api/auth/device/verify?user_code=ABCDEFG1&tempo_id=true`;
+
+      expect(await loginHandler({ network, browser: false, id: true, wait: false })).toMatchObject({
+        status: "pending",
+        verification_url: url,
+      });
+      expect(stderr).toContain(`Continue at: ${url}`);
+      expect(await loadPendingLogin()).toMatchObject({
+        registration: {
+          verification_uri: `${appUrl}/api/auth/device/verify?tempo_id=true`,
+          verification_uri_complete: url,
+        },
+      });
+      // The request itself is unchanged: the link only selects how the wallet app signs in.
+      expect(registeredKey(host).chainId).toBe(network === "mainnet" ? "0x1079" : "0xa5bf");
+      expect(await loginStatusHandler({})).toMatchObject({ accounts: [testWallet.toLowerCase()] });
+    },
+  );
+
   it.each([
     { advertised: 5, interval: 5 },
     { advertised: 12, interval: 12 },
