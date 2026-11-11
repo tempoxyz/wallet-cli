@@ -1,6 +1,7 @@
 ---
-title: "CLI timeout test includes TypeScript process startup"
-severity: "minor"
+title: 'CLI timeout test includes TypeScript process startup'
+severity: 'minor'
+issue: 'tempoxyz/wallet-cli#139'
 ---
 
 ## Expected Behavior
