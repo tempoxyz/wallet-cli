@@ -11,7 +11,7 @@ vi.mock("node:child_process", () => ({
   spawn: mocks.spawn,
 }));
 
-import { canPrompt, openExternal, runProcess } from "../src/shared/process.js";
+import { browserCommand, canPrompt, openExternal, runProcess } from "../src/shared/process.js";
 import { failedSpawn } from "./fixtures/failed-spawn.js";
 
 afterEach(() => {
@@ -58,6 +58,30 @@ describe("openExternal", () => {
     );
     expect(child.unref).toHaveBeenCalledOnce();
     expect(() => child.emit("error", new Error(`spawn ${command} ENOENT`))).not.toThrow();
+  });
+
+  it("escapes cmd.exe's own characters on Windows, so a link keeps every query parameter", () => {
+    const url =
+      "https://wallet.tempo.xyz/remote/rpc/wallet_connect?user_code=ABCDEFGH&tempo_id=true";
+    expect({
+      darwin: browserCommand(url, "darwin"),
+      linux: browserCommand(url, "linux"),
+      win32: browserCommand(url, "win32"),
+      win32_other: browserCommand("https://example.com/a(b)?c=1|2&d=<e>^f", "win32")[1][3],
+    }).toEqual({
+      darwin: ["open", [url]],
+      linux: ["xdg-open", [url]],
+      win32: [
+        "cmd",
+        [
+          "/c",
+          "start",
+          "",
+          "https://wallet.tempo.xyz/remote/rpc/wallet_connect?user_code=ABCDEFGH^&tempo_id=true",
+        ],
+      ],
+      win32_other: "https://example.com/a^(b^)?c=1^|2^&d=^<e^>^^f",
+    });
   });
 
   it.each(["1", "true"])("does not open a browser when TEMPO_NO_BROWSER=%s", (value) => {

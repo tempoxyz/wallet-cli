@@ -12,6 +12,10 @@ import { whoamiOutput } from "./whoami.js";
 export const loginOptions = z.object({
   ...globalOptionShape,
   browser: browserOption,
+  id: z
+    .boolean()
+    .optional()
+    .describe("Sign in with Tempo ID instead of a passkey in the wallet app"),
   wait: z
     .boolean()
     .optional()
