@@ -193,7 +193,11 @@ async function startLogin(network: Network, options: { id?: boolean | undefined 
  */
 async function finishLogin(pending: PendingLogin, network: Network, options: PollOptions) {
   const result = await pollLogin(pending, network, options);
-  const login = continuationCommand(["wallet", "login"], network);
+  // A login started with --id retries with it, so the next one asks for Tempo ID again.
+  const login = continuationCommand(
+    ["wallet", "login", ...(askedTempoId(pending) ? ["--id"] : [])],
+    network,
+  );
   const status = continuationCommand(statusArgv(options), network);
   // The code stays pending, so the same `login status` can pick it up again.
   if (result === "exhausted")
@@ -345,6 +349,13 @@ function withTempoId(url: unknown) {
   const next = new URL(url);
   next.searchParams.set("tempo_id", "true");
   return next.toString();
+}
+
+/** Whether `pending` was started with --id: its saved link carries `tempo_id` (`withTempoId`). */
+function askedTempoId(pending: PendingLogin) {
+  const url =
+    pending.registration.verification_uri_complete ?? pending.registration.verification_uri;
+  return typeof url === "string" && URL.canParse(url) && new URL(url).searchParams.has("tempo_id");
 }
 
 function loginPrompt(pending: PendingLogin) {

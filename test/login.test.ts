@@ -209,6 +209,20 @@ describe("login", () => {
 
 describe("login status", () => {
   it.each([
+    { answer: "deny" as const, code: "E_LOGIN_DENIED" },
+    { answer: "expire" as const, code: "E_LOGIN_EXPIRED" },
+  ])("retries a --id login with --id after $code", async ({ answer, code }) => {
+    await useTempHome();
+    useHost([answer]);
+    await loginHandler({ network: "testnet", browser: false, id: true, wait: false });
+
+    expect(await loginStatusHandler({})).toMatchObject({
+      code,
+      cta: { commands: [{ command: "tempo wallet login --id --network testnet" }] },
+    });
+  });
+
+  it.each([
     {
       name: "approval",
       answers: ["pending", "pending", "approve"],
