@@ -87,7 +87,7 @@ export async function buildFetchRequest(options: RequestOptions) {
   } else if (options.data.length > 0 || options.dataUrlencode.length > 0) {
     const data = [
       ...(await Promise.all(options.data.map(readDataValue))),
-      ...options.dataUrlencode.map(urlEncodeField),
+      ...(await Promise.all(options.dataUrlencode.map(urlEncodeField))),
     ].join("&");
     if (options.get) appendQuery(url, data);
     else {

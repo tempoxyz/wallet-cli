@@ -339,10 +339,20 @@ export function appendQuery(url: URL, data: string) {
   url.search = `${url.search}${prefix}${data}`;
 }
 
-export function urlEncodeField(value: string) {
-  const separator = value.indexOf("=");
+/**
+ * Encodes one `--data-urlencode` value the way curl does. The first `=` or `@` picks the form:
+ * `content`, `=content` (no name), `name=content`, `@file` and `name@file` (the file's contents,
+ * `-` for stdin). The name is passed on as given.
+ */
+export async function urlEncodeField(value: string) {
+  const separator = value.search(/[=@]/);
   if (separator < 0) return encodeURIComponent(value);
-  return `${value.slice(0, separator)}=${encodeURIComponent(value.slice(separator + 1))}`;
+  const name = value.slice(0, separator);
+  const content =
+    value[separator] === "@"
+      ? await readDataValue(value.slice(separator))
+      : value.slice(separator + 1);
+  return name ? `${name}=${encodeURIComponent(content)}` : encodeURIComponent(content);
 }
 
 export async function appendFormField(form: UndiciFormData, field: string) {
