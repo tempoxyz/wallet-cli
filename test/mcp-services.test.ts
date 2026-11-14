@@ -433,7 +433,9 @@ describe("MCP tools", () => {
       expect(firstToolText(response)).toContain(message);
       // Only reads reach the chain; nothing is signed, sent, or handed to the wallet app.
       expect(
-        host.requests.filter((request) => request !== "eth_call" && request !== "eth_chainId"),
+        host.requests.filter(
+          (request) => !["eth_blockNumber", "eth_call", "eth_chainId"].includes(request),
+        ),
       ).toEqual([]);
       expect(await readWalletStoreJson()).toEqual(stored);
     } finally {
@@ -662,8 +664,8 @@ describe("MCP tools", () => {
 
 /**
  * Stands in for the chain RPC, on mainnet, and the wallet app. It answers `decimals()` with 6 and any other
- * `eth_call` with a balance or quote large enough for any test amount, and records every RPC
- * method and other request.
+ * `eth_call` with a balance or quote large enough for any test amount, and the block number with 0, so
+ * channel discovery has no logs to scan. It records every RPC method and other request.
  */
 async function recordingHost() {
   const requests: string[] = [];
@@ -692,7 +694,9 @@ async function recordingHost() {
             ? { jsonrpc: "2.0", id, result: word(decimals ? 6n : 10n ** 12n) }
             : method === "eth_chainId"
               ? { jsonrpc: "2.0", id, result: "0x1079" }
-              : { jsonrpc: "2.0", id, error: { code: -32601, message: `Unexpected ${method}` } },
+              : method === "eth_blockNumber"
+                ? { jsonrpc: "2.0", id, result: "0x0" }
+                : { jsonrpc: "2.0", id, error: { code: -32601, message: `Unexpected ${method}` } },
         ),
       );
     });

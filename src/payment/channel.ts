@@ -6,7 +6,9 @@ import {
   escrowAbi,
   logHeadMargin,
   logQueryBlockRange,
+  logQueryConcurrency,
   logScanDepth,
+  precompileChannelsFromBlock,
 } from "../shared/constants.js";
 import {
   createTempoPublicClient,
@@ -16,6 +18,7 @@ import {
   type Network,
 } from "../shared/network.js";
 import { getRecord, parseOnChainBigInt, stringValue } from "../shared/utils.js";
+import type { SessionDescriptor } from "./session-descriptor.js";
 import type { PersistedSessionRecord } from "./session-store.js";
 
 type RpcOptions = Parameters<typeof createTempoPublicClient>[1];
@@ -28,6 +31,8 @@ export type OnChainDiscoveredChannel = {
   deposit: bigint;
   settled: bigint;
   closeRequestedAt: bigint;
+  /** A precompile channel's descriptor, which its `requestClose` and `withdraw` take. */
+  descriptor?: SessionDescriptor | undefined;
 };
 
 export async function findAllChannelsForPayer(options: { network: Network; payer: Address }) {
@@ -77,6 +82,115 @@ export async function findAllChannelsForPayer(options: { network: Network; payer
   }
 
   return results;
+}
+
+const channelOpenedEvent = parseAbiItem(
+  "event ChannelOpened(bytes32 indexed channelId, address indexed payer, address indexed payee, address operator, address token, address authorizedSigner, bytes32 salt, bytes32 expiringNonceHash, uint96 deposit)",
+);
+
+/**
+ * The TIP-1034 precompile channels `payer` pays from, opened from `fromBlock` (else from the
+ * precompile's first channel on the chain) up to the head by any client, that still hold a
+ * deposit. Each carries the descriptor rebuilt from its ChannelOpened event. `scannedTo` is the
+ * last block the scan covered, or undefined when there was no block to scan.
+ */
+export async function findPrecompileChannelsForPayer(options: {
+  fromBlock?: bigint | undefined;
+  network: Network;
+  payer: Address;
+}) {
+  await requireRpcChain(options.network.chainId);
+  const chain = options.network.chainId;
+  const client = createTempoPublicClient(chain);
+  const latest = (await client.getBlockNumber()).valueOf() - logHeadMargin;
+  const earliest = options.fromBlock ?? precompileChannelsFromBlock[chain] ?? 0n;
+  if (latest < earliest) return { channels: [], scannedTo: undefined };
+
+  const ranges: [bigint, bigint][] = [];
+  for (let start = earliest; start <= latest; start += logQueryBlockRange) {
+    const end = start + logQueryBlockRange - 1n;
+    ranges.push([start, end < latest ? end : latest]);
+  }
+
+  const channels: OnChainDiscoveredChannel[] = [];
+  for (let index = 0; index < ranges.length; index += logQueryConcurrency) {
+    const batches = await Promise.all(
+      ranges
+        .slice(index, index + logQueryConcurrency)
+        .map(([fromBlock, toBlock]) =>
+          precompileChannelsOpened(client, { fromBlock, payer: options.payer, toBlock }),
+        ),
+    );
+    for (const channel of batches.flat())
+      if (!channels.some((known) => known.channelId === channel.channelId)) channels.push(channel);
+  }
+  return { channels, scannedTo: latest };
+}
+
+/** The precompile channels `payer` opened in one block range that still hold a deposit. */
+async function precompileChannelsOpened(
+  client: TempoPublicClient,
+  options: { fromBlock: bigint; payer: Address; toBlock: bigint },
+) {
+  const logs = await client.getLogs({
+    address: TempoChannel.address,
+    event: channelOpenedEvent,
+    args: { payer: getAddress(options.payer) },
+    fromBlock: options.fromBlock,
+    toBlock: options.toBlock,
+  });
+  const opened = logs.flatMap((log) => {
+    const { args } = log;
+    if (
+      !args.channelId ||
+      !args.payer ||
+      !args.payee ||
+      !args.operator ||
+      !args.token ||
+      !args.authorizedSigner ||
+      !args.salt ||
+      !args.expiringNonceHash
+    )
+      return [];
+    const descriptor: SessionDescriptor = {
+      authorizedSigner: args.authorizedSigner,
+      expiringNonceHash: args.expiringNonceHash,
+      operator: args.operator,
+      payee: args.payee,
+      payer: args.payer,
+      salt: args.salt,
+      token: args.token,
+    };
+    return [{ channelId: args.channelId.toLowerCase() as Hex, descriptor }];
+  });
+  if (opened.length === 0) return [];
+
+  const states = (await client.readContract({
+    address: TempoChannel.address,
+    abi: TempoAbis.tip20ChannelReserve,
+    functionName: "getChannelStatesBatch",
+    args: [opened.map((channel) => channel.channelId)],
+  })) as unknown;
+  const list = Array.isArray(states) ? (states as unknown[]) : [];
+  return opened.flatMap(({ channelId, descriptor }, index): OnChainDiscoveredChannel[] => {
+    const item = list[index];
+    const state = getRecord(item);
+    const tuple = Array.isArray(item) ? (item as unknown[]) : [];
+    const deposit = parseOnChainBigInt(state.deposit ?? tuple[1]);
+    // The precompile clears a closed channel to a zero deposit, so nothing is left to withdraw.
+    if (deposit === 0n) return [];
+    return [
+      {
+        channelId,
+        escrowContract: TempoChannel.address,
+        token: descriptor.token.toLowerCase() as Address,
+        deposit,
+        settled: parseOnChainBigInt(state.settled ?? tuple[0]),
+        closeRequestedAt: parseOnChainBigInt(state.closeRequestedAt ?? tuple[2]),
+        descriptor,
+      },
+    ];
+  });
 }
 
 /**
