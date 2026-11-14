@@ -148,6 +148,11 @@ export async function updateSessionReceipt(options: {
 
 export async function deleteSessionRecord(channelId: string) {
   await ensureChannelsTable();
+  // The channel may still hold a deposit, so the payer's next channel discovery rescans from the
+  // start to find it again.
+  await runSql(`DELETE FROM channel_scans WHERE (chain_id, payer) IN (
+    SELECT chain_id, LOWER(payer) FROM channels WHERE LOWER(channel_id) = LOWER(${sqlString(channelId)})
+  )`);
   await runSql(`DELETE FROM channels WHERE LOWER(channel_id) = LOWER(${sqlString(channelId)})`);
 }
 
@@ -188,6 +193,14 @@ export async function ensureChannelsTable() {
     descriptor_json TEXT
   )`);
   await runSql("CREATE INDEX IF NOT EXISTS idx_channels_origin ON channels(origin)");
+  // The last block each payer's channel discovery scanned on an escrow, so the next scan resumes.
+  await runSql(`CREATE TABLE IF NOT EXISTS channel_scans (
+    chain_id INTEGER NOT NULL,
+    payer TEXT NOT NULL,
+    escrow_contract TEXT NOT NULL,
+    scanned_to INTEGER NOT NULL,
+    PRIMARY KEY (chain_id, payer, escrow_contract)
+  )`);
   await addColumnIfMissing("accepted_cumulative TEXT NOT NULL DEFAULT '0'");
   await addColumnIfMissing("server_spent TEXT NOT NULL DEFAULT '0'");
   await addColumnIfMissing("session_protocol TEXT NOT NULL DEFAULT 'v1'");

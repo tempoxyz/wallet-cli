@@ -1,4 +1,5 @@
-import { formatUnits, type Address } from "viem";
+import { formatUnits, zeroAddress, type Address } from "viem";
+import { Channel as TempoChannel } from "viem/tempo";
 
 import { networkName, tokenDecimals, type Network } from "../../shared/network.js";
 import { querySql, runSql, sqlString } from "../../shared/process.js";
@@ -15,6 +16,7 @@ import {
 } from "../../shared/utils.js";
 import {
   findAllChannelsForPayer,
+  findPrecompileChannelsForPayer,
   readGracePeriod,
   type OnChainDiscoveredChannel,
 } from "../../payment/channel.js";
@@ -167,7 +169,61 @@ export async function discoverAndPersistOrphanedChannels(network: Network) {
     });
   }
 
+  await discoverPrecompileChannels({ localIds, network, payer: wallet });
+
   return readChannelRecords();
+}
+
+/**
+ * Stores the wallet's TIP-1034 precompile channels that have no record, such as those another
+ * client opened with the same wallet. Their ChannelOpened logs span the chain's whole history,
+ * so each scan resumes after the last block a completed scan covered for this payer.
+ */
+async function discoverPrecompileChannels(options: {
+  localIds: ReadonlySet<string>;
+  network: Network;
+  payer: string;
+}) {
+  const chainId = options.network.chainId;
+  const payer = options.payer.toLowerCase();
+  const scannedTo = await readPrecompileScanCursor(chainId, payer);
+  const found = await findPrecompileChannelsForPayer({
+    fromBlock: scannedTo === undefined ? undefined : scannedTo + 1n,
+    network: options.network,
+    payer: options.payer as Address,
+  });
+  const missing = found.channels.filter((channel) => !options.localIds.has(channel.channelId));
+  const first = missing[0];
+  if (first) {
+    const gracePeriod = await readGracePeriod({
+      escrowContract: first.escrowContract,
+      network: options.network,
+    });
+    for (const channel of missing)
+      await saveDiscoveredChannel({
+        channel,
+        chainId,
+        gracePeriod,
+        payer,
+        state: sessionStateFromCloseTiming(Number(channel.closeRequestedAt), gracePeriod),
+      });
+  }
+  // Saved only once every channel found is stored, so a failed scan is repeated in full.
+  if (found.scannedTo !== undefined)
+    await runSql(`INSERT INTO channel_scans (chain_id, payer, escrow_contract, scanned_to)
+      VALUES (${chainId}, ${sqlString(payer)}, ${sqlString(TempoChannel.address.toLowerCase())}, ${Number(found.scannedTo)})
+      ON CONFLICT (chain_id, payer, escrow_contract) DO UPDATE SET scanned_to = excluded.scanned_to`);
+}
+
+/** The last block a completed precompile channel scan covered for `payer` on `chainId`. */
+async function readPrecompileScanCursor(chainId: number, payer: string) {
+  const rows = await querySql(`SELECT scanned_to FROM channel_scans
+    WHERE chain_id = ${chainId} AND payer = ${sqlString(payer)}
+      AND escrow_contract = ${sqlString(TempoChannel.address.toLowerCase())}`);
+  const [row] = getArray(rows);
+  if (!row) return undefined;
+  const value = safeNumber(getRecord(row).scanned_to);
+  return value > 0 ? BigInt(value) : undefined;
 }
 
 async function saveDiscoveredChannel(options: {
@@ -178,6 +234,7 @@ async function saveDiscoveredChannel(options: {
   state: ChannelState;
 }) {
   const now = nowSeconds();
+  const descriptor = options.channel.descriptor;
   const graceReadyAt =
     options.channel.closeRequestedAt === 0n
       ? 0
@@ -192,11 +249,12 @@ async function saveDiscoveredChannel(options: {
   ) VALUES (
     ${sqlString(options.channel.channelId)}, 1, '', '', ${options.chainId},
     ${sqlString(options.channel.escrowContract)}, ${sqlString(options.channel.token)},
-    '0x0000000000000000000000000000000000000000', ${sqlString(options.payer.toLowerCase())},
-    '0x0000000000000000000000000000000000000000', '0x00',
+    ${sqlString(descriptor?.payee.toLowerCase() ?? zeroAddress)}, ${sqlString(options.payer.toLowerCase())},
+    ${sqlString(descriptor?.authorizedSigner.toLowerCase() ?? zeroAddress)}, ${sqlString(descriptor?.salt ?? "0x00")},
     ${sqlString(options.channel.deposit.toString())}, ${sqlString(options.channel.settled.toString())},
     ${sqlString(options.channel.settled.toString())}, '0', '{}', ${sqlString(options.state)},
-    ${Number(options.channel.closeRequestedAt)}, ${graceReadyAt}, ${now}, ${now}, 'v1', NULL
+    ${Number(options.channel.closeRequestedAt)}, ${graceReadyAt}, ${now}, ${now},
+    ${descriptor ? "'v2'" : "'v1'"}, ${descriptor ? sqlString(JSON.stringify(descriptor)) : "NULL"}
   )`);
 }
 

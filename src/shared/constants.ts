@@ -17,6 +17,17 @@ export const defaultGracePeriodSeconds = 900;
 export const logQueryBlockRange = 50_000n;
 export const logScanDepth = 100_000n;
 export const logHeadMargin = 10n;
+/** How many log queries a full-history scan runs at once. */
+export const logQueryConcurrency = 8;
+
+/**
+ * Per chain, a block before which the TIP-1034 channel precompile logged no ChannelOpened event,
+ * so a scan for a payer's precompile channels starts there instead of at genesis.
+ */
+export const precompileChannelsFromBlock: Readonly<Record<number, bigint>> = {
+  4217: 24_450_000n,
+  42431: 21_370_000n,
+};
 
 /**
  * The incur and accounts SDK versions the CLI runs on: set by the bundler for a release build,

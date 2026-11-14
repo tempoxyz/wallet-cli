@@ -368,10 +368,17 @@ async function closeTargets(
     hasLogin,
   }: { dryRun?: boolean; hasLogin?: ((chainId: number) => boolean) | undefined } = {},
 ) {
-  if (options.target && !options.all && !options.orphaned)
+  if (options.target && !options.all && !options.orphaned) {
+    const channelId = isChannelId(options.target) ? options.target.toLowerCase() : undefined;
+    const stored = await readChannelRecords();
+    // A channel another client opened with this wallet has no record until discovery stores it.
+    const records =
+      channelId && !stored.some((record) => record.channel_id === channelId)
+        ? await discoverAndPersistOrphanedChannels(network)
+        : stored;
     return targetRecords(
       options.target,
-      await readChannelRecords(),
+      records,
       network,
       [
         ...(options.finalize ? ["--finalize"] : []),
@@ -382,6 +389,7 @@ async function closeTargets(
       ],
       hasLogin,
     );
+  }
 
   const local = (await discoverAndPersistOrphanedChannels(network)).filter(
     (record) => record.chain_id === network.chainId,
