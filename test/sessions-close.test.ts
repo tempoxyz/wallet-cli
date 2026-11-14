@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 
 import { Challenge, Credential } from "mppx";
 import { decodeFunctionData, toHex, type Hex } from "viem";
-import { Account as TempoAccount, Channel as TempoChannel } from "viem/tempo";
+import { Abis as TempoAbis, Account as TempoAccount, Channel as TempoChannel } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -68,8 +68,19 @@ import {
   dryRunCloseSessions as dryRunWithWallet,
 } from "../src/commands/sessions/close.js";
 import { listSessions } from "../src/commands/sessions/list.js";
-import { readSessionRecordsByOrigin, upsertSessionRecord } from "../src/payment/session-store.js";
-import { escrowAbi, mainnetEscrow, moderatoEscrow, usdcToken } from "../src/shared/constants.js";
+import { readChannelRecords } from "../src/commands/sessions/records.js";
+import {
+  deleteSessionRecord,
+  readSessionRecordsByOrigin,
+  upsertSessionRecord,
+} from "../src/payment/session-store.js";
+import {
+  escrowAbi,
+  mainnetEscrow,
+  moderatoEscrow,
+  precompileChannelsFromBlock,
+  usdcToken,
+} from "../src/shared/constants.js";
 import {
   testAccessKey,
   testWallet,
@@ -915,6 +926,129 @@ describe("orphaned channel discovery", () => {
   );
 });
 
+describe("precompile channels opened by another client", () => {
+  const from = precompileChannelsFromBlock[mainnet]!;
+  const zeroDepositChannelId = `0x${"e".repeat(64)}`;
+  const opened = [
+    precompileOpenedLog(channelId, from + 10n),
+    precompileOpenedLog(zeroDepositChannelId, from + 110_000n),
+  ];
+
+  beforeEach(async () => {
+    await writeWalletState(stateFor(mainnet));
+    // The scan ends 10 blocks below the head, so it reads three log ranges from `from`.
+    mocks.getBlockNumber.mockResolvedValue(from + 120_010n);
+    mocks.getLogs.mockImplementation(
+      async (call: { address: string; fromBlock: bigint; toBlock: bigint }) =>
+        call.address === TempoChannel.address
+          ? opened.filter(
+              (log) => log.blockNumber >= call.fromBlock && log.blockNumber <= call.toBlock,
+            )
+          : [],
+    );
+    mockPrecompile({ [channelId]: precompileState(10_000n) });
+  });
+
+  it("lists a channel with a deposit as orphaned from its ChannelOpened log, in chunked ranges", async () => {
+    const { sessions } = await listSessions({ orphaned: true, network: "mainnet" });
+
+    expect(sessions).toEqual([
+      expect.objectContaining({ channel_id: channelId, status: "orphaned", deposit: "0.01" }),
+    ]);
+    expect(precompileLogRanges()).toEqual([
+      [from, from + 49_999n],
+      [from + 50_000n, from + 99_999n],
+      [from + 100_000n, from + 120_000n],
+    ]);
+    expect(
+      mocks.getLogs.mock.calls
+        .map(([call]) => call as { address: string; args: unknown })
+        .filter((call) => call.address === TempoChannel.address)
+        .map((call) => call.args),
+    ).toEqual(Array(3).fill({ payer: testWallet }));
+    const [record] = await readChannelRecords();
+    expect(record).toMatchObject({
+      channel_id: channelId,
+      escrow_contract: TempoChannel.address.toLowerCase(),
+      payer: testWallet.toLowerCase(),
+      session_protocol: "v2",
+      state: "orphaned",
+    });
+    expect(lowercased(JSON.parse(record!.descriptor_json!))).toEqual(
+      lowercased(sessionDescriptor()),
+    );
+  });
+
+  it("resumes the next scan after the last block a completed scan covered", async () => {
+    await listSessions({ orphaned: true, network: "mainnet" });
+    mocks.getLogs.mockClear();
+    mocks.getBlockNumber.mockResolvedValue(from + 120_110n);
+
+    await listSessions({ orphaned: true, network: "mainnet" });
+
+    expect(precompileLogRanges()).toEqual([[from + 120_001n, from + 120_100n]]);
+  });
+
+  it("rescans from the start once a session record on the precompile is deleted", async () => {
+    await listSessions({ orphaned: true, network: "mainnet" });
+    await deleteSessionRecord(channelId);
+    mocks.getLogs.mockClear();
+
+    const { sessions } = await listSessions({ orphaned: true, network: "mainnet" });
+
+    expect(sessions).toEqual([expect.objectContaining({ channel_id: channelId })]);
+    expect(precompileLogRanges()[0]).toEqual([from, from + 49_999n]);
+  });
+
+  it.each([
+    {
+      functionName: "requestClose",
+      closeRequestedAt: 0,
+      summary: { closed: 0, pending: 1, failed: 0 },
+      result: { channel_id: channelId, status: "pending", remaining_seconds: 900 },
+      kept: [expect.objectContaining({ channel_id: channelId, state: "closing" })],
+    },
+    {
+      functionName: "withdraw",
+      closeRequestedAt: now - 1000,
+      summary: { closed: 1, pending: 0, failed: 0 },
+      result: { channel_id: channelId, status: "closed" },
+      kept: [],
+    },
+  ])(
+    "sends $functionName for a channel id with no local record through its descriptor",
+    async ({ functionName, closeRequestedAt, summary, result, kept }) => {
+      mockPrecompile({ [channelId]: precompileState(10_000n, closeRequestedAt) });
+      mocks.request.mockResolvedValue({ transactionHash: `0x${"c".repeat(64)}`, status: "0x1" });
+
+      const output = await closeSessions({ target: channelId });
+
+      expect(output).toMatchObject({ ...summary, results: [result] });
+      const [{ params }] = mocks.request.mock.calls[0] as [
+        { params: [{ calls: [{ to: string; data: Hex }] }] },
+      ];
+      expect(params[0].calls[0].to).toBe(TempoChannel.address);
+      const decoded = decodeFunctionData({
+        abi: TempoAbis.tip20ChannelReserve,
+        data: params[0].calls[0].data,
+      });
+      expect(decoded.functionName).toBe(functionName);
+      expect(lowercased(decoded.args[0] as object)).toEqual(lowercased(sessionDescriptor()));
+      expect(await readChannelRecords()).toEqual(kept);
+    },
+  );
+
+  it("reports a channel id the payer has no open precompile channel for as not found", async () => {
+    const result = await closeSessions({ target: zeroDepositChannelId });
+
+    expect(result).toMatchObject({
+      failed: 1,
+      results: [{ channel_id: zeroDepositChannelId, status: "not_found" }],
+    });
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+});
+
 describe("confirming a close", () => {
   const closing = { state: "closing", close_requested_at: now - 1000, grace_ready_at: now - 100 };
   const closeOutcome =
@@ -1322,4 +1456,45 @@ function withdrawals() {
     });
     return { functionName, args };
   });
+}
+
+/** A ChannelOpened log of the precompile, for the descriptor `sessionDescriptor` returns. */
+function precompileOpenedLog(id: string, blockNumber: bigint) {
+  return {
+    address: TempoChannel.address,
+    args: { ...sessionDescriptor(), channelId: id, deposit: 10_000n },
+    blockNumber,
+    eventName: "ChannelOpened",
+  };
+}
+
+/** Precompile reads with a 900s grace period; channels not listed read as cleared. */
+function mockPrecompile(channels: Record<string, unknown>) {
+  mocks.readContract.mockImplementation(
+    async ({ functionName, args }: { functionName: string; args: [string | string[]] }) => {
+      if (functionName === "CLOSE_GRACE_PERIOD") return 900n;
+      const state = (id: string) => channels[id] ?? precompileState(0n);
+      if (functionName === "getChannelStatesBatch") return (args[0] as string[]).map(state);
+      if (functionName === "getChannelState") return state(args[0] as string);
+      return escrowChannel({ deposit: 0n, payer: zeroAddress });
+    },
+  );
+}
+
+/** The block ranges of each ChannelOpened log query on the precompile, in order. */
+function precompileLogRanges() {
+  return mocks.getLogs.mock.calls
+    .map(([call]) => call as { address: string; fromBlock: bigint; toBlock: bigint })
+    .filter((call) => call.address === TempoChannel.address)
+    .map((call) => [call.fromBlock, call.toBlock]);
+}
+
+/** `value` with every string field lowercased, to compare addresses whatever their checksum case. */
+function lowercased(value: object) {
+  return Object.fromEntries(
+    Object.entries(value).map(([key, field]) => [
+      key,
+      typeof field === "string" ? field.toLowerCase() : field,
+    ]),
+  );
 }

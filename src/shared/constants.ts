@@ -22,11 +22,12 @@ export const logQueryConcurrency = 8;
 
 /**
  * Per chain, a block before which the TIP-1034 channel precompile logged no ChannelOpened event,
- * so a scan for a payer's precompile channels starts there instead of at genesis.
+ * so a scan for a payer's precompile channels starts there instead of at genesis. The first
+ * ChannelOpened logs are at block 24,458,546 on mainnet and 20,732,666 on Moderato.
  */
 export const precompileChannelsFromBlock: Readonly<Record<number, bigint>> = {
   4217: 24_450_000n,
-  42431: 21_370_000n,
+  42431: 20_700_000n,
 };
 
 /**

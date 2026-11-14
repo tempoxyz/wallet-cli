@@ -58,10 +58,14 @@ describe("sessions utilities", () => {
   it("returns a bare channel target for a dry-run close of an unknown channel id", async () => {
     await useTempHome();
     await writeWalletState(walletState());
-    // The close it reviews reads the channel, so an RPC override would need a chain check.
-    vi.stubEnv("TEMPO_RPC_URL", undefined);
+    // A channel id with no record is looked for on-chain first: the chain has no blocks to scan.
+    const rpc = await emptyChainRpc();
+    vi.stubEnv("TEMPO_RPC_URL", rpc.url);
+    const output = await dryRunCloseSessions(await readyWallet(), {
+      target: validChannelId,
+    }).finally(rpc.close);
 
-    expect(await dryRunCloseSessions(await readyWallet(), { target: validChannelId })).toEqual({
+    expect(output).toEqual({
       status: "dry_run",
       targets: [{ channel_id: validChannelId }],
       instruction:
@@ -258,5 +262,32 @@ function normalizeDescriptor(value: unknown) {
     payee: descriptor.payee.toLowerCase(),
     payer: descriptor.payer.toLowerCase(),
     token: descriptor.token.toLowerCase(),
+  };
+}
+
+/** A mainnet RPC with no blocks, so channel discovery reads no logs. */
+async function emptyChainRpc() {
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => (body += chunk));
+    request.on("end", () => {
+      const { id, method } = JSON.parse(body) as { id: number; method: string };
+      const result = { eth_blockNumber: "0x0", eth_chainId: "0x1079" }[method];
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify(
+          result
+            ? { jsonrpc: "2.0", id, result }
+            : { jsonrpc: "2.0", id, error: { code: -32601, message: `Unexpected ${method}` } },
+        ),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected listening address");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }

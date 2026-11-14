@@ -148,10 +148,11 @@ export async function updateSessionReceipt(options: {
 
 export async function deleteSessionRecord(channelId: string) {
   await ensureChannelsTable();
-  // The channel may still hold a deposit, so the payer's next channel discovery rescans from the
-  // start to find it again.
-  await runSql(`DELETE FROM channel_scans WHERE (chain_id, payer) IN (
-    SELECT chain_id, LOWER(payer) FROM channels WHERE LOWER(channel_id) = LOWER(${sqlString(channelId)})
+  // The channel may still hold a deposit, so the payer's next channel discovery on its escrow
+  // rescans from the start to find it again.
+  await runSql(`DELETE FROM channel_scans WHERE (chain_id, payer, escrow_contract) IN (
+    SELECT chain_id, LOWER(payer), LOWER(escrow_contract) FROM channels
+    WHERE LOWER(channel_id) = LOWER(${sqlString(channelId)})
   )`);
   await runSql(`DELETE FROM channels WHERE LOWER(channel_id) = LOWER(${sqlString(channelId)})`);
 }
