@@ -75,7 +75,7 @@ export async function tryTopUpAndRetry(options: {
 
   const { additionalDeposit, transaction } = await buildTopUpTransaction({
     additionalDeposit: sized,
-    balance: capacity.balance,
+    balance: spendableAmount(capacity),
     details: options.details,
     identity: options.identity,
     record: options.record,
@@ -198,8 +198,9 @@ async function buildTopUpTransaction(options: {
 const attodollarsPerFeeUnit = 10n ** 12n;
 
 /**
- * The top-up `additionalDeposit` lowered so that it and the transaction's fee fit `balance` when
- * the payer pays the fee in the session token, never below `required`. A sponsored top-up, or one
+ * The top-up `additionalDeposit` lowered so that it and the transaction's fee fit `balance` (the
+ * balance capped by the key's remaining limit) when the payer pays the fee in the session token,
+ * never below `required`. A sponsored top-up, or one
  * whose fee another token pays, keeps its amount. A fee `prepared` does not price lowers the
  * top-up to `required`.
  */
