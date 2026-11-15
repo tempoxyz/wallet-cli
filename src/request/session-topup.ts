@@ -68,6 +68,8 @@ export async function tryTopUpAndRetry(options: {
   assertCanFund(options.identity, {
     amount: sized,
     capacity,
+    // The retry signs a voucher one call higher, so a limit of only this top-up falls short again.
+    limit: sized + options.details.amount,
     network,
     purpose: "session top-up",
     token: options.details.token,

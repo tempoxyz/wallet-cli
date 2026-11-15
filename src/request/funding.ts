@@ -93,6 +93,8 @@ export function assertCanFund(
     amount: bigint;
     capacity: FundingCapacity;
     label?: string | undefined;
+    /** The key limit a refusal suggests, when a retry needs more than `amount`. */
+    limit?: bigint | undefined;
     network: Network;
     purpose: string;
     token: string;
@@ -116,6 +118,7 @@ export function assertKeyCanFund(
     allowance: FundingCapacity["allowance"];
     amount: bigint;
     label?: string | undefined;
+    limit?: bigint | undefined;
     network: Network;
     purpose: string;
     token: string;
@@ -131,7 +134,7 @@ export function assertKeyCanFund(
       key: identity.key.address,
       token: options.token,
       label: options.label ?? tokenSymbol(options.token, options.network.chainId) ?? options.token,
-      amount: formatTokenAmount(options.amount),
+      amount: formatTokenAmount(options.limit ?? options.amount),
       network: options.network,
     });
 }

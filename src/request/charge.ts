@@ -354,10 +354,11 @@ async function assertChargeFunding(
   const token = await tokenMetadata(spent.token as Address, chainId, (address) =>
     readTokenMetadata(address, chainId, dryRunRpc),
   ).catch(() => undefined);
-  if (token && token.decimals !== 6) return;
+  // Without known decimals the check could misread the amount and suggest a wrong limit.
+  if (!token || token.decimals !== 6) return;
   const funding = {
     amount: spent.amount,
-    label: token ? tokenLabel(token) : undefined,
+    label: tokenLabel(token),
     network,
     purpose: "payment",
     token: spent.token,
