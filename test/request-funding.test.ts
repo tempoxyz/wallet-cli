@@ -2,8 +2,13 @@ import { encodeFunctionData, type Hex } from "viem";
 import { Abis } from "viem/tempo";
 import { describe, expect, it } from "vitest";
 
-import { assertCanFund, spendableAmount, spentByCalls } from "../src/request/funding.js";
-import { topUpAmount } from "../src/request/session-topup.js";
+import {
+  assertCanFund,
+  assertKeyCanFund,
+  spendableAmount,
+  spentByCalls,
+} from "../src/request/funding.js";
+import { feeFundedTopUp, topUpAmount } from "../src/request/session-topup.js";
 import type { Network } from "../src/shared/network.js";
 
 const token = "0x20c000000000000000000000b9537d11c60e8b50";
@@ -146,5 +151,69 @@ describe("spendableAmount", () => {
     { allowance: { kind: "unusable" }, balance: 500n, expected: 0n },
   ])("$allowance.kind", ({ allowance, balance, expected }) => {
     expect(spendableAmount({ allowance: allowance as never, balance })).toBe(expected);
+  });
+});
+
+describe("assertKeyCanFund", () => {
+  const check = (allowance: object) =>
+    assertKeyCanFund(keyed, {
+      allowance: allowance as never,
+      amount: 500n,
+      network,
+      purpose: "payment",
+      token,
+    });
+  it("refuses a limit below the amount or an unusable key", () => {
+    expect(() => check({ kind: "limited", remaining: 100n })).toThrow(
+      expect.objectContaining({ code: "E_LIMIT_EXCEEDED" }),
+    );
+    expect(() => check({ kind: "unusable" })).toThrow(/revoked, expired/);
+  });
+  it.each([{ kind: "limited", remaining: 500n }, { kind: "unknown" }, { kind: "unlimited" }])(
+    "leaves the balance unchecked ($kind)",
+    (allowance) => {
+      expect(() => check(allowance)).not.toThrow();
+    },
+  );
+});
+
+describe("feeFundedTopUp", () => {
+  // 100_000 gas at 2e7 attodollars per gas costs 2 base units of a 6-decimal fee token.
+  const priced = { gas: 100_000n, maxFeePerGas: 20_000_000n };
+  const unsponsored = { feePayer: false, token };
+  it.each([
+    {
+      name: "leaves the fee in a balance the chunk would use up",
+      balance: 300_000n,
+      expected: 299_998n,
+    },
+    {
+      name: "keeps a chunk the balance covers with the fee",
+      balance: 1_000_000n,
+      expected: 300_000n,
+    },
+    { name: "never goes below the shortfall", balance: 5_001n, expected: 5_000n },
+    {
+      name: "keeps a sponsored chunk",
+      details: { feePayer: true, token },
+      balance: 300_000n,
+      expected: 300_000n,
+    },
+    {
+      name: "keeps a chunk whose fee another token pays",
+      details: { feePayer: false, feeToken: other, token },
+      balance: 300_000n,
+      expected: 300_000n,
+    },
+    {
+      name: "lowers an unpriced fee's top-up to the shortfall",
+      prepared: { gas: 100_000n },
+      balance: 300_000n,
+      expected: 5_000n,
+    },
+  ])("$name", ({ details = unsponsored, prepared = priced, balance, expected }) => {
+    expect(
+      feeFundedTopUp({ additionalDeposit: 300_000n, balance, details, prepared, required: 5_000n }),
+    ).toBe(expected);
   });
 });

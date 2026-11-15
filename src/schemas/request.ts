@@ -20,7 +20,7 @@ export const requestDryRunOutput = z.union([
       .string()
       .nullable()
       .describe(
-        "Deposit the payment locks: a new session's deposit, or the top-up a reused session's voucher needs",
+        "Deposit the payment locks: a new session's deposit, or a reused session's top-up: at least the voucher's shortfall, up to a chunk the balance and access key limit allow",
       ),
     raw_deposit: z.string().register(displayMeta, { hidden: true }).nullable(),
     token: z.string(),

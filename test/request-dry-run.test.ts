@@ -463,6 +463,27 @@ it.each<{
     expected: { ...reused, deposit: "1", raw_deposit: "1000000" },
   },
   {
+    name: "a top-up lowered to the wallet's balance",
+    challenge: offer("session"),
+    stored: [{ cumulative_amount: 999_000n }],
+    tokenBalances: { [usdc.toLowerCase()]: 300_000n },
+    expected: { ...reused, balance: "0.3", deposit: "0.3", raw_deposit: "300000" },
+  },
+  {
+    name: "a top-up lowered to the access key's stored limit",
+    challenge: offer("session"),
+    stored: [{ cumulative_amount: 999_000n }],
+    key: { limits: [{ token: usdc, limit: "200000#__bigint" }] },
+    expected: { ...reused, access_key_limit: "0.2", deposit: "0.2", raw_deposit: "200000" },
+  },
+  {
+    name: "a top-up never quoted below the shortfall",
+    challenge: offer("session"),
+    stored: [{ cumulative_amount: 999_000n }],
+    tokenBalances: { [usdc.toLowerCase()]: 1_000n },
+    expected: { ...reused, balance: "0.001", deposit: "0.005", raw_deposit: "5000" },
+  },
+  {
     name: "a top-up of a server's suggested deposit",
     challenge: offer("session", { suggestedDeposit: "3000000" }),
     stored: [{ cumulative_amount: 999_000n }],

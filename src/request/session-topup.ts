@@ -55,8 +55,10 @@ export async function tryTopUpAndRetry(options: {
     chainId: options.details.chainId,
     token: options.details.token,
   });
-  const additionalDeposit = topUpAmount({
-    available: spendableAmount(capacity),
+  const sized = topUpAmount({
+    // Only a known allowance may lift the top-up above the shortfall: an unread limit could be
+    // below the chunk, and the chain would reject it.
+    available: capacity.allowance.kind === "unknown" ? required : spendableAmount(capacity),
     cap,
     deposit: options.record.deposit,
     explicitCap: options.options.maxSpend !== undefined,
@@ -64,20 +66,22 @@ export async function tryTopUpAndRetry(options: {
     suggestedDeposit: options.details.suggestedDeposit,
   });
   assertCanFund(options.identity, {
-    amount: additionalDeposit,
+    amount: sized,
     capacity,
     network,
     purpose: "session top-up",
     token: options.details.token,
   });
-  const deposit = options.record.deposit + additionalDeposit;
 
-  const transaction = await buildTopUpTransaction({
-    additionalDeposit,
+  const { additionalDeposit, transaction } = await buildTopUpTransaction({
+    additionalDeposit: sized,
+    balance: capacity.balance,
     details: options.details,
     identity: options.identity,
     record: options.record,
+    required,
   });
+  const deposit = options.record.deposit + additionalDeposit;
   const topUpCredential = await options.payment.createCredential(
     tempoPaymentChallengeResponse(options.paymentRequiredResponse),
     {
@@ -146,27 +150,78 @@ export async function tryTopUpAndRetry(options: {
   return retried;
 }
 
+/**
+ * Signs the top-up transaction. A top-up whose fee the payer pays in the session token itself
+ * (no fee sponsor) is lowered so the deposit and the fee fit the balance together, never below
+ * `required`; a fee the prepared transaction does not price lowers it to `required`.
+ */
 async function buildTopUpTransaction(options: {
   additionalDeposit: bigint;
+  balance: bigint;
   details: SessionDetails;
   identity: PaymentIdentity;
   record: PersistedSessionRecord;
+  required: bigint;
 }) {
-  const request = buildTopUpTransactionRequest({
-    additionalDeposit: options.additionalDeposit,
-    details: options.details,
-    record: options.record,
-  });
+  const request = (additionalDeposit: bigint) =>
+    buildTopUpTransactionRequest({
+      additionalDeposit,
+      details: options.details,
+      record: options.record,
+    });
   const client = options.identity.getClient({ chainId: options.details.chainId });
-  const prepared = await prepareTransactionRequest(
+  const prepared = (await prepareTransactionRequest(
     client as never,
     {
       account: (client as { account: unknown }).account,
-      ...request,
+      ...request(options.additionalDeposit),
     } as never,
-  );
+  )) as Record<string, unknown> & { gas?: bigint };
   prepared.gas = (prepared.gas ?? 0n) + 5_000n;
-  return (await signTransaction(client as never, prepared as never)) as `0x${string}`;
+  const additionalDeposit = feeFundedTopUp({
+    additionalDeposit: options.additionalDeposit,
+    balance: options.balance,
+    details: options.details,
+    prepared,
+    required: options.required,
+  });
+  // The deposit only changes the calls' arguments, not the gas the prepared transaction priced.
+  if (additionalDeposit !== options.additionalDeposit)
+    prepared.calls = request(additionalDeposit).calls;
+  return {
+    additionalDeposit,
+    transaction: (await signTransaction(client as never, prepared as never)) as `0x${string}`,
+  };
+}
+
+/** Gas prices are in attodollars (10^-18 USD); fee tokens charge in 10^-6 USD base units. */
+const attodollarsPerFeeUnit = 10n ** 12n;
+
+/**
+ * The top-up `additionalDeposit` lowered so that it and the transaction's fee fit `balance` when
+ * the payer pays the fee in the session token, never below `required`. A sponsored top-up, or one
+ * whose fee another token pays, keeps its amount. A fee `prepared` does not price lowers the
+ * top-up to `required`.
+ */
+export function feeFundedTopUp(options: {
+  additionalDeposit: bigint;
+  balance: bigint;
+  details: Pick<SessionDetails, "feePayer" | "token"> & Partial<Pick<SessionDetails, "feeToken">>;
+  prepared: { gas?: unknown; gasPrice?: unknown; maxFeePerGas?: unknown };
+  required: bigint;
+}) {
+  if (options.additionalDeposit <= options.required || options.details.feePayer)
+    return options.additionalDeposit;
+  const feeToken = options.details.feeToken ?? options.details.token;
+  if (feeToken.toLowerCase() !== options.details.token.toLowerCase())
+    return options.additionalDeposit;
+  const { gas } = options.prepared;
+  const price = options.prepared.maxFeePerGas ?? options.prepared.gasPrice;
+  if (typeof gas !== "bigint" || typeof price !== "bigint") return options.required;
+  const fee = (gas * price + attodollarsPerFeeUnit - 1n) / attodollarsPerFeeUnit;
+  const room = options.balance > fee ? options.balance - fee : 0n;
+  if (options.additionalDeposit <= room) return options.additionalDeposit;
+  return room > options.required ? room : options.required;
 }
 
 export function buildTopUpTransactionRequest(options: {

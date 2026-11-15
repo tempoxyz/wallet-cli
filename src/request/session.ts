@@ -275,7 +275,7 @@ type SessionPlanOptions = {
  * How a session payment proceeds, shared by payments and dry runs: a voucher on a reusable stored
  * channel, or a new channel locking `depositRaw`. On reuse, `depositRaw` is the most the top-up
  * adds if the server rejects a voucher beyond the on-chain deposit (see `topUpAmount`); the
- * payment lowers it to what the wallet can spend, never below the shortfall. `signedCumulative`
+ * payment and the dry-run quote lower it to what the wallet can spend, never below the shortfall. `signedCumulative`
  * is the voucher amount the spending cap bounds.
  */
 export async function planSessionPayment(

@@ -34,7 +34,13 @@ import {
   runsMachRoute,
 } from "./mach.js";
 import type { RequestOptions } from "./options.js";
-import { assertCanFund, readFundingCapacity, spentByCalls } from "./funding.js";
+import {
+  assertCanFund,
+  assertKeyCanFund,
+  readFundingCapacity,
+  readKeyAllowance,
+  spentByCalls,
+} from "./funding.js";
 import { fetchPaidRequest, paymentReceipts } from "./paid.js";
 import { dryRunRpc, paySessionAndRetryRequest } from "./session.js";
 import { formatTokenAmount, MaxSpendExceededError, spendCap } from "./spend.js";
@@ -277,10 +283,13 @@ function chargeSettlement(
           throw routeFundingError ?? error;
         }
       })();
+      // The MACH route's balance shortfall is left to the direct transfer's machRouteError, which
+      // names the MACH balance and how to buy MACH; the route checks only the key's allowance.
+      const route = calls?.length === 2;
       try {
-        await assertChargeFunding(identity, calls, options, info.chainId);
+        await assertChargeFunding(identity, calls, options, { chainId: info.chainId, route });
       } catch (error) {
-        if (calls?.length === 2) routeFundingError = error;
+        if (route) routeFundingError = error;
         throw error;
       }
       return account;
@@ -316,36 +325,40 @@ function chargeSettlement(
 /**
  * Refuses a charge whose calls spend more of a token than the access key's remaining on-chain
  * limit or the wallet's balance allows, before it is signed: the server broadcasts a sponsored
- * charge, and one the chain rejects still lands as a failed transaction. A failed read leaves the
- * check to the chain.
+ * charge, and one the chain rejects still lands as a failed transaction. A MACH `route` checks
+ * the key's allowance only. A failed read leaves the check to the chain.
  */
 async function assertChargeFunding(
   identity: PaymentIdentity,
   calls: readonly { data?: `0x${string}` | undefined; to: string }[] | undefined,
   options: RequestOptions,
-  chainId: number,
+  check: { chainId: number; route: boolean },
 ) {
   const spent = calls ? spentByCalls(calls) : undefined;
   if (!spent) return;
+  const { chainId } = check;
   const network = requestNetwork(options);
-  const capacity = await readFundingCapacity(identity, {
-    chainId,
-    rpc: dryRunRpc,
-    token: spent.token,
-  }).catch(() => undefined);
+  const read = { chainId, rpc: dryRunRpc, token: spent.token };
+  const capacity = await (
+    check.route
+      ? readKeyAllowance(identity, read).then((allowance) => ({ allowance, balance: undefined }))
+      : readFundingCapacity(identity, read)
+  ).catch(() => undefined);
   if (!capacity) return;
   const token = await tokenMetadata(spent.token as Address, chainId, (address) =>
     readTokenMetadata(address, chainId, dryRunRpc),
   ).catch(() => undefined);
   if (token && token.decimals !== 6) return;
-  assertCanFund(identity, {
+  const funding = {
     amount: spent.amount,
-    capacity,
     label: token ? tokenLabel(token) : undefined,
     network,
     purpose: "payment",
     token: spent.token,
-  });
+  };
+  if (capacity.balance === undefined)
+    assertKeyCanFund(identity, { ...funding, allowance: capacity.allowance });
+  else assertCanFund(identity, { ...funding, capacity });
 }
 
 /**

@@ -98,7 +98,30 @@ export function assertCanFund(
     token: string;
   },
 ) {
-  const { allowance, balance } = options.capacity;
+  assertKeyCanFund(identity, { ...options, allowance: options.capacity.allowance });
+  if (options.capacity.balance < options.amount)
+    throw paymentError(
+      `Insufficient balance for ${options.purpose}: available=${formatTokenAmount(options.capacity.balance)} required=${formatTokenAmount(options.amount)}`,
+    );
+}
+
+/**
+ * Refuses a transaction that would spend `amount` of `options.token` when the payer's signer
+ * cannot: its access key is unusable, or its remaining spending limit is below `amount`. An
+ * `unknown` allowance leaves the limit to the chain.
+ */
+export function assertKeyCanFund(
+  identity: PaymentIdentity,
+  options: {
+    allowance: FundingCapacity["allowance"];
+    amount: bigint;
+    label?: string | undefined;
+    network: Network;
+    purpose: string;
+    token: string;
+  },
+) {
+  const { allowance } = options;
   if ("key" in identity && allowance.kind === "unusable")
     throw paymentError(
       `The access key ${identity.signerAddress.toLowerCase()} is revoked, expired or not authorized for this wallet, so it cannot fund the ${options.purpose}.`,
@@ -111,10 +134,6 @@ export function assertCanFund(
       amount: formatTokenAmount(options.amount),
       network: options.network,
     });
-  if (balance < options.amount)
-    throw paymentError(
-      `Insufficient balance for ${options.purpose}: available=${formatTokenAmount(balance)} required=${formatTokenAmount(options.amount)}`,
-    );
 }
 
 const tip20SpendFunctions = new Set(["approve", "transfer", "transferWithMemo"]);
