@@ -448,15 +448,16 @@ it.each<{
     name: "a reused session topped up for its voucher",
     challenge: offer("session"),
     stored: { cumulative_amount: 995_000n },
+    // The top-up doubles the 1 USDC.e deposit rather than adding the 0.5 shortfall.
     topUp: { required: 500_000n, accepted: 995_000n },
     payment: {
       ...session,
       tx_hash: topUpHash,
       session: "reuse",
-      deposit_locked: "1.5",
+      deposit_locked: "2",
       cumulative: "1.005",
     },
-    stderr: `Paid 0.01 USDC.e · session ${channelId} (1.005 of 1.5 USDC.e deposit in signed vouchers)\n`,
+    stderr: `Paid 0.01 USDC.e · session ${channelId} (1.005 of 2 USDC.e deposit in signed vouchers)\n`,
   },
 ])("reports the receipt of $name", async (row) => {
   const home = await useTempHome();

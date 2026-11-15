@@ -18,6 +18,7 @@ import { continuationCommand } from "../shared/next.js";
 import { getRecord, nowSeconds, stringValue } from "../shared/utils.js";
 import { type SessionDetails, tempoPaymentChallengeResponse } from "./challenge.js";
 import { cloneRequestInit, type FetchPlan, type RequestInitWithDispatcher } from "./fetch.js";
+import { assertCanFund, readFundingCapacity, spendableAmount } from "./funding.js";
 import { type PaymentIdentity, requestNetwork } from "./identity.js";
 import type { RequestOptions } from "./options.js";
 import { fetchPaidRequest, paidResponseFailures, paymentReceipts } from "./paid.js";
@@ -39,16 +40,37 @@ export async function tryTopUpAndRetry(options: {
     .clone()
     .text()
     .catch(() => "");
-  const additionalDeposit = topUpAmountFromProblem(body, options.record, options.signedCumulative);
-  if (additionalDeposit <= 0n) return undefined;
-  const deposit = options.record.deposit + additionalDeposit;
+  const required = topUpAmountFromProblem(body, options.record, options.signedCumulative);
+  if (required <= 0n) return undefined;
+  const cap = parseUnits(spendCap(options.options), 6);
   // This request's voucher was already sent, so a rerun with a higher cap would pay for the call
   // again; the refusal points at the session instead of suggesting one.
-  if (deposit > parseUnits(spendCap(options.options), 6))
+  if (options.record.deposit + required > cap)
     throw walletError({
       code: "E_LIMIT_EXCEEDED",
-      message: `Session top-up refused: the deposit would reach ${formatTokenAmount(deposit)}, above the spending cap (max=${spendCapLabel(options.options)}). The voucher for this request was already sent; check the session with '${continuationCommand(["wallet", "sessions", "list"], requestNetwork(options.options))}' before retrying.`,
+      message: `Session top-up refused: the deposit would reach ${formatTokenAmount(options.record.deposit + required)}, above the spending cap (max=${spendCapLabel(options.options)}). The voucher for this request was already sent; check the session with '${continuationCommand(["wallet", "sessions", "list"], requestNetwork(options.options))}' before retrying.`,
     });
+  const network = requestNetwork(options.options);
+  const capacity = await readFundingCapacity(options.identity, {
+    chainId: options.details.chainId,
+    token: options.details.token,
+  });
+  const additionalDeposit = topUpAmount({
+    available: spendableAmount(capacity),
+    cap,
+    deposit: options.record.deposit,
+    explicitCap: options.options.maxSpend !== undefined,
+    required,
+    suggestedDeposit: options.details.suggestedDeposit,
+  });
+  assertCanFund(options.identity, {
+    amount: additionalDeposit,
+    capacity,
+    network,
+    purpose: "session top-up",
+    token: options.details.token,
+  });
+  const deposit = options.record.deposit + additionalDeposit;
 
   const transaction = await buildTopUpTransaction({
     additionalDeposit,
@@ -216,6 +238,32 @@ function topUpAmountFromProblem(
   const requiredTopUp = stringValue(problem.requiredTopUp ?? problem.required_top_up);
   if (/^\d+$/.test(requiredTopUp)) return BigInt(requiredTopUp);
   return sessionShortfall(record, signedCumulative);
+}
+
+/**
+ * The amount a top-up adds to a session's deposit: at least `required`, the shortfall the server
+ * or the voucher names, and otherwise the largest of the server's `suggestedDeposit` and a chunk
+ * of the spending cap (the cap's whole headroom when it was set explicitly, else the current
+ * deposit, so the deposit doubles). Topping up by the bare shortfall costs one transaction per
+ * call once a session's deposit is used up. The chunk never lifts the deposit above the cap or
+ * spends more than `available`, the payer's balance within its key's remaining limit.
+ */
+export function topUpAmount(options: {
+  available?: bigint | undefined;
+  cap: bigint;
+  deposit: bigint;
+  explicitCap: boolean;
+  required: bigint;
+  suggestedDeposit?: bigint | undefined;
+}) {
+  const headroom = options.cap > options.deposit ? options.cap - options.deposit : 0n;
+  const chunk = options.explicitCap ? headroom : options.deposit;
+  let amount = [options.required, options.suggestedDeposit ?? 0n, chunk].reduce((max, value) =>
+    value > max ? value : max,
+  );
+  if (amount > headroom) amount = headroom;
+  if (options.available !== undefined && amount > options.available) amount = options.available;
+  return amount > options.required ? amount : options.required;
 }
 
 /**

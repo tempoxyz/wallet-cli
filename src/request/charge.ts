@@ -34,6 +34,7 @@ import {
   runsMachRoute,
 } from "./mach.js";
 import type { RequestOptions } from "./options.js";
+import { assertCanFund, readFundingCapacity, spentByCalls } from "./funding.js";
 import { fetchPaidRequest, paymentReceipts } from "./paid.js";
 import { dryRunRpc, paySessionAndRetryRequest } from "./session.js";
 import { formatTokenAmount, MaxSpendExceededError, spendCap } from "./spend.js";
@@ -260,12 +261,29 @@ function chargeSettlement(
   const recipient = stringValue(challenge.request.recipient);
   const mach = machChargeParameters(options, { amount, key, recipient, service });
   let debited = stringValue(challenge.request.currency).toLowerCase();
+  // A MACH route the funding check refuses is skipped for the direct transfer, which an explicit
+  // MACH payment then refuses for want of a route; that refusal reports the route's real cause.
+  let routeFundingError: unknown;
   const parameters: ChargeParameters = {
     ...mach,
     async resolveAccount(info) {
-      const token = info.operation.kind === "executeCalls" ? info.operation.calls?.[0]?.to : null;
+      const calls = info.operation.kind === "executeCalls" ? info.operation.calls : undefined;
+      const token = calls?.[0]?.to;
       if (token) debited = token.toLowerCase();
-      return (await mach.resolveAccount?.(info)) ?? info.account;
+      const account = await (async () => {
+        try {
+          return (await mach.resolveAccount?.(info)) ?? info.account;
+        } catch (error) {
+          throw routeFundingError ?? error;
+        }
+      })();
+      try {
+        await assertChargeFunding(identity, calls, options, info.chainId);
+      } catch (error) {
+        if (calls?.length === 2) routeFundingError = error;
+        throw error;
+      }
+      return account;
     },
   };
   return {
@@ -293,6 +311,41 @@ function chargeSettlement(
       });
     },
   };
+}
+
+/**
+ * Refuses a charge whose calls spend more of a token than the access key's remaining on-chain
+ * limit or the wallet's balance allows, before it is signed: the server broadcasts a sponsored
+ * charge, and one the chain rejects still lands as a failed transaction. A failed read leaves the
+ * check to the chain.
+ */
+async function assertChargeFunding(
+  identity: PaymentIdentity,
+  calls: readonly { data?: `0x${string}` | undefined; to: string }[] | undefined,
+  options: RequestOptions,
+  chainId: number,
+) {
+  const spent = calls ? spentByCalls(calls) : undefined;
+  if (!spent) return;
+  const network = requestNetwork(options);
+  const capacity = await readFundingCapacity(identity, {
+    chainId,
+    rpc: dryRunRpc,
+    token: spent.token,
+  }).catch(() => undefined);
+  if (!capacity) return;
+  const token = await tokenMetadata(spent.token as Address, chainId, (address) =>
+    readTokenMetadata(address, chainId, dryRunRpc),
+  ).catch(() => undefined);
+  if (token && token.decimals !== 6) return;
+  assertCanFund(identity, {
+    amount: spent.amount,
+    capacity,
+    label: token ? tokenLabel(token) : undefined,
+    network,
+    purpose: "payment",
+    token: spent.token,
+  });
 }
 
 /**

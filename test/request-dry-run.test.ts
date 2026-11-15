@@ -449,17 +449,31 @@ it.each<{
     args: ["--max-spend", "1"],
     expected: { ...reused, ...capped },
   },
+  // The 0.005 shortfall tops up by the current deposit, doubling it within the default cap.
   {
     name: "a reused session whose voucher needs a top-up",
     challenge: offer("session"),
     stored: [{ cumulative_amount: 999_000n }],
-    expected: { ...reused, deposit: "0.005", raw_deposit: "5000" },
+    expected: { ...reused, deposit: "1", raw_deposit: "1000000" },
   },
   {
     name: "a top-up measured against the on-chain deposit",
     challenge: offer("session"),
     stored: [{ cumulative_amount: 999_000n, deposit: 500_000n }],
-    expected: { ...reused, deposit: "0.005", raw_deposit: "5000" },
+    expected: { ...reused, deposit: "1", raw_deposit: "1000000" },
+  },
+  {
+    name: "a top-up of a server's suggested deposit",
+    challenge: offer("session", { suggestedDeposit: "3000000" }),
+    stored: [{ cumulative_amount: 999_000n }],
+    expected: { ...reused, deposit: "3", raw_deposit: "3000000" },
+  },
+  {
+    name: "a top-up of an explicit cap's headroom",
+    challenge: offer("session"),
+    stored: [{ cumulative_amount: 999_000n }],
+    args: ["--max-spend", "4"],
+    expected: { ...reused, max_spend: "4", deposit: "3", raw_deposit: "3000000" },
   },
   {
     name: "a reused session whose cumulative spend exceeds an explicit cap",
