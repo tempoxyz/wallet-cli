@@ -285,7 +285,13 @@ function chargeSettlement(
       })();
       // The MACH route's balance shortfall is left to the direct transfer's machRouteError, which
       // names the MACH balance and how to buy MACH; the route checks only the key's allowance.
-      const route = calls?.length === 2;
+      const deployment =
+        machineTokenDeployments[info.chainId as keyof typeof machineTokenDeployments];
+      const route =
+        !!deployment &&
+        calls?.length === 2 &&
+        calls[0]?.to.toLowerCase() === deployment.token.toLowerCase() &&
+        calls[1]?.to.toLowerCase() === deployment.swap.toLowerCase();
       try {
         await assertChargeFunding(identity, calls, options, { chainId: info.chainId, route });
       } catch (error) {
