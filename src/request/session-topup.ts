@@ -205,6 +205,9 @@ function topUpRequestInit(init: RequestInitWithDispatcher) {
   const headers = new Headers(next.headers);
   headers.delete("content-length");
   headers.delete("content-type");
+  // The top-up is a payment-only POST: keep the caller's own credential off it, as it was when
+  // payment credentials always replaced Authorization.
+  headers.delete("authorization");
   next.headers = headers;
   return next;
 }

@@ -54,13 +54,7 @@ vi.mock("mppx/client", async (importOriginal) => {
             challenge: Challenge.fromResponseList(response)[0]!,
             payload: charge.payload ?? { action: options?.action ?? "open", channelId },
           }),
-        transport: {
-          setCredential: (init: RequestInit, credential: string) => {
-            const headers = new Headers(init.headers);
-            headers.set("authorization", credential);
-            return { ...init, headers };
-          },
-        },
+        transport: actual.Transport.http(),
       }),
     },
   };
@@ -139,9 +133,11 @@ afterEach(async () => {
 function offer(
   intent: "charge" | "session" | "subscription",
   request: Record<string, unknown> = {},
+  header?: string,
 ) {
   return Challenge.from({
     id: `receipt-${intent}`,
+    ...(header ? { header } : {}),
     realm: "local",
     method: "tempo",
     intent,
@@ -193,6 +189,9 @@ async function listen(handler: Parameters<typeof createServer>[1]) {
  * the top-up answered with a receipt naming `topUpHash`. `/rpc` answers balance and channel reads,
  * the channel holding `onChain.deposit`.
  */
+/** The Authorization and Payment-Authorization headers each paid request carried, by action. */
+const paidHeaders: { action: string | undefined; authorization: string | undefined }[] = [];
+
 async function service(options: {
   challenge: Challenge.Challenge;
   receipt?: string | undefined;
@@ -220,14 +219,16 @@ async function service(options: {
       res.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, result }));
       return;
     }
-    if (!req.headers.authorization) {
+    const credential = [req.headers["payment-authorization"], req.headers.authorization].find(
+      (value): value is string => typeof value === "string" && value.startsWith("Payment "),
+    );
+    if (!credential) {
       res.writeHead(402, { "www-authenticate": Challenge.serialize(options.challenge) });
       res.end("Payment Required");
       return;
     }
-    const { action } = Credential.deserialize<{ action?: string }>(
-      req.headers.authorization,
-    ).payload;
+    const { action } = Credential.deserialize<{ action?: string }>(credential).payload;
+    paidHeaders.push({ action, authorization: req.headers.authorization });
     if (options.topUp && action === "topUp") {
       res.writeHead(200, { "payment-receipt": sessionReceipt(options.topUp.accepted, topUpHash) });
       res.end();
@@ -478,6 +479,28 @@ it.each<{
   expect(io.stdout.text()).toBe("paid");
   expect(io.stderr.text()).toBe(row.stderr);
   expect(JSON.parse(await readFile(meta, "utf8")).payment).toEqual(row.payment);
+});
+
+it("keeps the caller's Authorization off a top-up sent in Payment-Authorization", async () => {
+  await useTempHome();
+  await writeWalletState(walletState());
+  onChain.deposit = 1_000_000n;
+  paidHeaders.length = 0;
+  const origin = await service({
+    challenge: offer("session", {}, "Payment-Authorization"),
+    topUp: { required: 500_000n, accepted: 995_000n },
+  });
+  await storeSession(origin, { cumulative_amount: 995_000n });
+  const io = { stdout: capture(), stderr: capture() };
+
+  await runRequest(["-H", "Authorization: Bearer app", `${origin}/paid`], io);
+
+  expect(io.stdout.text()).toBe("paid");
+  expect(paidHeaders.find(({ action }) => action === "topUp")).toEqual({
+    action: "topUp",
+    authorization: undefined,
+  });
+  expect(paidHeaders.at(-1)?.authorization).toBe("Bearer app");
 });
 
 it.each<{
