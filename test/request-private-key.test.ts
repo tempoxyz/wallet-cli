@@ -163,7 +163,7 @@ it.each([
 it("sends the credential in Payment-Authorization when the challenge selects it", async () => {
   await useTempHome();
   await writeWalletState(walletState());
-  const seen: { authorization?: string; payment?: string }[] = [];
+  const seen: { authorization: string | undefined; payment: string | undefined }[] = [];
   const server = createServer((req, res) => {
     const payment = req.headers["payment-authorization"];
     seen.push({
