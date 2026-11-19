@@ -624,9 +624,12 @@ async function closeSessionCooperatively(options: {
     source: credentialSource(options.record.payer, chain),
   });
 
+  // Never follow a redirect with the signed close credential: fetch keeps a credential in
+  // Payment-Authorization across origins, and a 3xx fails the close below.
   const response = await fetch(closeUrl, {
     method: "POST",
     headers: { [Challenge.credentialHeader(challenge)]: authorization },
+    redirect: "manual",
   });
   if (!response.ok) {
     const body = sanitizeText(await response.text().catch(() => ""));

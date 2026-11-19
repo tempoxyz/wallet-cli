@@ -752,11 +752,13 @@ describe("--cooperative", () => {
       ),
     });
     const sent: Record<string, string>[] = [];
+    const redirects: (RequestRedirect | undefined)[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_url: unknown, init?: RequestInit) => {
         const headers = (init?.headers as Record<string, string> | undefined) ?? {};
         sent.push(headers);
+        if (headers["Payment-Authorization"]) redirects.push(init?.redirect);
         return new Response(null, { status: headers["Payment-Authorization"] ? 204 : 503 });
       }),
     );
@@ -770,6 +772,7 @@ describe("--cooperative", () => {
       channelId,
     });
     expect(close).not.toHaveProperty("Authorization");
+    expect(redirects).toEqual(["manual"]);
   });
 
   it("requests the close on-chain when a rerun finds the channel the server accepted still open", async () => {
