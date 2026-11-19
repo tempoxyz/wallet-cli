@@ -626,7 +626,7 @@ async function closeSessionCooperatively(options: {
 
   const response = await fetch(closeUrl, {
     method: "POST",
-    headers: { Authorization: authorization },
+    headers: { [Challenge.credentialHeader(challenge)]: authorization },
   });
   if (!response.ok) {
     const body = sanitizeText(await response.text().catch(() => ""));
@@ -781,6 +781,7 @@ function storedSessionChallenge(record: ChannelRecord) {
       ...(typeof value.expires === "string" ? { expires: value.expires } : {}),
       ...(typeof value.digest === "string" ? { digest: value.digest } : {}),
       ...(typeof value.opaque === "string" ? { opaque: value.opaque } : {}),
+      ...(typeof value.header === "string" ? { header: value.header } : {}),
     });
   } catch {
     return null;

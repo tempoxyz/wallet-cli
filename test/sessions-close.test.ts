@@ -737,6 +737,41 @@ describe("--cooperative", () => {
     expect(payload.closeSignature).not.toBe(payload.signature);
   });
 
+  it("sends the close credential in the field the stored challenge selects", async () => {
+    await writeWalletState(stateFor(mainnet));
+    await saveSession(channelId, mainnet, {
+      challenge_echo: JSON.stringify(
+        Challenge.from({
+          id: "close-test",
+          realm: origin,
+          method: "tempo",
+          intent: "session",
+          header: "Payment-Authorization",
+          request: { amount: "1000", currency: usdcToken, recipient: testWallet2 },
+        }),
+      ),
+    });
+    const sent: Record<string, string>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const headers = (init?.headers as Record<string, string> | undefined) ?? {};
+        sent.push(headers);
+        return new Response(null, { status: headers["Payment-Authorization"] ? 204 : 503 });
+      }),
+    );
+    mockEscrow({ [channelId]: escrowChannel() });
+
+    await closeSessions({ cooperative: true, target: channelId });
+
+    const close = sent.find((headers) => headers["Payment-Authorization"]);
+    expect(Credential.deserialize(close!["Payment-Authorization"]!).payload).toMatchObject({
+      action: "close",
+      channelId,
+    });
+    expect(close).not.toHaveProperty("Authorization");
+  });
+
   it("requests the close on-chain when a rerun finds the channel the server accepted still open", async () => {
     await writeWalletState(stateFor(mainnet));
     await saveSession(channelId, mainnet, { challenge_echo: sessionChallenge() });

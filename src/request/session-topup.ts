@@ -1,3 +1,4 @@
+import type { Challenge } from "mppx";
 import type { Mppx } from "mppx/client";
 import { Session as TempoSession } from "mppx/tempo";
 import { encodeFunctionData, parseUnits } from "viem";
@@ -24,6 +25,8 @@ import { fetchPaidRequest, paidResponseFailures, paymentReceipts } from "./paid.
 import { formatTokenAmount, spendCap, spendCapLabel } from "./spend.js";
 
 export async function tryTopUpAndRetry(options: {
+  /** The session challenge both credentials answer; it selects the field they are sent in. */
+  challenge: Challenge.Challenge;
   credential: string;
   details: SessionDetails;
   identity: PaymentIdentity;
@@ -69,7 +72,9 @@ export async function tryTopUpAndRetry(options: {
     } as never,
   );
   const topUpInit = topUpRequestInit(options.request.init);
-  const authorizedTopUp = options.payment.transport.setCredential(topUpInit, topUpCredential);
+  const authorizedTopUp = options.payment.transport.setCredential(topUpInit, topUpCredential, {
+    challenge: options.challenge,
+  });
   const topUpResponse = await fetchPaidRequest(
     { init: authorizedTopUp, url: options.request.url },
     options.options,
@@ -92,6 +97,7 @@ export async function tryTopUpAndRetry(options: {
   const paidInit = options.payment.transport.setCredential(
     cloneRequestInit(options.request.init),
     options.credential,
+    { challenge: options.challenge },
   );
   const retried = await fetchPaidRequest(
     { init: paidInit, url: options.request.url },

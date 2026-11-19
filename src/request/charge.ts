@@ -229,7 +229,9 @@ async function payCharge(
       .catch(async (error: unknown) => {
         throw (await charge.limitError(error)) ?? error;
       });
-    const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
+    const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential, {
+      challenge: selectedChallenge,
+    });
     const response = await fetchPaidRequest(
       { init: paidInit, url: request.url },
       options,

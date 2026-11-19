@@ -160,6 +160,64 @@ it.each([
   expect(server.requests()).toBe(0);
 });
 
+it("sends the credential in Payment-Authorization when the challenge selects it", async () => {
+  await useTempHome();
+  await writeWalletState(walletState());
+  const seen: { authorization?: string; payment?: string }[] = [];
+  const server = createServer((req, res) => {
+    const payment = req.headers["payment-authorization"];
+    seen.push({
+      authorization: req.headers.authorization,
+      payment: typeof payment === "string" ? payment : undefined,
+    });
+    if (typeof payment === "string") {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ source: Credential.deserialize(payment).source }));
+      return;
+    }
+    res.writeHead(402, {
+      "www-authenticate": Challenge.serialize(
+        Challenge.from({
+          id: "payment-authorization",
+          realm: "local",
+          method: "tempo",
+          intent: "charge",
+          header: "Payment-Authorization",
+          request: {
+            amount: "0",
+            currency: "0x20c0000000000000000000000000000000000000",
+            methodDetails: { chainId: 4217 },
+          },
+        }),
+      ),
+    });
+    res.end("Payment Required");
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("No address");
+
+  const io = { stdout: capture(), stderr: capture() };
+  await runRequest(
+    [
+      "--private-key",
+      testPrivateKey2,
+      "-H",
+      "Authorization: Bearer app",
+      `http://127.0.0.1:${address.port}`,
+    ],
+    io,
+  );
+
+  expect(JSON.parse(io.stdout.text()).source).toMatch(new RegExp(`${flagAddress}$`, "i"));
+  expect(seen).toHaveLength(2);
+  expect(seen[1]).toMatchObject({
+    authorization: "Bearer app",
+    payment: expect.stringMatching(/^Payment /),
+  });
+});
+
 it.each([
   { name: "missing challenge", header: "", args: [] },
   { name: "malformed challenge", header: "Basic realm=local", args: [] },

@@ -200,7 +200,9 @@ export async function paySessionAndRetryRequest(
       await upsertSessionRecord(record);
     }
 
-    const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
+    const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential, {
+      challenge,
+    });
     const response = await fetchPaidRequest(
       { init: paidInit, url: request.url },
       options,
@@ -208,6 +210,7 @@ export async function paySessionAndRetryRequest(
     );
     if (reusable && response.status === 402) {
       const recovered = await tryTopUpAndRetry({
+        challenge,
         credential,
         details,
         identity,
@@ -462,6 +465,7 @@ function challengeEchoJson(challenge: Challenge.Challenge) {
     ...(challenge.expires ? { expires: challenge.expires } : {}),
     ...(challenge.digest ? { digest: challenge.digest } : {}),
     ...(challenge.opaque ? { opaque: challenge.opaque } : {}),
+    ...(challenge.header ? { header: challenge.header } : {}),
   });
 }
 
