@@ -13,14 +13,16 @@ import type { RequestOptions } from "./options.js";
 import { enforceMaxSpend } from "./spend.js";
 
 /**
- * Whether a challenge selects a field a Payment credential may go in: `Authorization` (no
- * `header`) or `Payment-Authorization`, matched case-insensitively. Any other field, such as
- * `Content-Type`, would let a server overwrite a request header with the credential.
+ * Whether a challenge selects a field a Payment credential may go in: `Authorization` (the
+ * default, also when named) or `Payment-Authorization`, matched case-insensitively. Any other
+ * field, such as `Content-Type`, would let a server overwrite a request header with the credential.
  */
 export function hasSupportedCredentialHeader(challenge: Challenge.Challenge) {
+  const header = challenge.header?.toLowerCase();
   return (
-    challenge.header === undefined ||
-    challenge.header.toLowerCase() === Constants.Headers.paymentAuthorization.toLowerCase()
+    header === undefined ||
+    header === Constants.Headers.authorization.toLowerCase() ||
+    header === Constants.Headers.paymentAuthorization.toLowerCase()
   );
 }
 

@@ -244,6 +244,19 @@ it.each([
   expect(server.requests()).toBe(1);
 });
 
+it("pays a challenge that names Authorization explicitly", async () => {
+  await useTempHome();
+  await writeWalletState(walletState());
+  // Written by hand: Challenge.serialize omits a header that names the default field.
+  const server = await fixture(`${charge()}, header="Authorization"`);
+  const io = { stdout: capture(), stderr: capture() };
+
+  await runRequest(["--private-key", testPrivateKey2, server.url], io);
+
+  expect(JSON.parse(io.stdout.text()).source).toMatch(new RegExp(`${flagAddress}$`, "i"));
+  expect(server.requests()).toBe(2);
+});
+
 it("keeps keys out of the actual CLI output", async () => {
   const home = await useTempHome();
   const server = await fixture();
