@@ -26,6 +26,7 @@ import {
   sessionsCloseCommandOutput,
   sessionsCloseOptions,
 } from "../../schemas/sessions.js";
+import { hasSupportedCredentialHeader } from "../../request/challenge.js";
 import { fetchWithRedirects } from "../../request/fetch.js";
 import { globalAlias, type cliGlobals } from "../../schemas/shared.js";
 import { escrowAbi } from "../../shared/constants.js";
@@ -770,7 +771,11 @@ async function refreshSessionChallenge(url: string) {
     if (response.status !== 402) return null;
     const header = response.headers.get("www-authenticate");
     if (!header) return null;
-    return Challenge.deserializeList(header).find(isSessionChallenge) ?? null;
+    return (
+      Challenge.deserializeList(header).find(
+        (challenge) => isSessionChallenge(challenge) && hasSupportedCredentialHeader(challenge),
+      ) ?? null
+    );
   } catch {
     return null;
   }
@@ -784,7 +789,7 @@ function storedSessionChallenge(record: ChannelRecord) {
       typeof value.request === "string"
         ? decodeBase64UrlJson(value.request)
         : getRecord(value.request);
-    return Challenge.Schema.parse({
+    const challenge = Challenge.Schema.parse({
       id: stringValue(value.id),
       realm: stringValue(value.realm),
       method: stringValue(value.method),
@@ -795,6 +800,7 @@ function storedSessionChallenge(record: ChannelRecord) {
       ...(typeof value.opaque === "string" ? { opaque: value.opaque } : {}),
       ...(typeof value.header === "string" ? { header: value.header } : {}),
     });
+    return hasSupportedCredentialHeader(challenge) ? challenge : null;
   } catch {
     return null;
   }

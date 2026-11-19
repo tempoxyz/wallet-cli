@@ -221,6 +221,11 @@ it("sends the credential in Payment-Authorization when the challenge selects it"
 it.each([
   { name: "missing challenge", header: "", args: [] },
   { name: "malformed challenge", header: "Basic realm=local", args: [] },
+  {
+    name: "unsupported credential header",
+    header: charge({}, undefined, "Content-Type"),
+    args: [],
+  },
   { name: "network mismatch", header: charge({ methodDetails: { chainId: 42431 } }), args: [] },
   { name: "expired challenge", header: charge({}, "2000-01-01T00:00:00Z"), args: [] },
   {
@@ -268,7 +273,7 @@ it("keeps keys out of the actual CLI output", async () => {
 }, 30_000);
 
 // A zero-amount charge is authorized with a signed proof, so no funds or RPC are involved.
-function charge(request: Record<string, unknown> = {}, expires?: string) {
+function charge(request: Record<string, unknown> = {}, expires?: string, header?: string) {
   return Challenge.serialize(
     Challenge.from({
       id: "private-key",
@@ -276,6 +281,7 @@ function charge(request: Record<string, unknown> = {}, expires?: string) {
       method: "tempo",
       intent: "charge",
       ...(expires ? { expires } : {}),
+      ...(header ? { header } : {}),
       request: {
         amount: "0",
         currency: "0x20c0000000000000000000000000000000000000",
