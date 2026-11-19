@@ -217,6 +217,8 @@ export function chargeChallengeFromHeader(
     return Challenge.deserializeList(header)
       .filter((challenge) => {
         if (challenge.method !== "tempo" || challenge.intent !== "charge") return false;
+        // Recommend only charges the paid retry would accept.
+        if (!hasSupportedCredentialHeader(challenge)) return false;
         const request = challenge.request as Record<string, unknown>;
         const methodDetails = getRecord(request.methodDetails);
         return (
