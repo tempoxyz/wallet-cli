@@ -175,14 +175,15 @@ export async function paySessionAndRetryRequest(
 
     if (reusable) {
       assertWithinMaxSpend(signedCumulative, options);
-      await preserveSessionCumulative(reusable.channel_id, signedCumulative);
+      const challengeEcho = challengeEchoJson(challenge);
+      await preserveSessionCumulative(reusable.channel_id, signedCumulative, challengeEcho);
       credential = await payment.createCredential(challengeResponse, {
         action: "voucher",
         channelId: reusable.channel_id as `0x${string}`,
         cumulativeAmountRaw: signedCumulative.toString(),
         ...(reusable.descriptor_json ? { descriptor: requireSessionDescriptor(reusable) } : {}),
       });
-      record = reusable;
+      record = { ...reusable, challenge_echo: challengeEcho };
     } else {
       await assertSufficientSessionBalance(identity.address, details, depositRaw);
       assertWithinMaxSpend(signedCumulative, options);

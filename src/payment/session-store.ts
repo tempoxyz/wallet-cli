@@ -122,11 +122,22 @@ export async function upsertSessionRecord(record: PersistedSessionRecord) {
     server_spent = ${maxDecimalSql("channels.server_spent", "excluded.server_spent")}`);
 }
 
-export async function preserveSessionCumulative(channelId: string, cumulativeAmount: bigint) {
+/**
+ * Raises the session's signed cumulative to `cumulativeAmount`. With `challengeEcho`, also stores
+ * the challenge the session is now paid under, so a later cooperative close that falls back to it
+ * uses the credential field the provider currently selects.
+ */
+export async function preserveSessionCumulative(
+  channelId: string,
+  cumulativeAmount: bigint,
+  challengeEcho?: string,
+) {
   await ensureChannelsTable();
   const value = cumulativeAmount.toString();
   await runSql(`UPDATE channels SET
-    cumulative_amount = ${maxDecimalSql("cumulative_amount", sqlString(value))},
+    cumulative_amount = ${maxDecimalSql("cumulative_amount", sqlString(value))},${
+      challengeEcho === undefined ? "" : `\n    challenge_echo = ${sqlString(challengeEcho)},`
+    }
     last_used_at = ${nowSeconds()}
     WHERE LOWER(channel_id) = LOWER(${sqlString(channelId)})`);
 }

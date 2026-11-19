@@ -18,7 +18,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { runRequest } from "../src/request/run.js";
 import { paymentReceipt, receiptSummary, receiptTxHash } from "../src/payment/receipt.js";
-import { upsertSessionRecord, type PersistedSessionRecord } from "../src/payment/session-store.js";
+import {
+  readSessionRecordsByOrigin,
+  upsertSessionRecord,
+  type PersistedSessionRecord,
+} from "../src/payment/session-store.js";
 import { parseNetwork } from "../src/shared/network.js";
 import { cliBundle } from "./cli-bundle.js";
 import {
@@ -479,6 +483,24 @@ it.each<{
   expect(io.stdout.text()).toBe("paid");
   expect(io.stderr.text()).toBe(row.stderr);
   expect(JSON.parse(await readFile(meta, "utf8")).payment).toEqual(row.payment);
+});
+
+it("stores the challenge a reused session is paid under for a later close", async () => {
+  await useTempHome();
+  await writeWalletState(walletState());
+  onChain.deposit = 1_000_000n;
+  const challenge = offer("session", {}, "Payment-Authorization");
+  const origin = await service({ challenge, receipt: sessionReceipt(10_000n) });
+  await storeSession(origin, { cumulative_amount: 50_000n });
+  const io = { stdout: capture(), stderr: capture() };
+
+  await runRequest([`${origin}/paid`], io);
+
+  const [stored] = await readSessionRecordsByOrigin(origin);
+  expect(JSON.parse(stored!.challenge_echo)).toMatchObject({
+    id: challenge.id,
+    header: "Payment-Authorization",
+  });
 });
 
 it("keeps the caller's Authorization off a top-up sent in Payment-Authorization", async () => {
