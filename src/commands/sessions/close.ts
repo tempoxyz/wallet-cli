@@ -26,6 +26,7 @@ import {
   sessionsCloseCommandOutput,
   sessionsCloseOptions,
 } from "../../schemas/sessions.js";
+import { fetchWithRedirects } from "../../request/fetch.js";
 import { globalAlias, type cliGlobals } from "../../schemas/shared.js";
 import { escrowAbi } from "../../shared/constants.js";
 import {
@@ -624,13 +625,21 @@ async function closeSessionCooperatively(options: {
     source: credentialSource(options.record.payer, chain),
   });
 
-  // Never follow a redirect with the signed close credential: fetch keeps a credential in
-  // Payment-Authorization across origins, and a 3xx fails the close below.
-  const response = await fetch(closeUrl, {
-    method: "POST",
-    headers: { [Challenge.credentialHeader(challenge)]: authorization },
-    redirect: "manual",
-  });
+  // Follow redirects only on the close URL's origin: fetch keeps a credential in
+  // Payment-Authorization across origins, so a redirect elsewhere fails the close instead.
+  const { response } = await fetchWithRedirects(
+    {
+      init: {
+        headers: { [Challenge.credentialHeader(challenge)]: authorization },
+        method: "POST",
+        redirect: "manual",
+      },
+      url: closeUrl,
+    },
+    { followRedirects: true },
+    fetch,
+    true,
+  );
   if (!response.ok) {
     const body = sanitizeText(await response.text().catch(() => ""));
     throw walletError({
