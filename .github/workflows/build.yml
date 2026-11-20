@@ -458,9 +458,11 @@ jobs:
             exit 1
           fi
           endpoint="https://$ACCOUNT_ID.r2.cloudflarestorage.com"
-          id="$(curl --fail --silent --show-error --retry 3 --max-time 15 \
-            -H "Authorization: Bearer $TOKEN" \
+          # The token and the key pair reach curl on stdin (--config -), not in
+          # its arguments, which any process on the runner can read.
+          id="$(curl --fail --silent --show-error --retry 3 --max-time 15 --config - \
             "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/tokens/verify" \
+            <<<"header = \"Authorization: Bearer $TOKEN\"" \
             | jq -er '.result | select(.status == "active") | .id')" \
             || { echo "::error::Cloudflare did not verify the R2 token as active"; exit 1; }
           [[ "$id" =~ ^[0-9a-f]{32}$ ]]
@@ -470,29 +472,34 @@ jobs:
           # R2 can take up to a minute to honor a new token even after it
           # verifies as active: https://developers.cloudflare.com/r2/reference/consistency/
           # Not every R2 server honors it at once: one listing can succeed and
-          # the next request get a 401. Wait for three listings in a row, which
-          # change nothing in the bucket.
+          # the next request get a 401. Wait up to 90 seconds for three
+          # listings in a row, which change nothing in the bucket. A rejection,
+          # rate limit, server error or connection failure resets the count.
           accepted=0
-          for attempt in {1..30}; do
+          attempt=0
+          deadline=$((SECONDS + 90))
+          while :; do
+            attempt=$((attempt + 1))
             status="$(curl --silent --show-error --retry 2 --max-time 15 \
-              --aws-sigv4 'aws:amz:auto:s3' --user "$id:$secret" \
+              --aws-sigv4 'aws:amz:auto:s3' --config - \
               --output /dev/null --write-out '%{http_code}' \
-              "$endpoint/$BUCKET?list-type=2&max-keys=1")"
+              "$endpoint/$BUCKET?list-type=2&max-keys=1" \
+              <<<"user = \"$id:$secret\"")" || status=000
             case "$status" in
               200) accepted=$((accepted + 1)) ;;
-              401|403) accepted=0 ;;
+              000|401|403|429|5??) accepted=0 ;;
               *) echo "::error::R2 readiness check failed (HTTP $status)"; exit 1 ;;
             esac
             if (( accepted == 3 )); then
               echo "R2 accepted the credentials"
               break
             fi
-            if (( attempt == 30 )); then
-              echo "::error::R2 did not consistently accept the credentials within a minute (last HTTP $status)"
+            if (( SECONDS >= deadline )); then
+              echo "::error::R2 did not consistently accept the credentials within 90 seconds (last HTTP $status)"
               exit 1
             fi
             if [ "$status" != 200 ]; then
-              echo "Waiting for R2 to accept the credentials (attempt $attempt/30)"
+              echo "Waiting for R2 to accept the credentials (attempt $attempt, HTTP $status)"
             fi
             sleep 2
           done
