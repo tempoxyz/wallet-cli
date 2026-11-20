@@ -475,12 +475,14 @@ jobs:
           # the next request get a 401. Wait up to 90 seconds for three
           # listings in a row, which change nothing in the bucket. A rejection,
           # rate limit, server error or connection failure resets the count.
+          # Each probe is one request, without curl's own retries, so no
+          # failure is hidden from the count.
           accepted=0
           attempt=0
           deadline=$((SECONDS + 90))
           while :; do
             attempt=$((attempt + 1))
-            status="$(curl --silent --show-error --retry 2 --max-time 15 \
+            status="$(curl --silent --show-error --max-time 15 \
               --aws-sigv4 'aws:amz:auto:s3' --config - \
               --output /dev/null --write-out '%{http_code}' \
               "$endpoint/$BUCKET?list-type=2&max-keys=1" \
