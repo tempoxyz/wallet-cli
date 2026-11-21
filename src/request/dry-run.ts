@@ -19,6 +19,7 @@ import {
   walletIdentity,
 } from "./identity.js";
 import type { RequestOptions } from "./options.js";
+import { chargeWithinMaxSpend } from "./policy.js";
 import { dryRunRpc, planSessionPayment } from "./session.js";
 import { formatTokenAmount, spendCap } from "./spend.js";
 
@@ -86,7 +87,15 @@ export async function paymentQuote(
   const machLimit = storedAccessKeyLimit(key, mach);
   // No cap bounds a subscription: an explicit one refuses it before this, and the default skips it.
   const cap = challenge.intent === "subscription" ? undefined : spendCap(options);
-  const spend = challenge.intent === "session" ? plan?.signedCumulative : amount;
+  // A charge is checked by the policy its payment applies; a session by its signed cumulative.
+  const withinBudget =
+    cap === undefined
+      ? null
+      : challenge.intent === "charge"
+        ? await chargeWithinMaxSpend(challenge, options)
+        : plan?.signedCumulative === undefined
+          ? null
+          : plan.signedCumulative <= parseUnits(cap, 6);
   return {
     payment_required: true,
     method: challenge.method,
@@ -116,7 +125,7 @@ export async function paymentQuote(
     payment_token: options.paymentToken ?? null,
     ...networkFields(chainId),
     max_spend: cap ?? null,
-    within_budget: cap === undefined || spend === undefined ? null : spend <= parseUnits(cap, 6),
+    within_budget: withinBudget,
     signer: signer
       ? { address: signer.account.address.toLowerCase(), source: signer.source }
       : { address: null, source: "wallet" },

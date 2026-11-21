@@ -24,14 +24,24 @@ import {
 } from "./helpers.js";
 import { cliBundle } from "./cli-bundle.js";
 
-vi.mock("viem/actions", async (original) => ({
-  ...(await original<typeof import("viem/actions")>()),
-  prepareTransactionRequest: vi.fn(async (_client, parameters) => ({
-    ...parameters,
-    gas: 10_000n,
-  })),
-  signTransaction: vi.fn(async () => "0x021234"),
-}));
+vi.mock("viem/actions", async (original) => {
+  const actual = await original<typeof import("viem/actions")>();
+  return {
+    ...actual,
+    prepareTransactionRequest: vi.fn(async (_client, parameters) => ({
+      ...parameters,
+      gas: 10_000n,
+    })),
+    // The payer holds the charged token, so the OUSD auto-swap check reads its balance and skips
+    // the swap.
+    readContract: vi.fn(async (client, parameters) =>
+      parameters.functionName === "balanceOf"
+        ? 1_000_000_000n
+        : actual.readContract(client, parameters),
+    ),
+    signTransaction: vi.fn(async () => "0x021234"),
+  };
+});
 vi.mock("viem/tempo", async (original) => {
   const actual = await original<typeof import("viem/tempo")>();
   return {

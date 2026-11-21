@@ -41,7 +41,13 @@ vi.mock("mppx/client", async (importOriginal) => {
     Mppx: {
       ...actual.Mppx,
       create: () => ({
-        onChallengeReceived: () => undefined,
+        // mppx selects the only offer; machine-fetch checks it before signing.
+        preparePayment(response: Response) {
+          return Promise.resolve({
+            challenge: Challenge.fromResponseList(response)[0]!,
+            createCredential: (context?: unknown) => this.createCredential(response, context),
+          });
+        },
         createCredential: async (response: Response, options?: unknown) => {
           credentialOptions.push(options);
           return Credential.serialize({
