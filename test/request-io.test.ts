@@ -300,6 +300,19 @@ it("preserves repeated multipart fields and files in order", async () => {
   expect(received.indexOf("file one")).toBeLessThan(received.indexOf("file two"));
 });
 
+it("sends every value of a repeated -H and lets the first replace a default", async () => {
+  let received: IncomingMessage["headers"] = {};
+  const url = await server((req, res) => {
+    received = req.headers;
+    res.end("ok");
+  });
+  await runRequest(["-H", "X-Tag: one", "-H", "x-tag: two", "-H", "User-Agent: custom", url], {
+    stdout: capture(),
+  });
+  expect(received["x-tag"]).toBe("one, two");
+  expect(received["user-agent"]).toBe("custom");
+});
+
 it("routes HEAD headers exclusively to -o and creates parent directories", async () => {
   const home = await useTempHome();
   const path = join(home, "missing", "headers.txt");
