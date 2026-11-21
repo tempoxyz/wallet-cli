@@ -18,6 +18,7 @@ import { continuationCommand } from "../shared/next.js";
 import { getRecord, nowSeconds, stringValue } from "../shared/utils.js";
 import { type SessionDetails, tempoPaymentChallengeResponse } from "./challenge.js";
 import { cloneRequestInit, type FetchPlan, type RequestInitWithDispatcher } from "./fetch.js";
+import { assertCanFund, readFundingCapacity, spendableAmount } from "./funding.js";
 import { type PaymentIdentity, requestNetwork } from "./identity.js";
 import type { RequestOptions } from "./options.js";
 import { fetchPaidRequest, paidResponseFailures, paymentReceipts } from "./paid.js";
@@ -39,23 +40,50 @@ export async function tryTopUpAndRetry(options: {
     .clone()
     .text()
     .catch(() => "");
-  const additionalDeposit = topUpAmountFromProblem(body, options.record, options.signedCumulative);
-  if (additionalDeposit <= 0n) return undefined;
-  const deposit = options.record.deposit + additionalDeposit;
+  const required = topUpAmountFromProblem(body, options.record, options.signedCumulative);
+  if (required <= 0n) return undefined;
+  const cap = parseUnits(spendCap(options.options), 6);
   // This request's voucher was already sent, so a rerun with a higher cap would pay for the call
   // again; the refusal points at the session instead of suggesting one.
-  if (deposit > parseUnits(spendCap(options.options), 6))
+  if (options.record.deposit + required > cap)
     throw walletError({
       code: "E_LIMIT_EXCEEDED",
-      message: `Session top-up refused: the deposit would reach ${formatTokenAmount(deposit)}, above the spending cap (max=${spendCapLabel(options.options)}). The voucher for this request was already sent; check the session with '${continuationCommand(["wallet", "sessions", "list"], requestNetwork(options.options))}' before retrying.`,
+      message: `Session top-up refused: the deposit would reach ${formatTokenAmount(options.record.deposit + required)}, above the spending cap (max=${spendCapLabel(options.options)}). The voucher for this request was already sent; check the session with '${continuationCommand(["wallet", "sessions", "list"], requestNetwork(options.options))}' before retrying.`,
     });
+  const network = requestNetwork(options.options);
+  const capacity = await readFundingCapacity(options.identity, {
+    chainId: options.details.chainId,
+    token: options.details.token,
+  });
+  const sized = topUpAmount({
+    // Only a known allowance may lift the top-up above the shortfall: an unread limit could be
+    // below the chunk, and the chain would reject it.
+    available: capacity.allowance.kind === "unknown" ? required : spendableAmount(capacity),
+    cap,
+    deposit: options.record.deposit,
+    explicitCap: options.options.maxSpend !== undefined,
+    required,
+    suggestedDeposit: options.details.suggestedDeposit,
+  });
+  assertCanFund(options.identity, {
+    amount: sized,
+    capacity,
+    // The retry signs a voucher one call higher, so a limit of only this top-up falls short again.
+    limit: sized + options.details.amount,
+    network,
+    purpose: "session top-up",
+    token: options.details.token,
+  });
 
-  const transaction = await buildTopUpTransaction({
-    additionalDeposit,
+  const { additionalDeposit, transaction } = await buildTopUpTransaction({
+    additionalDeposit: sized,
+    balance: spendableAmount(capacity),
     details: options.details,
     identity: options.identity,
     record: options.record,
+    required,
   });
+  const deposit = options.record.deposit + additionalDeposit;
   const topUpCredential = await options.payment.createCredential(
     tempoPaymentChallengeResponse(options.paymentRequiredResponse),
     {
@@ -124,27 +152,79 @@ export async function tryTopUpAndRetry(options: {
   return retried;
 }
 
+/**
+ * Signs the top-up transaction. A top-up whose fee the payer pays in the session token itself
+ * (no fee sponsor) is lowered so the deposit and the fee fit the balance together, never below
+ * `required`; a fee the prepared transaction does not price lowers it to `required`.
+ */
 async function buildTopUpTransaction(options: {
   additionalDeposit: bigint;
+  balance: bigint;
   details: SessionDetails;
   identity: PaymentIdentity;
   record: PersistedSessionRecord;
+  required: bigint;
 }) {
-  const request = buildTopUpTransactionRequest({
-    additionalDeposit: options.additionalDeposit,
-    details: options.details,
-    record: options.record,
-  });
+  const request = (additionalDeposit: bigint) =>
+    buildTopUpTransactionRequest({
+      additionalDeposit,
+      details: options.details,
+      record: options.record,
+    });
   const client = options.identity.getClient({ chainId: options.details.chainId });
-  const prepared = await prepareTransactionRequest(
+  const prepared = (await prepareTransactionRequest(
     client as never,
     {
       account: (client as { account: unknown }).account,
-      ...request,
+      ...request(options.additionalDeposit),
     } as never,
-  );
+  )) as Record<string, unknown> & { gas?: bigint };
   prepared.gas = (prepared.gas ?? 0n) + 5_000n;
-  return (await signTransaction(client as never, prepared as never)) as `0x${string}`;
+  const additionalDeposit = feeFundedTopUp({
+    additionalDeposit: options.additionalDeposit,
+    balance: options.balance,
+    details: options.details,
+    prepared,
+    required: options.required,
+  });
+  // The deposit only changes the calls' arguments, not the gas the prepared transaction priced.
+  if (additionalDeposit !== options.additionalDeposit)
+    prepared.calls = request(additionalDeposit).calls;
+  return {
+    additionalDeposit,
+    transaction: (await signTransaction(client as never, prepared as never)) as `0x${string}`,
+  };
+}
+
+/** Gas prices are in attodollars (10^-18 USD); fee tokens charge in 10^-6 USD base units. */
+const attodollarsPerFeeUnit = 10n ** 12n;
+
+/**
+ * The top-up `additionalDeposit` lowered so that it and the transaction's fee fit `balance` (the
+ * balance capped by the key's remaining limit) when the payer pays the fee in the session token,
+ * never below `required`. A sponsored top-up, or one
+ * whose fee another token pays, keeps its amount. A fee `prepared` does not price lowers the
+ * top-up to `required`.
+ */
+export function feeFundedTopUp(options: {
+  additionalDeposit: bigint;
+  balance: bigint;
+  details: Pick<SessionDetails, "feePayer" | "token"> & Partial<Pick<SessionDetails, "feeToken">>;
+  prepared: { gas?: unknown; gasPrice?: unknown; maxFeePerGas?: unknown };
+  required: bigint;
+}) {
+  if (options.additionalDeposit <= options.required || options.details.feePayer)
+    return options.additionalDeposit;
+  const feeToken = options.details.feeToken ?? options.details.token;
+  if (feeToken.toLowerCase() !== options.details.token.toLowerCase())
+    return options.additionalDeposit;
+  const { gas } = options.prepared;
+  const price = options.prepared.maxFeePerGas ?? options.prepared.gasPrice;
+  if (typeof gas !== "bigint" || typeof price !== "bigint") return options.required;
+  const fee = (gas * price + attodollarsPerFeeUnit - 1n) / attodollarsPerFeeUnit;
+  const room = options.balance > fee ? options.balance - fee : 0n;
+  if (options.additionalDeposit <= room) return options.additionalDeposit;
+  return room > options.required ? room : options.required;
 }
 
 export function buildTopUpTransactionRequest(options: {
@@ -216,6 +296,32 @@ function topUpAmountFromProblem(
   const requiredTopUp = stringValue(problem.requiredTopUp ?? problem.required_top_up);
   if (/^\d+$/.test(requiredTopUp)) return BigInt(requiredTopUp);
   return sessionShortfall(record, signedCumulative);
+}
+
+/**
+ * The amount a top-up adds to a session's deposit: at least `required`, the shortfall the server
+ * or the voucher names, and otherwise the largest of the server's `suggestedDeposit` and a chunk
+ * of the spending cap (the cap's whole headroom when it was set explicitly, else the current
+ * deposit, so the deposit doubles). Topping up by the bare shortfall costs one transaction per
+ * call once a session's deposit is used up. The chunk never lifts the deposit above the cap or
+ * spends more than `available`, the payer's balance within its key's remaining limit.
+ */
+export function topUpAmount(options: {
+  available?: bigint | undefined;
+  cap: bigint;
+  deposit: bigint;
+  explicitCap: boolean;
+  required: bigint;
+  suggestedDeposit?: bigint | undefined;
+}) {
+  const headroom = options.cap > options.deposit ? options.cap - options.deposit : 0n;
+  const chunk = options.explicitCap ? headroom : options.deposit;
+  let amount = [options.required, options.suggestedDeposit ?? 0n, chunk].reduce((max, value) =>
+    value > max ? value : max,
+  );
+  if (amount > headroom) amount = headroom;
+  if (options.available !== undefined && amount > options.available) amount = options.available;
+  return amount > options.required ? amount : options.required;
 }
 
 /**

@@ -74,8 +74,31 @@ vi.mock("viem/actions", async (importOriginal) => {
     prepareTransactionRequest: async (_client: unknown, parameters: object) => ({
       ...parameters,
       gas: 1n,
+      maxFeePerGas: 1n,
     }),
     signTransaction: async () => "0x76",
+  };
+});
+
+// The logged-in wallet's access key is published without a spending policy, so a top-up's size
+// is not held to the shortfall for want of a limit read.
+vi.mock("viem/tempo", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("viem/tempo")>();
+  return {
+    ...actual,
+    Actions: {
+      ...actual.Actions,
+      accessKey: {
+        ...actual.Actions.accessKey,
+        getMetadata: async () => ({
+          // testAccessKey, which the hoisted mock cannot import.
+          address: "0x4cdadb819a7fc083b72ada08288a96424f34c8a0",
+          expiry: 0n,
+          isRevoked: false,
+          spendPolicy: "unlimited",
+        }),
+      },
+    },
   };
 });
 
@@ -448,15 +471,16 @@ it.each<{
     name: "a reused session topped up for its voucher",
     challenge: offer("session"),
     stored: { cumulative_amount: 995_000n },
+    // The top-up doubles the 1 USDC.e deposit rather than adding the 0.5 shortfall.
     topUp: { required: 500_000n, accepted: 995_000n },
     payment: {
       ...session,
       tx_hash: topUpHash,
       session: "reuse",
-      deposit_locked: "1.5",
+      deposit_locked: "2",
       cumulative: "1.005",
     },
-    stderr: `Paid 0.01 USDC.e · session ${channelId} (1.005 of 1.5 USDC.e deposit in signed vouchers)\n`,
+    stderr: `Paid 0.01 USDC.e · session ${channelId} (1.005 of 2 USDC.e deposit in signed vouchers)\n`,
   },
 ])("reports the receipt of $name", async (row) => {
   const home = await useTempHome();
