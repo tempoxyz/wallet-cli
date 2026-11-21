@@ -430,11 +430,92 @@ jobs:
 
           rm /tmp/release.key
 
+      # The token can read and write objects only in the tempo-cli bucket and
+      # works only from this runner's IP. The tempo-cli-release policy is in
+      # tempoxyz/cloudflare-sts under policies/wallet-cli-1266776969/, and the
+      # action revokes the token after the job.
+      - name: Fetch Cloudflare token for the tempo-cli bucket
+        id: cloudflare-sts
+        uses: tempoxyz/gh-actions/actions/cloudflare-sts@1a535d662a51f211d750307541069cb849535414 # 2026-11-19T07-33-38Z-1a535d66
+        with:
+          account: prd
+          policy: tempo-cli-release
+          ttl: 15m
+
+      # R2's S3 access key ID is the API token's ID, and its secret is the
+      # SHA-256 of the token value.
+      - name: Derive R2 credentials
+        id: r2-credentials
+        env:
+          TOKEN: ${{ steps.cloudflare-sts.outputs.token }}
+          ACCOUNT_ID: ${{ steps.cloudflare-sts.outputs.account-id }}
+          BUCKET: tempo-cli
+        run: |
+          set -euo pipefail
+          # The tempo-cli bucket is in the account STS issued the token for.
+          if [[ ! "$ACCOUNT_ID" =~ ^[0-9a-f]{32}$ ]]; then
+            echo "::error::Cloudflare STS returned an invalid account ID"
+            exit 1
+          fi
+          endpoint="https://$ACCOUNT_ID.r2.cloudflarestorage.com"
+          # The token and the key pair reach curl on stdin (--config -), not in
+          # its arguments, which any process on the runner can read.
+          id="$(curl --fail --silent --show-error --retry 3 --max-time 15 --config - \
+            "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/tokens/verify" \
+            <<<"header = \"Authorization: Bearer $TOKEN\"" \
+            | jq -er '.result | select(.status == "active") | .id')" \
+            || { echo "::error::Cloudflare did not verify the R2 token as active"; exit 1; }
+          [[ "$id" =~ ^[0-9a-f]{32}$ ]]
+          secret="$(printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1)"
+          echo "::add-mask::$id"
+          echo "::add-mask::$secret"
+          # R2 can take up to a minute to honor a new token even after it
+          # verifies as active: https://developers.cloudflare.com/r2/reference/consistency/
+          # Not every R2 server honors it at once: one listing can succeed and
+          # the next request get a 401. Wait up to 90 seconds for three
+          # listings in a row, which change nothing in the bucket. A rejection,
+          # rate limit, server error or connection failure resets the count.
+          # Each probe is one request, without curl's own retries, so no
+          # failure is hidden from the count.
+          accepted=0
+          attempt=0
+          deadline=$((SECONDS + 90))
+          while :; do
+            attempt=$((attempt + 1))
+            status="$(curl --silent --show-error --max-time 15 \
+              --aws-sigv4 'aws:amz:auto:s3' --config - \
+              --output /dev/null --write-out '%{http_code}' \
+              "$endpoint/$BUCKET?list-type=2&max-keys=1" \
+              <<<"user = \"$id:$secret\"")" || status=000
+            case "$status" in
+              200) accepted=$((accepted + 1)) ;;
+              000|401|403|429|5??) accepted=0 ;;
+              *) echo "::error::R2 readiness check failed (HTTP $status)"; exit 1 ;;
+            esac
+            if (( accepted == 3 )); then
+              echo "R2 accepted the credentials"
+              break
+            fi
+            if (( SECONDS >= deadline )); then
+              echo "::error::R2 did not consistently accept the credentials within 90 seconds (last HTTP $status)"
+              exit 1
+            fi
+            if [ "$status" != 200 ]; then
+              echo "Waiting for R2 to accept the credentials (attempt $attempt, HTTP $status)"
+            fi
+            sleep 2
+          done
+          {
+            echo "endpoint-url=$endpoint"
+            echo "access-key-id=$id"
+            echo "secret-access-key=$secret"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Upload to R2
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_ENDPOINT_URL: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          AWS_ACCESS_KEY_ID: ${{ steps.r2-credentials.outputs.access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.r2-credentials.outputs.secret-access-key }}
+          AWS_ENDPOINT_URL: ${{ steps.r2-credentials.outputs.endpoint-url }}
         run: |
           set -euo pipefail
 
