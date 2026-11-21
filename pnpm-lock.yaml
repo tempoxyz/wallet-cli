@@ -14,6 +14,7 @@ overrides:
   undici@>=7.0.0 <7.30.1: 7.30.1
   undici@>=8.0.0 <8.12.2: 8.12.2
   zod@>=4.0.0 <4.6.6: 4.6.7
+  wata>@hono/node-server: 2.1.6
 
 patchedDependencies:
   incur@0.7.1: ce9f4f28b7cb426f7ad6048b002752028a94ba5d9f22643b1fb0b254ffb2dcc1
@@ -30,7 +31,7 @@ importers:
         version: 0.7.1(patch_hash=ce9f4f28b7cb426f7ad6048b002752028a94ba5d9f22643b1fb0b254ffb2dcc1)
       mppx:
         specifier: 0.12.0
-        version: 0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7))
+        version: 0.12.0(hono@4.13.16)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7))
       qr:
         specifier: 0.7.2
         version: 0.7.2
@@ -294,11 +295,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@hono/node-server@1.19.17':
-    resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
-    engines: {node: '>=18.14.1'}
+  '@hono/node-server@2.1.6':
+    resolution: {integrity: sha512-p/KH9MnfNcsm3sR6x4lNgm5j+QN4Et8srKredl9DZfXiyZ1UQ3aQ2YVpFLbqktYN5JI+DB+VZFKM2PqE5hLKjQ==}
+    engines: {node: '>=20'}
     peerDependencies:
-      hono: ^4
+      hono: ^4 || ^5.0.0-0
 
   '@isaacs/fs-minipass@4.0.1':
     resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
@@ -1508,8 +1509,8 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
-  hono@4.13.12:
-    resolution: {integrity: sha512-6E2QDAc9Ick9Sq77ZrGS/dk2WUYni91aufTw6LJKpV7w8kW5/GxVUc650FOADOmlwg3K+f7Pun6XlV+pYmW6gw==}
+  hono@4.13.16:
+    resolution: {integrity: sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A==}
     engines: {node: '>=16.9.0'}
 
   idb-keyval@6.2.5:
@@ -2386,9 +2387,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@hono/node-server@1.19.17(hono@4.13.12)':
+  '@hono/node-server@2.1.6(hono@4.13.16)':
     dependencies:
-      hono: 4.13.12
+      hono: 4.13.16
 
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
@@ -3049,11 +3050,11 @@ snapshots:
 
   accounts@0.21.0(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7)):
     dependencies:
-      hono: 4.13.12
+      hono: 4.13.16
       idb-keyval: 6.2.5
       jose: 6.2.3
       mipd: 0.0.7(typescript@7.0.2)
-      mppx: 0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7))
+      mppx: 0.12.0(hono@4.13.16)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7))
       ox: 0.14.45(typescript@7.0.2)(zod@4.6.7)
       wata: 0.4.2(typescript@7.0.2)
       webauthx: 0.1.2(typescript@7.0.2)(zod@4.6.7)
@@ -3298,7 +3299,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.13.12: {}
+  hono@4.13.16: {}
 
   idb-keyval@6.2.5: {}
 
@@ -3427,7 +3428,7 @@ snapshots:
 
   mkdirp-classic@0.5.3: {}
 
-  mppx@0.12.0(hono@4.13.12)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7)):
+  mppx@0.12.0(hono@4.13.16)(typescript@7.0.2)(viem@2.57.1(typescript@7.0.2)(zod@4.6.7)):
     dependencies:
       '@stripe/stripe-js': 9.13.0
       eventsource-parser: 3.1.1
@@ -3436,7 +3437,7 @@ snapshots:
       viem: 2.57.1(typescript@7.0.2)(zod@4.6.7)
       zod: 4.6.7
     optionalDependencies:
-      hono: 4.13.12
+      hono: 4.13.16
     transitivePeerDependencies:
       - typescript
 
@@ -3983,10 +3984,10 @@ snapshots:
 
   wata@0.4.2(typescript@7.0.2):
     dependencies:
-      '@hono/node-server': 1.19.17(hono@4.13.12)
+      '@hono/node-server': 2.1.6(hono@4.13.16)
       '@noble/ciphers': 2.2.0
       '@noble/hashes': 2.2.0
-      hono: 4.13.12
+      hono: 4.13.16
       ox: 0.14.45(typescript@7.0.2)(zod@4.6.7)
       zod: 4.6.7
     transitivePeerDependencies:

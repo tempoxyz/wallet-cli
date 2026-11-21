@@ -9,6 +9,8 @@ overrides:
   undici@>=7.0.0 <7.30.1: 7.30.1
   undici@>=8.0.0 <8.12.2: 8.12.2
   zod@>=4.0.0 <4.6.6: 4.6.7
+  # wata 0.4.2 (latest, via accounts) depends on @hono/node-server ^1.13.7; 2.x keeps getRequestListener, the only API wata uses. Remove once wata moves to 2.x.
+  wata>@hono/node-server: 2.1.6
 allowBuilds:
   esbuild: true
 
