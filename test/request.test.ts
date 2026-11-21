@@ -1089,6 +1089,42 @@ describe("request command", () => {
     ).toContain("one-time charge of 0.015");
   });
 
+  it("does not recommend a charge whose credential header the retry would refuse", () => {
+    const currency = "0x20c000000000000000000000b9537d11c60e8b50";
+    const session = paymentChallenge({
+      amount: "15000",
+      id: "session",
+      intent: "session",
+      currency,
+      sessionProtocol: "v2",
+    });
+    const unsupported = {
+      ...paymentChallenge({
+        amount: "15000",
+        id: "content-type",
+        intent: "charge",
+        chainId: 4217,
+        currency,
+      }),
+      header: "Content-Type",
+    };
+    const supported = paymentChallenge({
+      amount: "25000",
+      id: "supported",
+      intent: "charge",
+      chainId: 4217,
+      currency,
+    });
+    const header = [session, unsupported, supported]
+      .map((challenge) => Challenge.serialize(challenge))
+      .join(", ");
+
+    expect(
+      chargeFallbackError(header, session, requestOptions("https://example.com"), "failed")
+        ?.message,
+    ).toContain("one-time charge of 0.025");
+  });
+
   it("returns E_PAYMENT for non-dry-run 402 responses", async () => {
     const server = await testServer((_request, response) => {
       response.statusCode = 402;

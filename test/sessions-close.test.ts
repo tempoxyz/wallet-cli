@@ -627,9 +627,7 @@ describe("--cooperative", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_url: unknown, init?: RequestInit) => {
-        const authorized = Boolean(
-          (init?.headers as Record<string, string> | undefined)?.Authorization,
-        );
+        const authorized = Boolean(new Headers(init?.headers).get("Authorization"));
         acceptedByServer ||= authorized;
         return new Response(null, { status: authorized ? 204 : 503 });
       }),
@@ -712,7 +710,7 @@ describe("--cooperative", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_url: unknown, init?: RequestInit) => {
-        authorization ||= (init?.headers as Record<string, string> | undefined)?.Authorization;
+        authorization ||= new Headers(init?.headers).get("Authorization") ?? undefined;
         return new Response(null, { status: authorization ? 204 : 503 });
       }),
     );
@@ -737,13 +735,60 @@ describe("--cooperative", () => {
     expect(payload.closeSignature).not.toBe(payload.signature);
   });
 
+  async function closeThroughRedirect(location: string) {
+    await writeWalletState(stateFor(mainnet));
+    await saveSession(channelId, mainnet, {
+      challenge_echo: JSON.stringify(
+        Challenge.from({
+          id: "close-test",
+          realm: origin,
+          method: "tempo",
+          intent: "session",
+          header: "Payment-Authorization",
+          request: { amount: "1000", currency: usdcToken, recipient: testWallet2 },
+        }),
+      ),
+    });
+    const sent: { headers: Headers; url: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        sent.push({ headers, url: String(url) });
+        if (!headers.get("Payment-Authorization")) return new Response(null, { status: 503 });
+        if (String(url) === `${origin}/session`)
+          return new Response(null, { status: 307, headers: { location } });
+        return new Response(null, { status: 204 });
+      }),
+    );
+    mockEscrow({ [channelId]: escrowChannel() });
+    await closeSessions({ cooperative: true, target: channelId }).catch(() => undefined);
+    return sent.filter(({ headers }) => headers.get("Payment-Authorization"));
+  }
+
+  it("sends the close credential in the field the stored challenge selects, across same-origin redirects", async () => {
+    const closes = await closeThroughRedirect(`${origin}/session/`);
+
+    expect(closes.map(({ url }) => url)).toEqual([`${origin}/session`, `${origin}/session/`]);
+    expect(
+      Credential.deserialize(closes[1]!.headers.get("Payment-Authorization")!).payload,
+    ).toMatchObject({ action: "close", channelId });
+    expect(closes[1]!.headers.get("Authorization")).toBeNull();
+  });
+
+  it("does not forward the close credential to another origin", async () => {
+    const closes = await closeThroughRedirect("https://elsewhere.example/session");
+
+    expect(closes.map(({ url }) => url)).toEqual([`${origin}/session`]);
+  });
+
   it("requests the close on-chain when a rerun finds the channel the server accepted still open", async () => {
     await writeWalletState(stateFor(mainnet));
     await saveSession(channelId, mainnet, { challenge_echo: sessionChallenge() });
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_url: unknown, init?: RequestInit) => {
-        const authorized = (init?.headers as Record<string, string> | undefined)?.Authorization;
+        const authorized = new Headers(init?.headers).get("Authorization");
         return new Response(null, { status: authorized ? 204 : 503 });
       }),
     );

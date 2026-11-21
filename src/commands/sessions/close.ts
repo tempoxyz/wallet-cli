@@ -26,6 +26,8 @@ import {
   sessionsCloseCommandOutput,
   sessionsCloseOptions,
 } from "../../schemas/sessions.js";
+import { hasSupportedCredentialHeader } from "../../request/challenge.js";
+import { fetchWithRedirects } from "../../request/fetch.js";
 import { globalAlias, type cliGlobals } from "../../schemas/shared.js";
 import { escrowAbi } from "../../shared/constants.js";
 import {
@@ -624,10 +626,21 @@ async function closeSessionCooperatively(options: {
     source: credentialSource(options.record.payer, chain),
   });
 
-  const response = await fetch(closeUrl, {
-    method: "POST",
-    headers: { Authorization: authorization },
-  });
+  // Follow redirects only on the close URL's origin: fetch keeps a credential in
+  // Payment-Authorization across origins, so a redirect elsewhere fails the close instead.
+  const { response } = await fetchWithRedirects(
+    {
+      init: {
+        headers: { [Challenge.credentialHeader(challenge)]: authorization },
+        method: "POST",
+        redirect: "manual",
+      },
+      url: closeUrl,
+    },
+    { followRedirects: true },
+    fetch,
+    true,
+  );
   if (!response.ok) {
     const body = sanitizeText(await response.text().catch(() => ""));
     throw walletError({
@@ -758,7 +771,11 @@ async function refreshSessionChallenge(url: string) {
     if (response.status !== 402) return null;
     const header = response.headers.get("www-authenticate");
     if (!header) return null;
-    return Challenge.deserializeList(header).find(isSessionChallenge) ?? null;
+    return (
+      Challenge.deserializeList(header).find(
+        (challenge) => isSessionChallenge(challenge) && hasSupportedCredentialHeader(challenge),
+      ) ?? null
+    );
   } catch {
     return null;
   }
@@ -772,7 +789,7 @@ function storedSessionChallenge(record: ChannelRecord) {
       typeof value.request === "string"
         ? decodeBase64UrlJson(value.request)
         : getRecord(value.request);
-    return Challenge.Schema.parse({
+    const challenge = Challenge.Schema.parse({
       id: stringValue(value.id),
       realm: stringValue(value.realm),
       method: stringValue(value.method),
@@ -781,7 +798,9 @@ function storedSessionChallenge(record: ChannelRecord) {
       ...(typeof value.expires === "string" ? { expires: value.expires } : {}),
       ...(typeof value.digest === "string" ? { digest: value.digest } : {}),
       ...(typeof value.opaque === "string" ? { opaque: value.opaque } : {}),
+      ...(typeof value.header === "string" ? { header: value.header } : {}),
     });
+    return hasSupportedCredentialHeader(challenge) ? challenge : null;
   } catch {
     return null;
   }

@@ -153,7 +153,7 @@ export async function fetchWithRetries(
 
 export async function fetchWithRedirects(
   request: FetchPlan,
-  options: RequestOptions,
+  options: Pick<RequestOptions, "followRedirects" | "maxRedirs">,
   fetchImpl: typeof fetch,
   sameOriginOnly = false,
 ) {

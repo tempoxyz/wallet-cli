@@ -13,6 +13,20 @@ import type { RequestOptions } from "./options.js";
 import { enforceMaxSpend } from "./spend.js";
 
 /**
+ * Whether a challenge selects a field a Payment credential may go in: `Authorization` (the
+ * default, also when named) or `Payment-Authorization`, matched case-insensitively. Any other
+ * field, such as `Content-Type`, would let a server overwrite a request header with the credential.
+ */
+export function hasSupportedCredentialHeader(challenge: Challenge.Challenge) {
+  const header = challenge.header?.toLowerCase();
+  return (
+    header === undefined ||
+    header === Constants.Headers.authorization.toLowerCase() ||
+    header === Constants.Headers.paymentAuthorization.toLowerCase()
+  );
+}
+
+/**
  * Pass exactly the validated offer to mppx. Observation hooks cannot reject payment. `service`
  * names the service, and how to retry it, when it does not accept MACH; the request URL's host
  * unless given.
@@ -33,6 +47,9 @@ export function preparePaymentChallenge(
   } catch {
     throw paymentError("Malformed payment challenge");
   }
+  // Skip offers that select an unsupported credential field, as mppx 0.21 rejects them.
+  challenges = challenges.filter(hasSupportedCredentialHeader);
+  if (challenges.length === 0) throw paymentError("Malformed payment challenge");
   const expectedChain = requestNetwork(options).chainId;
   const networkChallenges = challenges.filter(
     (offer) => paymentChallengeChainId(offer, options) === expectedChain,
@@ -200,6 +217,8 @@ export function chargeChallengeFromHeader(
     return Challenge.deserializeList(header)
       .filter((challenge) => {
         if (challenge.method !== "tempo" || challenge.intent !== "charge") return false;
+        // Recommend only charges the paid retry would accept.
+        if (!hasSupportedCredentialHeader(challenge)) return false;
         const request = challenge.request as Record<string, unknown>;
         const methodDetails = getRecord(request.methodDetails);
         return (

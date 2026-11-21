@@ -175,14 +175,15 @@ export async function paySessionAndRetryRequest(
 
     if (reusable) {
       assertWithinMaxSpend(signedCumulative, options);
-      await preserveSessionCumulative(reusable.channel_id, signedCumulative);
+      const challengeEcho = challengeEchoJson(challenge);
+      await preserveSessionCumulative(reusable.channel_id, signedCumulative, challengeEcho);
       credential = await payment.createCredential(challengeResponse, {
         action: "voucher",
         channelId: reusable.channel_id as `0x${string}`,
         cumulativeAmountRaw: signedCumulative.toString(),
         ...(reusable.descriptor_json ? { descriptor: requireSessionDescriptor(reusable) } : {}),
       });
-      record = reusable;
+      record = { ...reusable, challenge_echo: challengeEcho };
     } else {
       await assertSufficientSessionBalance(identity.address, details, depositRaw);
       assertWithinMaxSpend(signedCumulative, options);
@@ -200,7 +201,9 @@ export async function paySessionAndRetryRequest(
       await upsertSessionRecord(record);
     }
 
-    const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential);
+    const paidInit = payment.transport.setCredential(cloneRequestInit(request.init), credential, {
+      challenge,
+    });
     const response = await fetchPaidRequest(
       { init: paidInit, url: request.url },
       options,
@@ -208,6 +211,7 @@ export async function paySessionAndRetryRequest(
     );
     if (reusable && response.status === 402) {
       const recovered = await tryTopUpAndRetry({
+        challenge,
         credential,
         details,
         identity,
@@ -462,6 +466,7 @@ function challengeEchoJson(challenge: Challenge.Challenge) {
     ...(challenge.expires ? { expires: challenge.expires } : {}),
     ...(challenge.digest ? { digest: challenge.digest } : {}),
     ...(challenge.opaque ? { opaque: challenge.opaque } : {}),
+    ...(challenge.header ? { header: challenge.header } : {}),
   });
 }
 
