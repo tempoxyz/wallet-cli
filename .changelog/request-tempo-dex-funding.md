@@ -1,0 +1,5 @@
+---
+tempo-request: minor
+---
+
+`tempo request` now pays a Tempo charge in a USD token the wallet does not hold by buying it on the Tempo DEX in the same transaction, from OUSD first, then USDC.e, then pathUSD. A wallet that holds the token pays as before. `--max-slippage-bps` bounds the swap (default 50). `--funding off` (or `TEMPO_FUNDING=off`, or `tempo wallet config set funding off`) pays only from held tokens; the default is `tempo`. MACH settlement never swaps, and a machine-enabled charge the wallet holds enough MACH for is left to MACH. A swap counts twice against the access key's limit, once for its approve and once for the DEX's pull of the input. Before signing, a swap the limit, read on chain, cannot cover fails with `E_LIMIT_EXCEEDED` and the `tempo wallet keys update` that fixes it, and one no held token can cover fails with `E_INSUFFICIENT_FUNDS` and `tempo wallet fund`. The receipt names the swap (`funding` in `--write-meta`, "bought with up to … on the Tempo DEX" on stderr), and `--dry-run` reports `funding` when the balance is short.
