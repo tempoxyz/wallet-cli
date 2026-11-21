@@ -1,6 +1,7 @@
 ---
-title: "walletError cause option appends the cause message to message"
-severity: "minor"
+title: 'walletError cause option appends the cause message to message'
+severity: 'minor'
+issue: 'tempoxyz/wallet-cli#269'
 ---
 
 ## Expected Behavior
