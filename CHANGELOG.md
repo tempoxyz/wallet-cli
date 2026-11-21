@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.2 (2026-11-21)
+
+### Patch Changes
+
+- `tempo request --mach` (and `--payment-token MACH`) now tries the service's next machine-enabled charge offer when the MACH swap route for the first one cannot be simulated, such as when the DEX book for that offer's settlement currency is empty. It tries at most three offers, skips offers that do not accept pull-mode credentials, only offers to the first offer's recipient for no more than its amount (so the payment stays within what --dry-run quoted), skips an offer whose currency already failed at the same or a smaller amount, signs and sends nothing for a failed route, and reports the first offer's "swap route could not be simulated" error only when no offer's route simulates. Before, it gave up after the first offer, so a service listing OUSD before USDC.e could not be paid with MACH while the USDC.e/OUSD book was empty. Only a route that reverts again on its re-check moves on: a transient RPC failure (a timeout, an HTTP error, or a node reporting itself overloaded or failing internally), or a route that simulates on the re-check, is still reported as retryable for that offer. Balance, spending-limit and call-scope failures still stop at the first offer.
+- Support direct-to-merchant MACH v2 sessions with `--mach --payment-intent session`, prefer affordable MACH sessions automatically, and use a separate gas token for session top-ups and closure. Existing `--mach` charge negotiation is unchanged.
+- Releases no longer ship a macOS Intel (darwin-amd64) build of `tempo-wallet` or `tempo-request`; Linux x64, Linux arm64 and Apple silicon Macs are still built. Release builds also run types and tests once instead of in every binary job, and build both binaries in one job per platform.
+- `tempo wallet sessions list --orphaned` (and `--all`), `sessions close --orphaned`, and `sessions close <channel-id>` now find TIP-1034 precompile channels the logged-in wallet pays from that have no local record, such as channels another client opened with the same wallet. Discovery reads the precompile's `ChannelOpened` logs filtered on the payer, in block ranges of 50,000 from the precompile's first channel on the chain, keeps channels that still hold a deposit, and stores each with the channel descriptor rebuilt from its event, so `sessions close` can request the close and withdraw the deposit. Later scans resume after the last block a completed scan covered. Before, only legacy escrow channels opened in the last 100,000 blocks were discovered, and closing such a channel by ID reported "channel not found".
+
 ## 0.15.1 (2026-11-04)
 
 ### Patch Changes
