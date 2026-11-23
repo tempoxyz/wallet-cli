@@ -28,6 +28,7 @@ import { moderatoToken, usdcToken } from "../src/shared/constants.js";
 import { CtaError } from "../src/cli/incur-compat.js";
 import {
   testAccessKey,
+  ousdToken,
   unlistedToken,
   useTempHome,
   walletState,
@@ -334,11 +335,11 @@ describe("a MACH route that does not simulate for the first offer's currency", (
       return String(decodeFunctionData({ abi: swapAbi, data }).args[2]).toLowerCase();
     });
   }
-  const first = offer({ currency: unlistedToken }, { id: "first" });
+  const first = offer({ currency: ousdToken }, { id: "first" });
   const second = offer({}, { id: "second" });
 
   it("pays the next machine-enabled offer in another currency", async () => {
-    emptyBooks(unlistedToken);
+    emptyBooks(ousdToken);
     const service = await server([first, second]);
 
     await runRequest(["--mach", "--max-spend", "0.015", service.url], {
@@ -351,8 +352,8 @@ describe("a MACH route that does not simulate for the first offer's currency", (
   });
 
   it("skips an offer in a currency whose route already failed at that amount", async () => {
-    emptyBooks(unlistedToken);
-    const sameCurrency = offer({ currency: unlistedToken }, { id: "same" });
+    emptyBooks(ousdToken);
+    const sameCurrency = offer({ currency: ousdToken }, { id: "same" });
     const service = await server([first, sameCurrency, second]);
 
     await runRequest(["--mach", "--max-spend", "0.015", service.url], {
@@ -362,14 +363,14 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(second);
     // The first offer's route is simulated by the SDK and re-checked once; the same-currency
     // offer is never simulated.
-    expect(
-      simulatedTargets().filter((target) => target === unlistedToken.toLowerCase()),
-    ).toHaveLength(2);
+    expect(simulatedTargets().filter((target) => target === ousdToken.toLowerCase())).toHaveLength(
+      2,
+    );
   });
 
   it("tries a cheaper offer in a currency whose route failed at a larger amount", async () => {
-    thinBooks(14_000n, unlistedToken);
-    const cheaper = offer({ currency: unlistedToken, amount: "14000" }, { id: "cheaper" });
+    thinBooks(14_000n, ousdToken);
+    const cheaper = offer({ currency: ousdToken, amount: "14000" }, { id: "cheaper" });
     const service = await server([first, cheaper, second]);
 
     await runRequest(["--mach", "--max-spend", "0.015", service.url], {
@@ -383,7 +384,7 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     ["a larger amount", { amount: "15001" }],
     ["another recipient", { recipient: "0x2222222222222222222222222222222222222222" }],
   ])("does not fall through to an offer for %s than the first", async (_name, request) => {
-    emptyBooks(unlistedToken);
+    emptyBooks(ousdToken);
     const service = await server([first, offer(request, { id: "other" })]);
 
     const error = await runRequest(["--mach", "--max-spend", "0.02", service.url]).catch(
@@ -395,7 +396,7 @@ describe("a MACH route that does not simulate for the first offer's currency", (
   });
 
   it("skips a push-only offer for a later one the CLI can pay", async () => {
-    emptyBooks(unlistedToken);
+    emptyBooks(ousdToken);
     const pushOnly = offer(
       {
         currency: moderatoToken,
@@ -413,7 +414,7 @@ describe("a MACH route that does not simulate for the first offer's currency", (
   });
 
   it("reports the first offer's failure, without signing, when no route simulates", async () => {
-    emptyBooks(unlistedToken, usdcToken);
+    emptyBooks(ousdToken, usdcToken);
     const cheaper = offer({ amount: "14000" }, { id: "cheaper" });
     const service = await server([first, cheaper]);
 
@@ -432,11 +433,12 @@ describe("a MACH route that does not simulate for the first offer's currency", (
   });
 
   it("tries at most three offers", async () => {
-    const currencies = [unlistedToken, ...[2, 3, 4].map((n) => `0x${String(n).repeat(40)}`)];
+    // Every listed USD token's book is dry; the cheaper OUSD offer would be a fourth try.
+    const currencies = [ousdToken, moderatoToken, usdcToken];
     emptyBooks(...currencies);
     const offers = [
       ...currencies.map((currency, index) => offer({ currency }, { id: `dry-${index}` })),
-      second,
+      offer({ currency: ousdToken, amount: "14000" }, { id: "cheaper" }),
     ];
     const service = await server(offers);
 
@@ -446,13 +448,28 @@ describe("a MACH route that does not simulate for the first offer's currency", (
 
     expect(error).toMatchObject({ message: expect.stringContaining("could not be simulated") });
     expect(service.paid).toEqual([]);
-    const swapped = new Set(
-      vi.mocked(call).mock.calls.map(([, parameters]) => {
-        const data = (parameters as { calls: { data: `0x${string}` }[] }).calls[1]!.data;
-        return String(decodeFunctionData({ abi: swapAbi, data }).args[2]).toLowerCase();
-      }),
+    const routes = vi.mocked(call).mock.calls.map(([, parameters]) => {
+      const data = (parameters as { calls: { data: `0x${string}` }[] }).calls[1]!.data;
+      const { args } = decodeFunctionData({ abi: swapAbi, data });
+      return `${String(args[2]).toLowerCase()}:${args[1]}`;
+    });
+    expect(new Set(routes)).toEqual(
+      new Set(currencies.map((currency) => `${currency.toLowerCase()}:15000`)),
     );
-    expect(swapped.size).toBe(3);
+  });
+
+  it("skips an offer in a token the spend cap cannot price", async () => {
+    emptyBooks(ousdToken);
+    const unlisted = offer({ currency: unlistedToken }, { id: "unlisted" });
+    const service = await server([first, unlisted, second]);
+
+    await runRequest(["--mach", "--max-spend", "0.015", service.url], {
+      stdout: { write: () => true },
+    });
+
+    expect(service.paid).toHaveLength(1);
+    expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(second);
+    expect(simulatedTargets()).not.toContain(unlistedToken.toLowerCase());
   });
 
   it("keeps the first offer when its route simulates on the re-check", async () => {
@@ -472,7 +489,7 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     vi.mocked(call).mockImplementation(async (_client, parameters) => {
       const data = (parameters as { calls: { data: `0x${string}` }[] }).calls[1]!.data;
       const target = String(decodeFunctionData({ abi: swapAbi, data }).args[2]).toLowerCase();
-      if (target === unlistedToken.toLowerCase()) throw new Error("InsufficientLiquidity()");
+      if (target === ousdToken.toLowerCase()) throw new Error("InsufficientLiquidity()");
       throw new TimeoutError({ body: {}, url: "https://rpc.example" });
     });
     const service = await server([first, second]);
@@ -491,7 +508,7 @@ describe("a MACH route that does not simulate for the first offer's currency", (
 
   it("does not try another offer when the MACH balance is short", async () => {
     vi.mocked(readContract).mockResolvedValue(10_000n);
-    emptyBooks(unlistedToken);
+    emptyBooks(ousdToken);
     const service = await server([first, second]);
 
     const error = await runRequest(["--mach", "--max-spend", "0.015", service.url]).catch(

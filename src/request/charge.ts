@@ -8,6 +8,7 @@ import { paymentReceipt, receiptTxHash, transactionHash } from "../payment/recei
 import { signedSwap } from "../payment/tempo-funding.js";
 import { withSessionLock } from "../payment/session-lock.js";
 import { paymentError } from "../shared/errors.js";
+import { tempoUsdTokens } from "../shared/chains.js";
 import { readTokenMetadata, tokenLabel, tokenMetadata } from "../shared/tokens.js";
 import { getRecord, sanitizeText, stringValue } from "../shared/utils.js";
 import { accessKeyLimitError } from "../wallet/access-key.js";
@@ -155,6 +156,11 @@ function nextMachCharge(
     const modes = getRecord(offer.request.methodDetails).supportedModes;
     return !Array.isArray(modes) || modes.includes("pull");
   };
+  // The spend cap prices only the USD tokens the CLI lists; any other offer would be refused, and
+  // its refusal must not replace the first offer's route error.
+  const capped = new Set(
+    tempoUsdTokens(requestNetwork(options).chainId).map((t) => t.toLowerCase()),
+  );
   const [first] = tried;
   const recipient = (challenge: Challenge.Challenge) =>
     stringValue(challenge.request.recipient).toLowerCase();
@@ -179,6 +185,7 @@ function nextMachCharge(
     if (
       offer.intent !== "charge" ||
       !supportsPull(offer) ||
+      !capped.has(currency(offer)) ||
       failedAtOrBelow(offer) ||
       !withinFirst(offer)
     )
