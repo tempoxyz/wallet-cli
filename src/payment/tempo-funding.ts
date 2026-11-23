@@ -1,8 +1,9 @@
 import { Funder, type Payment } from "machine-fetch";
-import { type Address, decodeFunctionData, erc20Abi, getAddress } from "viem";
+import { type Address, decodeFunctionData, erc20Abi, formatUnits, getAddress } from "viem";
 import { Addresses, Transaction as TempoTransaction } from "viem/tempo";
 
 import { tempoFundingInputs, tempoUsdTokens } from "../shared/chains.js";
+import { paymentError } from "../shared/errors.js";
 import { stringValue } from "../shared/utils.js";
 
 /** Mppx Tempo charge auto-swap context: the swap's inputs, as an allowlist, and its slippage. */
@@ -25,6 +26,12 @@ export type TempoFundingOptions = {
    * inputs it may not spend, the first of them goes to `beforeSwap`, which names the fix.
    */
   canSpend?(input: SwapInput): Promise<boolean>;
+  /**
+   * What the Tempo DEX charges, in `tokenIn`, for `amountOut` of `tokenOut`. An input whose quote is
+   * above the slippage bound is skipped for the next, since Mppx would refuse it while signing;
+   * an unreadable quote leaves the input to Mppx.
+   */
+  quote?(swap: { tokenIn: Address; tokenOut: Address; amountOut: bigint }): Promise<bigint>;
 };
 
 /**
@@ -65,13 +72,25 @@ export function tempoFunding(options: TempoFundingOptions): Funder.Funder<TempoF
       const autoSwap = prepared?.context?.autoSwap;
       if (!autoSwap) return prepared;
       const maxAmount = withSlippage(requirement.amount, context.policy.maxSlippageBps);
+      // Mppx buys only the shortfall, and refuses a quote above it plus slippage, measured from par.
+      const shortfall = requirement.amount - held;
+      const bps = context.policy.maxSlippageBps ?? 0;
+      const quoteLimit = shortfall + (shortfall * BigInt(bps)) / 10_000n;
       let unspendable: SwapInput | undefined;
+      let overpriced: { token: Address; quoted: bigint } | undefined;
       for (const token of autoSwap.tokenIn) {
         const balance = await options.balance(token).catch(() => undefined);
         if (typeof balance !== "bigint" || balance < maxAmount) continue;
         const input = { token, maxAmount, requirement };
         if (options.canSpend && !(await options.canSpend(input))) {
           unspendable ??= input;
+          continue;
+        }
+        const quoted = await options
+          .quote?.({ tokenIn: token, tokenOut: asset, amountOut: shortfall })
+          .catch(() => undefined);
+        if (typeof quoted === "bigint" && quoted > quoteLimit) {
+          overpriced ??= { token, quoted };
           continue;
         }
         await options.beforeSwap?.(input);
@@ -84,6 +103,10 @@ export function tempoFunding(options: TempoFundingOptions): Funder.Funder<TempoF
         });
       }
       if (unspendable) await options.beforeSwap?.(unspendable);
+      if (overpriced)
+        throw paymentError(
+          `The Tempo DEX asks ${formatUnits(overpriced.quoted, 6)} of ${overpriced.token} for ${formatUnits(shortfall, 6)} of ${asset}, more than the ${formatUnits(quoteLimit, 6)} that --max-slippage-bps ${bps} allows, so nothing was paid. Retry with a higher --max-slippage-bps if you accept that price.`,
+        );
       throw new Funder.InsufficientFundsError(
         `The wallet holds neither ${requirement.amount} of ${asset} (atomic units) nor enough of ${autoSwap.tokenIn.join(", ")} to swap for it`,
       );

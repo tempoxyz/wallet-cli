@@ -3,6 +3,7 @@ import { MppxFetch } from "machine-fetch/mppx";
 import type { Challenge } from "mppx";
 
 import { type Address, erc20Abi, formatUnits } from "viem";
+import { Actions } from "viem/tempo";
 
 import {
   chargePolicy,
@@ -68,6 +69,10 @@ export function chargeFunders(
           network,
         });
       },
+      quote: ({ tokenIn, tokenOut, amountOut }) =>
+        createTempoPublicClient(network.chainId).readContract(
+          Actions.dex.getBuyQuote.call({ tokenIn, tokenOut, amountOut }),
+        ) as Promise<bigint>,
     }) as Funder.Funder<unknown>,
   ];
 }

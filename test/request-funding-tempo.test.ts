@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 
 import { Challenge, Credential } from "mppx";
+import { Addresses } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CtaError } from "../src/cli/incur-compat.js";
@@ -60,6 +61,8 @@ const usdcE = "0x20c000000000000000000000b9537d11c60e8b50";
 const pathUsd = "0x20c0000000000000000000000000000000000000";
 const eurc = "0x20c0000000000000000000001621e21f71cf12fb";
 const ousd = ousdToken;
+/** The Tempo DEX: a read of it, such as a buy quote, returns the balance set for it. */
+const dex = Addresses.stablecoinDex.toLowerCase();
 const servers: ReturnType<typeof createServer>[] = [];
 
 beforeEach(async () => {
@@ -197,6 +200,34 @@ describe("Tempo DEX funding", () => {
     expect(paid.paid()).toBe(1);
     const [context] = credentialContexts as { autoSwap: { tokenIn: string[] } }[];
     expect(context!.autoSwap.tokenIn.map((token) => token.toLowerCase())).toEqual([pathUsd]);
+  });
+
+  it("refuses before signing when the DEX quote is above the slippage bound", async () => {
+    // The DEX asks 0.010097 OUSD for 0.01 USDC.e; 50 bps allows at most 0.01005.
+    await wallet();
+    balances.set(usdcE, 0n).set(ousd, 5_000_000n).set(pathUsd, 0n).set(dex, 10_097n);
+    const paid = await service(usdcE);
+
+    await expect(run([], paid.url)).rejects.toMatchObject({
+      code: "E_PAYMENT",
+      message: expect.stringContaining(
+        "The Tempo DEX asks 0.010097 of 0x20c0000000000000000000006a37DA5C996874BE for 0.01",
+      ),
+    });
+    expect(paid.paid()).toBe(0);
+    expect(credentialContexts).toEqual([]);
+  });
+
+  it("swaps when --max-slippage-bps covers the DEX quote", async () => {
+    await wallet();
+    balances.set(usdcE, 0n).set(ousd, 5_000_000n).set(pathUsd, 0n).set(dex, 10_097n);
+    const paid = await service(usdcE);
+
+    await run(["--max-slippage-bps", "120"], paid.url);
+
+    expect(paid.paid()).toBe(1);
+    const [context] = credentialContexts as { autoSwap: { tokenIn: string[] } }[];
+    expect(context!.autoSwap.tokenIn.map((token) => token.toLowerCase())).toEqual([ousd]);
   });
 
   it("pays from a held token without a swap", async () => {
