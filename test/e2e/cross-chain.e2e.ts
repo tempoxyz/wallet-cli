@@ -152,7 +152,7 @@ describe("cross-chain funding", () => {
     expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
     // Nothing moved, so nothing is left to recover.
     const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
-    expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
+    expectNothingMoved(JSON.parse(list.stdout));
   });
 
   test("recovers after the CLI is killed mid-bridge without bridging again", async () => {
@@ -272,7 +272,7 @@ describe("cross-chain funding", () => {
     expect(output(result)).toContain("0.05 OUSD");
     expect(relay.quotes).toHaveLength(0);
     const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
-    expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
+    expectNothingMoved(JSON.parse(list.stdout));
   });
 
   test("refuses before signing when the wallet cannot cover any route's quote", async () => {
@@ -291,7 +291,7 @@ describe("cross-chain funding", () => {
     expect(stargate.sent).toHaveLength(0);
     expect(await tempoBalance(net, net.usdc, wallet.address)).toBe(101_000n);
     const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
-    expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
+    expectNothingMoved(JSON.parse(list.stdout));
   });
 
   test("recovers a Stargate bridge after the CLI is killed, without bridging again", async () => {
@@ -448,7 +448,7 @@ describe("cross-chain funding", () => {
     expect(stargate.sent).toHaveLength(0);
     expect(await tempoBalance(net, net.ousd, wallet.address)).toBe(1_000_000n);
     const list = await runCli("wallet", ["funding", "list", "--format", "json"], env(wallet));
-    expect(JSON.parse(list.stdout)).toMatchObject({ total: 0 });
+    expectNothingMoved(JSON.parse(list.stdout));
   });
 
   test.each(["off", "tempo"])("never bridges with --funding %s", async (funding) => {
@@ -507,4 +507,13 @@ async function payerOf(wallet: LocalWallet, url: string) {
   const payer = /remote payer (0x[0-9a-fA-F]{40})/.exec(output(unfunded))?.[1];
   expect(payer).toBeDefined();
   return payer as `0x${string}`;
+}
+
+/**
+ * A refused payment moved nothing: any attempt it saved never started, and is kept only until it
+ * counts as abandoned, since a concurrent run of the same request may share it.
+ */
+function expectNothingMoved(list: { operations: { status: string; route: unknown }[] }) {
+  for (const operation of list.operations)
+    expect(operation).toMatchObject({ status: "not_started", route: null });
 }
