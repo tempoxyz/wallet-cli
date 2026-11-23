@@ -84,6 +84,12 @@ export function evmOffers(response: Response, options: RequestOptions) {
       refuse(`its EIP-3009 domain is not ${destination.name} USDC's`);
       continue;
     }
+    // The EIP-3009 signer needs whole seconds; refuse before funding rather than after a bridge.
+    const timeout = getRecord(challenge.request).maxTimeoutSeconds;
+    if (kind === "x402" && !(Number.isSafeInteger(timeout) && (timeout as number) > 0)) {
+      refuse("its maxTimeoutSeconds is not a positive whole number of seconds");
+      continue;
+    }
     if (!requirement.recipient || !isAddress(requirement.recipient, { strict: false })) {
       refuse("missing a valid recipient address");
       continue;

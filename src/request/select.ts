@@ -59,7 +59,10 @@ export async function selectPayment(
   }
   const why = refused.length > 0 ? ` (${refused.map(escapeInvisible).join("; ")})` : "";
   if (forced) {
-    const offer = offers.find((candidate) => namesDestination(candidate.destination, forced));
+    // An exact name wins over the base alias for Base Sepolia, such as a dev chain named base.
+    const offer =
+      offers.find((candidate) => candidate.destination.name === forced) ??
+      offers.find((candidate) => namesDestination(candidate.destination, forced));
     if (!offer)
       throw paymentError(
         `Server did not offer a payable charge on ${escapeInvisible(forced)}${why}`,

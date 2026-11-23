@@ -451,6 +451,8 @@ describe("EVM offers", () => {
       accept: x402Accept({ extra: { name: "Evil", version: "2" } }),
     },
     { name: "an unsupported scheme", accept: x402Accept({ scheme: "upto" }) },
+    { name: "a fractional timeout", accept: x402Accept({ maxTimeoutSeconds: 60.5 }) },
+    { name: "a zero timeout", accept: x402Accept({ maxTimeoutSeconds: 0 }) },
   ])("refuses an x402 offer with $name as E_PAYMENT", async ({ accept }) => {
     await remotePayerAddress();
     const endpoint = await service({ x402: [accept] });
