@@ -237,6 +237,14 @@ export function destinations(tempoChainId: number): Destination[] {
   return [...listed.map((entry) => ({ ...entry, rpcUrl: destinationRpcUrl(entry) })), ...dev];
 }
 
+/**
+ * Whether `--payment-network <name>` names `entry`: by its name, or `base` for Base Sepolia, the
+ * Base of testnet, as `tempo` names whichever Tempo network the request uses.
+ */
+export function namesDestination(entry: Pick<Destination, "chainId" | "name">, name: string) {
+  return entry.name === name || (name === base.name && entry.chainId === baseSepolia.chainId);
+}
+
 /** The destination for `chainId` among `tempoChainId`'s, if payments may be made there. */
 export function destination(tempoChainId: number, chainId: number) {
   return destinations(tempoChainId).find((entry) => entry.chainId === chainId);

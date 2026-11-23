@@ -1,6 +1,6 @@
 import { type Address, erc20Abi } from "viem";
 
-import { destinationBalance, tempoFundingInputs } from "../shared/chains.js";
+import { destinationBalance, namesDestination, tempoFundingInputs } from "../shared/chains.js";
 import { crossChainEnabled } from "./cross-chain.js";
 import { paymentError, usageError } from "../shared/errors.js";
 import { createTempoPublicClient } from "../shared/network.js";
@@ -59,7 +59,7 @@ export async function selectPayment(
   }
   const why = refused.length > 0 ? ` (${refused.map(escapeInvisible).join("; ")})` : "";
   if (forced) {
-    const offer = offers.find((candidate) => candidate.destination.name === forced);
+    const offer = offers.find((candidate) => namesDestination(candidate.destination, forced));
     if (!offer)
       throw paymentError(
         `Server did not offer a payable charge on ${escapeInvisible(forced)}${why}`,

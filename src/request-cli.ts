@@ -22,7 +22,7 @@ const maxSpendHelp = `Hard cap for cumulative payment spend in payment token uni
 
 const fundingHelp = `Acquire a payment token the wallet does not hold: tempo swaps on the Tempo DEX, auto may also fund other chains, off pays only from held tokens (or TEMPO_FUNDING, then the saved funding setting; default ${defaultFunding})`;
 const paymentNetworkHelp =
-  "Pay on this network when the server offers several: tempo, or an EVM chain such as base (default: ranked by what the wallet holds)";
+  "Pay on this network when the server offers several: tempo, or an EVM chain such as base (Base Sepolia on testnet) (default: ranked by what the wallet holds)";
 const maxFundingSpendHelp =
   "Cap on the source token (USDC.e or OUSD) one cross-chain funding may spend, bridge fee and gas included (default: max spend plus 5% and 0.10)";
 const maxSlippageHelp = `Maximum funding slippage in basis points, 0 to ${maxMaxSlippageBps} (default ${defaultMaxSlippageBps})`;

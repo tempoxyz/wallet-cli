@@ -26,7 +26,7 @@ import {
   listAttempts,
   operationsDirectory,
 } from "../src/payment/attempts.js";
-import { destinations } from "../src/shared/chains.js";
+import { destinations, namesDestination } from "../src/shared/chains.js";
 import { parseRequestArgs } from "../src/request/args.js";
 import { crossChainFunding, fundingAccounts } from "../src/request/cross-chain.js";
 import { fundingDeadlineSeconds, payEvmAndRetry } from "../src/request/evm-charge.js";
@@ -1328,5 +1328,17 @@ describe("bridged dry run", () => {
     expect(off).not.toHaveProperty("funding");
     expect(held).not.toHaveProperty("funding");
     expect(relay.quotes).toHaveLength(0);
+  });
+});
+
+describe("--payment-network names", () => {
+  it.each([
+    { tempoChainId: 4217, name: "base", names: true },
+    { tempoChainId: 42431, name: "base", names: true },
+    { tempoChainId: 42431, name: "base-sepolia", names: true },
+    { tempoChainId: 4217, name: "base-sepolia", names: false },
+    { tempoChainId: 42431, name: "arbitrum", names: false },
+  ])("$name names the Base of $tempoChainId: $names", ({ tempoChainId, name, names }) => {
+    expect(namesDestination(destinations(tempoChainId)[0]!, name)).toBe(names);
   });
 });
