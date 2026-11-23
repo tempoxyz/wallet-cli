@@ -7,7 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CtaError } from "../src/cli/incur-compat.js";
 import { parseMaxSlippageBps } from "../src/request/funding-mode.js";
 import { runRequest } from "../src/request/run.js";
-import { ousdToken, testAccessKey, useTempHome, walletState, writeWalletState } from "./helpers.js";
+import {
+  ousdToken,
+  testAccessKey,
+  unlistedToken,
+  useTempHome,
+  walletState,
+  writeWalletState,
+} from "./helpers.js";
 
 const { credentialContexts, balances, quotes } = vi.hoisted(() => ({
   credentialContexts: [] as unknown[],
@@ -263,6 +270,46 @@ describe("Tempo DEX funding", () => {
     expect(paid.paid()).toBe(1);
     const [context] = credentialContexts as { autoSwap: { tokenIn: string[] } }[];
     expect(context!.autoSwap.tokenIn.map((token) => token.toLowerCase())).toEqual([ousd]);
+  });
+
+  it("pays a listed-token charge listed after one in a token the cap cannot price", async () => {
+    await wallet();
+    balances.set(usdcE, 1_000_000n).set(ousd, 0n);
+    const header = [unlistedToken, usdcE]
+      .map((currency, index) =>
+        Challenge.serialize(
+          Challenge.from({
+            id: `offer-${index}`,
+            realm: "local",
+            method: "tempo",
+            intent: "charge",
+            request: {
+              amount: "10000",
+              currency,
+              recipient: "0x0000000000000000000000000000000000000001",
+              methodDetails: { chainId: 4217 },
+            },
+          }),
+        ),
+      )
+      .join(", ");
+    const paid: string[] = [];
+    const server = createServer((req, res) => {
+      if (!req.headers.authorization) {
+        res.writeHead(402, { "www-authenticate": header }).end("Payment Required");
+        return;
+      }
+      paid.push(req.headers.authorization);
+      res.writeHead(200).end("paid");
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+
+    await run([], `http://127.0.0.1:${port}/`);
+
+    expect(paid).toHaveLength(1);
+    expect(Credential.deserialize(paid[0]!).challenge.id).toBe("offer-1");
   });
 
   it("pays from a held token without a swap", async () => {

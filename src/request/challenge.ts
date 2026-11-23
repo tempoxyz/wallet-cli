@@ -1,3 +1,4 @@
+import { tempoUsdTokens } from "../shared/chains.js";
 import { Challenge, Constants } from "mppx";
 import { machineTokenDeployments } from "mppx/tempo";
 import { isAddress } from "viem";
@@ -40,12 +41,21 @@ export function preparePaymentChallenge(
   // Prefer offers on the selected network before applying intent preference.
   // Keep mismatched offers when none match so the network diagnostic remains explicit.
   if (networkChallenges.length > 0) challenges = networkChallenges;
-  const charge = challenges.find(
+  const charges = challenges.filter(
     (offer) =>
       offer.method === "tempo" &&
       (offer.intent === "charge" ||
         (options.paymentIntent === "auto" && offer.intent === "subscription")),
   );
+  // --max-spend prices only the USD tokens the CLI lists, so a charge in another token is refused.
+  // Prefer the first charge in a listed token; keep the first offer when none is listed, so its
+  // refusal still names the token.
+  const listed = new Set(tempoUsdTokens(expectedChain).map((token) => token.toLowerCase()));
+  const charge =
+    charges.find(
+      (offer) =>
+        offer.intent !== "charge" || listed.has(stringValue(offer.request.currency).toLowerCase()),
+    ) ?? charges[0];
   // In auto intent, `--mach` asks for a one-time charge, so a MACH session is used only when the
   // server offers no machine-enabled charge.
   const session =

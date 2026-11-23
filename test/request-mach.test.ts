@@ -458,6 +458,18 @@ describe("a MACH route that does not simulate for the first offer's currency", (
     );
   });
 
+  it("pays a listed-token machine-enabled charge listed after an unlisted one", async () => {
+    const unlisted = offer({ currency: unlistedToken }, { id: "unlisted" });
+    const service = await server([unlisted, second]);
+
+    await runRequest(["--mach", "--max-spend", "0.015", service.url], {
+      stdout: { write: () => true },
+    });
+
+    expect(service.paid).toHaveLength(1);
+    expect(Credential.deserialize(service.paid[0]!).challenge).toEqual(second);
+  });
+
   it("skips an offer in a token the spend cap cannot price", async () => {
     emptyBooks(ousdToken);
     const unlisted = offer({ currency: unlistedToken }, { id: "unlisted" });
