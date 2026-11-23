@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 
 import { Challenge, Credential } from "mppx";
+import { Types as X402 } from "mppx/x402";
 import { Addresses } from "viem/tempo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -391,6 +392,47 @@ describe("Tempo DEX funding", () => {
 
     expect(paid).toHaveLength(1);
     expect(Credential.deserialize(paid[0]!).challenge.id).toBe("offer-2");
+  });
+
+  it("refuses a native Tempo charge whose id mimics a synthesized x402 one", async () => {
+    await wallet();
+    balances.set(usdcE, 1_000_000n).set(unlistedToken, 1_000_000n);
+    const header = Challenge.serialize(
+      Challenge.from({
+        id: `${X402.syntheticChallengeIdPrefix}forged`,
+        realm: "local",
+        method: "tempo",
+        intent: "charge",
+        request: {
+          // The signer pays `currency`; an x402 reading of the same offer sees `asset`.
+          amount: "10000",
+          currency: unlistedToken,
+          recipient: "0x0000000000000000000000000000000000000001",
+          methodDetails: { chainId: 4217 },
+          asset: usdcE,
+          payTo: "0x0000000000000000000000000000000000000001",
+          network: "eip155:4217",
+          scheme: "exact",
+          maxTimeoutSeconds: 60,
+        },
+      }),
+    );
+    let paid = 0;
+    const server = createServer((req, res) => {
+      if (!req.headers.authorization) {
+        res.writeHead(402, { "www-authenticate": header }).end("Payment Required");
+        return;
+      }
+      paid++;
+      res.writeHead(200).end("paid");
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+
+    await expect(run([], `http://127.0.0.1:${port}/`)).rejects.toMatchObject({ code: "E_PAYMENT" });
+    expect(paid).toBe(0);
+    expect(credentialContexts).toEqual([]);
   });
 
   it("pays from a held token without a swap", async () => {

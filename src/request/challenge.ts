@@ -1,5 +1,6 @@
 import { tempoUsdTokens } from "../shared/chains.js";
 import { Challenge, Constants } from "mppx";
+import { Types as X402 } from "mppx/x402";
 import { machineTokenDeployments } from "mppx/tempo";
 import { isAddress } from "viem";
 import { Channel as TempoChannel } from "viem/tempo";
@@ -44,6 +45,9 @@ export function preparePaymentChallenge(
   const charges = challenges.filter(
     (offer) =>
       offer.method === "tempo" &&
+      // Funding policy reads an offer with a synthesized x402 id as an x402 requirement (its
+      // `asset`), while the Tempo signer pays its `currency`: a native offer may not wear one.
+      !offer.id.startsWith(X402.syntheticChallengeIdPrefix) &&
       (offer.intent === "charge" ||
         (options.paymentIntent === "auto" && offer.intent === "subscription")),
   );
