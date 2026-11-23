@@ -9,9 +9,11 @@ import { parseMaxSlippageBps } from "../src/request/funding-mode.js";
 import { runRequest } from "../src/request/run.js";
 import { ousdToken, testAccessKey, useTempHome, walletState, writeWalletState } from "./helpers.js";
 
-const { credentialContexts, balances } = vi.hoisted(() => ({
+const { credentialContexts, balances, quotes } = vi.hoisted(() => ({
   credentialContexts: [] as unknown[],
   balances: new Map<string, bigint>(),
+  /** DEX buy quotes by lowercase input token; one not set falls back to the DEX's balance entry. */
+  quotes: new Map<string, bigint>(),
 }));
 
 // Signing is replaced so a test sees the credential context funding prepared, if any.
@@ -48,7 +50,9 @@ vi.mock("../src/shared/network.js", async (importOriginal) => {
   return {
     ...actual,
     createTempoPublicClient: () => ({
-      readContract: async ({ address }: { address: string }) => {
+      readContract: async ({ address, args }: { address: string; args?: unknown[] }) => {
+        const quote = quotes.get(String(args?.[0] ?? "").toLowerCase());
+        if (quote !== undefined && args?.length === 3) return quote;
         const balance = balances.get(address.toLowerCase());
         if (balance === undefined) throw new Error("balance unavailable");
         return balance;
@@ -78,6 +82,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   credentialContexts.length = 0;
   balances.clear();
+  quotes.clear();
   await Promise.all(
     servers.splice(0).map(
       (server) =>
@@ -224,6 +229,36 @@ describe("Tempo DEX funding", () => {
     const paid = await service(usdcE);
 
     await run(["--max-slippage-bps", "120"], paid.url);
+
+    expect(paid.paid()).toBe(1);
+    const [context] = credentialContexts as { autoSwap: { tokenIn: string[] } }[];
+    expect(context!.autoSwap.tokenIn.map((token) => token.toLowerCase())).toEqual([ousd]);
+  });
+
+  it("swaps from a later input when the first one's quote cannot be read", async () => {
+    // OUSD, the first input, has a quote that reverts, as on an empty book; pathUSD's fits.
+    await wallet([
+      { token: ousd, limit: "100000000#__bigint" },
+      { token: usdcE, limit: "100000000#__bigint" },
+      { token: pathUsd, limit: "100000000#__bigint" },
+    ]);
+    balances.set(usdcE, 0n).set(ousd, 5_000_000n).set(pathUsd, 5_000_000n);
+    quotes.set(pathUsd, 10_010n);
+    const paid = await service(usdcE);
+
+    await run([], paid.url);
+
+    expect(paid.paid()).toBe(1);
+    const [context] = credentialContexts as { autoSwap: { tokenIn: string[] } }[];
+    expect(context!.autoSwap.tokenIn.map((token) => token.toLowerCase())).toEqual([pathUsd]);
+  });
+
+  it("leaves an input whose quote cannot be read to Mppx when no other fits", async () => {
+    await wallet();
+    balances.set(usdcE, 0n).set(ousd, 5_000_000n).set(pathUsd, 0n);
+    const paid = await service(usdcE);
+
+    await run([], paid.url);
 
     expect(paid.paid()).toBe(1);
     const [context] = credentialContexts as { autoSwap: { tokenIn: string[] } }[];

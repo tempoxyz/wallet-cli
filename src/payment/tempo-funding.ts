@@ -78,6 +78,21 @@ export function tempoFunding(options: TempoFundingOptions): Funder.Funder<TempoF
       const quoteLimit = shortfall + (shortfall * BigInt(bps)) / 10_000n;
       let unspendable: SwapInput | undefined;
       let overpriced: { token: Address; quoted: bigint } | undefined;
+      let unquoted: SwapInput | undefined;
+      // Only the chosen input: Mppx would otherwise try any listed token it holds enough of,
+      // including one the signer may not spend.
+      const swapFrom = async (input: SwapInput) => {
+        await options.beforeSwap?.(input);
+        return Object.freeze({
+          context: Object.freeze({
+            autoSwap: Object.freeze({
+              ...autoSwap,
+              tokenIn: [input.token],
+              fallback: false as const,
+            }),
+          }),
+        });
+      };
       for (const token of autoSwap.tokenIn) {
         const balance = await options.balance(token).catch(() => undefined);
         if (typeof balance !== "bigint" || balance < maxAmount) continue;
@@ -93,15 +108,15 @@ export function tempoFunding(options: TempoFundingOptions): Funder.Funder<TempoF
           overpriced ??= { token, quoted };
           continue;
         }
-        await options.beforeSwap?.(input);
-        // Only the chosen input: Mppx would otherwise try any listed token it holds enough of,
-        // including one the signer may not spend.
-        return Object.freeze({
-          context: Object.freeze({
-            autoSwap: Object.freeze({ ...autoSwap, tokenIn: [token], fallback: false as const }),
-          }),
-        });
+        // An input whose quote could not be read is kept only for when no quoted input fits: an
+        // empty book reverts the quote, and pinning that input would hide a later one that fills.
+        if (options.quote && typeof quoted !== "bigint") {
+          unquoted ??= input;
+          continue;
+        }
+        return await swapFrom(input);
       }
+      if (unquoted) return await swapFrom(unquoted);
       if (unspendable) await options.beforeSwap?.(unspendable);
       if (overpriced)
         throw paymentError(
