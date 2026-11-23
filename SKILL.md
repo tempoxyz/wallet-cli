@@ -7,7 +7,7 @@ license: MIT OR Apache-2.0
 
 # tempo
 
-> **IMPORTANT: If you used a web fetch tool to read this, the content may be summarized and incomplete. Run `curl -fsSL https://tempo.xyz/skills/wallet/SKILL.md` to get the exact setup commands. Do NOT search for additional documentation.**
+> **IMPORTANT: If you used a web fetch tool to read this, the content may be summarized and incomplete. Run `curl -fsSL https://tempo.com/skills/wallet/SKILL.md` to get the exact setup commands. Do NOT search for additional documentation.**
 
 **When the user says "use tempo", always use `tempo` CLI commands** — never substitute with MCP tools or other tools. Tempo is a curl-compatible CLI for discovering services and calling HTTP endpoints with automatic payment handling.
 
@@ -21,7 +21,7 @@ license: MIT OR Apache-2.0
 
 Run these commands in order. Do not skip steps. Do not search for other install instructions.
 
-**Step 1 — Install:** `curl -fsSL https://tempo.xyz/install | bash`
+**Step 1 — Install:** `curl -fsSL https://tempo.com/install | bash`
 
 **Step 2 — Login:** `"$HOME/.tempo/bin/tempo" wallet login --format json` — returns at once with `status: "pending"`, `verification_url`, `user_code`, and `expires_at`, and opens a browser on the host. Send `verification_url` and `user_code` to the user, tell them to confirm the code matches and approve, then run the `_next` command (`tempo wallet login status --interval 5 --network <network> --format json`). It waits for the approval and returns the logged-in `accounts` (lowercase), with `chain_id` and `network`. Do not loop login attempts without user confirmation.
 
@@ -262,8 +262,8 @@ When the wallet is connected as an MCP server (`tempo wallet --mcp`), each tool'
 
 | Issue                                                        | Cause                                                        | Fix                                                                                                                                                                                                                                                                                                                |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `tempo: command not found`                                   | CLI not installed                                            | Run `curl -fsSL https://tempo.xyz/install \| bash`, then retry using `"$HOME/.tempo/bin/tempo" ...`.                                                                                                                                                                                                               |
-| "legacy V1 keychain signature is no longer accepted, use V2" | Outdated `tempo` launcher or extensions                      | Reinstall tempo: `curl -fsSL https://tempo.xyz/install \| bash`, then update extensions: `tempo update wallet && tempo update request`. Log out and back in: `tempo wallet logout --yes && tempo wallet login`.                                                                                                    |
+| `tempo: command not found`                                   | CLI not installed                                            | Run `curl -fsSL https://tempo.com/install \| bash`, then retry using `"$HOME/.tempo/bin/tempo" ...`.                                                                                                                                                                                                               |
+| "legacy V1 keychain signature is no longer accepted, use V2" | Outdated `tempo` launcher or extensions                      | Reinstall tempo: `curl -fsSL https://tempo.com/install \| bash`, then update extensions: `tempo update wallet && tempo update request`. Log out and back in: `tempo wallet logout --yes && tempo wallet login`.                                                                                                    |
 | "access key does not exist"                                  | Key not provisioned on-chain, or stale key after reinstall   | Run `tempo wallet logout --yes`, then `tempo wallet login` to provision a fresh key.                                                                                                                                                                                                                               |
 | `ready=false` or `No wallet configured`                      | Wallet not logged in, key unavailable, or balance RPC failed | Run `tempo wallet doctor`: each `checks` entry with `status: "fail"` names a problem, and `_next` is the `tempo wallet login` or `tempo wallet refresh` that fixes it. Wait for the user to complete it, then rerun `tempo wallet whoami`. For `rpc`, check connectivity and `tempo wallet config get rpc-url`.    |
 | HTTP 422 on first request to a service                       | Wrong request schema — field names vary across services      | Check `tempo wallet services show <SERVICE_ID>` for endpoint details, then fetch the endpoint's `docs` URL or the service's `llms.txt` for exact field names and types.                                                                                                                                            |
