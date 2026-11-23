@@ -54,7 +54,10 @@ export function preparePaymentChallenge(
   const charge =
     charges.find(
       (offer) =>
-        offer.intent !== "charge" || listed.has(stringValue(offer.request.currency).toLowerCase()),
+        offer.intent !== "charge" ||
+        // A zero-amount proof moves nothing, so the cap does not apply to it.
+        stringValue(offer.request.amount) === "0" ||
+        listed.has(stringValue(offer.request.currency).toLowerCase()),
     ) ?? charges[0];
   // In auto intent, `--mach` asks for a one-time charge, so a MACH session is used only when the
   // server offers no machine-enabled charge.

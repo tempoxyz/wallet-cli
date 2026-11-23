@@ -312,6 +312,46 @@ describe("Tempo DEX funding", () => {
     expect(Credential.deserialize(paid[0]!).challenge.id).toBe("offer-1");
   });
 
+  it("keeps a zero-amount proof in an unlisted token over a later listed charge", async () => {
+    await wallet();
+    balances.set(usdcE, 1_000_000n).set(ousd, 0n);
+    const header = [unlistedToken, usdcE]
+      .map((currency, index) =>
+        Challenge.serialize(
+          Challenge.from({
+            id: `offer-${index}`,
+            realm: "local",
+            method: "tempo",
+            intent: "charge",
+            request: {
+              amount: index === 0 ? "0" : "10000",
+              currency,
+              recipient: "0x0000000000000000000000000000000000000001",
+              methodDetails: { chainId: 4217 },
+            },
+          }),
+        ),
+      )
+      .join(", ");
+    const paid: string[] = [];
+    const server = createServer((req, res) => {
+      if (!req.headers.authorization) {
+        res.writeHead(402, { "www-authenticate": header }).end("Payment Required");
+        return;
+      }
+      paid.push(req.headers.authorization);
+      res.writeHead(200).end("paid");
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+
+    await run([], `http://127.0.0.1:${port}/`);
+
+    expect(paid).toHaveLength(1);
+    expect(Credential.deserialize(paid[0]!).challenge.id).toBe("offer-0");
+  });
+
   it("pays from a held token without a swap", async () => {
     await wallet();
     balances.set(usdcE, 10_000n).set(ousd, 5_000_000n);
