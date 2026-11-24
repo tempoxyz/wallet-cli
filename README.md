@@ -2,7 +2,7 @@
 <br>
 
 <p align="center">
-  <a href="https://tempo.xyz">
+  <a href="https://tempo.com">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tempoxyz/tempo/refs/heads/main/.github/assets/tempo-wordmark-white.svg">
       <img alt="Tempo wordmark" src="https://raw.githubusercontent.com/tempoxyz/tempo/refs/heads/main/.github/assets/tempo-wordmark-black.svg" width="360">
@@ -15,18 +15,18 @@
 
 # Tempo Wallet CLI
 
-A command-line wallet and HTTP client for [Tempo](https://tempo.xyz). `tempo wallet` manages your wallet, keys, tokens, and payment sessions. `tempo request` makes HTTP requests and handles [MPP](https://mpp.dev) payment challenges.
+A command-line wallet and HTTP client for [Tempo](https://tempo.com). `tempo wallet` manages your wallet, keys, tokens, and payment sessions. `tempo request` makes HTTP requests and handles [MPP](https://mpp.dev) payment challenges.
 
 Use this CLI for terminal and script workflows. For payment handling inside an application, use an MPP SDK such as [mpp-rs](https://github.com/tempoxyz/mpp-rs), [mpp-go](https://github.com/tempoxyz/mpp-go), or [pympp](https://github.com/tempoxyz/pympp).
 
-[Wallet](https://wallet.tempo.xyz) · [CLI docs](https://tempo.xyz/developers/docs/cli) · [Command reference](docs/commands.md) · [Usage guide](docs/usage.md)
+[Wallet](https://wallet.tempo.xyz) · [CLI docs](https://tempo.com/developers/docs/cli) · [Command reference](docs/commands.md) · [Usage guide](docs/usage.md)
 
 ## Install
 
 Install the Tempo launcher, which manages the `wallet` and `request` extensions:
 
 ```sh
-curl -fsSL https://tempo.xyz/install | bash
+curl -fsSL https://tempo.com/install | bash
 ```
 
 ## Quick start
