@@ -1,5 +1,6 @@
 import { z } from "incur";
 
+import { fundingModes, fundingSetting, parseFunding } from "../request/funding-mode.js";
 import { maxSpendSetting, parseMaxSpend } from "../request/spend.js";
 import {
   networkSetting,
@@ -91,6 +92,13 @@ export const configSettings = {
     parse: parseMaxSpend,
     effective: (_flag: string | undefined, _state?: WalletState, config?: Config) =>
       maxSpendSetting(undefined, config),
+  },
+  funding: {
+    about: `how tempo request acquires a payment token the wallet does not hold: ${fundingModes.join(", ")}`,
+    env: "TEMPO_FUNDING",
+    parse: parseFunding,
+    effective: (_flag: string | undefined, _state?: WalletState, config?: Config) =>
+      fundingSetting(undefined, config),
   },
 } satisfies Record<string, SharedSetting | NetworkSetting>;
 

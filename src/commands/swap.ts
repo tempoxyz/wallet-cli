@@ -23,9 +23,10 @@ import {
 import { continuationCommand, nextStep } from "../shared/next.js";
 import { withWallet, type Wallet } from "../shared/require-wallet.js";
 import { resolveTokenAddress, tokenLabel, tokenMetadata } from "../shared/tokens.js";
-import { cleanStoredScalar, getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
+import { getRecord, parseTokenAmount, stringValue } from "../shared/utils.js";
 import { createProvider, requireSender } from "../provider.js";
-import { accessKeyLimitError } from "../wallet/access-key.js";
+import { accessKeySpendLimit } from "../request/identity.js";
+import { accessKeyLimitError, dexSwapSpend } from "../wallet/access-key.js";
 import {
   deferredKeyRefusal,
   defersKeyCheck,
@@ -97,6 +98,11 @@ type SwapDependencies = {
   }) => Promise<string>;
   /** Reads a transaction's state on chain, for a swap replayed from its idempotency key. */
   getTxStatus: (txHash: string) => Promise<TxState>;
+  /** What the access key may still spend of `token`; `null` when unrestricted. */
+  getAccessKeyLimit: (
+    key: NonNullable<Wallet["key"]>,
+    token: `0x${string}`,
+  ) => Promise<bigint | null>;
 };
 
 /** With `--idempotency-key`, a swap is sent at most once per key; see `recordedSend`. */
@@ -257,12 +263,16 @@ export async function swapTokens(
     ? Actions.dex.buy.call({ amountOut, maxAmountIn, tokenIn, tokenOut })
     : Actions.dex.sell.call({ amountIn, minAmountOut, tokenIn, tokenOut });
   const calls = [approve, swap] as const;
-  const accessKeyLimit = key?.limits?.find((limit) => limit.token.toLowerCase() === tokenIn);
-  const accessKeyLimitRaw = parseAccessKeyLimit(accessKeyLimit?.limit);
-  // A key stored without limits is unrestricted, and without a key the wallet app approves the
-  // swap; only a limited key can fall short.
+  // The chain's remaining limit, not the stored one: earlier spends draw it down, and a key that
+  // cannot cover the swap leaves the provider to ask the wallet app to approve it. Without a key
+  // the wallet app approves the swap; only a limited key can fall short.
+  const accessKeyLimitRaw = key ? await runtime.getAccessKeyLimit(key, tokenIn) : null;
+  // The approve and the DEX's pull each count against the limit, so the key needs twice the input.
+  const keySpend = formatUnits(dexSwapSpend(maxAmountIn), metadataIn.decimals);
   const requiresAccessKeyUpdate =
-    key?.limits !== undefined && (accessKeyLimitRaw === null || accessKeyLimitRaw < maxAmountIn);
+    key !== undefined &&
+    accessKeyLimitRaw !== null &&
+    accessKeyLimitRaw < dexSwapSpend(maxAmountIn);
   const output = {
     ...networkFields(selectedChainId),
     mode: exactOut ? ("exact_out" as const) : ("exact_in" as const),
@@ -308,17 +318,8 @@ export async function swapTokens(
           { network },
         )
       : nextStep(
-          `The active access key cannot spend ${output.max_amount_in} ${nameIn}. Ask the wallet owner to run the next command, then rerun this dry run to review the swap.`,
-          [
-            "wallet",
-            "keys",
-            "update",
-            key.address,
-            "--token",
-            tokenIn,
-            "--limit",
-            output.max_amount_in,
-          ],
+          `The active access key cannot spend the ${keySpend} ${nameIn} this swap needs: its approve and the DEX's pull of up to ${output.max_amount_in} each count toward the limit. Ask the wallet owner to run the next command, then rerun this dry run to review the swap.`,
+          ["wallet", "keys", "update", key.address, "--token", tokenIn, "--limit", keySpend],
           { network },
         );
     return { status: "dry_run" as const, ...output, ...next };
@@ -330,7 +331,10 @@ export async function swapTokens(
       key: key.address,
       token: tokenIn,
       label: nameIn,
-      amount: output.max_amount_in,
+      amount: keySpend,
+      remaining: output.access_key_limit ?? undefined,
+      swap: true,
+      walletApp: true,
       network,
     });
 
@@ -361,15 +365,6 @@ function quoteMovedError(detail: string, flag: string) {
 
 function divideRoundUp(value: bigint, divisor: bigint) {
   return (value + divisor - 1n) / divisor;
-}
-
-function parseAccessKeyLimit(value: string | undefined) {
-  if (!value) return null;
-  try {
-    return BigInt(cleanStoredScalar(value));
-  } catch {
-    return null;
-  }
 }
 
 function defaultDependencies(network: Network): SwapDependencies {
@@ -412,5 +407,6 @@ function defaultDependencies(network: Network): SwapDependencies {
     async getTxStatus(txHash) {
       return (await txStatus(txHash, network)).status;
     },
+    getAccessKeyLimit: accessKeySpendLimit,
   };
 }

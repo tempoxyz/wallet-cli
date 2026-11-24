@@ -1,4 +1,6 @@
+import { tempoUsdTokens } from "../shared/chains.js";
 import { Challenge, Constants } from "mppx";
+import { Types as X402 } from "mppx/x402";
 import { machineTokenDeployments } from "mppx/tempo";
 import { isAddress } from "viem";
 import { Channel as TempoChannel } from "viem/tempo";
@@ -40,12 +42,28 @@ export function preparePaymentChallenge(
   // Prefer offers on the selected network before applying intent preference.
   // Keep mismatched offers when none match so the network diagnostic remains explicit.
   if (networkChallenges.length > 0) challenges = networkChallenges;
-  const charge = challenges.find(
+  const charges = challenges.filter(
     (offer) =>
       offer.method === "tempo" &&
+      // Funding policy reads an offer with a synthesized x402 id as an x402 requirement (its
+      // `asset`), while the Tempo signer pays its `currency`: a native offer may not wear one.
+      !offer.id.startsWith(X402.syntheticChallengeIdPrefix) &&
       (offer.intent === "charge" ||
         (options.paymentIntent === "auto" && offer.intent === "subscription")),
   );
+  // --max-spend prices only the USD tokens the CLI lists, so a charge in another token is refused.
+  // Prefer the first one-time charge it can pay: in a listed token, or a zero-amount proof, which
+  // moves nothing. Only when there is none does the first offer, charge or subscription, stand, so
+  // a recurring subscription never wins over a payable one-time charge, and a refusal still names
+  // the token.
+  const listed = new Set(tempoUsdTokens(expectedChain).map((token) => token.toLowerCase()));
+  const charge =
+    charges.find(
+      (offer) =>
+        offer.intent === "charge" &&
+        (stringValue(offer.request.amount) === "0" ||
+          listed.has(stringValue(offer.request.currency).toLowerCase())),
+    ) ?? charges[0];
   // In auto intent, `--mach` asks for a one-time charge, so a MACH session is used only when the
   // server offers no machine-enabled charge.
   const session =
