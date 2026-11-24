@@ -53,8 +53,16 @@ vi.mock("viem/tempo", async (importOriginal) => {
       ...actual.Actions,
       token: {
         ...actual.Actions.token,
+        // The balance comes from the mocked readContract, as the MACH route's own read does.
         getBalance: Object.assign(
-          vi.fn().mockResolvedValue({ amount: 1_000_000n }),
+          vi.fn(async (client: never, parameters: { account: string; token: string }) => ({
+            amount: await readContract(client, {
+              abi: actual.Abis.tip20,
+              address: parameters.token as never,
+              args: [parameters.account as never],
+              functionName: "balanceOf",
+            }),
+          })),
           actual.Actions.token.getBalance,
         ),
         getMetadata: vi.fn(),

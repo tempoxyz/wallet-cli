@@ -20,6 +20,7 @@ import {
 } from "./identity.js";
 import type { RequestOptions } from "./options.js";
 import { dryRunRpc, planSessionPayment } from "./session.js";
+import { sessionShortfall } from "./session-topup.js";
 import { formatTokenAmount, spendCap } from "./spend.js";
 
 export type RequestDryRunOutput = z.infer<typeof requestDryRunOutput>;
@@ -87,6 +88,7 @@ export async function paymentQuote(
   // No cap bounds a subscription: an explicit one refuses it before this, and the default skips it.
   const cap = challenge.intent === "subscription" ? undefined : spendCap(options);
   const spend = challenge.intent === "session" ? plan?.signedCumulative : amount;
+  const depositRaw = plan ? quotedDeposit(plan, { balance, limit }) : undefined;
   return {
     payment_required: true,
     method: challenge.method,
@@ -95,8 +97,8 @@ export async function paymentQuote(
     amount: formatTokenAmount(amount),
     raw_amount: amount.toString(),
     session: plan ? (plan.reusable ? "reuse" : "open") : null,
-    deposit: plan ? formatTokenAmount(plan.depositRaw) : null,
-    raw_deposit: plan ? plan.depositRaw.toString() : null,
+    deposit: depositRaw === undefined ? null : formatTokenAmount(depositRaw),
+    raw_deposit: depositRaw === undefined ? null : depositRaw.toString(),
     token: token.toLowerCase(),
     // The server picks the currency, so an unlisted token's self-declared ticker is not shown.
     symbol: knownToken(token, chainId)?.symbol ?? null,
@@ -128,4 +130,21 @@ export async function paymentQuote(
         )
       : {}),
   };
+}
+
+/**
+ * The deposit a quoted session payment locks. A reused session's top-up is lowered, as the payment
+ * lowers it, to what the read balance and stored key limit allow, never below the voucher's
+ * shortfall.
+ */
+function quotedDeposit(
+  plan: Awaited<ReturnType<typeof planSessionPayment>>,
+  read: { balance: bigint | null; limit: bigint | null },
+) {
+  if (!plan.reusable) return plan.depositRaw;
+  const required = sessionShortfall(plan.reusable, plan.signedCumulative);
+  let amount = plan.depositRaw;
+  for (const bound of [read.balance, read.limit])
+    if (bound !== null && amount > bound) amount = bound;
+  return amount > required ? amount : required;
 }

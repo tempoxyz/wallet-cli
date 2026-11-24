@@ -18,6 +18,7 @@ import { usdcToken } from "../src/shared/constants.js";
 import {
   testAccessKey,
   testPrivateKey,
+  testWallet,
   useTempHome,
   walletState,
   writeWalletState,
@@ -343,7 +344,16 @@ it.each([
 ])(
   "falls back to a compatible advertised charge: $intent on $chainId",
   async ({ intent, chainId, fallback }) => {
-    vi.mocked(Actions.token.getBalance).mockResolvedValue({ amount: 0n } as never);
+    // No MACH funds the session; the stablecoin charge is funded.
+    vi.mocked(Actions.token.getBalance).mockImplementation(
+      async (_client, parameters) =>
+        ({
+          amount:
+            (parameters as { token: string }).token.toLowerCase() === mach.toLowerCase()
+              ? 0n
+              : 1_000_000n,
+        }) as never,
+    );
     const charge = Challenge.from({ ...offer(usdcToken, { chainId }), intent: "charge" });
     const original = response([offer(), charge]);
     const options = parseRequestArgs(["--payment-intent", intent, "https://example.com"]);
@@ -431,6 +441,95 @@ it("reuses a funded MACH channel without needing new key allowance", async () =>
   expect(Actions.accessKey.getMetadata).not.toHaveBeenCalled();
   expect(Actions.accessKey.getRemainingLimit).not.toHaveBeenCalled();
   expect(Actions.token.getBalance).not.toHaveBeenCalled();
+});
+
+const machSession = ["--payment-token", mach, "--payment-intent", "session"];
+
+async function writeKeyWallet() {
+  vi.stubEnv("TEMPO_PRIVATE_KEY", "");
+  await writeWalletState(
+    walletState({
+      accessKeys: [
+        { ...walletState().accessKeys[0]!, limits: [{ token: mach, limit: "1000000#__bigint" }] },
+      ],
+    }),
+  );
+}
+
+it("refuses a session deposit above the access key's remaining limit before signing", async () => {
+  await writeKeyWallet();
+  vi.mocked(Actions.accessKey.getRemainingLimit).mockResolvedValue({
+    remaining: 2_999n,
+    periodEnd: undefined,
+  });
+  const endpoint = await service();
+  await expect(run(endpoint.url, machSession)).rejects.toMatchObject({
+    code: "E_LIMIT_EXCEEDED",
+    message: expect.stringContaining("The access key cannot spend 0.003 MACH"),
+  });
+  expect(endpoint.paid).toHaveLength(0);
+  expect(signTransaction).not.toHaveBeenCalled();
+});
+
+it.each([
+  { name: "the access key's remaining limit", remaining: 499n, balance: 1_000_000n },
+  { name: "the wallet's balance", remaining: 1_000_000n, balance: 499n },
+])("refuses a top-up above $name before signing it", async ({ remaining, balance }) => {
+  await writeKeyWallet();
+  vi.mocked(Actions.accessKey.getRemainingLimit).mockResolvedValue({
+    remaining: 1_000_000n,
+    periodEnd: undefined,
+  });
+  const endpoint = await service(undefined, true);
+  await run(endpoint.url, machSession);
+  vi.mocked(readOnChainChannel).mockResolvedValue({
+    payer: testWallet,
+    payee,
+    token: mach,
+    authorizedSigner: testAccessKey,
+    deposit: 1500n,
+    settled: 0n,
+    closeRequestedAt: 0n,
+  });
+  vi.mocked(Actions.accessKey.getRemainingLimit).mockResolvedValue({
+    remaining,
+    periodEnd: undefined,
+  });
+  vi.mocked(Actions.token.getBalance).mockResolvedValue({ amount: balance } as never);
+  const signed = vi.mocked(signTransaction).mock.calls.length;
+  await expect(run(endpoint.url, machSession)).rejects.toMatchObject(
+    remaining < 500n
+      ? { code: "E_LIMIT_EXCEEDED" }
+      : { message: expect.stringContaining("Insufficient balance for session top-up") },
+  );
+  expect(endpoint.paid.map((paid) => paid.payload.action)).toEqual(["open", "voucher"]);
+  expect(vi.mocked(signTransaction).mock.calls.length).toBe(signed);
+});
+
+it("tops up by the spending cap's headroom rather than the shortfall", async () => {
+  const endpoint = await service(undefined, true);
+  await run(endpoint.url);
+  vi.mocked(readOnChainChannel).mockResolvedValue({
+    payer: account.address,
+    payee,
+    token: mach,
+    authorizedSigner: account.address,
+    deposit: 1500n,
+    settled: 0n,
+    closeRequestedAt: 0n,
+  });
+  await run(endpoint.url);
+  expect(endpoint.paid.map((paid) => paid.payload.action)).toEqual([
+    "open",
+    "voucher",
+    "topUp",
+    "voucher",
+  ]);
+  const tx = Transaction.deserialize(endpoint.paid[2]!.payload.transaction as `0x76${string}`);
+  // The server asked for 500; --max-spend 0.003 leaves 1500 of headroom over the 1500 deposit.
+  expect(
+    decodeFunctionData({ abi: Abis.tip20ChannelReserve, data: tx.calls[0]!.data! }),
+  ).toMatchObject({ functionName: "topUp", args: [expect.anything(), 1500n] });
 });
 
 it.each([false, true])(

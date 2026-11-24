@@ -1,7 +1,7 @@
 import { Errors } from "incur";
 import { Challenge, Credential, PaymentRequest } from "mppx";
 import { Mppx, session as tempoSession } from "mppx/client";
-import { parseUnits, zeroAddress } from "viem";
+import { parseUnits } from "viem";
 import { Actions, Channel as TempoChannel } from "viem/tempo";
 
 import { readOnChainChannel } from "../payment/channel.js";
@@ -25,21 +25,17 @@ import {
   tempoPaymentChallengeResponse,
 } from "./challenge.js";
 import { cloneRequestInit, type FetchPlan } from "./fetch.js";
-import {
-  type PaymentIdentity,
-  requestNetwork,
-  resolvePaymentIdentity,
-  storedAccessKeyLimit,
-} from "./identity.js";
+import { type PaymentIdentity, requestNetwork, resolvePaymentIdentity } from "./identity.js";
 import type { RequestOptions } from "./options.js";
 import { fetchPaidRequest, paidResponseFailures, paymentReceipts } from "./paid.js";
-import { persistSessionReceipt, sessionShortfall, tryTopUpAndRetry } from "./session-topup.js";
+import { assertCanFund, readFundingCapacity, readKeyAllowance } from "./funding.js";
 import {
-  assertWithinMaxSpend,
-  formatTokenAmount,
-  MaxSpendExceededError,
-  spendCap,
-} from "./spend.js";
+  persistSessionReceipt,
+  sessionShortfall,
+  topUpAmount,
+  tryTopUpAndRetry,
+} from "./session-topup.js";
+import { assertWithinMaxSpend, MaxSpendExceededError, spendCap } from "./spend.js";
 
 // Dry-run reads only inform the quote, so a stalled RPC must not hold it up.
 export const dryRunRpc = { timeout: 3_000, retryCount: 0 };
@@ -74,8 +70,12 @@ export async function preferMachSession(response: Response, options: RequestOpti
     const identity = await resolvePaymentIdentity(options);
     const plan = await planSessionPayment(details, identity, options, { dryRun: true });
     assertWithinMaxSpend(plan.signedCumulative, options);
-    if (plan.depositRaw === 0n) return selected.response;
-    if (await canFundSessionDeposit(identity, details, plan.depositRaw)) {
+    // A top-up is lowered to what the wallet can spend, so only its shortfall must be fundable.
+    const needed = plan.reusable
+      ? sessionShortfall(plan.reusable, plan.signedCumulative)
+      : plan.depositRaw;
+    if (needed === 0n) return selected.response;
+    if (await canFundSessionDeposit(identity, details, needed)) {
       const balance = await Actions.token.getBalance(
         createTempoPublicClient(details.chainId, dryRunRpc) as never,
         {
@@ -83,7 +83,7 @@ export async function preferMachSession(response: Response, options: RequestOpti
           token: details.token as `0x${string}`,
         },
       );
-      if (balance.amount >= plan.depositRaw) return selected.response;
+      if (balance.amount >= needed) return selected.response;
     }
   } catch (error) {
     // A MACH session over the spending cap is refused by the payment, not traded for another offer.
@@ -119,27 +119,15 @@ async function canFundSessionDeposit(
   details: SessionDetails,
   amount: bigint,
 ) {
-  if (!("key" in identity)) return true;
-  const client = createTempoPublicClient(details.chainId, dryRunRpc);
-  const parameters = { account: identity.address, accessKey: identity.signerAddress };
-  const metadata = await Actions.accessKey.getMetadata(client, parameters);
-  if (metadata.isRevoked) return false;
-  if (metadata.address === zeroAddress) {
-    if (!identity.key.keyAuthorization) return false;
-    const limit = storedAccessKeyLimit(identity.key, details.token);
-    return limit === null || limit >= amount;
-  }
-  if (
-    metadata.address.toLowerCase() !== identity.signerAddress.toLowerCase() ||
-    (metadata.expiry !== 0n && metadata.expiry <= BigInt(nowSeconds()))
-  )
-    return false;
-  if (metadata.spendPolicy === "unlimited") return true;
-  const { remaining } = await Actions.accessKey.getRemainingLimit(client, {
-    ...parameters,
-    token: details.token as `0x${string}`,
+  const allowance = await readKeyAllowance(identity, {
+    chainId: details.chainId,
+    rpc: dryRunRpc,
+    token: details.token,
   });
-  return remaining >= amount;
+  return (
+    allowance.kind === "unlimited" ||
+    (allowance.kind === "limited" && allowance.remaining >= amount)
+  );
 }
 
 export async function paySessionAndRetryRequest(
@@ -184,8 +172,17 @@ export async function paySessionAndRetryRequest(
       });
       record = reusable;
     } else {
-      await assertSufficientSessionBalance(identity.address, details, depositRaw);
       assertWithinMaxSpend(signedCumulative, options);
+      assertCanFund(identity, {
+        amount: depositRaw,
+        capacity: await readFundingCapacity(identity, {
+          chainId: details.chainId,
+          token: details.token,
+        }),
+        network: requestNetwork(options),
+        purpose: "session deposit",
+        token: details.token,
+      });
       credential = await payment.createCredential(challengeResponse, {
         depositRaw: depositRaw.toString(),
       });
@@ -276,8 +273,9 @@ type SessionPlanOptions = {
 
 /**
  * How a session payment proceeds, shared by payments and dry runs: a voucher on a reusable stored
- * channel, or a new channel locking `depositRaw`. On reuse, `depositRaw` is the top-up the
- * payment sends if the server rejects a voucher beyond the on-chain deposit. `signedCumulative`
+ * channel, or a new channel locking `depositRaw`. On reuse, `depositRaw` is the most the top-up
+ * adds if the server rejects a voucher beyond the on-chain deposit (see `topUpAmount`); the
+ * payment and the dry-run quote lower it to what the wallet can spend, never below the shortfall. `signedCumulative`
  * is the voucher amount the spending cap bounds.
  */
 export async function planSessionPayment(
@@ -291,9 +289,19 @@ export async function planSessionPayment(
     const signedCumulative =
       maxBigInt(reusable.cumulative_amount, reusable.accepted_cumulative, reusable.server_spent) +
       details.amount;
+    const required = sessionShortfall(reusable, signedCumulative);
     return {
       reusable,
-      depositRaw: sessionShortfall(reusable, signedCumulative),
+      depositRaw:
+        required === 0n
+          ? 0n
+          : topUpAmount({
+              cap: parseUnits(spendCap(options), 6),
+              deposit: reusable.deposit,
+              explicitCap: options.maxSpend !== undefined,
+              required,
+              suggestedDeposit: details.suggestedDeposit,
+            }),
       signedCumulative,
     };
   }
@@ -384,24 +392,6 @@ function sessionDepositRaw(details: SessionDetails, options: RequestOptions) {
   const deposit = preferred > maxSpend ? maxSpend : preferred;
   if (deposit < details.amount) throw paymentError("Session payment exceeds --max-spend");
   return deposit;
-}
-
-async function assertSufficientSessionBalance(
-  payer: string,
-  details: SessionDetails,
-  depositRaw: bigint,
-) {
-  const client = createTempoPublicClient(details.chainId);
-  const balance = (
-    await Actions.token.getBalance(client as never, {
-      account: payer as `0x${string}`,
-      token: details.token as `0x${string}`,
-    })
-  ).amount;
-  if (balance >= depositRaw) return;
-  throw paymentError(
-    `Insufficient balance for session deposit: available=${formatTokenAmount(balance)} required=${formatTokenAmount(depositRaw)}`,
-  );
 }
 
 function sessionRecordFromOpenCredential(options: {

@@ -34,6 +34,13 @@ import {
   runsMachRoute,
 } from "./mach.js";
 import type { RequestOptions } from "./options.js";
+import {
+  assertCanFund,
+  assertKeyCanFund,
+  readFundingCapacity,
+  readKeyAllowance,
+  spentByCalls,
+} from "./funding.js";
 import { fetchPaidRequest, paymentReceipts } from "./paid.js";
 import { dryRunRpc, paySessionAndRetryRequest } from "./session.js";
 import { formatTokenAmount, MaxSpendExceededError, spendCap } from "./spend.js";
@@ -260,12 +267,38 @@ function chargeSettlement(
   const recipient = stringValue(challenge.request.recipient);
   const mach = machChargeParameters(options, { amount, key, recipient, service });
   let debited = stringValue(challenge.request.currency).toLowerCase();
+  // A MACH route the funding check refuses is skipped for the direct transfer, which an explicit
+  // MACH payment then refuses for want of a route; that refusal reports the route's real cause.
+  let routeFundingError: unknown;
   const parameters: ChargeParameters = {
     ...mach,
     async resolveAccount(info) {
-      const token = info.operation.kind === "executeCalls" ? info.operation.calls?.[0]?.to : null;
+      const calls = info.operation.kind === "executeCalls" ? info.operation.calls : undefined;
+      const token = calls?.[0]?.to;
       if (token) debited = token.toLowerCase();
-      return (await mach.resolveAccount?.(info)) ?? info.account;
+      const account = await (async () => {
+        try {
+          return (await mach.resolveAccount?.(info)) ?? info.account;
+        } catch (error) {
+          throw routeFundingError ?? error;
+        }
+      })();
+      // The MACH route's balance shortfall is left to the direct transfer's machRouteError, which
+      // names the MACH balance and how to buy MACH; the route checks only the key's allowance.
+      const deployment =
+        machineTokenDeployments[info.chainId as keyof typeof machineTokenDeployments];
+      const route =
+        !!deployment &&
+        calls?.length === 2 &&
+        calls[0]?.to.toLowerCase() === deployment.token.toLowerCase() &&
+        calls[1]?.to.toLowerCase() === deployment.swap.toLowerCase();
+      try {
+        await assertChargeFunding(identity, calls, options, { chainId: info.chainId, route });
+      } catch (error) {
+        if (route) routeFundingError = error;
+        throw error;
+      }
+      return account;
     },
   };
   return {
@@ -293,6 +326,46 @@ function chargeSettlement(
       });
     },
   };
+}
+
+/**
+ * Refuses a charge whose calls spend more of a token than the access key's remaining on-chain
+ * limit or the wallet's balance allows, before it is signed: the server broadcasts a sponsored
+ * charge, and one the chain rejects still lands as a failed transaction. A MACH `route` checks
+ * the key's allowance only. A failed read leaves the check to the chain.
+ */
+async function assertChargeFunding(
+  identity: PaymentIdentity,
+  calls: readonly { data?: `0x${string}` | undefined; to: string }[] | undefined,
+  options: RequestOptions,
+  check: { chainId: number; route: boolean },
+) {
+  const spent = calls ? spentByCalls(calls) : undefined;
+  if (!spent) return;
+  const { chainId } = check;
+  const network = requestNetwork(options);
+  const read = { chainId, rpc: dryRunRpc, token: spent.token };
+  const capacity = await (
+    check.route
+      ? readKeyAllowance(identity, read).then((allowance) => ({ allowance, balance: undefined }))
+      : readFundingCapacity(identity, read)
+  ).catch(() => undefined);
+  if (!capacity) return;
+  const token = await tokenMetadata(spent.token as Address, chainId, (address) =>
+    readTokenMetadata(address, chainId, dryRunRpc),
+  ).catch(() => undefined);
+  // Without known decimals the check could misread the amount and suggest a wrong limit.
+  if (!token || token.decimals !== 6) return;
+  const funding = {
+    amount: spent.amount,
+    label: tokenLabel(token),
+    network,
+    purpose: "payment",
+    token: spent.token,
+  };
+  if (capacity.balance === undefined)
+    assertKeyCanFund(identity, { ...funding, allowance: capacity.allowance });
+  else assertCanFund(identity, { ...funding, capacity });
 }
 
 /**
