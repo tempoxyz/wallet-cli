@@ -4,7 +4,7 @@ This list is generated from the mounted command schemas. Run `tempo wallet <comm
 
 <!-- generated:commands start -->
 
-- `login`: Sign up or log in to your Tempo wallet. Options: `--no-browser`, `--wait`, `--no-wait`.
+- `login`: Sign up or log in to your Tempo wallet. Options: `--no-browser`, `--id`, `--wait`, `--no-wait`.
 - `login status`: Wait for a pending login's approval and finish it. Options: `--interval`, `--max-attempts`.
 - `refresh`: Refresh your access key without logging out. Options: `--no-browser`.
 - `logout`: Log out of every network, or of one with --network. Options: `--revoke`, `--yes`, `--no-browser`.

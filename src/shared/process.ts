@@ -14,8 +14,7 @@ import { walletError } from "./errors.js";
 /** Opens `url` in the default browser, unless `TEMPO_NO_BROWSER` is set (headless hosts, agents). */
 export function openExternal(url: string) {
   if (env.TEMPO_NO_BROWSER) return;
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
-  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  const [command, args] = browserCommand(url);
   const child = spawn(command, args, {
     detached: true,
     stdio: "ignore",
@@ -25,6 +24,18 @@ export function openExternal(url: string) {
   // so keep the CLI alive and let the user open it elsewhere.
   child.on("error", () => undefined);
   child.unref();
+}
+
+/**
+ * The command that opens `url` on `os`. Windows opens it through `cmd /c start`, and cmd.exe
+ * reads `&`, `|`, `<`, `>`, `^`, `(` and `)` in its command line as its own syntax, so a link
+ * with more than one query parameter (`?user_code=…&tempo_id=true`) would be cut at the `&`. Each
+ * is escaped with `^`, which cmd.exe removes before `start` sees the link.
+ */
+export function browserCommand(url: string, os: NodeJS.Platform = platform): [string, string[]] {
+  if (os === "darwin") return ["open", [url]];
+  if (os === "win32") return ["cmd", ["/c", "start", "", url.replace(/[&|<>^()]/g, "^$&")]];
+  return ["xdg-open", [url]];
 }
 
 /**
