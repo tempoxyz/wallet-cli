@@ -300,6 +300,42 @@ it("preserves repeated multipart fields and files in order", async () => {
   expect(received.indexOf("file one")).toBeLessThan(received.indexOf("file two"));
 });
 
+it("encodes --data-urlencode content, =content, name=content, @file and name@file like curl", async () => {
+  const home = await useTempHome();
+  const file = join(home, "note.txt");
+  await writeFile(file, "a b&c\n");
+  let received = "";
+  const url = await server((req, res) => {
+    req.on("data", (chunk) => {
+      received += chunk;
+    });
+    req.on("end", () => res.end("ok"));
+  });
+  await runRequest(
+    [
+      "--data-urlencode",
+      "plain text",
+      "--data-urlencode",
+      "=x=y z",
+      "--data-urlencode",
+      "q=a@b c",
+      "--data-urlencode",
+      `@${file}`,
+      "--data-urlencode",
+      `note@${file}`,
+      url,
+    ],
+    { stdout: capture() },
+  );
+  expect(received.split("&")).toEqual([
+    "plain%20text",
+    "x%3Dy%20z",
+    "q=a%40b%20c",
+    "a%20b%26c%0A",
+    "note=a%20b%26c%0A",
+  ]);
+});
+
 it("routes HEAD headers exclusively to -o and creates parent directories", async () => {
   const home = await useTempHome();
   const path = join(home, "missing", "headers.txt");
