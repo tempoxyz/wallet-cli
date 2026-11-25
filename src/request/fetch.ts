@@ -49,10 +49,16 @@ export async function buildFetchRequest(options: RequestOptions) {
   if (options.referer) headers.set("referer", options.referer);
   if (options.compressed) headers.set("accept-encoding", "gzip, deflate, br");
 
+  // The first -H for a name replaces any default above; repeating it adds values, as in curl.
+  const given = new Set<string>();
   for (const header of options.headers) {
     const separator = header.indexOf(":");
     if (separator <= 0) throw usageError(`Invalid header: ${header}`);
-    headers.set(header.slice(0, separator).trim(), header.slice(separator + 1).trim());
+    const name = header.slice(0, separator).trim();
+    const value = header.slice(separator + 1).trim();
+    if (given.has(name.toLowerCase())) headers.append(name, value);
+    else headers.set(name, value);
+    given.add(name.toLowerCase());
   }
 
   // Negotiate before the initial probe: some servers only offer the requested intent.
